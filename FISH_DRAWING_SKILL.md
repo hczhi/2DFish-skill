@@ -85,6 +85,7 @@ animate()
 | patternDensity | number | 3 | 花纹密度 2~5 |
 | eyeSize | number | 0.14 | 眼睛大小 0.1~0.2 |
 | speedMultiplier | number | 1 | 游速倍率 |
+| bubbles | boolean | true | 是否吐泡泡 |
 
 ### 5 种预设种类
 

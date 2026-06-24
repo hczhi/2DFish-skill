@@ -48,6 +48,8 @@ export interface FishConfig {
   eyeSize?: number
   /** 游泳速度倍率，默认 1 */
   speedMultiplier?: number
+  /** 是否吐泡泡，默认 true */
+  bubbles?: boolean
   /** 预设种类（覆盖上面的外观参数） */
   species?: 'moyu' | 'juanwang' | 'sheniu' | 'xianyu' | 'xijing'
 }
@@ -109,6 +111,16 @@ function rand(min: number, max: number): number {
 
 // ============ FishDrawer 主类 ============
 
+interface Bubble {
+  x: number
+  y: number
+  size: number
+  vx: number
+  vy: number
+  life: number
+  maxLife: number
+}
+
 export class FishDrawer {
   // 外观参数（创建后不变）
   private bodyLength: number
@@ -123,6 +135,7 @@ export class FishDrawer {
   private patternDensity: number
   private eyeSize: number
   private speedMultiplier: number
+  private bubblesEnabled: boolean
 
   // 运动状态
   x = 0
@@ -142,6 +155,9 @@ export class FishDrawer {
   private animTime = 0
   private accumulatedWavePhase = 0
   private mouthOpen = 0.12
+
+  // 泡泡
+  private bubbleList: Bubble[] = []
 
   // 边界
   private tankWidth = 800
@@ -168,6 +184,7 @@ export class FishDrawer {
     this.patternDensity = merged.patternDensity ?? 3
     this.eyeSize = merged.eyeSize ?? 0.14
     this.speedMultiplier = merged.speedMultiplier ?? 1
+    this.bubblesEnabled = merged.bubbles !== false
 
     this.animTime = Math.random() * 100
     this.angle = Math.random() * Math.PI * 2
@@ -213,6 +230,11 @@ export class FishDrawer {
 
     // 嘴巴
     this.mouthOpen = Math.sin(this.animTime * 2.5) * 0.12 + 0.12
+
+    // 泡泡
+    if (this.bubblesEnabled) {
+      this.updateBubbles(dt)
+    }
   }
 
   /** 绘制鱼到指定 canvas context */
@@ -277,6 +299,67 @@ export class FishDrawer {
       ctx.fillRect(-this.bodyLength * 2, -this.bodyLength * 2, this.bodyLength * 4, this.bodyLength * 4)
     }
 
+    ctx.restore()
+
+    // 泡泡绘制在鱼的变换之外（世界坐标）
+    if (this.bubblesEnabled) {
+      this.drawBubbles(ctx)
+    }
+  }
+
+  // ============ 泡泡系统 ============
+
+  private updateBubbles(dt: number) {
+    // 随机从嘴部发射泡泡
+    if (Math.random() < dt * 0.8) {
+      const mouthX = this.x + Math.cos(this.angle) * this.bodyLength * 0.45
+      const mouthY = this.y + Math.sin(this.angle) * this.bodyLength * 0.45
+      this.bubbleList.push({
+        x: mouthX,
+        y: mouthY,
+        size: 1 + Math.random() * 2,
+        vx: (Math.random() - 0.5) * 0.5 + this.vx * 0.2,
+        vy: -1 - Math.random() * 1.5,
+        life: 0,
+        maxLife: 2 + Math.random() * 2,
+      })
+    }
+
+    // 更新泡泡状态
+    for (let i = this.bubbleList.length - 1; i >= 0; i--) {
+      const b = this.bubbleList[i]
+      b.life += dt
+      b.x += b.vx * dt * 60
+      b.y += b.vy * dt * 60
+      b.vx += (Math.random() - 0.5) * 0.1
+      b.size += dt * 0.5
+
+      if (b.life >= b.maxLife || b.y < -20) {
+        this.bubbleList.splice(i, 1)
+      }
+    }
+  }
+
+  private drawBubbles(ctx: CanvasRenderingContext2D) {
+    ctx.save()
+    for (const b of this.bubbleList) {
+      const alpha = Math.min(1, (b.maxLife - b.life) * 2)
+
+      // 泡泡主体
+      ctx.beginPath()
+      ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.4})`
+      ctx.fill()
+      ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.8})`
+      ctx.lineWidth = 0.5
+      ctx.stroke()
+
+      // 高光点
+      ctx.beginPath()
+      ctx.arc(b.x - b.size * 0.3, b.y - b.size * 0.3, b.size * 0.2, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`
+      ctx.fill()
+    }
     ctx.restore()
   }
 
