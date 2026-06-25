@@ -134,6 +134,51 @@ export interface GameState {
   fishes: Fish[]
   foods: Food[]
   physicalBubbles: PhysicalBubble[]
+  shockwaves: Shockwave[]
 }
 
-export type ActionType = 'idle' | 'wander' | 'hunt' | 'flee' | 'eat' | 'follow' | 'rest' | 'play' | 'hide' | 'attack' | 'fight' | 'stunned' | 'dead'
+export type ActionType = 'idle' | 'wander' | 'hunt' | 'flee' | 'eat' | 'follow' | 'rest' | 'play' | 'hide' | 'attack' | 'fight' | 'stunned' | 'dead' | 'player-control'
+
+export interface Shockwave {
+  id: string
+  x: number
+  y: number
+  angle: number // direction of travel
+  speed: number
+  radius: number // current radius (expands as it travels)
+  maxRadius: number
+  damage: number
+  knockback: number
+  range: number // max travel distance
+  traveled: number
+  sourceLevel: number
+  sourceFishId: string
+  opacity: number
+  hitFishIds: string[] // already hit targets
+}
+
+export interface PlayerControlState {
+  active: boolean
+  fishId: string | null
+  pressStartTime: number
+  pressProgress: number // 0~1, 长按进度
+  confirmed: boolean // 进度满，进入控制模式
+  targetLockMode: boolean // A键长按锁定模式
+  targetLockFishId: string | null // 当前锁定的攻击目标
+  targetCandidates: string[] // 附近可攻击目标列表
+  targetIndex: number // 当前选中索引
+  keys: {
+    up: boolean
+    down: boolean
+    left: boolean
+    right: boolean
+    z: boolean
+    x: boolean
+    a: boolean
+    s: boolean
+  }
+  aHoldTime: number // A键按住时长
+  sCharging: boolean // S键正在蓄力
+  sChargeTime: number // S键蓄力时长
+  sCooldown: number // 冲击波冷却剩余时间
+}

@@ -15,9 +15,12 @@ export class FishRenderer {
     this.updateTrail(fish, dt)
     
     // Accumulate wave phase using dt to avoid teleporting/jitter when speed changes
+    // Dead fish: no tail movement
     const speed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy)
-    const waveFreq = 1.0 + speed * 0.03
-    ;(fish as any)._accumulatedWavePhase = ((fish as any)._accumulatedWavePhase || 0) + waveFreq * 3 * dt
+    if (!fish.isDead) {
+      const waveFreq = 1.0 + speed * 0.03
+      ;(fish as any)._accumulatedWavePhase = ((fish as any)._accumulatedWavePhase || 0) + waveFreq * 3 * dt
+    }
 
     this.drawDepthShadow(ctx, fish)
     this.drawTrail(ctx, fish)
@@ -439,7 +442,10 @@ export class FishRenderer {
       swimPitch = Math.atan2(fish.vy, Math.abs(fish.vx))
     }
     const clampedPitch = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, swimPitch))
-    ctx.rotate(clampedPitch * 0.6)
+    // When facing left (xScale negative), the scale mirror flips the rotation visually,
+    // so we negate pitch to keep nose pointing in the correct direction
+    const facingLeft = (fish.yaw !== undefined ? Math.cos(fish.yaw) : Math.cos(fish.angle)) < 0
+    ctx.rotate(facingLeft ? -clampedPitch * 0.6 : clampedPitch * 0.6)
 
     // 2.5D yaw-based perspective
     const yaw = fish.yaw ?? 0

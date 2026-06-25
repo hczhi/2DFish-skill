@@ -1,5 +1,6 @@
-import type { Fish, Food, AIConfig, GameState, BubbleState, Relationship } from './types'
+import type { Fish, Food, AIConfig, GameState, BubbleState, Relationship, PlayerControlState, Shockwave } from './types'
 import { BehaviorExecutor } from './BehaviorExecutor'
+import { PlayerController } from './PlayerController'
 import { createFish, HOBBY_BUBBLES, HOBBY_KNOWLEDGE } from './FishFactory'
 import { StoryEventEngine } from './StoryEventEngine'
 import { StoryEventTrigger } from './StoryEventTrigger'
@@ -51,17 +52,21 @@ interface GameEngineOptions {
   onUpdate: (state: GameState) => void
   getAIConfig?: () => AIConfig
   onStoryEvent?: (state: StoryEventState) => void
+  onPlayerControlChange?: (state: PlayerControlState) => void
 }
 
 export class GameEngine {
   fishes: Fish[] = []
   foods: Food[] = []
   physicalBubbles: import('./types').PhysicalBubble[] = []
+  shockwaves: Shockwave[] = []
   private running = false
   private paused = false
   private lastTime = 0
   private behaviorExecutor: BehaviorExecutor
+  playerController: PlayerController
   private onUpdate: (state: GameState) => void
+  private onPlayerControlChange: (state: PlayerControlState) => void
   private getAIConfig: () => AIConfig
   private tankWidth = window.innerWidth
   private tankHeight = window.innerHeight
@@ -73,8 +78,10 @@ export class GameEngine {
 
   constructor(options: GameEngineOptions) {
     this.onUpdate = options.onUpdate
+    this.onPlayerControlChange = options.onPlayerControlChange || (() => {})
     this.getAIConfig = options.getAIConfig || (() => ({ apiUrl: '', apiKey: '', model: '' }))
     this.behaviorExecutor = new BehaviorExecutor(this.tankWidth, this.tankHeight)
+    this.playerController = new PlayerController()
     this.storyEventEngine = new StoryEventEngine(
       this.tankWidth, this.tankHeight,
       options.onStoryEvent || (() => {})
@@ -201,7 +208,7 @@ export class GameEngine {
     this.lastTime = now
 
     this.update(dt)
-    this.onUpdate({ fishes: this.fishes, foods: this.foods, physicalBubbles: this.physicalBubbles })
+    this.onUpdate({ fishes: this.fishes, foods: this.foods, physicalBubbles: this.physicalBubbles, shockwaves: this.shockwaves })
 
     requestAnimationFrame(() => this.loop())
   }
@@ -219,6 +226,20 @@ export class GameEngine {
     //     this.triggerStoryEvent()
     //   }
     // }
+
+    // Update player controller press progress
+    if (this.playerController.isPressing()) {
+      const entered = this.playerController.updatePress()
+      if (entered) {
+        const fish = this.fishes.find(f => f.id === this.playerController.state.fishId)
+        if (fish) {
+          fish.currentAction = 'player-control'
+          fish.actionTarget = null
+          this.showBubble(fish, '被控制了!')
+        }
+        this.onPlayerControlChange(this.playerController.state)
+      }
+    }
 
     this.fishes.forEach(fish => {
       fish.animTime += dt
@@ -263,10 +284,27 @@ export class GameEngine {
 
       this.updateRelationships(fish, dt)
       this.updateBubble(fish, dt)
-      if (!this.storyEventEngine.isActive) {
-        this.localDecision(fish)
+
+      // Player-controlled fish: skip AI, use player input
+      if (this.playerController.isControlling(fish.id)) {
+        const result = this.playerController.update(fish, this.fishes, dt)
+        if (result?.attack) {
+          this.playerAttack(result.attack.attacker, result.attack.target)
+        }
+        if (result?.shockwave) {
+          this.shockwaves.push(result.shockwave)
+          this.showBubble(fish, '波动拳!')
+          // Slight recoil but keep velocity mostly forward to avoid turning
+          fish.vx = Math.cos(fish.angle) * 0.5
+          fish.vy = Math.sin(fish.angle) * 0.5
+        }
+        this.behaviorExecutor.execute(fish, this.fishes, this.foods, dt)
+      } else {
+        if (!this.storyEventEngine.isActive) {
+          this.localDecision(fish)
+        }
+        this.behaviorExecutor.execute(fish, this.fishes, this.foods, dt)
       }
-      this.behaviorExecutor.execute(fish, this.fishes, this.foods, dt)
       
       // Update pseudo-IK segments
       fish.segments[0] = { x: fish.x, y: fish.y, angle: fish.angle }
@@ -276,13 +314,24 @@ export class GameEngine {
         const dx = prev.x - curr.x
         const dy = prev.y - curr.y
         const dist = Math.sqrt(dx * dx + dy * dy)
-        const targetDist = fish.appearance.bodyLength * 0.25 // Segment spacing
-        
+        const targetDist = fish.appearance.bodyLength * 0.25
+
         if (dist > targetDist) {
           curr.x = prev.x - (dx / dist) * targetDist
           curr.y = prev.y - (dy / dist) * targetDist
         }
-        curr.angle = Math.atan2(dy, dx)
+
+        // Ensure segment is always behind prev along its facing direction
+        const behindX = prev.x - Math.cos(prev.angle) * targetDist
+        const behindY = prev.y - Math.sin(prev.angle) * targetDist
+        const aheadDot = (curr.x - prev.x) * Math.cos(prev.angle) + (curr.y - prev.y) * Math.sin(prev.angle)
+        if (aheadDot > 0) {
+          // Segment drifted in front — snap it behind
+          curr.x = behindX
+          curr.y = behindY
+        }
+
+        curr.angle = Math.atan2(prev.y - curr.y, prev.x - curr.x)
       }
 
       // Emit physical breathing bubbles randomly
@@ -330,6 +379,9 @@ export class GameEngine {
       b.size += dt * 0.5 // Expand as they rise
     })
     this.physicalBubbles = this.physicalBubbles.filter(b => b.life < b.maxLife && b.y > -20)
+
+    // Update shockwaves
+    this.updateShockwaves(dt)
 
     this.foods.forEach(f => {
       f.life -= dt
@@ -669,6 +721,106 @@ export class GameEngine {
   private inheritStat(a: number, b: number): number {
     const avg = (a + b) / 2
     return avg * (0.9 + Math.random() * 0.2)
+  }
+
+  startPlayerControl(fishId: string) {
+    this.playerController.startPress(fishId)
+  }
+
+  cancelPlayerControl() {
+    this.playerController.cancelPress()
+  }
+
+  exitPlayerControl() {
+    const fishId = this.playerController.state.fishId
+    if (fishId) {
+      const fish = this.fishes.find(f => f.id === fishId)
+      if (fish) {
+        fish.currentAction = 'wander'
+        this.showBubble(fish, '自由了~')
+      }
+    }
+    this.playerController.exit()
+    this.onPlayerControlChange(this.playerController.state)
+  }
+
+  private updateShockwaves(dt: number) {
+    this.shockwaves.forEach(sw => {
+      const moveDist = sw.speed * dt
+      sw.x += Math.cos(sw.angle) * moveDist
+      sw.y += Math.sin(sw.angle) * moveDist
+      sw.traveled += moveDist
+
+      // Expand radius as it travels
+      const travelRatio = sw.traveled / sw.range
+      sw.radius = sw.maxRadius * (0.5 + travelRatio * 0.5)
+      sw.opacity = 1 - travelRatio * 0.6
+
+      // Check collision with fishes
+      this.fishes.forEach(fish => {
+        if (fish.id === sw.sourceFishId || fish.isDead) return
+        if (sw.hitFishIds.includes(fish.id)) return
+
+        const dist = distance(sw.x, sw.y, fish.x, fish.y)
+        if (dist < sw.radius + fish.appearance.bodyLength * 0.4) {
+          sw.hitFishIds.push(fish.id)
+
+          // Apply damage
+          const defense = fish.hidden.defense * 0.3
+          const dmg = Math.max(1, sw.damage - defense)
+          fish.currentHp -= dmg
+          fish.hitFlash = 1
+
+          // Knockback along shockwave direction
+          fish.vx += Math.cos(sw.angle) * sw.knockback
+          fish.vy += Math.sin(sw.angle) * sw.knockback
+
+          // Stun if target level is lower than source
+          if (fish.hidden.level < sw.sourceLevel) {
+            fish.stunTimer = 2 + (sw.sourceLevel - fish.hidden.level) * 0.3
+            this.showBubble(fish, '晕了...')
+          } else {
+            this.showBubble(fish, '好痛!')
+          }
+        }
+      })
+    })
+
+    // Remove expired shockwaves
+    this.shockwaves = this.shockwaves.filter(sw => sw.traveled < sw.range)
+  }
+
+  private playerAttack(attacker: Fish, target: Fish) {
+    // Face toward the target
+    const dx = target.x - attacker.x
+    const dy = target.y - attacker.y
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1
+    attacker.angle = Math.atan2(dy, dx)
+
+    const damage = Math.max(1, attacker.hidden.attack - target.hidden.defense * 0.5)
+    target.currentHp -= damage
+    target.hitFlash = 1
+    attacker.hitFlash = 0.5
+    attacker.hidden.exp += 20
+
+    target.vx += (dx / dist) * 20
+    target.vy += (dy / dist) * 20
+    attacker.vx -= (dx / dist) * 8
+    attacker.vy -= (dy / dist) * 8
+
+    this.showBubble(attacker, '吃我一击!')
+
+    if (target.currentHp <= 0) {
+      target.currentHp = 0
+      attacker.hidden.exp += 50
+      this.showBubble(attacker, 'K.O.!')
+    } else {
+      if (target.personality.cowardice > 0.3) {
+        target.currentAction = 'flee'
+        target.actionTarget = attacker.id
+        target.actionUrgency = 1
+      }
+    }
   }
 
   async triggerStoryEvent(forceLocal = false) {

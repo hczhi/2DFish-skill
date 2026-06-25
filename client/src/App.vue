@@ -8,9 +8,13 @@
       :fishes="fishes"
       :foods="foods"
       :physicalBubbles="physicalBubbles"
+      :shockwaves="shockwaves"
       :boss="storyState.boss"
+      :playerControl="playerControlState"
       @feed="handleFeed"
       @pet="handlePet"
+      @playerPressStart="handlePlayerPressStart"
+      @playerPressEnd="handlePlayerPressEnd"
     />
 
     <!-- <StoryEventOverlay
@@ -66,7 +70,7 @@ import FishListPanel from './components/FishListPanel.vue'
 import StoryEventOverlay from './components/StoryEventOverlay.vue'
 import { GameEngine } from './game/GameEngine'
 import { HOBBY_KNOWLEDGE } from './game/FishFactory'
-import type { Fish, Food, AIConfig, PhysicalBubble } from './game/types'
+import type { Fish, Food, AIConfig, PhysicalBubble, PlayerControlState, Shockwave } from './game/types'
 import type { StoryEventState } from './game/StoryEventEngine'
 
 const showSettings = ref(false)
@@ -74,6 +78,7 @@ const showAddFish = ref(false)
 const fishes = ref<Fish[]>([])
 const foods = ref<Food[]>([])
 const physicalBubbles = ref<PhysicalBubble[]>([])
+const shockwaves = ref<Shockwave[]>([])
 const storyState = ref<StoryEventState>({
   status: 'idle',
   payload: null,
@@ -96,14 +101,46 @@ const isBossKeyActive = ref(false)
 const typingCounter = ref(0)
 const SLACK_TYPING_THRESHOLD = 15 // Drops food every 15 keystrokes
 
+// Player control state
+const playerControlState = ref<PlayerControlState | null>(null)
+
 
 let engine: GameEngine
 let saveInterval: ReturnType<typeof setInterval>
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-  // Boss Key: Press Escape to toggle stealth mode
+  // Escape: exit player control first, then toggle stealth mode
   if (e.key === 'Escape') {
+    if (engine?.playerController.state.active) {
+      engine.exitPlayerControl()
+      playerControlState.value = null
+      return
+    }
     isBossKeyActive.value = !isBossKeyActive.value
+    return
+  }
+
+  // Player control keys
+  if (engine?.playerController.state.active) {
+    e.preventDefault()
+    const pc = engine.playerController
+
+    // In target lock mode, direction keys switch targets
+    if (pc.state.targetLockMode && pc.state.keys.a) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        pc.switchTarget('next')
+        playerControlState.value = { ...pc.state }
+        return
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        pc.switchTarget('prev')
+        playerControlState.value = { ...pc.state }
+        return
+      }
+    }
+
+    pc.handleKeyDown(e.key)
+    playerControlState.value = { ...pc.state }
     return
   }
 
@@ -123,17 +160,33 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
   }
 }
 
+const handleGlobalKeyup = (e: KeyboardEvent) => {
+  if (engine?.playerController.state.active) {
+    engine.playerController.handleKeyUp(e.key)
+    playerControlState.value = { ...engine.playerController.state }
+  }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('keyup', handleGlobalKeyup)
   engine = new GameEngine({
     onUpdate: (state) => {
       fishes.value = state.fishes
       foods.value = state.foods
       physicalBubbles.value = state.physicalBubbles || []
+      shockwaves.value = state.shockwaves || []
+      // Sync player control state for rendering
+      if (engine.playerController.state.active || engine.playerController.isPressing()) {
+        playerControlState.value = { ...engine.playerController.state }
+      }
     },
     getAIConfig: () => aiConfig.value,
     onStoryEvent: (state) => {
       storyState.value = { ...state }
+    },
+    onPlayerControlChange: (state) => {
+      playerControlState.value = state.active ? { ...state } : null
     },
   })
   engine.start()
@@ -152,6 +205,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('keyup', handleGlobalKeyup)
   clearInterval(saveInterval)
   saveFishes()
   engine?.stop()
@@ -187,6 +241,14 @@ function handlePet(x: number, y: number) {
       engine.showBubble(pettedFish, text, 5)
     }
   }
+}
+
+function handlePlayerPressStart(fishId: string) {
+  engine.startPlayerControl(fishId)
+}
+
+function handlePlayerPressEnd() {
+  engine.cancelPlayerControl()
 }
 
 function handleAddFish(fishData: { name: string; species: string }) {

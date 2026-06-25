@@ -83,6 +83,10 @@ export class BehaviorExecutor {
       case 'hide':
         this.doHide(fish, baseSpeed, dt)
         break
+      case 'player-control':
+        // Player-controlled: skip behavior, reduced damping applied below
+        this.applyPlayerControlPhysics(fish, dt)
+        return
       default:
         this.doWander(fish, allFishes, baseSpeed, dt)
     }
@@ -604,6 +608,57 @@ export class BehaviorExecutor {
     fish.vx *= 0.92
     fish.vy *= 0.92
     fish.angle += dt * 3
+  }
+
+  private applyPlayerControlPhysics(fish: Fish, dt: number) {
+    // Moderate damping — responsive but not too fast
+    fish.vx *= 0.94
+    fish.vy *= 0.94
+    fish.vz *= 0.95
+
+    // Clamp max speed to prevent tail overshoot
+    const maxSpeed = 2.2
+    const speed2 = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy)
+    if (speed2 > maxSpeed) {
+      fish.vx = (fish.vx / speed2) * maxSpeed
+      fish.vy = (fish.vy / speed2) * maxSpeed
+    }
+
+    // Z-axis
+    if (fish.z === undefined) fish.z = 0.6
+    if (fish.vz === undefined) fish.vz = 0
+    if (fish.targetZ === undefined) fish.targetZ = 0.6
+
+    const zDiff = fish.targetZ - fish.z
+    fish.vz += zDiff * 0.03
+    fish.z += fish.vz * dt * 2
+    if (fish.z < 0.3) { fish.z = 0.3; fish.vz = Math.abs(fish.vz) * 0.3 }
+    if (fish.z > 0.95) { fish.z = 0.95; fish.vz = -Math.abs(fish.vz) * 0.3 }
+
+    // Position
+    fish.x += fish.vx * dt * 60
+    fish.y += fish.vy * dt * 60
+
+    // Boundary
+    const margin = 50
+    if (fish.x < margin) { fish.x = margin; fish.vx = Math.abs(fish.vx) * 0.3 }
+    if (fish.x > this.tankWidth - margin) { fish.x = this.tankWidth - margin; fish.vx = -Math.abs(fish.vx) * 0.3 }
+    if (fish.y < margin) { fish.y = margin; fish.vy = Math.abs(fish.vy) * 0.3 }
+    if (fish.y > this.tankHeight - margin) { fish.y = this.tankHeight - margin; fish.vy = -Math.abs(fish.vy) * 0.3 }
+
+    // Angle follows velocity direction
+    const speed = Math.sqrt(fish.vx * fish.vx + fish.vy * fish.vy)
+    if (speed > 0.2) {
+      const targetAngle = Math.atan2(fish.vy, fish.vx)
+      let diff = targetAngle - fish.angle
+      while (diff > Math.PI) diff -= Math.PI * 2
+      while (diff < -Math.PI) diff += Math.PI * 2
+      // Limit turn rate to avoid sudden flips when facing left
+      const maxTurn = 0.08
+      fish.angle += Math.max(-maxTurn, Math.min(maxTurn, diff * 0.3))
+    }
+
+    fish.angularVelocity = lerp(fish.angularVelocity, 0, 0.1)
   }
 
   private applyPhysics(fish: Fish, dt: number) {
