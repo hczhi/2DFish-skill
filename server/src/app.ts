@@ -22,6 +22,7 @@ import { adminRouter } from './api/admin.js';
 import { homeRouter } from './api/home.js';
 import { seoRouter } from './api/seo.js';
 import { initWorkspace } from './services/workspaceService.js';
+import { getSSGOutputDir } from './services/ssgService.js';
 
 dotenv.config();
 
@@ -84,16 +85,31 @@ app.use('/api/seo', seoRouter);
 // Static uploads
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
 
-// Production: serve compiled frontend with SEO injection
+// Production: serve compiled frontend with SSG pre-generated pages
 const clientDistPath = path.resolve(process.cwd(), '../client/dist');
 if (fs.existsSync(clientDistPath)) {
-  // robots.txt and sitemap.xml served dynamically
+  const ssgDir = getSSGOutputDir();
+
+  // robots.txt — serve from SSG if available, else dynamic
   app.get('/robots.txt', (req, res, next) => {
-    // Delegate to SEO router
+    const ssgFile = path.join(ssgDir, 'robots.txt');
+    if (fs.existsSync(ssgFile)) {
+      res.setHeader('Content-Type', 'text/plain');
+      res.send(fs.readFileSync(ssgFile, 'utf-8'));
+      return;
+    }
     req.url = '/api/seo/robots.txt';
     next('route');
   });
+
+  // sitemap.xml — serve from SSG if available, else dynamic
   app.get('/sitemap.xml', (req, res, next) => {
+    const ssgFile = path.join(ssgDir, 'sitemap.xml');
+    if (fs.existsSync(ssgFile)) {
+      res.setHeader('Content-Type', 'application/xml');
+      res.send(fs.readFileSync(ssgFile, 'utf-8'));
+      return;
+    }
     req.url = '/api/seo/sitemap.xml';
     next('route');
   });
@@ -103,62 +119,26 @@ if (fs.existsSync(clientDistPath)) {
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
 
+    // Try SSG pre-generated file first
+    let ssgFile: string;
+    if (req.path === '/') {
+      ssgFile = path.join(ssgDir, 'index.html');
+    } else {
+      const pagePath = req.path.replace(/^\//, '').replace(/\/$/, '');
+      ssgFile = path.join(ssgDir, pagePath, 'index.html');
+    }
+
+    if (fs.existsSync(ssgFile)) {
+      res.setHeader('Content-Type', 'text/html');
+      res.send(fs.readFileSync(ssgFile, 'utf-8'));
+      return;
+    }
+
+    // Fallback: serve base index.html (SPA mode, no SEO injection)
     const htmlPath = path.join(clientDistPath, 'index.html');
-    let html = fs.readFileSync(htmlPath, 'utf-8');
-
-    // Inject SEO meta tags
-    try {
-      const db = getDatabase();
-      const page = db.prepare('SELECT * FROM seo_pages WHERE path = ?').get(req.path) as any;
-      const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
-      const globals: Record<string, string> = {};
-      for (const r of globalRows) globals[r.key] = r.value;
-
-      const siteUrl = globals.site_url || '';
-      const siteName = globals.site_name || 'QiaoNan';
-      const title = page?.title || `${siteName} - AI 效率工具平台`;
-      const description = page?.description || globals.site_description || '';
-      const ogImage = page?.og_image || globals.default_og_image || '';
-      const canonical = page?.canonical || (siteUrl ? `${siteUrl}${req.path}` : '');
-
-      let metaTags = `<title>${escapeHtml(title)}</title>\n`;
-      metaTags += `    <meta name="description" content="${escapeHtml(description)}" />\n`;
-      if (page?.keywords) metaTags += `    <meta name="keywords" content="${escapeHtml(page.keywords)}" />\n`;
-      if (canonical) metaTags += `    <link rel="canonical" href="${escapeHtml(canonical)}" />\n`;
-      if (page?.no_index) metaTags += `    <meta name="robots" content="noindex,nofollow" />\n`;
-
-      // Open Graph
-      metaTags += `    <meta property="og:title" content="${escapeHtml(page?.og_title || title)}" />\n`;
-      metaTags += `    <meta property="og:description" content="${escapeHtml(page?.og_description || description)}" />\n`;
-      metaTags += `    <meta property="og:type" content="website" />\n`;
-      if (siteUrl) metaTags += `    <meta property="og:url" content="${escapeHtml(siteUrl + req.path)}" />\n`;
-      if (ogImage) metaTags += `    <meta property="og:image" content="${escapeHtml(ogImage)}" />\n`;
-      metaTags += `    <meta property="og:site_name" content="${escapeHtml(siteName)}" />\n`;
-
-      // Twitter Card
-      metaTags += `    <meta name="twitter:card" content="summary_large_image" />\n`;
-      metaTags += `    <meta name="twitter:title" content="${escapeHtml(page?.og_title || title)}" />\n`;
-      metaTags += `    <meta name="twitter:description" content="${escapeHtml(page?.og_description || description)}" />\n`;
-      if (ogImage) metaTags += `    <meta name="twitter:image" content="${escapeHtml(ogImage)}" />\n`;
-
-      // Verification
-      if (globals.google_verification) metaTags += `    <meta name="google-site-verification" content="${escapeHtml(globals.google_verification)}" />\n`;
-      if (globals.bing_verification) metaTags += `    <meta name="msvalidate.01" content="${escapeHtml(globals.bing_verification)}" />\n`;
-
-      // JSON-LD
-      if (page?.json_ld) metaTags += `    <script type="application/ld+json">${page.json_ld}</script>\n`;
-
-      // Replace the <title> in HTML
-      html = html.replace(/<title>.*?<\/title>/, metaTags);
-    } catch { /* serve unmodified HTML on error */ }
-
     res.setHeader('Content-Type', 'text/html');
-    res.send(html);
+    res.send(fs.readFileSync(htmlPath, 'utf-8'));
   });
-}
-
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Global error handler

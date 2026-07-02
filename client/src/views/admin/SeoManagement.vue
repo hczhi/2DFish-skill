@@ -3,6 +3,7 @@
     <div class="section-tabs">
       <button :class="{ active: tab === 'pages' }" @click="tab = 'pages'">页面 SEO</button>
       <button :class="{ active: tab === 'globals' }" @click="tab = 'globals'">全局设置</button>
+      <button :class="{ active: tab === 'generate' }" @click="tab = 'generate'">静态生成</button>
     </div>
 
     <!-- Pages Tab -->
@@ -90,6 +91,44 @@
       </div>
     </div>
 
+    <!-- Generate Tab -->
+    <div v-if="tab === 'generate'" class="section">
+      <div class="section-header">
+        <h2>静态页面生成 (SSG)</h2>
+      </div>
+
+      <div class="generate-info">
+        <p>点击「生成」按钮后，系统将根据当前 SEO 配置和首页内容，预生成所有页面的静态 HTML 文件。</p>
+        <ul>
+          <li><strong>首页 (/)</strong> — 生成完整 DOM 内容（模块卡片 + Feed 流），搜索引擎可直接抓取</li>
+          <li><strong>子页面 (/fish, /board 等)</strong> — 注入 SEO meta 标签，内容仍由前端 JS 渲染</li>
+          <li><strong>robots.txt / sitemap.xml</strong> — 自动生成</li>
+        </ul>
+        <p class="note">生成后，Nginx 可直接指向 <code>client/dist/ssg/</code> 目录提供服务，无需 Node 处理页面请求。</p>
+      </div>
+
+      <button class="btn-generate" @click="handleGenerate" :disabled="generating">
+        {{ generating ? '生成中...' : '生成静态页面' }}
+      </button>
+
+      <div v-if="generateResult" class="generate-result" :class="{ success: generateResult.success, error: !generateResult.success }">
+        <h4>{{ generateResult.success ? '生成成功' : '生成完成（有错误）' }}</h4>
+        <div class="result-section" v-if="generateResult.generated.length">
+          <p><strong>已生成页面 ({{ generateResult.generated.length }}):</strong></p>
+          <ul>
+            <li v-for="p in generateResult.generated" :key="p"><code>{{ p }}</code></li>
+          </ul>
+        </div>
+        <div class="result-section" v-if="generateResult.errors.length">
+          <p><strong>错误:</strong></p>
+          <ul class="error-list">
+            <li v-for="(e, i) in generateResult.errors" :key="i">{{ e }}</li>
+          </ul>
+        </div>
+        <p class="result-dir">输出目录: <code>{{ generateResult.outputDir }}</code></p>
+      </div>
+    </div>
+
     <!-- Page Form Modal -->
     <div class="modal-overlay" v-if="showForm" @click.self="closeForm">
       <div class="modal modal-wide">
@@ -167,7 +206,7 @@
 import { ref, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
 
-const tab = ref<'pages' | 'globals'>('pages')
+const tab = ref<'pages' | 'globals' | 'generate'>('pages')
 
 interface SeoPage {
   id: string; path: string; title: string; description: string; keywords: string;
@@ -245,6 +284,29 @@ async function saveGlobals() {
   })
   savingGlobals.value = false
 }
+
+// SSG Generate
+interface GenerateResult {
+  success: boolean
+  generated: string[]
+  errors: string[]
+  outputDir: string
+}
+
+const generating = ref(false)
+const generateResult = ref<GenerateResult | null>(null)
+
+async function handleGenerate() {
+  generating.value = true
+  generateResult.value = null
+  try {
+    const res = await authFetch('/api/seo/admin/generate', { method: 'POST' })
+    generateResult.value = await res.json()
+  } catch (e: any) {
+    generateResult.value = { success: false, generated: [], errors: [e.message || 'Network error'], outputDir: '' }
+  }
+  generating.value = false
+}
 </script>
 
 <style scoped>
@@ -304,4 +366,26 @@ async function saveGlobals() {
 .form-checks { margin: 12px 0; font-size: 13px; }
 .form-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+.generate-info { background: #f9fafb; border-radius: 8px; padding: 20px; margin-bottom: 24px; font-size: 14px; line-height: 1.8; }
+.generate-info ul { margin: 12px 0; padding-left: 20px; }
+.generate-info li { margin: 6px 0; }
+.generate-info .note { margin-top: 12px; color: #666; font-size: 13px; }
+.generate-info code { background: #e5e7eb; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+
+.btn-generate { padding: 12px 32px; background: #10b981; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.btn-generate:hover { background: #059669; }
+.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.generate-result { margin-top: 24px; padding: 20px; border-radius: 8px; font-size: 13px; }
+.generate-result.success { background: #ecfdf5; border: 1px solid #a7f3d0; }
+.generate-result.error { background: #fef2f2; border: 1px solid #fecaca; }
+.generate-result h4 { margin: 0 0 12px; font-size: 15px; font-family: -apple-system, sans-serif; font-weight: 600; }
+.result-section { margin: 8px 0; }
+.result-section ul { padding-left: 18px; margin: 4px 0; }
+.result-section li { margin: 2px 0; }
+.result-section code { background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 3px; }
+.error-list li { color: #dc2626; }
+.result-dir { margin-top: 12px; color: #666; font-size: 12px; }
+.result-dir code { background: #e5e7eb; padding: 2px 6px; border-radius: 3px; }
 </style>

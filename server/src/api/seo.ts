@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
+import { generateStaticPages } from '../services/ssgService.js';
 
 export const seoRouter = Router();
 
@@ -162,6 +163,14 @@ seoRouter.patch('/admin/globals', (req: Request, res: Response) => {
   }
 
   res.json(getGlobals(db));
+});
+
+// SSG: Generate static pages
+seoRouter.post('/admin/generate', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const result = generateStaticPages();
+  res.json(result);
 });
 
 function getGlobals(db: any): Record<string, string> {
