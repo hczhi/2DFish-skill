@@ -20,6 +20,12 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Database
+server/data/
+*.db
+*.db-shm
+*.db-wal
+
 # Logs
 *.log
 npm-debug.log*
