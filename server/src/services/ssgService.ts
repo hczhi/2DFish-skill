@@ -2,7 +2,8 @@ import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../db/index.js';
 
-const SSG_OUTPUT_DIR = path.resolve(process.cwd(), '../client/dist/ssg');
+const CLIENT_DIST = path.resolve(process.cwd(), '../client/dist');
+const TEMPLATE_FILE = 'index.base.html';
 
 interface SeoPage {
   path: string;
@@ -156,22 +157,39 @@ export interface SSGResult {
   outputDir: string;
 }
 
+function getBaseTemplate(): string | null {
+  const templatePath = path.join(CLIENT_DIST, TEMPLATE_FILE);
+  const indexPath = path.join(CLIENT_DIST, 'index.html');
+
+  // If base template already exists, use it
+  if (fs.existsSync(templatePath)) {
+    return fs.readFileSync(templatePath, 'utf-8');
+  }
+
+  // First time: backup original index.html as base template
+  if (fs.existsSync(indexPath)) {
+    const html = fs.readFileSync(indexPath, 'utf-8');
+    fs.writeFileSync(templatePath, html, 'utf-8');
+    return html;
+  }
+
+  return null;
+}
+
 export function generateStaticPages(): SSGResult {
-  const result: SSGResult = { success: true, generated: [], errors: [], outputDir: SSG_OUTPUT_DIR };
+  const result: SSGResult = { success: true, generated: [], errors: [], outputDir: CLIENT_DIST };
 
-  const clientDistPath = path.resolve(process.cwd(), '../client/dist');
-  const templatePath = path.join(clientDistPath, 'index.html');
-
-  if (!fs.existsSync(templatePath)) {
+  if (!fs.existsSync(CLIENT_DIST)) {
     result.success = false;
-    result.errors.push('index.html template not found. Run client build first.');
+    result.errors.push('client/dist/ not found. Run client build first.');
     return result;
   }
 
-  const baseHtml = fs.readFileSync(templatePath, 'utf-8');
-
-  if (!fs.existsSync(SSG_OUTPUT_DIR)) {
-    fs.mkdirSync(SSG_OUTPUT_DIR, { recursive: true });
+  const baseHtml = getBaseTemplate();
+  if (!baseHtml) {
+    result.success = false;
+    result.errors.push('index.html template not found. Run client build first.');
+    return result;
   }
 
   const db = getDatabase();
@@ -181,7 +199,7 @@ export function generateStaticPages(): SSGResult {
 
   const seoPages = db.prepare('SELECT * FROM seo_pages ORDER BY path').all() as SeoPage[];
 
-  // Generate homepage with full DOM content
+  // Generate homepage — overwrite client/dist/index.html
   try {
     const homeSeo = seoPages.find(p => p.path === '/') || null;
     const modules = db.prepare('SELECT * FROM home_modules WHERE visible = 1 ORDER BY sort_order ASC, created_at ASC').all() as HomeModule[];
@@ -194,13 +212,13 @@ export function generateStaticPages(): SSGResult {
     const homepageContent = renderHomepageContent(modules, feeds);
     html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
 
-    fs.writeFileSync(path.join(SSG_OUTPUT_DIR, 'index.html'), html, 'utf-8');
+    fs.writeFileSync(path.join(CLIENT_DIST, 'index.html'), html, 'utf-8');
     result.generated.push('/');
   } catch (e: any) {
     result.errors.push(`/ : ${e.message}`);
   }
 
-  // Generate sub-pages with SEO meta only
+  // Generate sub-pages — write to client/dist/{path}/index.html
   for (const page of seoPages) {
     if (page.path === '/') continue;
 
@@ -210,7 +228,7 @@ export function generateStaticPages(): SSGResult {
       html = html.replace(/<title>.*?<\/title>/, metaTags);
 
       const pagePath = page.path.replace(/^\//, '');
-      const dir = path.join(SSG_OUTPUT_DIR, pagePath);
+      const dir = path.join(CLIENT_DIST, pagePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
@@ -233,7 +251,7 @@ Disallow: /synap/
 
 Sitemap: ${siteUrl}/sitemap.xml
 `;
-    fs.writeFileSync(path.join(SSG_OUTPUT_DIR, 'robots.txt'), robotsTxt, 'utf-8');
+    fs.writeFileSync(path.join(CLIENT_DIST, 'robots.txt'), robotsTxt, 'utf-8');
     result.generated.push('/robots.txt');
   } catch (e: any) {
     result.errors.push(`/robots.txt: ${e.message}`);
@@ -257,7 +275,7 @@ Sitemap: ${siteUrl}/sitemap.xml
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls}
 </urlset>`;
-    fs.writeFileSync(path.join(SSG_OUTPUT_DIR, 'sitemap.xml'), sitemapXml, 'utf-8');
+    fs.writeFileSync(path.join(CLIENT_DIST, 'sitemap.xml'), sitemapXml, 'utf-8');
     result.generated.push('/sitemap.xml');
   } catch (e: any) {
     result.errors.push(`/sitemap.xml: ${e.message}`);
@@ -270,6 +288,3 @@ ${urls}
   return result;
 }
 
-export function getSSGOutputDir(): string {
-  return SSG_OUTPUT_DIR;
-}
