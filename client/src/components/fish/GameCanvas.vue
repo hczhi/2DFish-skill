@@ -15,11 +15,11 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import type { Fish, Food, PhysicalBubble, PlayerControlState, Shockwave } from '../game/types'
-import type { BossEntity } from '../game/StoryEventEngine'
-import { FishRenderer } from '../game/FishRenderer'
-import { AmbientEffects } from '../game/AmbientEffects'
-import { ForegroundEffects } from '../game/ForegroundEffects'
+import type { Fish, Food, PhysicalBubble, PlayerControlState, Shockwave } from '../../game/types'
+import type { BossEntity } from '../../game/StoryEventEngine'
+import { FishRenderer } from '../../game/FishRenderer'
+import { AmbientEffects } from '../../game/AmbientEffects'
+import { ForegroundEffects } from '../../game/ForegroundEffects'
 
 const props = defineProps<{
   fishes: Fish[]

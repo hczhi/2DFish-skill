@@ -30,7 +30,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { getSpeciesList } from '../game/FishFactory'
+import { getSpeciesList } from '../../game/FishFactory'
 
 const emit = defineEmits<{
   close: []

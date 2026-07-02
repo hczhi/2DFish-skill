@@ -87,7 +87,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
-import type { Fish, Hobby } from '../game/types'
+import type { Fish, Hobby } from '../../game/types'
 
 const props = defineProps<{
   fishes: Fish[]

@@ -58,8 +58,8 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { StoryEventState } from '../game/StoryEventEngine'
-import type { EventPhase } from '../game/StoryEventTemplates'
+import type { StoryEventState } from '../../game/StoryEventEngine'
+import type { EventPhase } from '../../game/StoryEventTemplates'
 
 const props = defineProps<{
   state: StoryEventState

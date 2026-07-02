@@ -82,7 +82,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { AILogger, type AILogEntry } from '../game/AILogger'
+import { AILogger, type AILogEntry } from '../../game/AILogger'
 
 const expanded = ref(false)
 const showRaw = ref(false)

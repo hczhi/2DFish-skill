@@ -44,7 +44,7 @@
 
 <script setup lang="ts">
 import { reactive } from 'vue'
-import type { AIConfig } from '../game/types'
+import type { AIConfig } from '../../game/types'
 
 const props = defineProps<{ config: AIConfig }>()
 const emit = defineEmits<{

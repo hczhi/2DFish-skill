@@ -1,4 +1,4 @@
-import type { Fish, Food, AIConfig, GameState, BubbleState, Relationship, PlayerControlState, Shockwave } from './types'
+import type { Fish, Food, GameState, BubbleState, Relationship, PlayerControlState, Shockwave } from './types'
 import { BehaviorExecutor } from './BehaviorExecutor'
 import { PlayerController } from './PlayerController'
 import { createFish, HOBBY_BUBBLES, HOBBY_KNOWLEDGE } from './FishFactory'
@@ -50,7 +50,6 @@ function distance(x1: number, y1: number, x2: number, y2: number): number {
 
 interface GameEngineOptions {
   onUpdate: (state: GameState) => void
-  getAIConfig?: () => AIConfig
   onStoryEvent?: (state: StoryEventState) => void
   onPlayerControlChange?: (state: PlayerControlState) => void
 }
@@ -67,7 +66,6 @@ export class GameEngine {
   playerController: PlayerController
   private onUpdate: (state: GameState) => void
   private onPlayerControlChange: (state: PlayerControlState) => void
-  private getAIConfig: () => AIConfig
   private tankWidth = window.innerWidth
   private tankHeight = window.innerHeight
   private foodIdCounter = 0
@@ -79,7 +77,6 @@ export class GameEngine {
   constructor(options: GameEngineOptions) {
     this.onUpdate = options.onUpdate
     this.onPlayerControlChange = options.onPlayerControlChange || (() => {})
-    this.getAIConfig = options.getAIConfig || (() => ({ apiUrl: '', apiKey: '', model: '' }))
     this.behaviorExecutor = new BehaviorExecutor(this.tankWidth, this.tankHeight)
     this.playerController = new PlayerController()
     this.storyEventEngine = new StoryEventEngine(
@@ -832,14 +829,7 @@ export class GameEngine {
       return
     }
 
-    const config = this.getAIConfig()
-    if (!config.apiKey) {
-      const payload = this.storyEventTrigger.generateFallbackEvent(this.fishes)
-      this.storyEventEngine.start(payload, this.fishes)
-      return
-    }
-
-    const payload = await this.storyEventTrigger.requestEvent(this.fishes, config)
+    const payload = await this.storyEventTrigger.requestEvent(this.fishes)
     if (payload) {
       this.storyEventEngine.start(payload, this.fishes)
     } else {

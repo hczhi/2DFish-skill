@@ -1,6 +1,13 @@
-import type { Fish, AIConfig } from './types'
+import type { Fish } from './types'
 import { EVENT_TEMPLATES } from './StoryEventTemplates'
 import type { StoryEventPayload } from './StoryEventTemplates'
+
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem('mmPla_token')
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
 
 export class StoryEventTrigger {
   private cooldown = 0
@@ -44,7 +51,7 @@ export class StoryEventTrigger {
       .map(t => t.id)
   }
 
-  async requestEvent(fishes: Fish[], config: AIConfig): Promise<StoryEventPayload | null> {
+  async requestEvent(fishes: Fish[]): Promise<StoryEventPayload | null> {
     if (this.fetching) return null
     this.fetching = true
     this.cooldown = this.minInterval
@@ -53,13 +60,10 @@ export class StoryEventTrigger {
     const templates = this.getEligibleTemplateIds(fishes)
 
     try {
-      const res = await fetch('/api/ai/story-event', {
+      const res = await fetch('/api/ai/fish/story-event', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
-          apiUrl: config.apiUrl,
-          apiKey: config.apiKey,
-          model: config.model,
           fishes: aliveFishes.map(f => ({
             id: f.id,
             name: f.name,
