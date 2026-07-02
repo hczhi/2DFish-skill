@@ -70,6 +70,7 @@ const router = createRouter({
         { path: 'usage', name: 'admin-usage', component: () => import('../views/admin/AIDashboard.vue') },
         { path: 'config', name: 'admin-config', component: () => import('../views/admin/SystemConfig.vue') },
         { path: 'home', name: 'admin-home', component: () => import('../views/admin/HomeContent.vue') },
+        { path: 'seo', name: 'admin-seo', component: () => import('../views/admin/SeoManagement.vue') },
       ],
     },
     {

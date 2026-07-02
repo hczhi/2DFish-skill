@@ -1,0 +1,172 @@
+import { Router, Request, Response } from 'express';
+import { getDatabase } from '../db/index.js';
+import { v4 as uuidv4 } from 'uuid';
+
+export const seoRouter = Router();
+
+// ===== PUBLIC: 前端获取 SEO 数据 =====
+
+// Get SEO for a specific path
+seoRouter.get('/page', (req: Request, res: Response) => {
+  const { path } = req.query;
+  if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path query required' }); return; }
+
+  const db = getDatabase();
+  const page = db.prepare('SELECT * FROM seo_pages WHERE path = ?').get(path);
+  const globals = getGlobals(db);
+
+  if (!page) {
+    res.json({ page: null, globals });
+    return;
+  }
+  res.json({ page, globals });
+});
+
+// Get all SEO pages (for sitemap generation)
+seoRouter.get('/sitemap', (_req: Request, res: Response) => {
+  const db = getDatabase();
+  const pages = db.prepare('SELECT path, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC').all();
+  const globals = getGlobals(db);
+  res.json({ pages, siteUrl: globals.site_url || '' });
+});
+
+// Dynamic robots.txt
+seoRouter.get('/robots.txt', (_req: Request, res: Response) => {
+  const db = getDatabase();
+  const globals = getGlobals(db);
+  const siteUrl = globals.site_url || 'https://your-domain.com';
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(`User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /settings/
+Disallow: /synap/
+
+Sitemap: ${siteUrl}/sitemap.xml
+`);
+});
+
+// Dynamic sitemap.xml
+seoRouter.get('/sitemap.xml', (_req: Request, res: Response) => {
+  const db = getDatabase();
+  const pages = db.prepare('SELECT path, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC').all() as Array<{
+    path: string; priority: number; changefreq: string; updated_at: string;
+  }>;
+  const globals = getGlobals(db);
+  const siteUrl = globals.site_url || 'https://your-domain.com';
+
+  const urls = pages.map(p => `  <url>
+    <loc>${siteUrl}${p.path}</loc>
+    <lastmod>${p.updated_at.split('T')[0]}</lastmod>
+    <changefreq>${p.changefreq}</changefreq>
+    <priority>${p.priority}</priority>
+  </url>`).join('\n');
+
+  res.setHeader('Content-Type', 'application/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls}
+</urlset>`);
+});
+
+// ===== ADMIN: 管理 SEO =====
+
+seoRouter.get('/admin/pages', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const db = getDatabase();
+  const pages = db.prepare('SELECT * FROM seo_pages ORDER BY priority DESC, path ASC').all();
+  res.json(pages);
+});
+
+seoRouter.post('/admin/pages', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const { path, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq } = req.body;
+  if (!path || !title) { res.status(400).json({ error: 'path and title required' }); return; }
+
+  const db = getDatabase();
+  const existing = db.prepare('SELECT id FROM seo_pages WHERE path = ?').get(path);
+  if (existing) { res.status(409).json({ error: 'path already exists' }); return; }
+
+  const now = new Date().toISOString();
+  const id = uuidv4();
+
+  db.prepare(`
+    INSERT INTO seo_pages (id, path, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, path, title, description || '', keywords || '', og_title || '', og_description || '', og_image || '', canonical || '', no_index ? 1 : 0, json_ld || '', priority ?? 0.5, changefreq || 'weekly', now, now);
+
+  const page = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(id);
+  res.status(201).json(page);
+});
+
+seoRouter.patch('/admin/pages/:id', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const existing = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(req.params.id);
+  if (!existing) { res.status(404).json({ error: 'not found' }); return; }
+
+  const fields: string[] = [];
+  const values: any[] = [];
+  const allowed = ['path', 'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image', 'canonical', 'no_index', 'json_ld', 'priority', 'changefreq'];
+
+  for (const field of allowed) {
+    if (req.body[field] !== undefined) {
+      const val = field === 'no_index' ? (req.body[field] ? 1 : 0) : req.body[field];
+      fields.push(`${field} = ?`);
+      values.push(val);
+    }
+  }
+
+  if (fields.length === 0) { res.status(400).json({ error: 'no fields' }); return; }
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  values.push(req.params.id);
+
+  db.prepare(`UPDATE seo_pages SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  const updated = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(req.params.id);
+  res.json(updated);
+});
+
+seoRouter.delete('/admin/pages/:id', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const db = getDatabase();
+  const result = db.prepare('DELETE FROM seo_pages WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) { res.status(404).json({ error: 'not found' }); return; }
+  res.json({ success: true });
+});
+
+// Global settings
+seoRouter.get('/admin/globals', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const db = getDatabase();
+  res.json(getGlobals(db));
+});
+
+seoRouter.patch('/admin/globals', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  const allowed = ['site_name', 'site_description', 'site_url', 'default_og_image', 'google_verification', 'bing_verification'];
+
+  const stmt = db.prepare('INSERT OR REPLACE INTO seo_global (key, value, updated_at) VALUES (?, ?, ?)');
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) {
+      stmt.run(key, req.body[key], now);
+    }
+  }
+
+  res.json(getGlobals(db));
+});
+
+function getGlobals(db: any): Record<string, string> {
+  const rows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
+  const result: Record<string, string> = {};
+  for (const row of rows) { result[row.key] = row.value; }
+  return result;
+}

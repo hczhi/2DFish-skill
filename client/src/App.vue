@@ -5,6 +5,9 @@
 
 <script setup lang="ts">
 import QuotaExhaustedModal from './components/common/QuotaExhaustedModal.vue'
+import { useSeo } from './lib/useSeo'
+
+useSeo()
 </script>
 
 <style>
