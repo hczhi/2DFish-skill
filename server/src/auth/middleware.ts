@@ -34,6 +34,8 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   { path: '/api/home/modules', method: 'GET', level: 'public' },
   { path: '/api/home/feeds', method: 'GET', level: 'public' },
   { path: /^\/api\/seo\/(page|sitemap|robots\.txt|sitemap\.xml)/, level: 'public' },
+  { path: /^\/api\/discover\/articles/, method: 'GET', level: 'public' },
+  { path: '/api/analytics/pageview', method: 'POST', level: 'public' },
 
   // PROTECTED — everything under these prefixes requires auth
   // (default is already protected, these are just explicit for clarity)

@@ -1,26 +1,27 @@
 <template>
-  <Teleport to="body">
-    <div class="modal-overlay" v-if="showQuotaModal" @click.self="dismiss">
-      <div class="modal-card">
-        <div class="modal-icon">⚡</div>
-        <h3 class="modal-title">今日 AI 额度已用完</h3>
-        <p class="modal-desc">
-          每日免费额度为 {{ quotaState?.limit || 10 }} 次 AI 调用，今日已全部使用。
-        </p>
-        <p class="modal-hint">
-          你可以在「设置」中配置自己的 API Key 来解除限制。
-        </p>
-        <div class="modal-actions">
-          <button class="btn-secondary" @click="dismiss">知道了</button>
-          <router-link to="/settings" class="btn-primary" @click="dismiss">去设置</router-link>
-        </div>
-      </div>
+  <HcModal v-model="showQuotaModal" max-width="400px" :show-close="false">
+    <div class="modal-content-center">
+      <div class="modal-icon">⚡</div>
+      <h3 class="modal-title">今日 AI 额度已用完</h3>
+      <p class="modal-desc">
+        每日免费额度为 {{ quotaState?.limit || 10 }} 次 AI 调用，今日已全部使用。
+      </p>
+      <p class="modal-hint">
+        你可以在「设置」中配置自己的 API Key 来解除限制。
+      </p>
     </div>
-  </Teleport>
+    <template #footer>
+      <div class="modal-actions">
+        <button class="btn-secondary" @click="dismiss">知道了</button>
+        <router-link to="/settings" class="btn-primary" @click="dismiss">去设置</router-link>
+      </div>
+    </template>
+  </HcModal>
 </template>
 
 <script setup lang="ts">
 import { showQuotaModal, quotaState, dismissQuotaModal } from '../../lib/quota'
+import HcModal from './HcModal.vue'
 
 function dismiss() {
   dismissQuotaModal()
@@ -28,43 +29,27 @@ function dismiss() {
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(2px);
-}
-.modal-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 32px;
-  max-width: 400px;
-  width: 90%;
+.modal-content-center {
   text-align: center;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.15);
 }
 .modal-icon {
   font-size: 48px;
   margin-bottom: 16px;
 }
 .modal-title {
-  font-family: -apple-system, sans-serif;
+  font-family: var(--font-sans, sans-serif);
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 700;
   margin: 0 0 12px 0;
 }
 .modal-desc {
-  color: #555;
+  color: var(--c-text-main, #111827);
   font-size: 14px;
   line-height: 1.6;
   margin: 0 0 8px 0;
 }
 .modal-hint {
-  color: #888;
+  color: var(--c-text-sub, #6b7280);
   font-size: 13px;
   margin: 0 0 24px 0;
 }
@@ -72,31 +57,36 @@ function dismiss() {
   display: flex;
   gap: 12px;
   justify-content: center;
+  width: 100%;
 }
 .btn-secondary {
   padding: 8px 20px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
   background: #fff;
-  color: #333;
+  color: #374151;
   font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
+  transition: all 0.2s;
 }
 .btn-secondary:hover {
-  background: #f5f5f5;
+  background: #f9fafb;
 }
 .btn-primary {
   padding: 8px 20px;
   border: none;
-  border-radius: 6px;
-  background: #0052FF;
+  border-radius: 8px;
+  background: #3B5BDB;
   color: #fff;
   font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
+  transition: all 0.2s;
 }
 .btn-primary:hover {
-  background: #003ecc;
+  background: #2b45a8;
 }
 </style>

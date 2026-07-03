@@ -1,6 +1,8 @@
 <template>
   <div class="page">
-    <h1>额度管理</h1>
+    <div class="page-header">
+      <h1>额度管理</h1>
+    </div>
     <p class="desc">管理每个用户的每日 AI 调用限额。用户使用平台 Key 时受此限制，配置了自己 Key 的用户不受限。</p>
 
     <table class="data-table" v-if="quotas.length">
@@ -62,13 +64,40 @@ onMounted(loadQuotas)
 </script>
 
 <style scoped>
-h1 { font-family: -apple-system, sans-serif; font-size: 24px; font-weight: 600; margin-bottom: 8px; }
-.desc { color: #666; font-size: 14px; margin-bottom: 24px; }
-.data-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.data-table th { text-align: left; padding: 12px 16px; background: #f8f9fa; font-size: 13px; color: #666; font-weight: 500; }
-.data-table td { padding: 12px 16px; border-top: 1px solid #f0f0f0; font-size: 14px; }
-.inline-input { width: 80px; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; text-align: center; }
-.btn-sm { padding: 4px 10px; font-size: 12px; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; }
-.btn-sm:hover { background: #f5f5f5; }
-.empty { color: #999; font-size: 14px; margin-top: 24px; }
+/* 使用 AdminLayout 注入的全局 Brutalist 样式，移除重复样式 */
+.page { max-width: 1200px; }
+.desc { 
+  color: var(--c-text-sub); 
+  font-family: var(--font-mono);
+  font-size: 13px; 
+  margin-bottom: 32px; 
+  line-height: 1.6;
+  border-left: 4px solid var(--c-blue-primary);
+  padding-left: 16px;
+}
+.inline-input { 
+  width: 100px; 
+  padding: 8px; 
+  border: 1px solid var(--c-text-main); 
+  border-radius: 0; 
+  font-family: var(--font-mono);
+  font-size: 14px; 
+  font-weight: bold;
+  text-align: center; 
+  transition: all 0.2s;
+}
+.inline-input:focus {
+  outline: none;
+  box-shadow: 4px 4px 0 var(--c-blue-primary);
+}
+.empty { 
+  color: var(--c-text-sub); 
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 14px; 
+  margin-top: 32px; 
+  text-align: center;
+  padding: 40px;
+  border: 2px dashed #ddd;
+}
 </style>

@@ -1,6 +1,8 @@
 <template>
   <div class="page">
-    <h1>系统配置</h1>
+    <div class="page-header">
+      <h1>系统配置</h1>
+    </div>
     <p class="desc">配置平台级 LLM API Key。使用平台 Key 的用户受每日额度限制，配置了自己 Key 的用户不受限。</p>
 
     <div class="config-card">
@@ -62,15 +64,56 @@ onMounted(loadConfig)
 </script>
 
 <style scoped>
-h1 { font-family: -apple-system, sans-serif; font-size: 24px; font-weight: 600; margin-bottom: 8px; }
-.desc { color: #666; font-size: 14px; margin-bottom: 24px; }
-.config-card { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.form-group { margin-bottom: 20px; }
-.form-group label { display: block; font-size: 13px; font-weight: 500; color: #333; margin-bottom: 6px; }
-.input-row { display: flex; gap: 8px; }
-.input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; font-family: monospace; }
-.hint { font-size: 12px; color: #888; margin-top: 4px; display: block; font-family: monospace; }
-.btn-primary { padding: 8px 16px; background: #0052FF; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; white-space: nowrap; }
-.btn-primary:hover { background: #003ecc; }
-.success { color: #00a854; font-size: 14px; margin-top: 16px; }
+/* 使用 AdminLayout 注入的全局 Brutalist 样式，移除重复样式 */
+.page { max-width: 800px; }
+.desc { 
+  color: var(--c-text-sub); 
+  font-family: var(--font-mono);
+  font-size: 13px; 
+  margin-bottom: 32px; 
+  line-height: 1.6;
+  border-left: 4px solid var(--c-blue-primary);
+  padding-left: 16px;
+}
+.config-card { 
+  background: #fff; 
+  padding: 32px; 
+  border: 2px solid var(--c-text-main); 
+  box-shadow: 12px 12px 0 var(--c-blue-primary); 
+}
+.form-group { margin-bottom: 32px; }
+.form-group:last-child { margin-bottom: 0; }
+
+.input-row { display: flex; gap: 16px; }
+.input { 
+  flex: 1; 
+  padding: 12px 16px; 
+  border: 2px solid var(--c-text-main); 
+  border-radius: 0; 
+  font-size: 14px; 
+  font-family: var(--font-mono); 
+  transition: all 0.2s;
+}
+.input:focus {
+  outline: none;
+  box-shadow: 4px 4px 0 var(--c-blue-primary);
+}
+
+.hint { 
+  font-size: 12px; 
+  color: var(--c-text-sub); 
+  margin-top: 8px; 
+  display: block; 
+  font-family: var(--font-mono); 
+  font-weight: bold;
+}
+
+.success { 
+  color: #10b981; 
+  font-family: var(--font-mono);
+  font-size: 14px; 
+  font-weight: bold;
+  margin-top: 24px; 
+  text-transform: uppercase;
+}
 </style>

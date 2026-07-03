@@ -92,11 +92,16 @@ adminRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
 
 adminRouter.get('/quotas', (_req: Request, res: Response) => {
   const db = getDatabase();
+  const today = new Date().toISOString().split('T')[0];
   const quotas = db.prepare(`
-    SELECT q.*, u.username
-    FROM ai_quota q JOIN user u ON q.user_id = u.id
+    SELECT u.id as user_id, u.username,
+      COALESCE(q.daily_limit, 10) as daily_limit,
+      COALESCE(q.used_today, 0) as used_today,
+      COALESCE(q.last_reset_date, ?) as last_reset_date
+    FROM user u
+    LEFT JOIN ai_quota q ON q.user_id = u.id
     ORDER BY u.username ASC
-  `).all();
+  `).all(today);
   res.json({ quotas });
 });
 

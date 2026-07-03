@@ -371,7 +371,8 @@ export class FishDrawer {
     const dy = this.targetY - this.y
     const dist = Math.sqrt(dx * dx + dy * dy)
 
-    if (dist < 60 || (this.targetX === 0 && this.targetY === 0)) {
+    const arrivalDist = Math.min(60, Math.min(this.tankWidth, this.tankHeight) * 0.3)
+    if (dist < arrivalDist || (this.targetX === 0 && this.targetY === 0)) {
       this.pickWanderTarget()
       return
     }
@@ -395,8 +396,8 @@ export class FishDrawer {
     this.vx *= 0.97
     this.vy *= 0.97
 
-    // 边界
-    const margin = 50
+    // 边界 — margin 按比例缩小以适应小容器
+    const margin = Math.min(50, Math.min(this.tankWidth, this.tankHeight) * 0.15)
     if (this.x < margin) { this.x = margin; this.vx = Math.abs(this.vx) * 0.3 }
     if (this.x > this.tankWidth - margin) { this.x = this.tankWidth - margin; this.vx = -Math.abs(this.vx) * 0.3 }
     if (this.y < margin) { this.y = margin; this.vy = Math.abs(this.vy) * 0.3 }
@@ -411,9 +412,9 @@ export class FishDrawer {
   }
 
   private pickWanderTarget() {
-    const margin = 100
     const w = this.tankWidth
     const h = this.tankHeight
+    const margin = Math.min(100, Math.min(w, h) * 0.2)
 
     if (this.x > w - margin * 1.5) {
       this.targetX = margin + Math.random() * (w * 0.3)
@@ -1005,9 +1006,10 @@ export function startFishTank(canvas: HTMLCanvasElement, configs: FishConfig[]):
   for (const config of configs) {
     const fish = new FishDrawer(config)
     fish.setTankSize(canvas.width, canvas.height)
+    const margin = Math.min(100, Math.min(canvas.width, canvas.height) * 0.2)
     fish.setPosition(
-      100 + Math.random() * (canvas.width - 200),
-      100 + Math.random() * (canvas.height - 200),
+      margin + Math.random() * Math.max(1, canvas.width - margin * 2),
+      margin + Math.random() * Math.max(1, canvas.height - margin * 2),
       0.4 + Math.random() * 0.4
     )
     fishes.push(fish)

@@ -1,5 +1,24 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { getToken, fetchMe } from '../lib/auth';
+import { openLoginModal } from '../lib/loginModal';
+
+function getSessionId(): string {
+  let sid = sessionStorage.getItem('_sid');
+  if (!sid) {
+    sid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem('_sid', sid);
+  }
+  return sid;
+}
+
+function trackPageView(path: string) {
+  if (path.startsWith('/admin')) return;
+  fetch('/api/analytics/pageview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, referrer: document.referrer || '', session_id: getSessionId() }),
+  }).catch(() => {});
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -10,9 +29,9 @@ const router = createRouter({
       component: () => import('../views/Home.vue'),
     },
     {
-      path: '/login',
-      name: 'login',
-      component: () => import('../views/Login.vue'),
+      path: '/en',
+      name: 'home-en',
+      component: () => import('../views/Home.vue'),
     },
     {
       path: '/fish',
@@ -70,8 +89,22 @@ const router = createRouter({
         { path: 'usage', name: 'admin-usage', component: () => import('../views/admin/AIDashboard.vue') },
         { path: 'config', name: 'admin-config', component: () => import('../views/admin/SystemConfig.vue') },
         { path: 'home', name: 'admin-home', component: () => import('../views/admin/HomeContent.vue') },
+        { path: 'home/module/:id?', name: 'admin-home-module', component: () => import('../views/admin/HomeModuleEditor.vue') },
         { path: 'seo', name: 'admin-seo', component: () => import('../views/admin/SeoManagement.vue') },
+        { path: 'discover', name: 'admin-discover', component: () => import('../views/admin/DiscoverManagement.vue') },
+        { path: 'discover/edit/:id?', name: 'admin-discover-edit', component: () => import('../views/admin/DiscoverArticleEditor.vue') },
+        { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsDashboard.vue') },
       ],
+    },
+    {
+      path: '/discover/:slug',
+      name: 'discover-article',
+      component: () => import('../views/discover/ArticleView.vue'),
+    },
+    {
+      path: '/en/discover/:slug',
+      name: 'discover-article-en',
+      component: () => import('../views/discover/ArticleView.vue'),
     },
     {
       path: '/:pathMatch(.*)*',
@@ -81,15 +114,27 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
   const token = getToken();
 
   if (to.meta.requiresAuth && !token) {
-    return { name: 'login', query: { redirect: to.fullPath } };
+    if (from.name) {
+      setTimeout(() => openLoginModal(to.fullPath), 0);
+      return false;
+    } else {
+      setTimeout(() => openLoginModal(to.fullPath), 100);
+      return { name: 'home' };
+    }
   }
 
   if (to.meta.requiresAI && !token) {
-    return { name: 'login', query: { redirect: to.fullPath, reason: 'ai' } };
+    if (from.name) {
+      setTimeout(() => openLoginModal(to.fullPath, 'ai'), 0);
+      return false;
+    } else {
+      setTimeout(() => openLoginModal(to.fullPath, 'ai'), 100);
+      return { name: 'home' };
+    }
   }
 
   if (to.meta.requiresAdmin && token) {
@@ -98,6 +143,10 @@ router.beforeEach(async (to) => {
       return { name: 'home' };
     }
   }
+});
+
+router.afterEach((to) => {
+  trackPageView(to.fullPath);
 });
 
 export default router;

@@ -21,6 +21,8 @@ import { quotaRouter } from './api/quota.js';
 import { adminRouter } from './api/admin.js';
 import { homeRouter } from './api/home.js';
 import { seoRouter } from './api/seo.js';
+import { discoverRouter } from './api/discover.js';
+import { analyticsRouter } from './api/analytics.js';
 import { initWorkspace } from './services/workspaceService.js';
 
 dotenv.config();
@@ -33,6 +35,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use('/api/files', express.json({ limit: '5mb' }));
+app.use('/api/discover', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '512kb' }));
 
 // Request logger
@@ -80,6 +83,12 @@ app.use('/api/home', homeRouter);
 
 // SEO management
 app.use('/api/seo', seoRouter);
+
+// Discover articles (public reads + admin writes)
+app.use('/api/discover', discoverRouter);
+
+// Analytics (public pageview + admin stats)
+app.use('/api/analytics', analyticsRouter);
 
 // Static uploads
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));

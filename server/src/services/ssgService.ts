@@ -82,7 +82,17 @@ function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>,
   return meta;
 }
 
-function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[]): string {
+interface DiscoverFeedItem {
+  slug: string;
+  icon: string;
+  bg_color: string;
+  avatar_color: string;
+  author: string;
+  title: string;
+  summary: string;
+}
+
+function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discoverArticles: DiscoverFeedItem[] = []): string {
   const moduleCards = modules.map(item => {
     const spanClass = item.grid_span === '2x2' ? 'bento-span-2x2' :
       item.grid_span === '2x1' ? 'bento-span-2x1' :
@@ -109,6 +119,24 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[]): string
       </a>`;
   }).join('\n');
 
+  const articleCards = discoverArticles.map(article => {
+    if (!article.title) return '';
+    return `        <a href="/discover/${escapeHtml(article.slug)}" class="feed-card">
+          <div class="feed-image" style="height: 220px; background: ${escapeHtml(article.bg_color)}">
+            <span class="feed-emoji">${article.icon}</span>
+          </div>
+          <div class="feed-info">
+            <h3 class="feed-text">${escapeHtml(article.title)}</h3>
+            <div class="feed-meta">
+              <div class="feed-author">
+                <div class="author-avatar" style="background: ${escapeHtml(article.avatar_color)}"></div>
+                <span>${escapeHtml(article.author)}</span>
+              </div>
+            </div>
+          </div>
+        </a>`;
+  }).filter(Boolean).join('\n');
+
   const feedCards = feeds.map(feed => {
     const tag = feed.link ? 'a' : 'div';
     const hrefAttr = feed.link ? ` href="${escapeHtml(feed.link)}" target="_blank"` : '';
@@ -132,19 +160,22 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[]): string
         </${tag}>`;
   }).join('\n');
 
+  const allFeedCards = articleCards + (articleCards && feedCards ? '\n' : '') + feedCards;
+  const hasFeedContent = feeds.length > 0 || discoverArticles.length > 0;
+
   return `
     <div class="ssg-home-content" id="ssg-content">
       <div class="bento-grid">
 ${moduleCards}
       </div>
-      ${feeds.length > 0 ? `
+      ${hasFeedContent ? `
       <div class="ultra-wide-feed">
         <div class="feed-header">
           <h2 class="feed-title">DISCOVER</h2>
           <span class="feed-subtitle">Personalized Content Recommendations</span>
         </div>
         <div class="feed-masonry">
-${feedCards}
+${allFeedCards}
         </div>
       </div>` : ''}
     </div>`;
@@ -155,6 +186,27 @@ export interface SSGResult {
   generated: string[];
   errors: string[];
   outputDir: string;
+}
+
+interface DiscoverArticle {
+  id: string;
+  slug: string;
+  cover_image: string;
+  author: string;
+  icon: string;
+  bg_color: string;
+  avatar_color: string;
+  visible_locales: string;
+}
+
+interface DiscoverArticleContent {
+  locale: string;
+  title: string;
+  summary: string;
+  content: string;
+  seo_title: string;
+  seo_description: string;
+  seo_keywords: string;
 }
 
 function getBaseTemplate(): string | null {
@@ -199,23 +251,46 @@ export function generateStaticPages(): SSGResult {
 
   const seoPages = db.prepare('SELECT * FROM seo_pages ORDER BY path').all() as SeoPage[];
 
-  // Generate homepage — overwrite client/dist/index.html
-  try {
-    const homeSeo = seoPages.find(p => p.path === '/') || null;
-    const modules = db.prepare('SELECT * FROM home_modules WHERE visible = 1 ORDER BY sort_order ASC, created_at ASC').all() as HomeModule[];
-    const feeds = db.prepare('SELECT * FROM home_feeds WHERE visible = 1 ORDER BY sort_order ASC, created_at DESC').all() as HomeFeed[];
+  // Generate homepage — zh (/) and en (/en) with hreflang
+  const homepageLocales: Array<{ locale: string; pagePath: string; outputFile: string }> = [
+    { locale: 'zh', pagePath: '/', outputFile: 'index.html' },
+    { locale: 'en', pagePath: '/en', outputFile: 'en/index.html' },
+  ];
 
-    let html = baseHtml;
-    const metaTags = buildSeoMetaTags(homeSeo, globals, '/');
-    html = html.replace(/<title>.*?<\/title>/, metaTags);
+  const siteUrl = globals.site_url || '';
+  const modules = db.prepare('SELECT * FROM home_modules WHERE visible = 1 ORDER BY sort_order ASC, created_at ASC').all() as HomeModule[];
+  const feeds = db.prepare('SELECT * FROM home_feeds WHERE visible = 1 ORDER BY sort_order ASC, created_at DESC').all() as HomeFeed[];
 
-    const homepageContent = renderHomepageContent(modules, feeds);
-    html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
+  for (const hp of homepageLocales) {
+    try {
+      const homeSeo = seoPages.find(p => p.path === hp.pagePath) || seoPages.find(p => p.path === '/') || null;
 
-    fs.writeFileSync(path.join(CLIENT_DIST, 'index.html'), html, 'utf-8');
-    result.generated.push('/');
-  } catch (e: any) {
-    result.errors.push(`/ : ${e.message}`);
+      const discoverArticles = db.prepare(`
+        SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, c.title, c.summary
+        FROM discover_articles a
+        LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
+        WHERE a.status = 'published' AND a.visible_locales LIKE '%"' || ? || '"%'
+        ORDER BY a.sort_order ASC, a.created_at DESC
+      `).all(hp.locale, hp.locale) as DiscoverFeedItem[];
+
+      let html = baseHtml;
+      const metaTags = buildSeoMetaTags(homeSeo, globals, hp.pagePath);
+      const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en" />\n`;
+      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
+
+      const homepageContent = renderHomepageContent(modules, feeds, discoverArticles);
+      html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
+
+      const outputPath = path.join(CLIENT_DIST, hp.outputFile);
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      fs.writeFileSync(outputPath, html, 'utf-8');
+      result.generated.push(hp.pagePath);
+    } catch (e: any) {
+      result.errors.push(`${hp.pagePath}: ${e.message}`);
+    }
   }
 
   // Generate sub-pages — write to client/dist/{path}/index.html
@@ -271,14 +346,184 @@ Sitemap: ${siteUrl}/sitemap.xml
     <priority>${p.priority}</priority>
   </url>`).join('\n');
 
+    // Include discover articles in sitemap
+    const publishedArticles = db.prepare(`
+      SELECT slug, visible_locales, updated_at FROM discover_articles
+      WHERE status = 'published' AND visible_locales != '[]'
+      ORDER BY sort_order ASC
+    `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
+
+    // English homepage
+    const enHomepageUrl = `  <url>
+    <loc>${siteUrl}/en</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>`;
+
+    const articleUrls = publishedArticles.flatMap(a => {
+      const locales: string[] = JSON.parse(a.visible_locales || '[]');
+      return locales.map(locale => {
+        const articlePath = locale === 'zh' ? `/discover/${a.slug}` : `/${locale}/discover/${a.slug}`;
+        return `  <url>
+    <loc>${siteUrl}${articlePath}</loc>
+    <lastmod>${a.updated_at.split('T')[0]}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>`;
+      });
+    }).join('\n');
+
+    const allUrls = [urls, enHomepageUrl, articleUrls].filter(Boolean).join('\n');
+
     const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
+${allUrls}
 </urlset>`;
     fs.writeFileSync(path.join(CLIENT_DIST, 'sitemap.xml'), sitemapXml, 'utf-8');
     result.generated.push('/sitemap.xml');
   } catch (e: any) {
     result.errors.push(`/sitemap.xml: ${e.message}`);
+  }
+
+  if (result.errors.length > 0) {
+    result.success = false;
+  }
+
+  return result;
+}
+
+interface RecommendedItem {
+  slug: string;
+  icon: string;
+  bg_color: string;
+  author: string;
+  title: string;
+  summary: string;
+}
+
+function renderArticleContent(article: DiscoverArticle, content: DiscoverArticleContent, locale: string, recommendations: RecommendedItem[] = []): string {
+  const recsHtml = recommendations.length > 0 ? `
+        <section class="article-recommendations">
+          <h2>${locale === 'en' ? 'Recommended' : '热门推荐'}</h2>
+          <div class="rec-grid">
+${recommendations.map(r => `            <a href="${locale === 'zh' ? `/discover/${escapeHtml(r.slug)}` : `/${locale}/discover/${escapeHtml(r.slug)}`}" class="rec-card">
+              <div class="rec-icon" style="background: ${escapeHtml(r.bg_color)}">${r.icon}</div>
+              <div class="rec-info">
+                <h3>${escapeHtml(r.title)}</h3>
+                <p>${escapeHtml(r.summary || '')}</p>
+              </div>
+            </a>`).join('\n')}
+          </div>
+        </section>` : '';
+
+  return `
+    <div class="ssg-article-content" id="ssg-content">
+      <article class="discover-article">
+        <header class="article-header">
+          <h1>${escapeHtml(content.title)}</h1>
+          <div class="article-meta">
+            <span class="article-author">${escapeHtml(article.author)}</span>
+          </div>
+        </header>
+        <div class="article-body">${content.content}</div>
+${recsHtml}
+      </article>
+    </div>`;
+}
+
+export function generateArticlePage(article: DiscoverArticle, contents: DiscoverArticleContent[], locales: string[]): SSGResult {
+  const result: SSGResult = { success: true, generated: [], errors: [], outputDir: CLIENT_DIST };
+
+  if (!fs.existsSync(CLIENT_DIST)) {
+    result.success = false;
+    result.errors.push('client/dist/ not found. Run client build first.');
+    return result;
+  }
+
+  const baseHtml = getBaseTemplate();
+  if (!baseHtml) {
+    result.success = false;
+    result.errors.push('index.html template not found. Run client build first.');
+    return result;
+  }
+
+  const db = getDatabase();
+  const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
+  const globals: Record<string, string> = {};
+  for (const r of globalRows) globals[r.key] = r.value;
+
+  const siteUrl = globals.site_url || '';
+
+  for (const locale of locales) {
+    const content = contents.find(c => c.locale === locale);
+    if (!content || !content.title) continue;
+
+    const recommendations = db.prepare(`
+      SELECT ra.slug, ra.icon, ra.bg_color, ra.author, rc.title, rc.summary
+      FROM discover_article_recommendations r
+      JOIN discover_articles ra ON ra.id = r.recommended_article_id AND ra.status = 'published'
+      LEFT JOIN discover_article_contents rc ON rc.article_id = ra.id AND rc.locale = ?
+      WHERE r.article_id = ? AND r.locale = ?
+      ORDER BY r.sort_order ASC
+      LIMIT 5
+    `).all(locale, article.id, locale) as RecommendedItem[];
+
+    try {
+      const isDefault = locale === 'zh';
+      const pagePath = isDefault
+        ? `/discover/${article.slug}`
+        : `/${locale}/discover/${article.slug}`;
+
+      const alternatePath = isDefault
+        ? `/en/discover/${article.slug}`
+        : `/discover/${article.slug}`;
+
+      const seoPage: SeoPage = {
+        path: pagePath,
+        title: content.seo_title || content.title,
+        description: content.seo_description || content.summary,
+        keywords: content.seo_keywords || '',
+        og_title: content.seo_title || content.title,
+        og_description: content.seo_description || content.summary,
+        og_image: article.cover_image || '',
+        canonical: siteUrl ? `${siteUrl}${pagePath}` : '',
+        no_index: 0,
+        json_ld: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'Article',
+          'headline': content.title,
+          'author': { '@type': 'Person', 'name': article.author },
+          'description': content.summary,
+        }),
+      };
+
+      let html = baseHtml;
+      const metaTags = buildSeoMetaTags(seoPage, globals, pagePath);
+
+      let hreflangTags = '';
+      const zhContent = contents.find(c => c.locale === 'zh');
+      const enContent = contents.find(c => c.locale === 'en');
+      if (zhContent && locales.includes('zh')) {
+        hreflangTags += `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/discover/${article.slug}" />\n`;
+      }
+      if (enContent && locales.includes('en')) {
+        hreflangTags += `    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en/discover/${article.slug}" />\n`;
+      }
+
+      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
+
+      const articleHtml = renderArticleContent(article, content, locale, recommendations);
+      html = html.replace('<div id="app"></div>', `<div id="app">${articleHtml}</div>`);
+
+      const dir = path.join(CLIENT_DIST, pagePath.replace(/^\//, ''));
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, 'index.html'), html, 'utf-8');
+      result.generated.push(pagePath);
+    } catch (e: any) {
+      result.errors.push(`${locale}: ${e.message}`);
+    }
   }
 
   if (result.errors.length > 0) {

@@ -130,81 +130,79 @@
     </div>
 
     <!-- Page Form Modal -->
-    <div class="modal-overlay" v-if="showForm" @click.self="closeForm">
-      <div class="modal modal-wide">
-        <h3>{{ editingPage ? '编辑页面 SEO' : '添加页面 SEO' }}</h3>
-        <form @submit.prevent="savePage">
-          <div class="form-grid">
+    <HcModal v-model="showForm" :title="editingPage ? '编辑页面 SEO' : '添加页面 SEO'" max-width="640px">
+      <form @submit.prevent="savePage">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>路径 *</label>
+            <input v-model="form.path" placeholder="/" :disabled="!!editingPage" />
+          </div>
+          <div class="form-row">
+            <label>页面标题 * <small>(显示在浏览器标签和搜索结果)</small></label>
+            <input v-model="form.title" placeholder="摸鱼缸 - AI 桌面养鱼游戏 | QiaoNan" />
+            <small :class="{ warn: form.title.length > 60 }">{{ form.title.length }}/60 字符</small>
+          </div>
+          <div class="form-row">
+            <label>Meta Description <small>(搜索结果摘要)</small></label>
+            <textarea v-model="form.description" rows="2" placeholder="160字符内的页面描述"></textarea>
+            <small :class="{ warn: form.description.length > 160 }">{{ form.description.length }}/160 字符</small>
+          </div>
+          <div class="form-row">
+            <label>关键词 <small>(逗号分隔)</small></label>
+            <input v-model="form.keywords" placeholder="AI工具,效率平台,知识管理" />
+          </div>
+          <div class="form-row">
+            <label>OG 标题 <small>(社交分享标题，留空用页面标题)</small></label>
+            <input v-model="form.og_title" />
+          </div>
+          <div class="form-row">
+            <label>OG 描述 <small>(社交分享描述，留空用 description)</small></label>
+            <input v-model="form.og_description" />
+          </div>
+          <div class="form-row">
+            <label>OG 图片 URL <small>(社交分享封面，留空用全局默认)</small></label>
+            <input v-model="form.og_image" />
+          </div>
+          <div class="form-row">
+            <label>Canonical URL <small>(留空自动生成)</small></label>
+            <input v-model="form.canonical" />
+          </div>
+          <div class="form-row">
+            <label>JSON-LD 结构化数据 <small>(可选，完整 JSON)</small></label>
+            <textarea v-model="form.json_ld" rows="3" placeholder='{"@context":"https://schema.org",...}'></textarea>
+          </div>
+          <div class="form-row-inline">
             <div class="form-row">
-              <label>路径 *</label>
-              <input v-model="form.path" placeholder="/" :disabled="!!editingPage" />
+              <label>Sitemap 优先级</label>
+              <input v-model.number="form.priority" type="number" step="0.1" min="0" max="1" />
             </div>
             <div class="form-row">
-              <label>页面标题 * <small>(显示在浏览器标签和搜索结果)</small></label>
-              <input v-model="form.title" placeholder="摸鱼缸 - AI 桌面养鱼游戏 | QiaoNan" />
-              <small :class="{ warn: form.title.length > 60 }">{{ form.title.length }}/60 字符</small>
-            </div>
-            <div class="form-row">
-              <label>Meta Description <small>(搜索结果摘要)</small></label>
-              <textarea v-model="form.description" rows="2" placeholder="160字符内的页面描述"></textarea>
-              <small :class="{ warn: form.description.length > 160 }">{{ form.description.length }}/160 字符</small>
-            </div>
-            <div class="form-row">
-              <label>关键词 <small>(逗号分隔)</small></label>
-              <input v-model="form.keywords" placeholder="AI工具,效率平台,知识管理" />
-            </div>
-            <div class="form-row">
-              <label>OG 标题 <small>(社交分享标题，留空用页面标题)</small></label>
-              <input v-model="form.og_title" />
-            </div>
-            <div class="form-row">
-              <label>OG 描述 <small>(社交分享描述，留空用 description)</small></label>
-              <input v-model="form.og_description" />
-            </div>
-            <div class="form-row">
-              <label>OG 图片 URL <small>(社交分享封面，留空用全局默认)</small></label>
-              <input v-model="form.og_image" />
-            </div>
-            <div class="form-row">
-              <label>Canonical URL <small>(留空自动生成)</small></label>
-              <input v-model="form.canonical" />
-            </div>
-            <div class="form-row">
-              <label>JSON-LD 结构化数据 <small>(可选，完整 JSON)</small></label>
-              <textarea v-model="form.json_ld" rows="3" placeholder='{"@context":"https://schema.org",...}'></textarea>
-            </div>
-            <div class="form-row-inline">
-              <div class="form-row">
-                <label>Sitemap 优先级</label>
-                <input v-model.number="form.priority" type="number" step="0.1" min="0" max="1" />
-              </div>
-              <div class="form-row">
-                <label>更新频率</label>
-                <select v-model="form.changefreq">
-                  <option value="daily">daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                  <option value="yearly">yearly</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-checks">
-              <label><input type="checkbox" v-model="form.no_index" /> noindex（禁止搜索引擎索引）</label>
+              <label>更新频率</label>
+              <select v-model="form.changefreq">
+                <option value="daily">daily</option>
+                <option value="weekly">weekly</option>
+                <option value="monthly">monthly</option>
+                <option value="yearly">yearly</option>
+              </select>
             </div>
           </div>
-          <div class="form-actions">
-            <button type="button" class="btn-cancel" @click="closeForm">取消</button>
-            <button type="submit" class="btn-primary">保存</button>
+          <div class="form-checks">
+            <label><input type="checkbox" v-model="form.no_index" /> noindex（禁止搜索引擎索引）</label>
           </div>
-        </form>
-      </div>
-    </div>
+        </div>
+        <div class="form-actions" style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+          <button type="button" class="btn-cancel" @click="closeForm">取消</button>
+          <button type="submit" class="btn-primary">保存</button>
+        </div>
+      </form>
+    </HcModal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
+import HcModal from '../../components/common/HcModal.vue'
 
 const tab = ref<'pages' | 'globals' | 'generate'>('pages')
 
@@ -310,82 +308,120 @@ async function handleGenerate() {
 </script>
 
 <style scoped>
+/* 使用 AdminLayout 注入的全局 Brutalist 样式，移除重复样式 */
 .seo-admin { max-width: 1200px; }
-.section-tabs { display: flex; gap: 0; margin-bottom: 24px; border-bottom: 2px solid #e5e7eb; }
-.section-tabs button { padding: 12px 24px; background: none; border: none; font-size: 14px; cursor: pointer; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }
-.section-tabs button.active { color: #0052ff; border-bottom-color: #0052ff; font-weight: 600; }
+.section-tabs { 
+  display: flex; 
+  gap: 16px; 
+  margin-bottom: 32px; 
+  border-bottom: 2px solid var(--c-text-main, #111); 
+}
+.section-tabs button { 
+  padding: 12px 24px; 
+  background: none; 
+  border: 2px solid transparent; 
+  font-family: var(--font-mono); 
+  font-size: 14px; 
+  font-weight: bold;
+  text-transform: uppercase;
+  cursor: pointer; 
+  color: var(--c-text-sub); 
+  margin-bottom: -2px; 
+  transition: all 0.2s;
+}
+.section-tabs button:hover { color: var(--c-text-main); }
+.section-tabs button.active { 
+  color: var(--c-text-main); 
+  border: 2px solid var(--c-text-main); 
+  border-bottom-color: #fff; 
+  background: #fff; 
+}
 
-.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.section-header h2 { font-size: 18px; font-family: -apple-system, sans-serif; font-weight: 600; }
+.section-header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: flex-end; 
+  margin-bottom: 24px; 
+}
+.section-header h2 { font-size: 24px; margin: 0; }
 
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; color: #666; font-weight: 500; }
-.data-table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
-.data-table code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
-.title-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.desc-cell { max-width: 200px; color: #666; font-size: 12px; }
+.data-table code { background: #f5f5f5; padding: 4px 8px; border: 1px solid var(--c-border); font-family: var(--font-mono); font-size: 11px; }
+.title-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
+.desc-cell { max-width: 200px; color: var(--c-text-sub); font-size: 12px; }
 
-.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-.badge-green { background: #dcfce7; color: #166534; }
 .badge-red { background: #fef2f2; color: #991b1b; }
 
-.btn-primary { padding: 8px 16px; background: #0052ff; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
-.btn-primary:hover { background: #0044d4; }
-.btn-primary:disabled { opacity: 0.6; }
-.btn-sm { padding: 4px 10px; background: #f5f5f5; border: 1px solid #e5e7eb; border-radius: 4px; font-size: 12px; cursor: pointer; margin-right: 4px; }
-.btn-sm:hover { background: #e5e7eb; }
-.btn-danger { color: #dc2626; }
-.btn-cancel { padding: 8px 16px; background: #f5f5f5; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; cursor: pointer; }
-
-.tips { margin-top: 20px; padding: 16px; background: #f9fafb; border-radius: 8px; font-size: 13px; color: #666; line-height: 1.8; }
-.tips a { color: #0052ff; }
+.tips { 
+  margin-top: 24px; 
+  padding: 24px; 
+  background: #f8f8f8; 
+  border: 2px dashed var(--c-text-main);
+  font-family: var(--font-mono);
+  font-size: 13px; 
+  color: var(--c-text-sub); 
+  line-height: 1.8; 
+}
+.tips a { color: var(--c-blue-primary); text-decoration: none; font-weight: bold; }
+.tips a:hover { text-decoration: underline; }
 
 .globals-form { max-width: 600px; }
-.globals-form .form-row { margin-bottom: 16px; }
-.globals-form .form-row label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
-.globals-form .form-row input, .globals-form .form-row textarea { width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
-.globals-form .form-row input:focus, .globals-form .form-row textarea:focus { outline: none; border-color: #0052ff; }
-.globals-form .form-row small { display: block; font-size: 11px; color: #999; margin-top: 4px; }
 
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal { background: #fff; border-radius: 12px; padding: 28px; max-height: 85vh; overflow-y: auto; }
-.modal-wide { width: 640px; }
-.modal h3 { margin: 0 0 20px; font-size: 16px; font-family: -apple-system, sans-serif; }
-
-.form-grid .form-row { margin-bottom: 12px; }
-.form-grid .form-row label { display: block; font-size: 12px; color: #333; margin-bottom: 4px; font-weight: 500; }
-.form-grid .form-row label small { color: #999; font-weight: 400; }
-.form-grid .form-row input, .form-grid .form-row textarea, .form-grid .form-row select {
-  width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px;
-}
-.form-grid .form-row input:focus, .form-grid .form-row textarea:focus { outline: none; border-color: #0052ff; }
-.form-grid .form-row small { font-size: 11px; color: #999; }
-.form-grid .form-row small.warn { color: #dc2626; }
-.form-row-inline { display: flex; gap: 16px; }
+.modal-wide { width: 640px; padding: 0; }
+.modal-wide h3 { padding: 24px 32px; margin: 0; border-bottom: 2px solid var(--c-text-main); background: #f8f8f8; }
+.form-grid { padding: 24px 32px; }
+.form-grid .form-row small { font-family: var(--font-mono); font-size: 11px; color: var(--c-text-sub); display: block; margin-top: 4px; }
+.form-grid .form-row small.warn { color: #dc2626; font-weight: bold; }
+.form-row-inline { display: flex; gap: 24px; }
 .form-row-inline .form-row { flex: 1; }
-.form-checks { margin: 12px 0; font-size: 13px; }
-.form-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.form-checks { margin: 16px 0; font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
+.form-checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 0 !important; }
 
-.generate-info { background: #f9fafb; border-radius: 8px; padding: 20px; margin-bottom: 24px; font-size: 14px; line-height: 1.8; }
-.generate-info ul { margin: 12px 0; padding-left: 20px; }
-.generate-info li { margin: 6px 0; }
-.generate-info .note { margin-top: 12px; color: #666; font-size: 13px; }
-.generate-info code { background: #e5e7eb; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+.generate-info { 
+  background: #f8f8f8; 
+  border: 2px solid var(--c-text-main);
+  padding: 24px; 
+  margin-bottom: 32px; 
+  font-size: 14px; 
+  line-height: 1.8; 
+}
+.generate-info ul { margin: 16px 0; padding-left: 24px; }
+.generate-info li { margin: 8px 0; }
+.generate-info .note { margin-top: 16px; color: var(--c-text-sub); font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
+.generate-info code { background: #fff; padding: 2px 6px; border: 1px solid var(--c-text-main); font-family: var(--font-mono); font-size: 12px; }
 
-.btn-generate { padding: 12px 32px; background: #10b981; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
-.btn-generate:hover { background: #059669; }
-.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-generate { 
+  padding: 16px 32px; 
+  background: #10b981; 
+  color: #fff; 
+  border: 2px solid #10b981; 
+  font-family: var(--font-mono);
+  font-size: 16px; 
+  font-weight: bold; 
+  text-transform: uppercase;
+  cursor: pointer; 
+  transition: all 0.2s; 
+  box-shadow: 6px 6px 0 var(--c-text-main);
+}
+.btn-generate:hover { 
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--c-text-main);
+}
+.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
 
-.generate-result { margin-top: 24px; padding: 20px; border-radius: 8px; font-size: 13px; }
-.generate-result.success { background: #ecfdf5; border: 1px solid #a7f3d0; }
-.generate-result.error { background: #fef2f2; border: 1px solid #fecaca; }
-.generate-result h4 { margin: 0 0 12px; font-size: 15px; font-family: -apple-system, sans-serif; font-weight: 600; }
-.result-section { margin: 8px 0; }
-.result-section ul { padding-left: 18px; margin: 4px 0; }
-.result-section li { margin: 2px 0; }
-.result-section code { background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 3px; }
-.error-list li { color: #dc2626; }
-.result-dir { margin-top: 12px; color: #666; font-size: 12px; }
-.result-dir code { background: #e5e7eb; padding: 2px 6px; border-radius: 3px; }
+.generate-result { 
+  margin-top: 32px; 
+  padding: 24px; 
+  border: 2px solid var(--c-text-main); 
+  font-size: 14px; 
+}
+.generate-result.success { background: #ecfdf5; box-shadow: 8px 8px 0 #10b981; }
+.generate-result.error { background: #fef2f2; box-shadow: 8px 8px 0 #dc2626; }
+.generate-result h4 { margin: 0 0 16px; font-size: 18px; font-family: var(--font-serif); font-weight: 700; text-transform: uppercase; }
+.result-section { margin: 12px 0; }
+.result-section ul { padding-left: 24px; margin: 8px 0; }
+.result-section li { margin: 4px 0; font-family: var(--font-mono); font-size: 13px; }
+.result-section code { background: #fff; padding: 2px 6px; border: 1px solid var(--c-text-main); }
+.error-list li { color: #dc2626; font-weight: bold; }
+.result-dir { margin-top: 24px; color: var(--c-text-sub); font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
+.result-dir code { background: #fff; padding: 4px 8px; border: 1px solid var(--c-text-main); color: var(--c-text-main); }
 </style>

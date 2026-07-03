@@ -1,10 +1,12 @@
 <template>
   <router-view />
   <QuotaExhaustedModal />
+  <LoginModal />
 </template>
 
 <script setup lang="ts">
 import QuotaExhaustedModal from './components/common/QuotaExhaustedModal.vue'
+import LoginModal from './components/common/LoginModal.vue'
 import { useSeo } from './lib/useSeo'
 
 useSeo()
@@ -137,6 +139,27 @@ body {
   overflow: hidden;
   font-size: 15px;
   line-height: 1.6;
+}
+
+/* 全局滚动条样式优化 (HC Design) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(107, 114, 128, 0.6);
 }
 
 h1, h2, h3, h4, h5, h6 {

@@ -106,22 +106,99 @@ onMounted(loadStats)
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-.page-header h1 { font-family: -apple-system, sans-serif; font-size: 24px; font-weight: 600; }
-.select { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-.stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
-.stat-card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.stat-label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-.stat-value { font-size: 28px; font-weight: 700; color: #111; }
-.section { margin-bottom: 32px; }
-.section h2 { font-family: -apple-system, sans-serif; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
-.data-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.data-table th { text-align: left; padding: 10px 16px; background: #f8f9fa; font-size: 13px; color: #666; }
-.data-table td { padding: 10px 16px; border-top: 1px solid #f0f0f0; font-size: 14px; }
-.bar-chart { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-.bar-label { width: 90px; font-size: 13px; color: #666; flex-shrink: 0; }
-.bar-track { flex: 1; height: 20px; background: #f0f0f0; border-radius: 4px; overflow: hidden; }
-.bar-fill { height: 100%; background: #0052FF; border-radius: 4px; transition: width 0.3s; }
-.bar-value { width: 40px; font-size: 13px; color: #333; text-align: right; }
+/* 使用 AdminLayout 注入的全局 Brutalist 样式，移除重复样式 */
+.page { max-width: 1200px; }
+
+.select { 
+  padding: 8px 12px; 
+  border: 2px solid var(--c-text-main, #111); 
+  border-radius: 0; 
+  font-family: var(--font-mono); 
+  font-size: 14px; 
+  font-weight: bold;
+  text-transform: uppercase;
+  background: #fff;
+  cursor: pointer;
+}
+.select:focus {
+  outline: none;
+  box-shadow: 4px 4px 0 var(--c-blue-primary, #0077FF);
+}
+
+.stat-cards { 
+  display: grid; 
+  grid-template-columns: repeat(4, 1fr); 
+  gap: 24px; 
+  margin-bottom: 48px; 
+}
+.stat-card { 
+  background: #fff; 
+  padding: 24px; 
+  border: 2px solid var(--c-text-main, #111);
+  box-shadow: 8px 8px 0 rgba(0,0,0,0.05);
+  transition: all 0.2s;
+}
+.stat-card:hover {
+  transform: translate(-4px, -4px);
+  box-shadow: 12px 12px 0 var(--c-blue-primary, #0077FF);
+  border-color: var(--c-blue-primary, #0077FF);
+}
+.stat-label { 
+  display: block; 
+  font-family: var(--font-mono);
+  font-size: 12px; 
+  font-weight: bold;
+  color: var(--c-text-sub, #555); 
+  margin-bottom: 8px; 
+  text-transform: uppercase; 
+  letter-spacing: 1px; 
+}
+.stat-value { 
+  font-family: var(--font-sans);
+  font-size: 40px; 
+  font-weight: 800; 
+  color: var(--c-text-main, #111); 
+  letter-spacing: -1px;
+}
+
+.section { margin-bottom: 48px; }
+
+.bar-chart { 
+  background: #fff; 
+  padding: 24px; 
+  border: 2px solid var(--c-text-main, #111);
+}
+.bar-row { 
+  display: flex; 
+  align-items: center; 
+  gap: 16px; 
+  margin-bottom: 12px; 
+}
+.bar-label { 
+  width: 100px; 
+  font-family: var(--font-mono);
+  font-size: 13px; 
+  font-weight: bold;
+  color: var(--c-text-main, #111); 
+  flex-shrink: 0; 
+}
+.bar-track { 
+  flex: 1; 
+  height: 24px; 
+  background: #f0f0f0; 
+  border: 1px solid var(--c-border, #e5e7eb);
+}
+.bar-fill { 
+  height: 100%; 
+  background: var(--c-blue-primary, #0077FF); 
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1); 
+}
+.bar-value { 
+  width: 60px; 
+  font-family: var(--font-mono);
+  font-size: 14px; 
+  font-weight: bold;
+  color: var(--c-text-main, #111); 
+  text-align: right; 
+}
 </style>
