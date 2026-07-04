@@ -61,7 +61,7 @@ function handleAdd() {
 
 .modal {
   background: #1e293b;
-  border-radius: 16px;
+  border-radius: 10px;
   width: 360px;
   max-width: 90vw;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);

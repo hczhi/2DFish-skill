@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
-import { generateArticlePage } from '../services/ssgService.js';
+import { generateArticlePage, deleteArticleStaticPages } from '../services/ssgService.js';
+import { aiGateway } from '../core/llm/gateway.js';
+import fs from 'fs';
+import path from 'path';
 
 export const discoverRouter = Router();
 
@@ -45,7 +48,23 @@ interface RecommendationRow {
 
 discoverRouter.get('/articles', (req: Request, res: Response) => {
   const locale = (req.query.locale as string) || 'zh';
+  const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const offset = (page - 1) * limit;
+  const q = ((req.query.q as string) || '').trim();
   const db = getDatabase();
+
+  const searchClause = q ? `AND (c.title LIKE '%' || ? || '%' OR c.summary LIKE '%' || ? || '%')` : '';
+  const params = q ? [locale, locale, q, q] : [locale, locale];
+
+  const countRow = db.prepare(`
+    SELECT COUNT(*) as total
+    FROM discover_articles a
+    LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
+    WHERE a.status = 'published'
+      AND a.visible_locales LIKE '%"' || ? || '"%'
+      ${searchClause}
+  `).get(...params) as { total: number };
 
   const articles = db.prepare(`
     SELECT a.*, c.title, c.summary
@@ -53,10 +72,12 @@ discoverRouter.get('/articles', (req: Request, res: Response) => {
     LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
     WHERE a.status = 'published'
       AND a.visible_locales LIKE '%"' || ? || '"%'
-    ORDER BY a.sort_order ASC, a.created_at DESC
-  `).all(locale, locale) as Array<ArticleRow & { title: string; summary: string }>;
+      ${searchClause}
+    ORDER BY a.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset) as Array<ArticleRow & { title: string; summary: string }>;
 
-  res.json(articles);
+  res.json({ items: articles, total: countRow.total, page, limit });
 });
 
 discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
@@ -64,11 +85,14 @@ discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
   const db = getDatabase();
 
   const article = db.prepare(`
-    SELECT a.*, c.title, c.summary, c.content, c.seo_title, c.seo_description, c.seo_keywords
+    SELECT a.*, c.title, c.summary, c.content, c.seo_title, c.seo_description, c.seo_keywords,
+      t.slug as topic_slug, tc.title as topic_title
     FROM discover_articles a
     LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
+    LEFT JOIN discover_topics t ON t.id = a.topic_id AND t.status = 'published'
+    LEFT JOIN discover_topic_contents tc ON tc.topic_id = t.id AND tc.locale = ?
     WHERE a.slug = ? AND a.status = 'published'
-  `).get(locale, req.params.slug) as (ArticleRow & ArticleContentRow) | undefined;
+  `).get(locale, locale, req.params.slug) as (ArticleRow & ArticleContentRow & { topic_slug: string | null; topic_title: string | null }) | undefined;
 
   if (!article) {
     res.status(404).json({ error: 'not found' });
@@ -143,8 +167,12 @@ discoverRouter.get('/admin/articles/:id', (req: Request, res: Response) => {
 discoverRouter.post('/admin/articles', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
-  const { slug, cover_image, author, icon, bg_color, avatar_color, sort_order, visible_locales, status, contents, recommendations } = req.body;
+  const { slug, cover_image, author, icon, bg_color, avatar_color, sort_order, visible_locales, status, topic_id, contents, recommendations } = req.body;
   if (!slug) { res.status(400).json({ error: 'slug is required' }); return; }
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+    res.status(400).json({ error: 'slug must contain only lowercase letters, numbers, and hyphens' });
+    return;
+  }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT id FROM discover_articles WHERE slug = ?').get(slug);
@@ -154,8 +182,8 @@ discoverRouter.post('/admin/articles', (req: Request, res: Response) => {
   const id = uuidv4();
 
   db.prepare(`
-    INSERT INTO discover_articles (id, slug, cover_image, author, icon, bg_color, avatar_color, sort_order, visible_locales, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO discover_articles (id, slug, cover_image, author, icon, bg_color, avatar_color, sort_order, visible_locales, status, topic_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, slug,
     cover_image || '', author || '', icon || '',
@@ -163,6 +191,7 @@ discoverRouter.post('/admin/articles', (req: Request, res: Response) => {
     sort_order ?? 0,
     JSON.stringify(visible_locales || []),
     status || 'draft',
+    topic_id || null,
     now, now
   );
 
@@ -201,9 +230,14 @@ discoverRouter.patch('/admin/articles/:id', (req: Request, res: Response) => {
   const existing = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
   if (!existing) { res.status(404).json({ error: 'not found' }); return; }
 
+  if (req.body.slug && !/^[a-z0-9][a-z0-9-]*$/.test(req.body.slug)) {
+    res.status(400).json({ error: 'slug must contain only lowercase letters, numbers, and hyphens' });
+    return;
+  }
+
   const fields: string[] = [];
   const values: any[] = [];
-  const allowed = ['slug', 'cover_image', 'author', 'icon', 'bg_color', 'avatar_color', 'sort_order', 'status'];
+  const allowed = ['slug', 'cover_image', 'author', 'icon', 'bg_color', 'avatar_color', 'sort_order', 'status', 'topic_id'];
 
   for (const field of allowed) {
     if (req.body[field] !== undefined) {
@@ -293,6 +327,23 @@ discoverRouter.put('/admin/articles/sort', (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+// Take article offline and delete static pages
+discoverRouter.post('/admin/articles/:id/offline', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
+  if (!article) { res.status(404).json({ error: 'not found' }); return; }
+
+  db.prepare('UPDATE discover_articles SET status = ?, updated_at = ? WHERE id = ?')
+    .run('offline', new Date().toISOString(), req.params.id);
+
+  const locales: string[] = JSON.parse(article.visible_locales || '[]');
+  const result = deleteArticleStaticPages(article.slug, locales.length > 0 ? locales : ['zh', 'en']);
+
+  res.json({ success: true, status: 'offline', ...result });
+});
+
 // Generate static page for a single article
 discoverRouter.post('/admin/articles/:id/generate', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
@@ -319,4 +370,174 @@ discoverRouter.post('/admin/articles/:id/generate', (req: Request, res: Response
   }
 
   res.json(result);
+});
+
+// --- SEO & AI Detection Skills ---
+
+function loadSkill(skillName: string): string {
+  const skillPath = path.resolve(process.cwd(), `../skills/${skillName}.md`);
+  if (!fs.existsSync(skillPath)) {
+    throw new Error(`Skill file not found: ${skillName}`);
+  }
+  const content = fs.readFileSync(skillPath, 'utf-8');
+  const match = content.match(/```\n([\s\S]*?)\n```/);
+  return match ? match[1] : content;
+}
+
+// SEO Score - analyze article SEO quality
+discoverRouter.post('/admin/articles/:id/seo-score', async (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
+  if (!article) { res.status(404).json({ error: 'not found' }); return; }
+
+  const locale = (req.body.locale as string) || 'zh';
+  const articleContent = db.prepare(
+    'SELECT * FROM discover_article_contents WHERE article_id = ? AND locale = ?'
+  ).get(req.params.id, locale) as ArticleContentRow | undefined;
+  if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
+
+  try {
+    const skillPrompt = loadSkill('SEO_SCORE_SKILL');
+    const targetKeyword = req.body.target_keyword || '';
+
+    const userMessage = `请对以下文章进行 SEO 评分分析：
+
+标题 (title): ${articleContent.title}
+SEO标题 (seo_title): ${articleContent.seo_title || '未设置'}
+Meta Description: ${articleContent.seo_description || '未设置'}
+URL Slug: ${article.slug}
+目标关键词: ${targetKeyword || '未指定'}
+语言: ${locale}
+
+文章正文:
+${articleContent.content}`;
+
+    const result = await aiGateway(
+      { messages: [{ role: 'system', content: skillPrompt }, { role: 'user', content: userMessage }], temperature: 0.3 },
+      { userId: req.user!.id, source: 'discover', operation: 'seo-score', requestSummary: `SEO score for: ${article.slug}` }
+    );
+
+    const text = result.response.choices[0]?.message?.content || '';
+    let report: any;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+    } catch {
+      report = { raw: text };
+    }
+
+    res.json({ report, usage: result.usage, duration_ms: result.duration_ms });
+  } catch (e: any) {
+    if (e.message === 'quota_exceeded') { res.status(429).json({ error: 'AI quota exceeded' }); return; }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// AI Detection - check article for AI-generated patterns
+discoverRouter.post('/admin/articles/:id/ai-detection', async (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
+  if (!article) { res.status(404).json({ error: 'not found' }); return; }
+
+  const locale = (req.body.locale as string) || 'zh';
+  const articleContent = db.prepare(
+    'SELECT * FROM discover_article_contents WHERE article_id = ? AND locale = ?'
+  ).get(req.params.id, locale) as ArticleContentRow | undefined;
+  if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
+
+  try {
+    const skillPrompt = loadSkill('AI_DETECTION_SKILL');
+
+    const userMessage = `请检测以下文章的 AI 生成特征并打分：
+
+标题: ${articleContent.title}
+语言: ${locale}
+
+文章正文:
+${articleContent.content}`;
+
+    const result = await aiGateway(
+      { messages: [{ role: 'system', content: skillPrompt }, { role: 'user', content: userMessage }], temperature: 0.3 },
+      { userId: req.user!.id, source: 'discover', operation: 'ai-detection', requestSummary: `AI detection for: ${article.slug}` }
+    );
+
+    const text = result.response.choices[0]?.message?.content || '';
+    let report: any;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+    } catch {
+      report = { raw: text };
+    }
+
+    res.json({ report, usage: result.usage, duration_ms: result.duration_ms });
+  } catch (e: any) {
+    if (e.message === 'quota_exceeded') { res.status(429).json({ error: 'AI quota exceeded' }); return; }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Combined analysis - run both SEO score and AI detection
+discoverRouter.post('/admin/articles/:id/full-analysis', async (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
+  if (!article) { res.status(404).json({ error: 'not found' }); return; }
+
+  const locale = (req.body.locale as string) || 'zh';
+  const articleContent = db.prepare(
+    'SELECT * FROM discover_article_contents WHERE article_id = ? AND locale = ?'
+  ).get(req.params.id, locale) as ArticleContentRow | undefined;
+  if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
+
+  try {
+    const seoSkill = loadSkill('SEO_SCORE_SKILL');
+    const aiSkill = loadSkill('AI_DETECTION_SKILL');
+    const targetKeyword = req.body.target_keyword || '';
+
+    const combinedPrompt = `你是一名同时精通 SEO 优化和 AI 内容检测的专家。请对以下文章进行两方面分析，合并为一份报告。
+
+## 任务 1: SEO 评分
+${seoSkill}
+
+## 任务 2: AI 特征检测
+${aiSkill}
+
+请返回 JSON 格式，包含 "seo" 和 "ai_detection" 两个顶层字段，分别对应上述两个评分结果。`;
+
+    const userMessage = `文章信息：
+标题: ${articleContent.title}
+SEO标题: ${articleContent.seo_title || '未设置'}
+Meta Description: ${articleContent.seo_description || '未设置'}
+URL Slug: ${article.slug}
+目标关键词: ${targetKeyword || '未指定'}
+语言: ${locale}
+
+文章正文:
+${articleContent.content}`;
+
+    const result = await aiGateway(
+      { messages: [{ role: 'system', content: combinedPrompt }, { role: 'user', content: userMessage }], temperature: 0.3 },
+      { userId: req.user!.id, source: 'discover', operation: 'full-analysis', requestSummary: `Full analysis for: ${article.slug}` }
+    );
+
+    const text = result.response.choices[0]?.message?.content || '';
+    let report: any;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+    } catch {
+      report = { raw: text };
+    }
+
+    res.json({ report, usage: result.usage, duration_ms: result.duration_ms });
+  } catch (e: any) {
+    if (e.message === 'quota_exceeded') { res.status(429).json({ error: 'AI quota exceeded' }); return; }
+    res.status(500).json({ error: e.message });
+  }
 });

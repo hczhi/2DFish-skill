@@ -78,8 +78,9 @@ onMounted(loadConfig)
 .config-card { 
   background: #fff; 
   padding: 32px; 
-  border: 2px solid var(--c-text-main); 
-  box-shadow: 12px 12px 0 var(--c-blue-primary); 
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05); 
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04); 
 }
 .form-group { margin-bottom: 32px; }
 .form-group:last-child { margin-bottom: 0; }
@@ -88,15 +89,18 @@ onMounted(loadConfig)
 .input { 
   flex: 1; 
   padding: 12px 16px; 
-  border: 2px solid var(--c-text-main); 
-  border-radius: 0; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 10px; 
   font-size: 14px; 
-  font-family: var(--font-mono); 
-  transition: all 0.2s;
+  font-family: var(--font-sans, sans-serif); 
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background: #f9fafb;
 }
 .input:focus {
   outline: none;
-  box-shadow: 4px 4px 0 var(--c-blue-primary);
+  background: #ffffff;
+  border-color: #3B5BDB;
+  box-shadow: 0 0 0 4px rgba(59, 91, 219, 0.15);
 }
 
 .hint { 
@@ -104,8 +108,7 @@ onMounted(loadConfig)
   color: var(--c-text-sub); 
   margin-top: 8px; 
   display: block; 
-  font-family: var(--font-mono); 
-  font-weight: bold;
+  font-family: var(--font-sans, sans-serif); 
 }
 
 .success { 

@@ -15,8 +15,8 @@ authRouter.post('/login', (req: Request, res: Response) => {
   }
 
   const db = getDatabase();
-  const user = db.prepare('SELECT id, username, password_hash, role FROM user WHERE username = ?').get(username) as {
-    id: string; username: string; password_hash: string; role: string;
+  const user = db.prepare('SELECT id, username, password_hash, role, token_version FROM user WHERE username = ?').get(username) as {
+    id: string; username: string; password_hash: string; role: string; token_version: number;
   } | undefined;
 
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
@@ -24,7 +24,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return;
   }
 
-  const payload = { id: user.id, username: user.username, role: user.role || 'user' };
+  const payload = { id: user.id, username: user.username, role: user.role || 'user', tv: user.token_version || 1 };
   const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '30d' });
 
   res.json({ token, user: payload });
@@ -36,7 +36,11 @@ authRouter.post('/register', (req: Request, res: Response) => {
     res.status(400).json({ error: 'username and password are required' });
     return;
   }
-  if (password.length < 6) {
+  if (!username || username.length < 2 || username.length > 30 || !/^[a-zA-Z0-9_一-鿿]+$/.test(username)) {
+    res.status(400).json({ error: 'Username must be 2-30 characters (letters, numbers, underscores, or Chinese characters)' });
+    return;
+  }
+  if (!password || password.length < 6) {
     res.status(400).json({ error: 'Password must be at least 6 characters' });
     return;
   }
@@ -57,7 +61,7 @@ authRouter.post('/register', (req: Request, res: Response) => {
      VALUES (?, ?, ?, 'user', ?, ?)`
   ).run(id, username, passwordHash, now, now);
 
-  const payload = { id, username, role: 'user' };
+  const payload = { id, username, role: 'user', tv: 1 };
   const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '30d' });
 
   res.status(201).json({ token, user: payload });
@@ -107,7 +111,7 @@ authRouter.post('/change-password', (req: Request, res: Response) => {
   }
 
   const hash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE user SET password_hash = ?, updated_at = ? WHERE id = ?')
+  db.prepare('UPDATE user SET password_hash = ?, token_version = COALESCE(token_version, 1) + 1, updated_at = ? WHERE id = ?')
     .run(hash, new Date().toISOString(), req.user.id);
 
   res.json({ success: true });

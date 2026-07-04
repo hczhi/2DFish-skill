@@ -32,44 +32,55 @@
     <!-- 按用户 -->
     <section class="section">
       <h2>按用户</h2>
-      <table class="data-table" v-if="stats.byUser?.length">
-        <thead><tr><th>用户</th><th>调用次数</th><th>Tokens</th></tr></thead>
-        <tbody>
-          <tr v-for="row in stats.byUser" :key="row.username">
-            <td>{{ row.username }}</td>
-            <td>{{ row.calls }}</td>
-            <td>{{ formatNum(row.tokens) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container" v-if="stats.byUser?.length">
+        <table class="hc-table">
+          <thead><tr><th>用户</th><th>调用次数</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr v-for="row in stats.byUser" :key="row.username">
+              <td>
+                <div style="font-weight: 600; color: var(--c-text-main);">{{ row.username }}</div>
+              </td>
+              <td>{{ row.calls }}</td>
+              <td>{{ formatNum(row.tokens) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- 按来源 -->
     <section class="section">
       <h2>按模块</h2>
-      <table class="data-table" v-if="stats.bySource?.length">
-        <thead><tr><th>模块</th><th>调用次数</th><th>Tokens</th></tr></thead>
-        <tbody>
-          <tr v-for="row in stats.bySource" :key="row.source">
-            <td>{{ row.source }}</td>
-            <td>{{ row.calls }}</td>
-            <td>{{ formatNum(row.tokens) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container" v-if="stats.bySource?.length">
+        <table class="hc-table">
+          <thead><tr><th>模块</th><th>调用次数</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr v-for="row in stats.bySource" :key="row.source">
+              <td>
+                <span class="hc-badge hc-badge-blue">{{ row.source }}</span>
+              </td>
+              <td>{{ row.calls }}</td>
+              <td>{{ formatNum(row.tokens) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- 按日期 -->
     <section class="section">
       <h2>按日期</h2>
-      <div class="bar-chart" v-if="stats.byDay?.length">
-        <div class="bar-row" v-for="row in stats.byDay" :key="row.day">
-          <span class="bar-label">{{ row.day }}</span>
-          <div class="bar-track">
-            <div class="bar-fill" :style="{ width: barWidth(row.calls) }"></div>
-          </div>
-          <span class="bar-value">{{ row.calls }}</span>
-        </div>
+      <div class="hc-table-container" v-if="stats.byDay?.length">
+        <table class="hc-table">
+          <thead><tr><th>日期</th><th>调用次数</th><th>Tokens</th></tr></thead>
+          <tbody>
+            <tr v-for="row in stats.byDay" :key="row.day">
+              <td><span style="color: var(--c-text-sub); font-size: 13px;">{{ row.day }}</span></td>
+              <td>{{ row.calls }}</td>
+              <td>{{ formatNum(row.tokens) }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
   </div>
@@ -110,19 +121,22 @@ onMounted(loadStats)
 .page { max-width: 1200px; }
 
 .select { 
-  padding: 8px 12px; 
-  border: 2px solid var(--c-text-main, #111); 
-  border-radius: 0; 
-  font-family: var(--font-mono); 
-  font-size: 14px; 
-  font-weight: bold;
-  text-transform: uppercase;
-  background: #fff;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
   cursor: pointer;
+  color: #374151;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .select:focus {
   outline: none;
-  box-shadow: 4px 4px 0 var(--c-blue-primary, #0077FF);
+  background: #ffffff;
+  border-color: #3B5BDB;
+  box-shadow: 0 0 0 4px rgba(59, 91, 219, 0.15);
 }
 
 .stat-cards { 
@@ -132,33 +146,30 @@ onMounted(loadStats)
   margin-bottom: 48px; 
 }
 .stat-card { 
-  background: #fff; 
-  padding: 24px; 
-  border: 2px solid var(--c-text-main, #111);
-  box-shadow: 8px 8px 0 rgba(0,0,0,0.05);
-  transition: all 0.2s;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  padding: 24px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .stat-card:hover {
-  transform: translate(-4px, -4px);
-  box-shadow: 12px 12px 0 var(--c-blue-primary, #0077FF);
-  border-color: var(--c-blue-primary, #0077FF);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
 }
 .stat-label { 
   display: block; 
-  font-family: var(--font-mono);
-  font-size: 12px; 
-  font-weight: bold;
-  color: var(--c-text-sub, #555); 
+  font-family: var(--font-sans, sans-serif);
+  font-size: 13px; 
+  font-weight: 600;
+  color: var(--c-text-sub); 
   margin-bottom: 8px; 
-  text-transform: uppercase; 
-  letter-spacing: 1px; 
 }
 .stat-value { 
-  font-family: var(--font-sans);
-  font-size: 40px; 
-  font-weight: 800; 
-  color: var(--c-text-main, #111); 
-  letter-spacing: -1px;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 32px; 
+  font-weight: 700; 
+  color: #3B5BDB; 
 }
 
 .section { margin-bottom: 48px; }

@@ -150,21 +150,46 @@ if (fs.existsSync(clientDistPath)) {
 
 ```env
 # 必填
-JWT_SECRET=<32位以上随机字符串>
 PORT=3001
+NODE_ENV=production
+JWT_SECRET=<48字符以上随机字符串>
 
-# 可选 - CORS（方案A下不需要设置，同源无跨域）
-# CORS_ORIGIN=https://your-domain.com
+# 可选 - CORS 允许跨域的域名（逗号分隔）
+# 方案A（Node统一服务）下前端和API同源，无需设置
+# 方案B（Nginx分流，或前端部署在不同域）必须设置
+# CORS_ORIGIN=https://your-domain.com,https://www.your-domain.com
 
 # 可选 - 数据库路径（默认 ./data/app.db）
 # DB_PATH=./data/app.db
 ```
 
-生成 JWT_SECRET：
+### 生成 JWT_SECRET
 
 ```bash
-openssl rand -base64 32
+# 方法1: macOS / Linux
+openssl rand -base64 48
+
+# 方法2: Node.js
+node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"
 ```
+
+将输出的随机字符串填入 `JWT_SECRET=` 后面即可。
+
+### 环境变量说明
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `PORT` | 是 | 服务监听端口，默认 3001 |
+| `NODE_ENV` | 是 | 设为 `production` 启用安全检查（JWT 强制、CORS 严格） |
+| `JWT_SECRET` | 是 | JWT 签名密钥。生产环境未设置或为默认值时**服务拒绝启动** |
+| `CORS_ORIGIN` | 视情况 | 允许跨域的域名列表。方案A同源不需要；方案B必填 |
+| `DB_PATH` | 否 | SQLite 数据库路径，默认 `./data/app.db` |
+
+### 安全要求
+
+- **`NODE_ENV=production` 时**，如果 `JWT_SECRET` 未设置或仍为 `.env.example` 中的默认值，服务会输出 FATAL 错误并退出
+- **`CORS_ORIGIN` 未设置时**，生产环境默认拒绝所有跨域请求（方案A同源访问不受影响）
+- **`.env` 文件权限**应设为 `600`：`chmod 600 /opt/mmPla/server/.env`
 
 > 平台 AI Key 通过管理后台（系统配置）设置，不放在 .env 中。
 
@@ -425,15 +450,37 @@ curl -s http://localhost:3001/api/health | jq .
 
 ## 十一、安全清单
 
-- [ ] `JWT_SECRET` 使用强随机值（≥32字符）
+### 部署前必做
+
+- [ ] `NODE_ENV=production` 已设置
+- [ ] `JWT_SECRET` 使用 `openssl rand -base64 48` 生成的强随机值
+- [ ] 方案A下 `CORS_ORIGIN` 可不设（同源）；方案B下设为实际域名
+- [ ] 首次登录后**立即修改** admin 默认密码（admin/123456）
+- [ ] `.env` 文件权限设为 600：`chmod 600 .env`
+
+### 已内置的安全机制
+
+| 机制 | 说明 |
+|------|------|
+| JWT Secret 强制检查 | 生产环境未设置则拒绝启动 |
+| CORS 严格模式 | 生产环境默认拒绝跨域，仅白名单放行 |
+| 安全响应头 | 自动设置 X-Frame-Options、X-Content-Type-Options 等 |
+| Auth 限流 | 登录/注册每分钟最多 10 次 |
+| AI 限流 | AI 调用每分钟 30 次，Chat/Consultant 每分钟 20 次 |
+| Analytics 限流 | 页面访问统计每分钟 60 次 |
+| XSS 防护 | 文章内容 DOMPurify 消毒，Chat HTML 转义，SSG icon 转义 |
+| 路径穿越防护 | slug 格式校验 + 文件路径解析检查 |
+| Token 撤销 | 修改密码后旧 JWT 自动失效（token_version 机制） |
+| 模块 Token 隔离 | 每个 Token 只能访问白名单路径，所有请求记录审计日志 |
+
+### 运维安全
+
 - [ ] 启用 HTTPS（Let's Encrypt）
-- [ ] 方案A下 `CORS_ORIGIN` 可不设（同源）；方案B下设为域名
-- [ ] 首次登录后修改 admin 默认密码（admin/123456）
 - [ ] 定期备份数据库
-- [ ] Nginx 配置安全响应头（HSTS、X-Frame-Options 等）
+- [ ] Nginx 配置 HSTS：`Strict-Transport-Security "max-age=31536000"`
 - [ ] 限制 SSH 访问（密钥登录、禁用 root）
 - [ ] 定期更新 Node.js 和系统补丁
-- [ ] `.env` 文件权限设为 600
+- [ ] 监控磁盘空间（SQLite + workspaces + SSG 静态文件）
 
 ---
 

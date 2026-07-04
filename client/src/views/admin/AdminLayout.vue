@@ -13,8 +13,11 @@
         <router-link to="/admin/config" class="nav-item" active-class="active" @click="sidebarOpen = false">系统配置</router-link>
         <router-link to="/admin/home" class="nav-item" active-class="active" @click="sidebarOpen = false">首页内容</router-link>
         <router-link to="/admin/discover" class="nav-item" active-class="active" @click="sidebarOpen = false">文章管理</router-link>
+        <router-link to="/admin/topics" class="nav-item" active-class="active" @click="sidebarOpen = false">专题管理</router-link>
         <router-link to="/admin/analytics" class="nav-item" active-class="active" @click="sidebarOpen = false">数据统计</router-link>
+        <router-link to="/admin/modules" class="nav-item" active-class="active" @click="sidebarOpen = false">模块管理</router-link>
         <router-link to="/admin/seo" class="nav-item" active-class="active" @click="sidebarOpen = false">SEO 管理</router-link>
+        <router-link to="/admin/ads" class="nav-item" active-class="active" @click="sidebarOpen = false">广告管理</router-link>
       </nav>
     </aside>
     <main class="admin-main">
@@ -68,7 +71,8 @@ onMounted(async () => {
 .hc-modal-container .btn-secondary,
 .hc-modal-container .btn-sm,
 .hc-modal-container .btn-danger,
-.hc-modal-container .btn-cancel {
+.hc-modal-container .btn-cancel,
+.hc-btn {
   font-family: var(--font-sans, sans-serif);
   font-size: 14px;
   font-weight: 600;
@@ -82,12 +86,14 @@ onMounted(async () => {
 }
 
 .admin-main .btn-primary,
-.hc-modal-container .btn-primary {
+.hc-modal-container .btn-primary,
+.hc-btn-primary {
   background: #3B5BDB;
   color: #fff;
 }
 .admin-main .btn-primary:hover,
-.hc-modal-container .btn-primary:hover {
+.hc-modal-container .btn-primary:hover,
+.hc-btn-primary:hover {
   background: #2b45a8;
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(59, 91, 219, 0.3);
@@ -96,7 +102,9 @@ onMounted(async () => {
 .admin-main .btn-secondary,
 .admin-main .btn-cancel,
 .hc-modal-container .btn-secondary,
-.hc-modal-container .btn-cancel {
+.hc-modal-container .btn-cancel,
+.hc-btn-secondary,
+.hc-btn-cancel {
   border-color: #e5e7eb;
 }
 .admin-main .btn-secondary:hover,
@@ -104,68 +112,98 @@ onMounted(async () => {
 .admin-main .btn-sm:hover,
 .hc-modal-container .btn-secondary:hover,
 .hc-modal-container .btn-cancel:hover,
-.hc-modal-container .btn-sm:hover {
+.hc-modal-container .btn-sm:hover,
+.hc-btn-secondary:hover,
+.hc-btn-cancel:hover {
   background: #f9fafb;
   border-color: #d1d5db;
 }
 
 .admin-main .btn-danger,
-.hc-modal-container .btn-danger {
+.hc-modal-container .btn-danger,
+.hc-btn-danger {
   color: #ef4444;
   background: #fef2f2;
 }
 .admin-main .btn-danger:hover,
-.hc-modal-container .btn-danger:hover {
+.hc-modal-container .btn-danger:hover,
+.hc-btn-danger:hover {
   background: #fee2e2;
   color: #dc2626;
 }
 
-/* 表格全局 HC Design */
-.admin-main .data-table {
+/* --- HC Design 数据表格 (Data Table) 优化 --- */
+.hc-table-container {
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04); /* 加深了点阴影增强层次 */
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.05); /* 极细的高级边框 */
+  margin-top: 32px; /* 增加与页面标题的间距 */
+}
+
+.hc-table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  background: #fff;
-  border: 1px solid var(--c-border, #E5E7EB);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-}
-.admin-main .data-table th {
   text-align: left;
-  padding: 16px;
-  font-family: var(--font-sans, sans-serif);
-  font-size: 13px;
-  font-weight: 600;
-  color: #6b7280;
-  border-bottom: 1px solid var(--c-border, #E5E7EB);
-  background: #f9fafb;
 }
-.admin-main .data-table td {
-  padding: 16px;
-  border-bottom: 1px solid var(--c-border, #E5E7EB);
+
+.hc-table th {
+  padding: 24px 24px 16px 24px; /* 表头增加间距，留白更足 */
   font-size: 14px;
-  vertical-align: middle;
+  font-weight: 600;
+  color: var(--c-text-sub);
+  background: #fdfdfd; /* 极淡的灰底区分表头 */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
 }
-.admin-main .data-table tr:last-child td {
+
+.hc-table td {
+  padding: 24px; /* 增大单元格间距，让内容呼吸 */
+  font-size: 14px;
+  color: var(--c-text-main);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  vertical-align: top; /* 顶部对齐，适合多行文本如文章标题/摘要 */
+  line-height: 1.6;
+}
+
+.hc-table tr:last-child td {
   border-bottom: none;
 }
-.admin-main .data-table tr:hover td {
-  background: #f9fafb;
+
+.hc-table tr:hover td {
+  background: rgba(67, 97, 238, 0.02); /* Hover 时非常淡的品牌蓝背景 */
+}
+
+/* 表格内的操作按钮容器 */
+.table-actions {
+  display: flex;
+  gap: 12px; /* 增大按钮之间的间距 */
+  flex-wrap: wrap;
+}
+
+/* 调整徽章(Badge)在表格中的显示 */
+.hc-table .hc-badge {
+  display: inline-flex;
+  margin-right: 6px;
+  margin-bottom: 6px;
 }
 
 /* 徽章 HC Design */
 .admin-main .badge,
-.hc-modal-container .badge {
+.hc-modal-container .badge,
+.hc-badge {
   font-family: var(--font-sans, sans-serif);
   font-size: 12px;
   font-weight: 600;
   padding: 4px 8px;
   border-radius: 6px;
 }
-.admin-main .badge.admin, .admin-main .badge-green, .hc-modal-container .badge-green { color: #059669; background: #d1fae5; }
-.admin-main .badge.user, .admin-main .badge-gray, .hc-modal-container .badge-gray { color: #4b5563; background: #f3f4f6; }
-.admin-main .badge-blue, .hc-modal-container .badge-blue { color: #3B5BDB; background: #e0e7ff; }
+.admin-main .badge.admin, .admin-main .badge-green, .hc-modal-container .badge-green, .hc-badge-green { color: #059669; background: #d1fae5; }
+.admin-main .badge.user, .admin-main .badge-gray, .hc-modal-container .badge-gray, .hc-badge-gray { color: #4b5563; background: #f3f4f6; }
+.admin-main .badge-blue, .hc-modal-container .badge-blue, .hc-badge-blue { color: #3B5BDB; background: #e0e7ff; }
+.admin-main .badge-red, .hc-modal-container .badge-red, .hc-badge-red { color: #dc2626; background: #fef2f2; }
 
 /* 表单全局 HC Design */
 .admin-main .form-row label, .admin-main .form-group label,
@@ -188,7 +226,7 @@ onMounted(async () => {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 12px 16px;
   font-family: var(--font-sans, sans-serif);
   font-size: 14px;

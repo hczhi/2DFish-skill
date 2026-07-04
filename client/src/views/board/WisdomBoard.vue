@@ -42,11 +42,11 @@
 
     <div class="bottom-buttons">
       <router-link to="/" class="seal-btn small" title="首页">首</router-link>
-      <button
+      <!-- <button
         class="seal-btn small"
         :class="{ 'dark-mode': chatMode === 'dark' }"
         @click="toggleMode"
-      >{{ chatMode === 'wisdom' ? '明' : '暗' }}</button>
+      >{{ chatMode === 'wisdom' ? '明' : '暗' }}</button> -->
       <button class="seal-btn small" @click="showLog = !showLog">记</button>
     </div>
 
@@ -179,6 +179,7 @@ async function handleSend() {
   font-family: "TsangerJinKai02", "Songti SC", Georgia, serif;
   color: #141413;
 }
+
 
 .global-grid {
   position: absolute;

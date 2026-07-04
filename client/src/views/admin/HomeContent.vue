@@ -12,40 +12,58 @@
         <router-link to="/admin/home/module" class="btn-primary" style="text-decoration: none;">添加模块</router-link>
       </div>
 
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>排序</th>
-            <th>Icon</th>
-            <th>标题</th>
-            <th>路径</th>
-            <th>分类</th>
-            <th>布局</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="m in modules" :key="m.id">
-            <td>{{ m.sort_order }}</td>
-            <td>{{ m.icon }}</td>
-            <td><strong>{{ m.title }}</strong><br><small>{{ m.description }}</small></td>
-            <td><code>{{ m.path }}</code></td>
-            <td>{{ m.category }}</td>
-            <td>{{ m.grid_span }}</td>
-            <td>
-              <span class="badge" :class="m.visible ? 'badge-green' : 'badge-gray'">
-                {{ m.visible ? '显示' : '隐藏' }}
-              </span>
-              <span class="badge badge-blue" v-if="m.featured">推荐</span>
-            </td>
-            <td>
-              <router-link :to="`/admin/home/module/${m.id}`" class="btn-sm" style="text-decoration: none; display: inline-block;">编辑</router-link>
-              <button class="btn-sm btn-danger" @click="deleteModule(m.id)">删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container">
+        <table class="hc-table">
+          <thead>
+            <tr>
+              <th>排序</th>
+              <th>Icon</th>
+              <th>标题</th>
+              <th>分类</th>
+              <th>跨度</th>
+              <th>背景/图片</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in modules" :key="item.id">
+              <td>{{ item.sort_order }}</td>
+              <td>{{ item.icon }}</td>
+              <td>
+                <div style="font-weight: 600; margin-bottom: 4px; color: var(--c-text-main);">{{ item.title }}</div>
+                <div style="font-size: 12px; color: var(--c-text-sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 200px;">
+                  {{ item.description }}
+                </div>
+              </td>
+              <td>
+                <span class="hc-badge hc-badge-blue">{{ item.category }}</span>
+              </td>
+              <td>
+                <code style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-family: monospace;">{{ item.grid_span }}</code>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 16px; height: 16px; border-radius: 4px;" :style="{ background: item.bg_color }"></div>
+                  <span style="font-size: 12px; color: var(--c-text-sub);" v-if="item.image_url">有图</span>
+                </div>
+              </td>
+              <td>
+                <span :class="['hc-badge', item.visible ? 'hc-badge-green' : 'hc-badge-gray']">
+                  {{ item.visible ? '显示' : '隐藏' }}
+                </span>
+                <span class="hc-badge hc-badge-blue" v-if="item.featured">Featured</span>
+              </td>
+              <td>
+                <div class="table-actions">
+                  <router-link :to="`/admin/home/module/${item.id}`" class="hc-btn hc-btn-secondary" style="text-decoration: none; display: inline-block;">编辑</router-link>
+                  <button class="hc-btn hc-btn-danger" @click="deleteModule(item.id)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-if="modules.length === 0" class="empty">暂无模块，点击上方按钮添加</p>
     </div>
 
@@ -53,46 +71,64 @@
     <div v-if="tab === 'feeds'" class="section">
       <div class="section-header">
         <h2>DISCOVER 推荐内容</h2>
-        <button class="btn-primary" @click="showFeedForm = true">添加内容</button>
+        <button class="hc-btn hc-btn-primary" @click="showFeedForm = true">添加推荐</button>
       </div>
 
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>排序</th>
-            <th>Icon</th>
-            <th>标题</th>
-            <th>作者</th>
-            <th>点赞</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="f in feeds" :key="f.id">
-            <td>{{ f.sort_order }}</td>
-            <td>{{ f.icon }}</td>
-            <td>{{ f.title }}</td>
-            <td>{{ f.author }}</td>
-            <td>{{ f.likes }}</td>
-            <td>
-              <span class="badge" :class="f.visible ? 'badge-green' : 'badge-gray'">
-                {{ f.visible ? '显示' : '隐藏' }}
-              </span>
-            </td>
-            <td>
-              <button class="btn-sm" @click="editFeed(f)">编辑</button>
-              <button class="btn-sm btn-danger" @click="deleteFeed(f.id)">删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container">
+        <table class="hc-table">
+          <thead>
+            <tr>
+              <th>排序</th>
+              <th>Icon</th>
+              <th>标题/链接</th>
+              <th>作者</th>
+              <th>背景</th>
+              <th>点赞</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in feeds" :key="item.id">
+              <td>{{ item.sort_order }}</td>
+              <td>{{ item.icon }}</td>
+              <td>
+                <div style="font-weight: 600; margin-bottom: 4px; color: var(--c-text-main);">{{ item.title }}</div>
+                <div style="font-size: 12px; color: var(--c-text-sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 200px;">
+                  <a :href="item.link" target="_blank" style="color: var(--c-blue-primary); text-decoration: none;">{{ item.link }}</a>
+                </div>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 24px; height: 24px; border-radius: 50%;" :style="{ background: item.avatar_color }"></div>
+                  <span>{{ item.author }}</span>
+                </div>
+              </td>
+              <td>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 16px; height: 16px; border-radius: 4px;" :style="{ background: item.bg_color }"></div>
+                </div>
+              </td>
+              <td>{{ item.likes }}</td>
+              <td>
+                <span :class="['hc-badge', item.visible ? 'hc-badge-green' : 'hc-badge-gray']">
+                  {{ item.visible ? '显示' : '隐藏' }}
+                </span>
+              </td>
+              <td>
+                <div class="table-actions">
+                  <button class="hc-btn hc-btn-secondary" @click="editFeed(item)">编辑</button>
+                  <button class="hc-btn hc-btn-danger" @click="deleteFeed(item.id)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-if="feeds.length === 0" class="empty">暂无推荐内容</p>
     </div>
 
-
-
-    <!-- Feed Form Modal -->
+    <!-- Feed Modal -->
     <HcModal v-model="showFeedForm" :title="editingFeed ? '编辑推荐' : '添加推荐'" max-width="600px">
       <form @submit.prevent="saveFeed">
         <div class="form-row">
@@ -237,29 +273,27 @@ async function deleteFeed(id: string) {
   display: flex; 
   gap: 16px; 
   margin-bottom: 32px; 
-  border-bottom: 2px solid var(--c-text-main, #111); 
+  border-bottom: 1px solid #e5e7eb; 
 }
 .section-tabs button {
   padding: 12px 24px; 
   background: none; 
-  border: 2px solid transparent; 
-  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  border: none;
+  border-bottom: 2px solid transparent; 
+  font-family: var(--font-sans, sans-serif);
   font-size: 14px;
-  font-weight: bold;
-  text-transform: uppercase;
+  font-weight: 600;
   cursor: pointer; 
   color: var(--c-text-sub, #555); 
-  margin-bottom: -2px;
-  transition: all 0.2s;
+  margin-bottom: -1px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .section-tabs button:hover {
   color: var(--c-text-main, #111);
 }
 .section-tabs button.active { 
-  color: var(--c-text-main, #111); 
-  border: 2px solid var(--c-text-main, #111); 
-  border-bottom-color: #fff;
-  background: #fff;
+  color: #3B5BDB; 
+  border-bottom-color: #3B5BDB;
 }
 
 .section-header { 
@@ -271,15 +305,17 @@ async function deleteFeed(id: string) {
 .section-header h2 { 
   font-size: 24px; 
   margin: 0;
+  font-family: var(--font-sans, sans-serif);
+  font-weight: 700;
 }
 
-.data-table code { background: #f5f5f5; padding: 4px 8px; border: 1px solid #ddd; font-family: var(--font-mono); font-size: 11px; }
+.data-table code { background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; }
 .data-table small { color: var(--c-text-sub); display: block; margin-top: 4px; }
 
-.empty { text-align: center; color: var(--c-text-sub); padding: 60px; font-family: var(--font-mono); text-transform: uppercase; border: 2px dashed #ddd; }
+.empty { text-align: center; color: var(--c-text-sub); padding: 60px; font-family: var(--font-sans, sans-serif); font-size: 14px; border: 1px dashed #d1d5db; border-radius: 10px; }
 
 .form-row { margin-bottom: 20px; }
-.form-checks { display: flex; flex-wrap: wrap; gap: 24px; margin: 24px 0; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; }
+.form-checks { display: flex; flex-wrap: wrap; gap: 24px; margin: 24px 0; font-family: var(--font-sans, sans-serif); font-size: 13px; font-weight: 600; }
 .form-checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: bold; margin-bottom: 0 !important; }
 .form-checks input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--c-blue-primary); }
 </style>

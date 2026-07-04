@@ -97,7 +97,7 @@ export function loadAllSkills(): SkillInfo[] {
       }
     } else if (entry.name.endsWith('.md')) {
       try {
-        const content = readFile(`skills/${entry.name}`);
+        const content = readFile(`skills/${entry.name}`, 'default');
         const { data, content: body } = matter(content);
         skills.push({
           name: data.name || entry.name.replace('.md', ''),

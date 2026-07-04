@@ -3,11 +3,12 @@
     <div class="footer-content">
       <div class="brand">QiaoNan.</div>
       <div class="copyright">
-        &copy; {{ new Date().getFullYear() }} mmPla Team. All rights reserved.
+        &copy; {{ new Date().getFullYear() }} QiaoNan. All rights reserved.
       </div>
       <div class="links">
-        <!-- <a href="#">Privacy</a>
-        <a href="#">Terms</a> -->
+        <router-link :to="locale === 'en' ? '/en/privacy' : '/privacy'">{{ locale === 'en' ? 'Privacy' : '隐私政策' }}</router-link>
+        <router-link :to="locale === 'en' ? '/en/terms' : '/terms'">{{ locale === 'en' ? 'Terms' : '服务条款' }}</router-link>
+        <a href="mailto:364317853@qq.com">{{ locale === 'en' ? 'Contact' : '联系我们' }}</a>
       </div>
     </div>
   </footer>
@@ -19,6 +20,7 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const isHome = computed(() => route.path === '/')
+const locale = computed(() => route.path.startsWith('/en') ? 'en' : 'zh')
 </script>
 
 <style scoped>

@@ -5,16 +5,21 @@ const WORKSPACES_ROOT = path.resolve(process.cwd(), '../workspaces');
 
 let currentUserId: string = 'default';
 
+/**
+ * @deprecated Use explicit userId parameter on each function instead.
+ * Kept for backward compatibility only. This sets a global that is unsafe
+ * under concurrent requests.
+ */
 export function setCurrentUser(userId: string): void {
   currentUserId = userId;
 }
 
-function getWorkspacePath(): string {
-  return path.join(WORKSPACES_ROOT, currentUserId);
+function getWorkspacePath(userId: string): string {
+  return path.join(WORKSPACES_ROOT, userId);
 }
 
-function resolveSecurePath(relativePath: string): string {
-  const basePath = getWorkspacePath();
+function resolveSecurePath(userId: string, relativePath: string): string {
+  const basePath = getWorkspacePath(userId);
   const resolved = path.resolve(basePath, relativePath);
 
   if (!resolved.startsWith(basePath + path.sep) && resolved !== basePath) {
@@ -44,8 +49,9 @@ export function ensureWorkspaceExists(userId: string): void {
   }
 }
 
-export function readFile(relativePath: string): string {
-  const fullPath = resolveSecurePath(relativePath);
+export function readFile(relativePath: string, userId?: string): string {
+  const uid = userId ?? currentUserId;
+  const fullPath = resolveSecurePath(uid, relativePath);
   validateExtension(fullPath);
 
   if (!fs.existsSync(fullPath)) {
@@ -55,8 +61,9 @@ export function readFile(relativePath: string): string {
   return fs.readFileSync(fullPath, 'utf-8');
 }
 
-export function writeFile(relativePath: string, content: string): void {
-  const fullPath = resolveSecurePath(relativePath);
+export function writeFile(relativePath: string, content: string, userId?: string): void {
+  const uid = userId ?? currentUserId;
+  const fullPath = resolveSecurePath(uid, relativePath);
   validateExtension(fullPath);
 
   const dir = path.dirname(fullPath);
@@ -64,15 +71,17 @@ export function writeFile(relativePath: string, content: string): void {
   fs.writeFileSync(fullPath, content, 'utf-8');
 }
 
-export function deleteFile(relativePath: string): void {
-  const fullPath = resolveSecurePath(relativePath);
+export function deleteFile(relativePath: string, userId?: string): void {
+  const uid = userId ?? currentUserId;
+  const fullPath = resolveSecurePath(uid, relativePath);
   if (fs.existsSync(fullPath)) {
     fs.unlinkSync(fullPath);
   }
 }
 
-export function listFiles(relativePath: string = ''): Array<{ name: string; type: 'file' | 'dir'; path: string }> {
-  const fullPath = resolveSecurePath(relativePath);
+export function listFiles(relativePath: string = '', userId?: string): Array<{ name: string; type: 'file' | 'dir'; path: string }> {
+  const uid = userId ?? currentUserId;
+  const fullPath = resolveSecurePath(uid, relativePath);
   if (!fs.existsSync(fullPath)) return [];
 
   const entries = fs.readdirSync(fullPath, { withFileTypes: true });
@@ -85,9 +94,10 @@ export function listFiles(relativePath: string = ''): Array<{ name: string; type
     }));
 }
 
-export function searchFiles(query: string): Array<{ path: string; matches: string[] }> {
+export function searchFiles(query: string, userId?: string): Array<{ path: string; matches: string[] }> {
+  const uid = userId ?? currentUserId;
   const results: Array<{ path: string; matches: string[] }> = [];
-  const basePath = getWorkspacePath();
+  const basePath = getWorkspacePath(uid);
 
   function walk(dir: string, relBase: string) {
     if (!fs.existsSync(dir)) return;

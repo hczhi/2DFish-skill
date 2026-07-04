@@ -9,6 +9,7 @@ export interface StreamContext {
   model: string;
   messages: ChatCompletionMessageParam[];
   tools?: ChatCompletionTool[];
+  userId?: string;
   onComplete?: (assistantContent: string, totalInput: number, totalOutput: number) => void;
 }
 
@@ -17,7 +18,7 @@ function sendEvent(res: Response, event: string, data: unknown) {
 }
 
 export async function streamWithToolCalls(ctx: StreamContext): Promise<{ content: string; totalInput: number; totalOutput: number }> {
-  const { res, client, model, messages, tools } = ctx;
+  const { res, client, model, messages, tools, userId } = ctx;
   let totalInput = 0;
   let totalOutput = 0;
   let finalContent = '';
@@ -74,7 +75,7 @@ export async function streamWithToolCalls(ctx: StreamContext): Promise<{ content
       for (const tc of toolCalls) {
         const args = JSON.parse(tc.function.arguments);
         sendEvent(res, 'tool_call', { id: tc.id, name: tc.function.name, arguments: args });
-        const result = executeTool(tc.function.name, args);
+        const result = executeTool(tc.function.name, args, userId);
         sendEvent(res, 'tool_result', { id: tc.id, name: tc.function.name, result: result.result, success: result.success });
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result.result });
       }

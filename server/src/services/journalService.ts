@@ -1,6 +1,6 @@
 import { readFile, writeFile } from './fileService.js';
 
-export function appendToJournal(userMessage: string, assistantReply: string): void {
+export function appendToJournal(userMessage: string, assistantReply: string, userId?: string): void {
   const today = new Date().toISOString().split('T')[0];
   const filePath = `journal/${today}.md`;
   const time = new Date().toTimeString().slice(0, 5);
@@ -9,10 +9,10 @@ export function appendToJournal(userMessage: string, assistantReply: string): vo
 
   let existing = '';
   try {
-    existing = readFile(filePath);
+    existing = readFile(filePath, userId);
   } catch {
     existing = `# ${today} 对话记录\n`;
   }
 
-  writeFile(filePath, existing + entry);
+  writeFile(filePath, existing + entry, userId);
 }

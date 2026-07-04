@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { requireAdmin } from '../auth/guards.js';
 import { getDatabase } from '../db/index.js';
+import { generateApiToken, hashApiToken } from '../auth/middleware.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
@@ -26,6 +27,10 @@ adminRouter.post('/users', (req: Request, res: Response) => {
   const { username, password, role = 'user' } = req.body;
   if (!username || !password) {
     res.status(400).json({ error: 'username and password are required' });
+    return;
+  }
+  if (role && !['admin', 'user'].includes(role)) {
+    res.status(400).json({ error: 'role must be "admin" or "user"' });
     return;
   }
 
@@ -82,7 +87,7 @@ adminRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
   }
 
   const hash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE user SET password_hash = ?, updated_at = ? WHERE id = ?')
+  db.prepare('UPDATE user SET password_hash = ?, token_version = COALESCE(token_version, 1) + 1, updated_at = ? WHERE id = ?')
     .run(hash, new Date().toISOString(), req.params.id);
 
   res.json({ success: true });
@@ -131,10 +136,11 @@ adminRouter.patch('/quotas/:userId', (req: Request, res: Response) => {
 
 adminRouter.get('/ai-usage', (req: Request, res: Response) => {
   const { days = '7' } = req.query;
+  const safeDays = Math.min(Math.max(Number(days) || 7, 1), 365);
   const db = getDatabase();
 
   const since = new Date();
-  since.setDate(since.getDate() - Number(days));
+  since.setDate(since.getDate() - safeDays);
   const sinceStr = since.toISOString();
 
   const byUser = db.prepare(`
@@ -164,7 +170,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
     FROM ai_logs WHERE created_at >= ?
   `).get(sinceStr);
 
-  res.json({ byUser, bySource, byDay, total, days: Number(days) });
+  res.json({ byUser, bySource, byDay, total, days: safeDays });
 });
 
 // --- System Config ---
@@ -207,4 +213,165 @@ adminRouter.delete('/config/:key', (req: Request, res: Response) => {
   const db = getDatabase();
   db.prepare('DELETE FROM system_config WHERE key = ?').run(req.params.key);
   res.json({ success: true });
+});
+
+// --- Module Configs ---
+
+adminRouter.get('/modules', (_req: Request, res: Response) => {
+  const db = getDatabase();
+  const modules = db.prepare('SELECT * FROM module_configs ORDER BY created_at ASC').all();
+  res.json({ modules });
+});
+
+adminRouter.patch('/modules/:id', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const existing = db.prepare('SELECT id FROM module_configs WHERE id = ?').get(req.params.id);
+  if (!existing) { res.status(404).json({ error: 'Module not found' }); return; }
+
+  const fields: string[] = [];
+  const values: any[] = [];
+  const allowed = ['name', 'description', 'enabled'];
+
+  for (const field of allowed) {
+    if (req.body[field] !== undefined) {
+      fields.push(`${field} = ?`);
+      values.push(req.body[field]);
+    }
+  }
+
+  if (req.body.allowed_paths !== undefined) {
+    fields.push('allowed_paths = ?');
+    values.push(JSON.stringify(req.body.allowed_paths));
+  }
+
+  if (fields.length === 0) { res.status(400).json({ error: 'no fields' }); return; }
+  values.push(req.params.id);
+  db.prepare(`UPDATE module_configs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+  const updated = db.prepare('SELECT * FROM module_configs WHERE id = ?').get(req.params.id);
+  res.json(updated);
+});
+
+adminRouter.post('/modules', (req: Request, res: Response) => {
+  const { id, name, description, allowed_paths } = req.body;
+  if (!id || !name) { res.status(400).json({ error: 'id and name required' }); return; }
+
+  const db = getDatabase();
+  const existing = db.prepare('SELECT id FROM module_configs WHERE id = ?').get(id);
+  if (existing) { res.status(409).json({ error: 'Module id already exists' }); return; }
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO module_configs (id, name, description, allowed_paths, enabled, created_at)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `).run(id, name, description || '', JSON.stringify(allowed_paths || []), now);
+
+  const created = db.prepare('SELECT * FROM module_configs WHERE id = ?').get(id);
+  res.status(201).json(created);
+});
+
+// --- Module Tokens ---
+
+adminRouter.get('/users/:id/tokens', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const tokens = db.prepare(`
+    SELECT t.*, mc.name as module_name
+    FROM module_tokens t
+    LEFT JOIN module_configs mc ON mc.id = t.module_id
+    WHERE t.user_id = ?
+    ORDER BY t.created_at DESC
+  `).all(req.params.id);
+  res.json({ tokens });
+});
+
+adminRouter.post('/users/:id/tokens', (req: Request, res: Response) => {
+  const { module_id, expires_in_days } = req.body;
+  if (!module_id) { res.status(400).json({ error: 'module_id is required' }); return; }
+
+  const db = getDatabase();
+
+  const user = db.prepare('SELECT id FROM user WHERE id = ?').get(req.params.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  const moduleConfig = db.prepare('SELECT id FROM module_configs WHERE id = ?').get(module_id);
+  if (!moduleConfig) { res.status(400).json({ error: 'Invalid module_id' }); return; }
+
+  const existing = db.prepare('SELECT id FROM module_tokens WHERE user_id = ? AND module_id = ?')
+    .get(req.params.id, module_id);
+  if (existing) { res.status(409).json({ error: 'User already has a token for this module. Revoke it first.' }); return; }
+
+  const token = generateApiToken();
+  const tokenHash = hashApiToken(token);
+  const tokenPrefix = token.slice(0, 12) + '...';
+  const now = new Date().toISOString();
+
+  let expiresAt: string | null = null;
+  if (expires_in_days) {
+    const d = new Date();
+    d.setDate(d.getDate() + parseInt(expires_in_days, 10));
+    expiresAt = d.toISOString();
+  }
+
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO module_tokens (id, user_id, module_id, token_hash, token_prefix, enabled, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+  `).run(id, req.params.id, module_id, tokenHash, tokenPrefix, expiresAt, now);
+
+  res.status(201).json({
+    id, module_id, token, token_prefix: tokenPrefix,
+    expires_at: expiresAt, created_at: now,
+    warning: 'Save this token now. It will not be shown again.',
+  });
+});
+
+adminRouter.patch('/tokens/:id', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const existing = db.prepare('SELECT id FROM module_tokens WHERE id = ?').get(req.params.id);
+  if (!existing) { res.status(404).json({ error: 'Token not found' }); return; }
+
+  const { enabled } = req.body;
+  if (enabled === undefined) { res.status(400).json({ error: 'enabled field required' }); return; }
+
+  db.prepare('UPDATE module_tokens SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, req.params.id);
+  res.json({ success: true });
+});
+
+adminRouter.delete('/tokens/:id', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const result = db.prepare('DELETE FROM module_tokens WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) { res.status(404).json({ error: 'Token not found' }); return; }
+  res.json({ success: true });
+});
+
+// --- Token Access Logs ---
+
+adminRouter.get('/users/:id/token-logs', (req: Request, res: Response) => {
+  const { module_id, days = '7', limit = '100' } = req.query;
+  const safeDays = Math.min(Math.max(Number(days) || 7, 1), 365);
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  const db = getDatabase();
+
+  const since = new Date();
+  since.setDate(since.getDate() - safeDays);
+  const sinceStr = since.toISOString();
+
+  let query = `
+    SELECT l.*, mc.name as module_name
+    FROM token_access_logs l
+    LEFT JOIN module_configs mc ON mc.id = l.module_id
+    WHERE l.user_id = ? AND l.created_at >= ?
+  `;
+  const params: any[] = [req.params.id, sinceStr];
+
+  if (module_id) {
+    query += ' AND l.module_id = ?';
+    params.push(module_id);
+  }
+
+  query += ' ORDER BY l.created_at DESC LIMIT ?';
+  params.push(safeLimit);
+
+  const logs = db.prepare(query).all(...params);
+  res.json({ logs });
 });

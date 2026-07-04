@@ -106,11 +106,11 @@ consultantRouter.post('/stream', async (req: Request, res: Response) => {
       { userId, source: 'consultant', operation: 'stream', requestSummary: message.slice(0, 50) }
     );
 
-    const { client } = resolveLLMConfig(userId);
+    const { client } = resolveLLMConfig();
     const startTime = Date.now();
 
     const { content, totalInput, totalOutput } = await streamWithToolCalls({
-      res, client, model, messages: fullMessages, tools: toolDefinitions,
+      res, client, model, messages: fullMessages, tools: toolDefinitions, userId,
     });
 
     if (content) {

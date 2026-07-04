@@ -9,10 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "dompurify": "^3.4.11",
     "vue": "^3.4.0",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.2.0",
     "@vitejs/plugin-vue": "^5.0.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.0",

@@ -48,13 +48,16 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>, pagePath: string): string {
+function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>, pagePath: string, locale?: string): string {
   const siteUrl = globals.site_url || '';
   const siteName = globals.site_name || 'QiaoNan';
   const title = page?.title || `${siteName} - AI 效率工具平台`;
   const description = page?.description || globals.site_description || '';
   const ogImage = page?.og_image || globals.default_og_image || '';
   const canonical = page?.canonical || (siteUrl ? `${siteUrl}${pagePath}` : '');
+
+  // Determine locale from parameter or path
+  const resolvedLocale = locale || (pagePath.startsWith('/en') ? 'en' : 'zh');
 
   let meta = `<title>${escapeHtml(title)}</title>\n`;
   meta += `    <meta name="description" content="${escapeHtml(description)}" />\n`;
@@ -68,6 +71,8 @@ function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>,
   if (siteUrl) meta += `    <meta property="og:url" content="${escapeHtml(siteUrl + pagePath)}" />\n`;
   if (ogImage) meta += `    <meta property="og:image" content="${escapeHtml(ogImage)}" />\n`;
   meta += `    <meta property="og:site_name" content="${escapeHtml(siteName)}" />\n`;
+  meta += `    <meta property="og:locale" content="${resolvedLocale === 'zh' ? 'zh_CN' : 'en_US'}" />\n`;
+  meta += `    <meta property="og:locale:alternate" content="${resolvedLocale === 'zh' ? 'en_US' : 'zh_CN'}" />\n`;
 
   meta += `    <meta name="twitter:card" content="summary_large_image" />\n`;
   meta += `    <meta name="twitter:title" content="${escapeHtml(page?.og_title || title)}" />\n`;
@@ -77,7 +82,10 @@ function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>,
   if (globals.google_verification) meta += `    <meta name="google-site-verification" content="${escapeHtml(globals.google_verification)}" />\n`;
   if (globals.bing_verification) meta += `    <meta name="msvalidate.01" content="${escapeHtml(globals.bing_verification)}" />\n`;
 
-  if (page?.json_ld) meta += `    <script type="application/ld+json">${page.json_ld}</script>\n`;
+  if (page?.json_ld) {
+    const safeJsonLd = page.json_ld.replace(/<\//g, '<\\/');
+    meta += `    <script type="application/ld+json">${safeJsonLd}</script>\n`;
+  }
 
   return meta;
 }
@@ -108,7 +116,7 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discove
         </div>
         <div class="card-content">
           <div class="card-header">
-            <span class="icon">${item.icon}</span>
+            <span class="icon">${escapeHtml(item.icon)}</span>
           </div>
           <div class="card-body">
             <h2 class="card-title">${escapeHtml(item.title)}</h2>
@@ -123,7 +131,7 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discove
     if (!article.title) return '';
     return `        <a href="/discover/${escapeHtml(article.slug)}" class="feed-card">
           <div class="feed-image" style="height: 220px; background: ${escapeHtml(article.bg_color)}">
-            <span class="feed-emoji">${article.icon}</span>
+            <span class="feed-emoji">${escapeHtml(article.icon)}</span>
           </div>
           <div class="feed-info">
             <h3 class="feed-text">${escapeHtml(article.title)}</h3>
@@ -142,7 +150,7 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discove
     const hrefAttr = feed.link ? ` href="${escapeHtml(feed.link)}" target="_blank"` : '';
     return `        <${tag}${hrefAttr} class="feed-card">
           <div class="feed-image" style="height: ${feed.image_height}px; background: ${escapeHtml(feed.bg_color)}">
-            <span class="feed-emoji">${feed.icon}</span>
+            <span class="feed-emoji">${escapeHtml(feed.icon)}</span>
           </div>
           <div class="feed-info">
             <h3 class="feed-text">${escapeHtml(feed.title)}</h3>
@@ -165,19 +173,24 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discove
 
   return `
     <div class="ssg-home-content" id="ssg-content">
-      <div class="bento-grid">
+      <main>
+        <nav class="bento-grid">
 ${moduleCards}
-      </div>
-      ${hasFeedContent ? `
-      <div class="ultra-wide-feed">
-        <div class="feed-header">
-          <h2 class="feed-title">DISCOVER</h2>
-          <span class="feed-subtitle">Personalized Content Recommendations</span>
-        </div>
-        <div class="feed-masonry">
+        </nav>
+        ${hasFeedContent ? `
+        <div class="ultra-wide-feed">
+          <div class="feed-header">
+            <h2 class="feed-title">DISCOVER</h2>
+            <span class="feed-subtitle">Personalized Content Recommendations</span>
+          </div>
+          <div class="feed-masonry">
 ${allFeedCards}
-        </div>
-      </div>` : ''}
+          </div>
+        </div>` : ''}
+      </main>
+      <footer>
+        <p>&copy; ${new Date().getFullYear()} QiaoNan. All rights reserved.</p>
+      </footer>
     </div>`;
 }
 
@@ -197,6 +210,8 @@ interface DiscoverArticle {
   bg_color: string;
   avatar_color: string;
   visible_locales: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface DiscoverArticleContent {
@@ -263,7 +278,10 @@ export function generateStaticPages(): SSGResult {
 
   for (const hp of homepageLocales) {
     try {
-      const homeSeo = seoPages.find(p => p.path === hp.pagePath) || seoPages.find(p => p.path === '/') || null;
+      const homeSeo = seoPages.find(p => p.path === '/' && (p as any).locale === hp.locale)
+        || seoPages.find(p => p.path === hp.pagePath)
+        || seoPages.find(p => p.path === '/')
+        || null;
 
       const discoverArticles = db.prepare(`
         SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, c.title, c.summary
@@ -275,7 +293,7 @@ export function generateStaticPages(): SSGResult {
 
       let html = baseHtml;
       const metaTags = buildSeoMetaTags(homeSeo, globals, hp.pagePath);
-      const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en" />\n`;
+      const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en" />\n    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/" />\n`;
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
       const homepageContent = renderHomepageContent(modules, feeds, discoverArticles);
@@ -294,96 +312,50 @@ export function generateStaticPages(): SSGResult {
   }
 
   // Generate sub-pages — write to client/dist/{path}/index.html
+  // Group pages by path to generate locale variants
+  const pagesByPath: Record<string, SeoPage[]> = {};
   for (const page of seoPages) {
     if (page.path === '/') continue;
+    if (!pagesByPath[page.path]) pagesByPath[page.path] = [];
+    pagesByPath[page.path].push(page);
+  }
 
-    try {
-      let html = baseHtml;
-      const metaTags = buildSeoMetaTags(page, globals, page.path);
-      html = html.replace(/<title>.*?<\/title>/, metaTags);
+  for (const [pagePath, localePages] of Object.entries(pagesByPath)) {
+    for (const page of localePages) {
+      const locale = (page as any).locale || 'zh';
+      try {
+        let html = baseHtml;
+        const outputPath = locale === 'zh' ? pagePath : `/en${pagePath}`;
+        const metaTags = buildSeoMetaTags(page, globals, outputPath);
 
-      const pagePath = page.path.replace(/^\//, '');
-      const dir = path.join(CLIENT_DIST, pagePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+        const zhPage = localePages.find((p: any) => (p as any).locale === 'zh' || !(p as any).locale);
+        const enPage = localePages.find((p: any) => (p as any).locale === 'en');
+        let hreflangTags = '';
+        if (zhPage && enPage) {
+          hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}${pagePath}" />\n`;
+          hreflangTags += `    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en${pagePath}" />\n`;
+          hreflangTags += `    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}${pagePath}" />\n`;
+        }
+
+        html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
+
+        const diskPath = outputPath.replace(/^\//, '');
+        const dir = path.join(CLIENT_DIST, diskPath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(dir, 'index.html'), html, 'utf-8');
+        result.generated.push(outputPath);
+      } catch (e: any) {
+        result.errors.push(`${pagePath} (${locale}): ${e.message}`);
       }
-      fs.writeFileSync(path.join(dir, 'index.html'), html, 'utf-8');
-      result.generated.push(page.path);
-    } catch (e: any) {
-      result.errors.push(`${page.path}: ${e.message}`);
     }
   }
 
-  // Generate robots.txt
-  try {
-    const siteUrl = globals.site_url || 'https://your-domain.com';
-    const robotsTxt = `User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /admin/
-Disallow: /settings/
-Disallow: /synap/
-
-Sitemap: ${siteUrl}/sitemap.xml
-`;
-    fs.writeFileSync(path.join(CLIENT_DIST, 'robots.txt'), robotsTxt, 'utf-8');
-    result.generated.push('/robots.txt');
-  } catch (e: any) {
-    result.errors.push(`/robots.txt: ${e.message}`);
-  }
-
-  // Generate sitemap.xml
-  try {
-    const siteUrl = globals.site_url || 'https://your-domain.com';
-    const indexablePages = db.prepare(
-      'SELECT path, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC'
-    ).all() as Array<{ path: string; priority: number; changefreq: string; updated_at: string }>;
-
-    const urls = indexablePages.map(p => `  <url>
-    <loc>${siteUrl}${p.path}</loc>
-    <lastmod>${p.updated_at.split('T')[0]}</lastmod>
-    <changefreq>${p.changefreq}</changefreq>
-    <priority>${p.priority}</priority>
-  </url>`).join('\n');
-
-    // Include discover articles in sitemap
-    const publishedArticles = db.prepare(`
-      SELECT slug, visible_locales, updated_at FROM discover_articles
-      WHERE status = 'published' AND visible_locales != '[]'
-      ORDER BY sort_order ASC
-    `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
-
-    // English homepage
-    const enHomepageUrl = `  <url>
-    <loc>${siteUrl}/en</loc>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>`;
-
-    const articleUrls = publishedArticles.flatMap(a => {
-      const locales: string[] = JSON.parse(a.visible_locales || '[]');
-      return locales.map(locale => {
-        const articlePath = locale === 'zh' ? `/discover/${a.slug}` : `/${locale}/discover/${a.slug}`;
-        return `  <url>
-    <loc>${siteUrl}${articlePath}</loc>
-    <lastmod>${a.updated_at.split('T')[0]}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.6</priority>
-  </url>`;
-      });
-    }).join('\n');
-
-    const allUrls = [urls, enHomepageUrl, articleUrls].filter(Boolean).join('\n');
-
-    const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${allUrls}
-</urlset>`;
-    fs.writeFileSync(path.join(CLIENT_DIST, 'sitemap.xml'), sitemapXml, 'utf-8');
-    result.generated.push('/sitemap.xml');
-  } catch (e: any) {
-    result.errors.push(`/sitemap.xml: ${e.message}`);
-  }
+  // Generate robots.txt and sitemap.xml
+  const sitemapResult = regenerateSitemapAndRobots();
+  result.generated.push(...sitemapResult.generated);
+  result.errors.push(...sitemapResult.errors);
 
   if (result.errors.length > 0) {
     result.success = false;
@@ -407,7 +379,7 @@ function renderArticleContent(article: DiscoverArticle, content: DiscoverArticle
           <h2>${locale === 'en' ? 'Recommended' : '热门推荐'}</h2>
           <div class="rec-grid">
 ${recommendations.map(r => `            <a href="${locale === 'zh' ? `/discover/${escapeHtml(r.slug)}` : `/${locale}/discover/${escapeHtml(r.slug)}`}" class="rec-card">
-              <div class="rec-icon" style="background: ${escapeHtml(r.bg_color)}">${r.icon}</div>
+              <div class="rec-icon" style="background: ${escapeHtml(r.bg_color)}">${escapeHtml(r.icon)}</div>
               <div class="rec-info">
                 <h3>${escapeHtml(r.title)}</h3>
                 <p>${escapeHtml(r.summary || '')}</p>
@@ -418,17 +390,225 @@ ${recommendations.map(r => `            <a href="${locale === 'zh' ? `/discover/
 
   return `
     <div class="ssg-article-content" id="ssg-content">
-      <article class="discover-article">
-        <header class="article-header">
-          <h1>${escapeHtml(content.title)}</h1>
-          <div class="article-meta">
-            <span class="article-author">${escapeHtml(article.author)}</span>
+      <main>
+        <article class="discover-article">
+          <header class="article-header">
+            <h1>${escapeHtml(content.title)}</h1>
+            <div class="article-meta">
+              <span class="article-author">${escapeHtml(article.author)}</span>
+            </div>
+          </header>
+          <div class="article-body">${content.content}</div>
+${recsHtml}
+        </article>
+      </main>
+    </div>`;
+}
+
+export function deleteArticleStaticPages(slug: string, locales: string[]): { deleted: string[], errors: string[] } {
+  const deleted: string[] = [];
+  const errors: string[] = [];
+
+  for (const locale of locales) {
+    const pagePath = locale === 'zh' ? `discover/${slug}` : `${locale}/discover/${slug}`;
+    const dir = path.join(CLIENT_DIST, pagePath);
+
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true });
+        deleted.push(`/${pagePath}`);
+      }
+    } catch (e: any) {
+      errors.push(`${pagePath}: ${e.message}`);
+    }
+  }
+
+  return { deleted, errors };
+}
+
+interface DiscoverTopic {
+  id: string;
+  slug: string;
+  cover_image: string;
+  icon: string;
+  bg_color: string;
+  template: string;
+  visible_locales: string;
+}
+
+interface DiscoverTopicContent {
+  locale: string;
+  title: string;
+  description: string;
+  seo_title: string;
+  seo_description: string;
+  seo_keywords: string;
+}
+
+function renderTopicContent(topic: DiscoverTopic, content: DiscoverTopicContent, locale: string, articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>): string {
+  const articlesHtml = articles.map(a => `            <a href="${locale === 'zh' ? `/discover/${escapeHtml(a.slug)}` : `/${locale}/discover/${escapeHtml(a.slug)}`}" class="topic-article-card">
+              <div class="topic-article-icon" style="background: ${escapeHtml(a.bg_color)}">${escapeHtml(a.icon)}</div>
+              <div class="topic-article-info">
+                <h3>${escapeHtml(a.title)}</h3>
+                <p>${escapeHtml(a.summary || '')}</p>
+                <span class="topic-article-author">${escapeHtml(a.author)}</span>
+              </div>
+            </a>`).join('\n');
+
+  return `
+    <div class="ssg-topic-content" id="ssg-content">
+      <div class="topic-page">
+        <header class="topic-header" style="background: ${escapeHtml(topic.bg_color)}">
+          ${topic.cover_image ? `<img src="${escapeHtml(topic.cover_image)}" class="topic-cover" alt="${escapeHtml(content.title)}" />` : ''}
+          <div class="topic-header-content">
+            ${topic.icon ? `<span class="topic-icon">${escapeHtml(topic.icon)}</span>` : ''}
+            <h1>${escapeHtml(content.title)}</h1>
+            <p class="topic-desc">${escapeHtml(content.description)}</p>
           </div>
         </header>
-        <div class="article-body">${content.content}</div>
-${recsHtml}
-      </article>
+        <section class="topic-articles">
+          <div class="topic-articles-grid">
+${articlesHtml}
+          </div>
+        </section>
+      </div>
     </div>`;
+}
+
+export function deleteTopicStaticPages(slug: string, locales: string[]): { deleted: string[], errors: string[] } {
+  const deleted: string[] = [];
+  const errors: string[] = [];
+
+  for (const locale of locales) {
+    const pagePath = locale === 'zh' ? `discover/topic/${slug}` : `${locale}/discover/topic/${slug}`;
+    const dir = path.join(CLIENT_DIST, pagePath);
+
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true });
+        deleted.push(`/${pagePath}`);
+      }
+    } catch (e: any) {
+      errors.push(`${pagePath}: ${e.message}`);
+    }
+  }
+
+  return { deleted, errors };
+}
+
+export function generateTopicPage(topic: DiscoverTopic, contents: DiscoverTopicContent[], locales: string[]): SSGResult {
+  const result: SSGResult = { success: true, generated: [], errors: [], outputDir: CLIENT_DIST };
+
+  if (!fs.existsSync(CLIENT_DIST)) {
+    result.success = false;
+    result.errors.push('client/dist/ not found. Run client build first.');
+    return result;
+  }
+
+  const baseHtml = getBaseTemplate();
+  if (!baseHtml) {
+    result.success = false;
+    result.errors.push('index.html template not found. Run client build first.');
+    return result;
+  }
+
+  const db = getDatabase();
+  const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
+  const globals: Record<string, string> = {};
+  for (const r of globalRows) globals[r.key] = r.value;
+
+  const siteUrl = globals.site_url || '';
+
+  for (const locale of locales) {
+    const content = contents.find(c => c.locale === locale);
+    if (!content || !content.title) continue;
+
+    const articles = db.prepare(`
+      SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, ac.title, ac.summary
+      FROM discover_articles a
+      LEFT JOIN discover_article_contents ac ON ac.article_id = a.id AND ac.locale = ?
+      WHERE a.topic_id = ? AND a.status = 'published'
+        AND a.visible_locales LIKE '%"' || ? || '"%'
+      ORDER BY a.sort_order ASC, a.created_at DESC
+    `).all(locale, topic.id, locale) as Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>;
+
+    try {
+      const isDefault = locale === 'zh';
+      const pagePath = isDefault
+        ? `/discover/topic/${topic.slug}`
+        : `/${locale}/discover/topic/${topic.slug}`;
+
+      const seoPage: SeoPage = {
+        path: pagePath,
+        title: content.seo_title || content.title,
+        description: content.seo_description || content.description,
+        keywords: content.seo_keywords || '',
+        og_title: content.seo_title || content.title,
+        og_description: content.seo_description || content.description,
+        og_image: topic.cover_image || '',
+        canonical: siteUrl ? `${siteUrl}${pagePath}` : '',
+        no_index: 0,
+        json_ld: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          'name': content.title,
+          'description': content.description,
+        }),
+      };
+
+      let html = baseHtml;
+      const metaTags = buildSeoMetaTags(seoPage, globals, pagePath);
+
+      let hreflangTags = '';
+      const zhContent = contents.find(c => c.locale === 'zh');
+      const enContent = contents.find(c => c.locale === 'en');
+      if (zhContent && locales.includes('zh')) {
+        hreflangTags += `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/discover/topic/${topic.slug}" />\n`;
+      }
+      if (enContent && locales.includes('en')) {
+        hreflangTags += `    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en/discover/topic/${topic.slug}" />\n`;
+      }
+      hreflangTags += `    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/discover/topic/${topic.slug}" />\n`;
+
+      const topicBreadcrumbLd = JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        'itemListElement': [
+          { '@type': 'ListItem', 'position': 1, 'name': locale === 'zh' ? '首页' : 'Home', 'item': siteUrl + (locale === 'zh' ? '/' : '/en') },
+          { '@type': 'ListItem', 'position': 2, 'name': 'Discover', 'item': siteUrl + (locale === 'zh' ? '/discover' : '/en/discover') },
+          { '@type': 'ListItem', 'position': 3, 'name': content.title },
+        ],
+      });
+      const topicBreadcrumbScript = `    <script type="application/ld+json">${topicBreadcrumbLd.replace(/<\//g, '<\\/')}</script>\n`;
+
+      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags + topicBreadcrumbScript);
+
+      const topicHtml = renderTopicContent(topic, content, locale, articles);
+      html = html.replace('<div id="app"></div>', `<div id="app">${topicHtml}</div>`);
+
+      const dir = path.join(CLIENT_DIST, pagePath.replace(/^\//, ''));
+      const resolved = path.resolve(dir);
+      if (!resolved.startsWith(path.resolve(CLIENT_DIST))) {
+        throw new Error('Invalid slug: path traversal detected');
+      }
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(dir, 'index.html'), html, 'utf-8');
+      result.generated.push(pagePath);
+    } catch (e: any) {
+      result.errors.push(`${locale}: ${e.message}`);
+    }
+  }
+
+  // Auto-update sitemap when a topic is generated
+  regenerateSitemapAndRobots();
+
+  if (result.errors.length > 0) {
+    result.success = false;
+  }
+
+  return result;
 }
 
 export function generateArticlePage(article: DiscoverArticle, contents: DiscoverArticleContent[], locales: string[]): SSGResult {
@@ -492,8 +672,17 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
           '@context': 'https://schema.org',
           '@type': 'Article',
           'headline': content.title,
-          'author': { '@type': 'Person', 'name': article.author },
-          'description': content.summary,
+          'description': content.seo_description || content.summary,
+          'author': { '@type': 'Person', 'name': article.author || 'QiaoNan' },
+          'publisher': {
+            '@type': 'Organization',
+            'name': 'QiaoNan',
+            'logo': { '@type': 'ImageObject', 'url': siteUrl + '/logo.png' },
+          },
+          'datePublished': article.created_at,
+          'dateModified': article.updated_at,
+          'image': article.cover_image || siteUrl + '/og-default.png',
+          'mainEntityOfPage': { '@type': 'WebPage', '@id': siteUrl + pagePath },
         }),
       };
 
@@ -509,13 +698,29 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
       if (enContent && locales.includes('en')) {
         hreflangTags += `    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en/discover/${article.slug}" />\n`;
       }
+      hreflangTags += `    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/discover/${article.slug}" />\n`;
 
-      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
+      const breadcrumbLd = JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        'itemListElement': [
+          { '@type': 'ListItem', 'position': 1, 'name': locale === 'zh' ? '首页' : 'Home', 'item': siteUrl + (locale === 'zh' ? '/' : '/en') },
+          { '@type': 'ListItem', 'position': 2, 'name': 'Discover', 'item': siteUrl + (locale === 'zh' ? '/discover' : '/en/discover') },
+          { '@type': 'ListItem', 'position': 3, 'name': content.title },
+        ],
+      });
+      const breadcrumbScript = `    <script type="application/ld+json">${breadcrumbLd.replace(/<\//g, '<\\/')}</script>\n`;
+
+      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags + breadcrumbScript);
 
       const articleHtml = renderArticleContent(article, content, locale, recommendations);
       html = html.replace('<div id="app"></div>', `<div id="app">${articleHtml}</div>`);
 
       const dir = path.join(CLIENT_DIST, pagePath.replace(/^\//, ''));
+      const resolved = path.resolve(dir);
+      if (!resolved.startsWith(path.resolve(CLIENT_DIST))) {
+        throw new Error('Invalid slug: path traversal detected');
+      }
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
@@ -526,10 +731,152 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
     }
   }
 
+  // Auto-update sitemap when an article is generated
+  regenerateSitemapAndRobots();
+
   if (result.errors.length > 0) {
     result.success = false;
   }
 
   return result;
+}
+
+export function regenerateSitemapAndRobots(): { generated: string[]; errors: string[] } {
+  const generated: string[] = [];
+  const errors: string[] = [];
+
+  if (!fs.existsSync(CLIENT_DIST)) {
+    errors.push('client/dist/ not found.');
+    return { generated, errors };
+  }
+
+  const db = getDatabase();
+  const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
+  const globals: Record<string, string> = {};
+  for (const r of globalRows) globals[r.key] = r.value;
+  const siteUrl = globals.site_url || 'https://your-domain.com';
+
+  // robots.txt
+  try {
+    const robotsTxt = `User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /settings/
+Disallow: /synap/
+
+Sitemap: ${siteUrl}/sitemap.xml
+`;
+    fs.writeFileSync(path.join(CLIENT_DIST, 'robots.txt'), robotsTxt, 'utf-8');
+    generated.push('/robots.txt');
+  } catch (e: any) {
+    errors.push(`/robots.txt: ${e.message}`);
+  }
+
+  // sitemap.xml
+  try {
+    const indexablePages = db.prepare(
+      'SELECT path, locale, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC'
+    ).all() as Array<{ path: string; locale: string; priority: number; changefreq: string; updated_at: string }>;
+
+    const urls = indexablePages.map(p => {
+      const fullPath = (p.locale && p.locale !== 'zh') ? `/en${p.path}` : p.path;
+      return `  <url>
+    <loc>${siteUrl}${fullPath}</loc>
+    <lastmod>${p.updated_at.split('T')[0]}</lastmod>
+    <changefreq>${p.changefreq}</changefreq>
+    <priority>${p.priority}</priority>
+  </url>`;
+    }).join('\n');
+
+    const publishedArticles = db.prepare(`
+      SELECT slug, visible_locales, updated_at FROM discover_articles
+      WHERE status = 'published' AND visible_locales != '[]'
+      ORDER BY sort_order ASC
+    `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
+
+    const enHomepageUrl = `  <url>
+    <loc>${siteUrl}/en</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>`;
+
+    const discoverListUrls = `  <url>
+    <loc>${siteUrl}/discover</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/en/discover</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>`;
+
+    const articleUrls = publishedArticles.flatMap(a => {
+      const locales: string[] = JSON.parse(a.visible_locales || '[]');
+      return locales.map(locale => {
+        const articlePath = locale === 'zh' ? `/discover/${a.slug}` : `/${locale}/discover/${a.slug}`;
+        return `  <url>
+    <loc>${siteUrl}${articlePath}</loc>
+    <lastmod>${a.updated_at.split('T')[0]}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>`;
+      });
+    }).join('\n');
+
+    const publishedTopics = db.prepare(`
+      SELECT slug, visible_locales, updated_at FROM discover_topics
+      WHERE status = 'published' AND visible_locales != '[]'
+      ORDER BY sort_order ASC
+    `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
+
+    const topicUrls = publishedTopics.flatMap(t => {
+      const locales: string[] = JSON.parse(t.visible_locales || '[]');
+      return locales.map(locale => {
+        const topicPath = locale === 'zh' ? `/discover/topic/${t.slug}` : `/${locale}/discover/topic/${t.slug}`;
+        return `  <url>
+    <loc>${siteUrl}${topicPath}</loc>
+    <lastmod>${t.updated_at.split('T')[0]}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>`;
+      });
+    }).join('\n');
+
+    const privacyTermsUrls = `  <url>
+    <loc>${siteUrl}/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/en/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/terms</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/en/terms</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>`;
+
+    const allUrls = [urls, enHomepageUrl, discoverListUrls, topicUrls, articleUrls, privacyTermsUrls].filter(Boolean).join('\n');
+
+    const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${allUrls}
+</urlset>`;
+    fs.writeFileSync(path.join(CLIENT_DIST, 'sitemap.xml'), sitemapXml, 'utf-8');
+    generated.push('/sitemap.xml');
+  } catch (e: any) {
+    errors.push(`/sitemap.xml: ${e.message}`);
+  }
+
+  return { generated, errors };
 }
 

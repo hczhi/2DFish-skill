@@ -77,9 +77,11 @@
   </div>
 </template>
 
+
 <style scoped>
 .synap-app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
   background: var(--bg);

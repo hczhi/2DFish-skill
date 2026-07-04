@@ -69,7 +69,7 @@ function close() {
 .hc-modal-container {
   background: #ffffff;
   width: 100%;
-  border-radius: 20px;
+  border-radius: 10px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.04);
   position: relative;
   display: flex;

@@ -57,51 +57,55 @@
 
     <div class="section">
       <h2 class="section-title">热门页面 TOP 20</h2>
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>页面</th>
-            <th>PV</th>
-            <th>UV</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in stats.top_pages" :key="p.path">
-            <td class="path-cell">{{ p.path }}</td>
-            <td>{{ p.pv }}</td>
-            <td>{{ p.uv }}</td>
-          </tr>
-          <tr v-if="!stats.top_pages?.length">
-            <td colspan="3" class="empty-cell">暂无数据</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container">
+        <table class="hc-table">
+          <thead>
+            <tr>
+              <th>页面</th>
+              <th>PV</th>
+              <th>UV</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in stats.top_pages" :key="p.path">
+              <td class="path-cell">{{ p.path }}</td>
+              <td>{{ p.pv }}</td>
+              <td>{{ p.uv }}</td>
+            </tr>
+            <tr v-if="!stats.top_pages?.length">
+              <td colspan="3" class="empty-cell">暂无数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="section">
       <h2 class="section-title">实时访问</h2>
-      <button class="btn-sm" @click="loadRecent" :disabled="loadingRecent">刷新</button>
-      <table class="data-table" style="margin-top: 12px;">
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>页面</th>
-            <th>IP</th>
-            <th>来源</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(r, i) in recentViews" :key="i">
-            <td class="time-cell">{{ formatTime(r.created_at) }}</td>
-            <td class="path-cell">{{ r.path }}</td>
-            <td>{{ r.ip }}</td>
-            <td class="ref-cell">{{ shortRef(r.referrer) }}</td>
-          </tr>
-          <tr v-if="!recentViews.length">
-            <td colspan="4" class="empty-cell">暂无数据</td>
-          </tr>
-        </tbody>
-      </table>
+      <button class="hc-btn hc-btn-secondary hc-btn-sm" @click="loadRecent" :disabled="loadingRecent">刷新</button>
+      <div class="hc-table-container" style="margin-top: 12px;">
+        <table class="hc-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>页面</th>
+              <th>IP</th>
+              <th>来源</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(r, i) in recentViews" :key="i">
+              <td class="time-cell">{{ formatTime(r.created_at) }}</td>
+              <td class="path-cell">{{ r.path }}</td>
+              <td>{{ r.ip }}</td>
+              <td class="ref-cell">{{ shortRef(r.referrer) }}</td>
+            </tr>
+            <tr v-if="!recentViews.length">
+              <td colspan="4" class="empty-cell">暂无数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </template>
@@ -214,15 +218,20 @@ onMounted(() => {
 .header-actions { display: flex; gap: 12px; align-items: center; }
 
 .days-select {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 8px 12px;
-  border: 2px solid var(--c-text-main);
-  border-radius: 0;
-  background: #fff;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
   cursor: pointer;
-  text-transform: uppercase;
-  font-weight: bold;
+  color: #374151;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.days-select:hover {
+  background: #ffffff;
+  border-color: #3B5BDB;
 }
 
 .stats-overview {
@@ -233,34 +242,39 @@ onMounted(() => {
 }
 
 .stat-card {
-  background: #fff;
-  border: 2px solid var(--c-text-main);
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
   padding: 24px;
   text-align: center;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
 }
 .stat-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
   color: var(--c-text-sub);
   margin-bottom: 8px;
 }
 .stat-value {
-  font-family: var(--font-serif);
-  font-size: 36px;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 32px;
   font-weight: 700;
-  color: var(--c-text-main);
+  color: #3B5BDB;
 }
 
 .section-title {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans, sans-serif);
   font-size: 20px;
   font-weight: 700;
   margin: 0 0 16px;
   padding-bottom: 8px;
-  border-bottom: 2px solid var(--c-text-main);
-  text-transform: uppercase;
+  border-bottom: 1px solid #e5e7eb;
 }
 
 .chart-section {
@@ -268,8 +282,10 @@ onMounted(() => {
 }
 
 .chart-container {
-  background: #fff;
-  border: 2px solid var(--c-text-main);
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.04);
   padding: 24px;
 }
 

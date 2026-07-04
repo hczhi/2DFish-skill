@@ -1,5 +1,6 @@
-import { getToken } from './auth';
+import { getToken, clearToken } from './auth';
 import { handleQuotaExceeded } from './quota';
+import { openLoginModal } from './loginModal';
 
 export async function api(url: string, options: RequestInit = {}): Promise<Response> {
   const token = getToken();
@@ -10,6 +11,11 @@ export async function api(url: string, options: RequestInit = {}): Promise<Respo
   }
 
   const response = await fetch(url, { ...options, headers });
+
+  if (response.status === 401) {
+    clearToken();
+    openLoginModal(window.location.pathname, 'ai');
+  }
 
   if (response.status === 429) {
     const data = await response.clone().json().catch(() => ({}));

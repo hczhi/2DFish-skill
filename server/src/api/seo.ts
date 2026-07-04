@@ -9,11 +9,16 @@ export const seoRouter = Router();
 
 // Get SEO for a specific path
 seoRouter.get('/page', (req: Request, res: Response) => {
-  const { path } = req.query;
+  const { path, locale } = req.query;
   if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path query required' }); return; }
 
+  const reqLocale = (locale as string) || 'zh';
   const db = getDatabase();
-  const page = db.prepare('SELECT * FROM seo_pages WHERE path = ?').get(path);
+
+  let page = db.prepare('SELECT * FROM seo_pages WHERE path = ? AND locale = ?').get(path, reqLocale);
+  if (!page && reqLocale !== 'zh') {
+    page = db.prepare('SELECT * FROM seo_pages WHERE path = ? AND locale = ?').get(path, 'zh');
+  }
   const globals = getGlobals(db);
 
   if (!page) {
@@ -52,18 +57,21 @@ Sitemap: ${siteUrl}/sitemap.xml
 // Dynamic sitemap.xml
 seoRouter.get('/sitemap.xml', (_req: Request, res: Response) => {
   const db = getDatabase();
-  const pages = db.prepare('SELECT path, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC').all() as Array<{
-    path: string; priority: number; changefreq: string; updated_at: string;
+  const pages = db.prepare('SELECT path, locale, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC').all() as Array<{
+    path: string; locale: string; priority: number; changefreq: string; updated_at: string;
   }>;
   const globals = getGlobals(db);
   const siteUrl = globals.site_url || 'https://your-domain.com';
 
-  const urls = pages.map(p => `  <url>
-    <loc>${siteUrl}${p.path}</loc>
+  const urls = pages.map(p => {
+    const fullPath = (p.locale && p.locale !== 'zh') ? `/en${p.path}` : p.path;
+    return `  <url>
+    <loc>${siteUrl}${fullPath}</loc>
     <lastmod>${p.updated_at.split('T')[0]}</lastmod>
     <changefreq>${p.changefreq}</changefreq>
     <priority>${p.priority}</priority>
-  </url>`).join('\n');
+  </url>`;
+  }).join('\n');
 
   res.setHeader('Content-Type', 'application/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
@@ -77,27 +85,28 @@ ${urls}
 seoRouter.get('/admin/pages', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
-  const pages = db.prepare('SELECT * FROM seo_pages ORDER BY priority DESC, path ASC').all();
+  const pages = db.prepare('SELECT * FROM seo_pages ORDER BY path ASC, locale ASC').all();
   res.json(pages);
 });
 
 seoRouter.post('/admin/pages', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
-  const { path, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq } = req.body;
+  const { path, locale, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq } = req.body;
   if (!path || !title) { res.status(400).json({ error: 'path and title required' }); return; }
 
+  const pageLocale = locale || 'zh';
   const db = getDatabase();
-  const existing = db.prepare('SELECT id FROM seo_pages WHERE path = ?').get(path);
-  if (existing) { res.status(409).json({ error: 'path already exists' }); return; }
+  const existing = db.prepare('SELECT id FROM seo_pages WHERE path = ? AND locale = ?').get(path, pageLocale);
+  if (existing) { res.status(409).json({ error: 'path+locale already exists' }); return; }
 
   const now = new Date().toISOString();
   const id = uuidv4();
 
   db.prepare(`
-    INSERT INTO seo_pages (id, path, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, path, title, description || '', keywords || '', og_title || '', og_description || '', og_image || '', canonical || '', no_index ? 1 : 0, json_ld || '', priority ?? 0.5, changefreq || 'weekly', now, now);
+    INSERT INTO seo_pages (id, path, locale, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, path, pageLocale, title, description || '', keywords || '', og_title || '', og_description || '', og_image || '', canonical || '', no_index ? 1 : 0, json_ld || '', priority ?? 0.5, changefreq || 'weekly', now, now);
 
   const page = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(id);
   res.status(201).json(page);
@@ -112,7 +121,7 @@ seoRouter.patch('/admin/pages/:id', (req: Request, res: Response) => {
 
   const fields: string[] = [];
   const values: any[] = [];
-  const allowed = ['path', 'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image', 'canonical', 'no_index', 'json_ld', 'priority', 'changefreq'];
+  const allowed = ['path', 'locale', 'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image', 'canonical', 'no_index', 'json_ld', 'priority', 'changefreq'];
 
   for (const field of allowed) {
     if (req.body[field] !== undefined) {

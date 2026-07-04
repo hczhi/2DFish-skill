@@ -264,7 +264,7 @@ async function handleSubmit() {
   width: 100%;
   max-width: 900px;
   height: 600px;
-  border-radius: 24px;
+  border-radius: 10px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.04);
   display: flex;
   overflow: hidden;
@@ -372,7 +372,7 @@ async function handleSubmit() {
   width: 100%;
   padding: 14px 16px;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #f9fafb;
   color: #111827;
   font-size: 15px;
@@ -394,7 +394,7 @@ async function handleSubmit() {
   background: linear-gradient(135deg, #5c7cfa, #3B5BDB);
   color: #ffffff;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   font-family: var(--font-sans, sans-serif);
   font-size: 16px;
   font-weight: 600;
@@ -443,7 +443,7 @@ async function handleSubmit() {
 .login-graphic-side {
   flex: 1;
   background: linear-gradient(135deg, #5c7cfa 0%, #3B5BDB 100%);
-  border-radius: 20px;
+  border-radius: 10px;
   margin: 12px;
   position: relative;
   overflow: hidden;
@@ -625,7 +625,7 @@ async function handleSubmit() {
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-radius: 24px;
+  border-radius: 10px;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -635,7 +635,7 @@ async function handleSubmit() {
 }
 .color-swatch {
   flex: 1;
-  border-radius: 12px;
+  border-radius: 10px;
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
 }
 .c-red { background: linear-gradient(135deg, #ff8787, #fa5252); }
@@ -656,7 +656,7 @@ async function handleSubmit() {
   animation: float 5s infinite;
 }
 .shape-rect {
-  width: 80px; height: 40px; border-radius: 12px;
+  width: 80px; height: 40px; border-radius: 10px;
   bottom: 20%; left: 0;
   transform: rotate(20deg);
   animation: float 4s infinite reverse;
@@ -715,7 +715,7 @@ async function handleSubmit() {
   backdrop-filter: blur(8px);
   color: #3B5BDB;
   padding: 8px 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   font-weight: 900;
   font-size: 16px;
   box-shadow: 0 12px 24px rgba(0,0,0,0.15), inset 0 1px 1px #fff;

@@ -17,18 +17,32 @@ interface SeoResponse {
 
 let cache: Record<string, SeoResponse> = {}
 
+function getLocaleFromPath(path: string): string {
+  return path.startsWith('/en') ? 'en' : 'zh'
+}
+
+function getNormalizedPath(path: string): string {
+  if (path.startsWith('/en/')) return path.slice(3)
+  if (path === '/en') return '/'
+  return path
+}
+
 export function useSeo() {
   const route = useRoute()
 
   async function applySeo(path: string) {
-    if (!cache[path]) {
+    const locale = getLocaleFromPath(path)
+    const normalizedPath = getNormalizedPath(path)
+    const cacheKey = `${normalizedPath}:${locale}`
+
+    if (!cache[cacheKey]) {
       try {
-        const res = await fetch(`/api/seo/page?path=${encodeURIComponent(path)}`)
-        if (res.ok) cache[path] = await res.json()
+        const res = await fetch(`/api/seo/page?path=${encodeURIComponent(normalizedPath)}&locale=${locale}`)
+        if (res.ok) cache[cacheKey] = await res.json()
       } catch { return }
     }
 
-    const data = cache[path]
+    const data = cache[cacheKey]
     if (!data?.page) return
 
     document.title = data.page.title || `${data.globals.site_name || 'QiaoNan'}`

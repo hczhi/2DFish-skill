@@ -8,7 +8,8 @@ filesRouter.get('/read', (req: Request, res: Response) => {
   if (!filePath) { res.status(400).json({ error: 'path is required' }); return; }
 
   try {
-    const content = readFile(filePath);
+    const userId = req.user!.id;
+    const content = readFile(filePath, userId);
     res.json({ content });
   } catch (e) {
     res.status(404).json({ error: (e as Error).message });
@@ -23,7 +24,8 @@ filesRouter.post('/write', (req: Request, res: Response) => {
   }
 
   try {
-    writeFile(filePath, content);
+    const userId = req.user!.id;
+    writeFile(filePath, content, userId);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
@@ -35,7 +37,8 @@ filesRouter.delete('/', (req: Request, res: Response) => {
   if (!filePath) { res.status(400).json({ error: 'path is required' }); return; }
 
   try {
-    deleteFile(filePath);
+    const userId = req.user!.id;
+    deleteFile(filePath, userId);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
@@ -45,7 +48,8 @@ filesRouter.delete('/', (req: Request, res: Response) => {
 filesRouter.get('/list', (req: Request, res: Response) => {
   const dirPath = (req.query.path as string) || '';
   try {
-    const files = listFiles(dirPath);
+    const userId = req.user!.id;
+    const files = listFiles(dirPath, userId);
     res.json({ files });
   } catch (e) {
     res.status(400).json({ error: (e as Error).message });
@@ -56,6 +60,7 @@ filesRouter.get('/search', (req: Request, res: Response) => {
   const query = req.query.q as string;
   if (!query) { res.status(400).json({ error: 'q is required' }); return; }
 
-  const results = searchFiles(query);
+  const userId = req.user!.id;
+  const results = searchFiles(query, userId);
   res.json({ results });
 });

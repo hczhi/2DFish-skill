@@ -64,7 +64,7 @@ analyticsRouter.post('/pageview', (req: Request, res: Response) => {
 analyticsRouter.get('/stats/overview', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
-  const days = parseInt(req.query.days as string) || 7;
+  const days = Math.min(Math.max(parseInt(req.query.days as string) || 7, 1), 365);
   const db = getDatabase();
 
   const totals = db.prepare(`
@@ -116,7 +116,7 @@ analyticsRouter.get('/stats/page', (req: Request, res: Response) => {
   const pagePath = req.query.path as string;
   if (!pagePath) { res.status(400).json({ error: 'path query required' }); return; }
 
-  const days = parseInt(req.query.days as string) || 30;
+  const days = Math.min(Math.max(parseInt(req.query.days as string) || 30, 1), 365);
   const db = getDatabase();
 
   const daily = db.prepare(`

@@ -39,9 +39,9 @@
     <transition name="fade">
       <FishListPanel :fishes="fishes" v-if="!isBossKeyActive" />
     </transition>
-    <transition name="fade">
+    <!-- <transition name="fade">
       <DebugPanel v-if="!isBossKeyActive" />
-    </transition>
+    </transition> -->
   </div>
 </template>
 
@@ -206,7 +206,7 @@ function saveFishes() {
   position: relative;
   overflow: hidden;
   background: radial-gradient(ellipse at top, #1e293b 0%, #0f172a 70%);
-  color: #f1f5f9; /* Force light text for dark background */
+  color: #f1f5f9;
 }
 
 .ui-overlay {
@@ -220,7 +220,7 @@ function saveFishes() {
   z-index: 10;
   padding: 10px 14px;
   background: rgba(20, 25, 35, 0.4);
-  border-radius: 28px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(48px) saturate(200%);
@@ -235,7 +235,7 @@ function saveFishes() {
 .dock-btn {
   padding: 10px 20px;
   border: none;
-  border-radius: 20px;
+  border-radius: 10px;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;

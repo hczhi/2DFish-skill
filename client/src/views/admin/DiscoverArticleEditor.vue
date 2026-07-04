@@ -45,6 +45,7 @@
             <select v-model="form.status">
               <option value="draft">草稿</option>
               <option value="published">已发布</option>
+              <option value="offline">已下线</option>
             </select>
           </div>
           <div class="form-row">
@@ -54,6 +55,13 @@
               <label><input type="checkbox" value="en" v-model="form.visible_locales" /> English</label>
             </div>
             <small>不选择 = 都不展示</small>
+          </div>
+          <div class="form-row">
+            <label>所属专题</label>
+            <select v-model="form.topic_id">
+              <option value="">— 不归属专题 —</option>
+              <option v-for="t in availableTopics" :key="t.id" :value="t.id">{{ t.title || t.slug }}</option>
+            </select>
           </div>
         </div>
 
@@ -161,6 +169,44 @@
         </div>
       </div>
 
+      <!-- SEO & AI Analysis -->
+      <div class="analysis-section" v-if="isEditing">
+        <div class="analysis-header">
+          <h3>SEO & AI 质量分析</h3>
+          <div class="analysis-actions">
+            <input v-model="targetKeyword" placeholder="目标关键词（可选）" class="keyword-input" />
+            <button type="button" class="btn-analysis" @click="runSeoScore" :disabled="analyzing">SEO 评分</button>
+            <button type="button" class="btn-analysis" @click="runAiDetection" :disabled="analyzing">AI 检测</button>
+            <button type="button" class="btn-analysis btn-full" @click="runFullAnalysis" :disabled="analyzing">完整分析</button>
+          </div>
+          <p v-if="analyzing" class="analyzing-hint">分析中，请稍候...</p>
+        </div>
+
+        <div class="analysis-result" v-if="analysisReport">
+          <div class="score-overview" v-if="analysisReport.total_score !== undefined">
+            <div class="score-badge" :class="getGradeClass(analysisReport.grade)">
+              <span class="score-number">{{ analysisReport.total_score }}</span>
+              <span class="score-grade">{{ analysisReport.grade }}</span>
+            </div>
+          </div>
+
+          <div class="score-overview" v-if="analysisReport.seo && analysisReport.ai_detection">
+            <div class="score-badge" :class="getGradeClass(analysisReport.seo?.grade)">
+              <span class="score-label">SEO</span>
+              <span class="score-number">{{ analysisReport.seo?.total_score }}</span>
+              <span class="score-grade">{{ analysisReport.seo?.grade }}</span>
+            </div>
+            <div class="score-badge" :class="getGradeClass(analysisReport.ai_detection?.grade)">
+              <span class="score-label">人类化</span>
+              <span class="score-number">{{ analysisReport.ai_detection?.total_score }}</span>
+              <span class="score-grade">{{ analysisReport.ai_detection?.grade }}</span>
+            </div>
+          </div>
+
+          <pre class="analysis-json">{{ JSON.stringify(analysisReport, null, 2) }}</pre>
+        </div>
+      </div>
+
       <div class="form-actions">
         <router-link to="/admin/discover" class="btn-cancel" style="text-decoration: none; display: inline-block;">取消</router-link>
         <button type="submit" class="btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button>
@@ -207,6 +253,13 @@ interface AvailableArticle {
 
 const availableArticles = ref<AvailableArticle[]>([])
 
+interface AvailableTopic {
+  id: string
+  slug: string
+  title: string
+}
+const availableTopics = ref<AvailableTopic[]>([])
+
 const defaultContent = () => ({ title: '', summary: '', content: '', seo_title: '', seo_description: '', seo_keywords: '' })
 const defaultForm = () => ({
   slug: '',
@@ -217,6 +270,7 @@ const defaultForm = () => ({
   avatar_color: '#0077ff',
   sort_order: 0,
   status: 'draft',
+  topic_id: '',
   visible_locales: [] as string[],
   contents: { zh: defaultContent(), en: defaultContent() },
   recommendations: { zh: [] as RecItem[], en: [] as RecItem[] },
@@ -234,7 +288,7 @@ function removeRec(locale: 'zh' | 'en', idx: number) {
 }
 
 onMounted(async () => {
-  await loadAvailableArticles()
+  await Promise.all([loadAvailableArticles(), loadAvailableTopics()])
   if (isEditing.value) {
     await loadArticle(articleId.value!)
   }
@@ -249,6 +303,18 @@ async function loadAvailableArticles() {
       slug: a.slug,
       title_zh: a.contents?.find((c: any) => c.locale === 'zh')?.title || '',
       title_en: a.contents?.find((c: any) => c.locale === 'en')?.title || '',
+    }))
+  } catch { /* silent */ }
+}
+
+async function loadAvailableTopics() {
+  try {
+    const res = await authFetch('/api/discover/topics/admin/list')
+    const topics = await res.json()
+    availableTopics.value = topics.map((t: any) => ({
+      id: t.id,
+      slug: t.slug,
+      title: t.contents?.find((c: any) => c.locale === 'zh')?.title || t.contents?.[0]?.title || t.slug,
     }))
   } catch { /* silent */ }
 }
@@ -281,6 +347,7 @@ async function loadArticle(id: string) {
       avatar_color: article.avatar_color,
       sort_order: article.sort_order,
       status: article.status,
+      topic_id: article.topic_id || '',
       visible_locales: [...article.visible_locales],
       contents: {
         zh: zhContent ? { ...zhContent } : defaultContent(),
@@ -294,6 +361,76 @@ async function loadArticle(id: string) {
   } catch (e) {
     console.error(e)
     alert('加载失败')
+  }
+}
+
+// --- SEO & AI Analysis ---
+const targetKeyword = ref('')
+const analyzing = ref(false)
+const analysisReport = ref<any>(null)
+
+function getGradeClass(grade: string) {
+  if (!grade) return ''
+  if (grade === 'A') return 'grade-a'
+  if (grade === 'B') return 'grade-b'
+  if (grade === 'C') return 'grade-c'
+  return 'grade-d'
+}
+
+async function runSeoScore() {
+  if (!articleId.value) return
+  analyzing.value = true
+  analysisReport.value = null
+  try {
+    const res = await authFetch(`/api/discover/admin/articles/${articleId.value}/seo-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale: contentTab.value, target_keyword: targetKeyword.value }),
+    })
+    const data = await res.json()
+    analysisReport.value = data.report
+  } catch (e) {
+    alert('分析失败')
+  } finally {
+    analyzing.value = false
+  }
+}
+
+async function runAiDetection() {
+  if (!articleId.value) return
+  analyzing.value = true
+  analysisReport.value = null
+  try {
+    const res = await authFetch(`/api/discover/admin/articles/${articleId.value}/ai-detection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale: contentTab.value }),
+    })
+    const data = await res.json()
+    analysisReport.value = data.report
+  } catch (e) {
+    alert('分析失败')
+  } finally {
+    analyzing.value = false
+  }
+}
+
+async function runFullAnalysis() {
+  if (!articleId.value) return
+  analyzing.value = true
+  analysisReport.value = null
+  try {
+    const res = await authFetch(`/api/discover/admin/articles/${articleId.value}/full-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale: contentTab.value, target_keyword: targetKeyword.value }),
+    })
+    const data = await res.json()
+    analysisReport.value = data.report
+  } catch (e) {
+    alert('分析失败')
+  } finally {
+    analyzing.value = false
   }
 }
 
@@ -329,6 +466,7 @@ async function saveArticle() {
       avatar_color: form.value.avatar_color,
       sort_order: form.value.sort_order,
       status: form.value.status,
+      topic_id: form.value.topic_id || null,
       visible_locales: form.value.visible_locales,
       contents,
       recommendations,
@@ -530,8 +668,82 @@ async function saveArticle() {
   flex: 1;
 }
 
+/* Analysis Section */
+.analysis-section {
+  border-top: 2px solid var(--c-text-main);
+  padding: 24px 32px;
+  background: #fafbfc;
+}
+.analysis-header h3 {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+.analysis-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.keyword-input {
+  width: 200px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 2px solid #ddd;
+}
+.btn-analysis {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: bold;
+  text-transform: uppercase;
+  background: #fff;
+  border: 2px solid var(--c-text-main);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-analysis:hover { background: var(--c-text-main); color: #fff; }
+.btn-analysis:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-analysis.btn-full { background: var(--c-blue-primary); color: #fff; border-color: var(--c-blue-primary); }
+.btn-analysis.btn-full:hover { background: #3451de; }
+.analyzing-hint { font-size: 12px; color: var(--c-text-sub); margin-top: 12px; font-family: var(--font-mono); }
+
+.analysis-result { margin-top: 24px; }
+.score-overview { display: flex; gap: 24px; margin-bottom: 16px; }
+.score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 24px;
+  border: 2px solid;
+  min-width: 100px;
+}
+.score-badge .score-label { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; margin-bottom: 4px; }
+.score-badge .score-number { font-size: 32px; font-weight: bold; }
+.score-badge .score-grade { font-size: 14px; font-family: var(--font-mono); font-weight: bold; }
+.grade-a { border-color: #10b981; color: #10b981; background: #ecfdf5; }
+.grade-b { border-color: #3b82f6; color: #3b82f6; background: #eff6ff; }
+.grade-c { border-color: #f59e0b; color: #f59e0b; background: #fffbeb; }
+.grade-d { border-color: #ef4444; color: #ef4444; background: #fef2f2; }
+
+.analysis-json {
+  background: #1a1a2e;
+  color: #e2e8f0;
+  padding: 24px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  max-height: 600px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 900px) {
   .editor-grid { grid-template-columns: 1fr; }
   .editor-sidebar { border-right: none; border-bottom: 2px solid var(--c-text-main); }
+  .analysis-actions { flex-direction: column; align-items: stretch; }
+  .keyword-input { width: 100%; }
 }
 </style>

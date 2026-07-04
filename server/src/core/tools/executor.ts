@@ -8,11 +8,11 @@ export interface ToolCallResult {
   success: boolean;
 }
 
-export function executeTool(name: string, args: Record<string, unknown>): ToolCallResult {
+export function executeTool(name: string, args: Record<string, unknown>, userId?: string): ToolCallResult {
   try {
     switch (name) {
       case 'read_file': {
-        const content = fileService.readFile(args.path as string);
+        const content = fileService.readFile(args.path as string, userId);
         return { name, result: content, success: true };
       }
 
@@ -22,21 +22,21 @@ export function executeTool(name: string, args: Record<string, unknown>): ToolCa
         const mode = args.mode as string;
 
         if (mode === 'append') {
-          const existing = (() => { try { return fileService.readFile(filePath); } catch { return ''; } })();
-          fileService.writeFile(filePath, existing + '\n' + content);
+          const existing = (() => { try { return fileService.readFile(filePath, userId); } catch { return ''; } })();
+          fileService.writeFile(filePath, existing + '\n' + content, userId);
         } else {
-          fileService.writeFile(filePath, content);
+          fileService.writeFile(filePath, content, userId);
         }
         return { name, result: `文件 "${filePath}" 已${mode === 'append' ? '追加' : '写入'}成功。`, success: true };
       }
 
       case 'list_files': {
-        const files = fileService.listFiles(args.path as string);
+        const files = fileService.listFiles(args.path as string, userId);
         return { name, result: JSON.stringify(files, null, 2), success: true };
       }
 
       case 'search_files': {
-        const results = fileService.searchFiles(args.query as string);
+        const results = fileService.searchFiles(args.query as string, userId);
         if (results.length === 0) {
           return { name, result: '未找到匹配内容。', success: true };
         }
@@ -53,7 +53,7 @@ export function executeTool(name: string, args: Record<string, unknown>): ToolCa
         if (!isAllowed) {
           return { name, result: `错误: 仅允许删除 journal/、knowledge/、monthly/ 目录下的文件。`, success: false };
         }
-        fileService.deleteFile(filePath);
+        fileService.deleteFile(filePath, userId);
         return { name, result: `文件 "${filePath}" 已删除。`, success: true };
       }
 

@@ -37,19 +37,26 @@ const router = createRouter({
       path: '/fish',
       name: 'fish',
       component: () => import('../views/fish/FishGame.vue'),
-      meta: { requiresAI: true },
+    },
+    {
+      path: '/en/fish',
+      name: 'fish-en',
+      component: () => import('../views/fish/FishGame.vue'),
     },
     {
       path: '/board',
       name: 'board',
       component: () => import('../views/board/WisdomBoard.vue'),
-      meta: { requiresAI: true },
+    },
+    {
+      path: '/en/board',
+      name: 'board-en',
+      component: () => import('../views/board/WisdomBoard.vue'),
     },
     {
       path: '/synap',
       name: 'synap',
       component: () => import('../views/synap/SynapApp.vue'),
-      meta: { requiresAuth: true },
       children: [
         { path: '', redirect: '/synap/chat' },
         { path: 'chat', name: 'synap-chat', component: () => import('../views/synap/ChatView.vue') },
@@ -63,8 +70,7 @@ const router = createRouter({
     {
       path: '/settings',
       name: 'settings',
-      component: () => import('../views/settings/AISettings.vue'),
-      meta: { requiresAuth: true },
+      redirect: '/settings/tokens',
     },
     {
       path: '/settings/logs',
@@ -92,9 +98,32 @@ const router = createRouter({
         { path: 'home/module/:id?', name: 'admin-home-module', component: () => import('../views/admin/HomeModuleEditor.vue') },
         { path: 'seo', name: 'admin-seo', component: () => import('../views/admin/SeoManagement.vue') },
         { path: 'discover', name: 'admin-discover', component: () => import('../views/admin/DiscoverManagement.vue') },
+        { path: 'topics', name: 'admin-topics', component: () => import('../views/admin/TopicManagement.vue') },
         { path: 'discover/edit/:id?', name: 'admin-discover-edit', component: () => import('../views/admin/DiscoverArticleEditor.vue') },
+        { path: 'modules', name: 'admin-modules', component: () => import('../views/admin/ModuleConfig.vue') },
         { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsDashboard.vue') },
+        { path: 'ads', name: 'admin-ads', component: () => import('../views/admin/AdSlotManagement.vue') },
       ],
+    },
+    {
+      path: '/discover',
+      name: 'discover-list',
+      component: () => import('../views/discover/DiscoverList.vue'),
+    },
+    {
+      path: '/en/discover',
+      name: 'discover-list-en',
+      component: () => import('../views/discover/DiscoverList.vue'),
+    },
+    {
+      path: '/discover/topic/:slug',
+      name: 'discover-topic',
+      component: () => import('../views/discover/TopicView.vue'),
+    },
+    {
+      path: '/en/discover/topic/:slug',
+      name: 'discover-topic-en',
+      component: () => import('../views/discover/TopicView.vue'),
     },
     {
       path: '/discover/:slug',
@@ -105,6 +134,26 @@ const router = createRouter({
       path: '/en/discover/:slug',
       name: 'discover-article-en',
       component: () => import('../views/discover/ArticleView.vue'),
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('../views/PrivacyPolicy.vue'),
+    },
+    {
+      path: '/en/privacy',
+      name: 'privacy-en',
+      component: () => import('../views/PrivacyPolicy.vue'),
+    },
+    {
+      path: '/terms',
+      name: 'terms',
+      component: () => import('../views/TermsOfService.vue'),
+    },
+    {
+      path: '/en/terms',
+      name: 'terms-en',
+      component: () => import('../views/TermsOfService.vue'),
     },
     {
       path: '/:pathMatch(.*)*',
@@ -127,15 +176,6 @@ router.beforeEach(async (to, from) => {
     }
   }
 
-  if (to.meta.requiresAI && !token) {
-    if (from.name) {
-      setTimeout(() => openLoginModal(to.fullPath, 'ai'), 0);
-      return false;
-    } else {
-      setTimeout(() => openLoginModal(to.fullPath, 'ai'), 100);
-      return { name: 'home' };
-    }
-  }
 
   if (to.meta.requiresAdmin && token) {
     const user = await fetchMe();

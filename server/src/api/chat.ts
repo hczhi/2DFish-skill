@@ -18,16 +18,16 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 
 export const chatRouter = Router();
 
-function getContext() {
+function getContext(userId: string) {
   let indexContent = '';
   let profileContent = '';
   let journalContent: string | null = null;
 
-  try { indexContent = readFile('INDEX.md'); } catch { /* empty */ }
-  try { profileContent = readFile('CORE_PROFILE.md'); } catch { /* empty */ }
+  try { indexContent = readFile('INDEX.md', userId); } catch { /* empty */ }
+  try { profileContent = readFile('CORE_PROFILE.md', userId); } catch { /* empty */ }
 
   const today = new Date().toISOString().split('T')[0];
-  try { journalContent = readFile(`journal/${today}.md`); } catch { /* empty */ }
+  try { journalContent = readFile(`journal/${today}.md`, userId); } catch { /* empty */ }
 
   return { indexContent, profileContent, journalContent };
 }
@@ -73,7 +73,7 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
   try {
     saveMessage(userId, 'user', message);
 
-    const { indexContent, profileContent, journalContent } = getContext();
+    const { indexContent, profileContent, journalContent } = getContext(userId);
     const { messages: contextMessages, needsSummary } = buildContextMessages(userId);
     const summary = getLatestSummary(userId);
     let systemPrompt = buildSystemPrompt(indexContent, profileContent, journalContent, summary?.summary);
@@ -101,16 +101,16 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     );
 
     // Use shared streaming utility with the resolved client
-    const { client } = resolveLLMConfig(userId);
+    const { client } = resolveLLMConfig();
     const startTime = Date.now();
 
     const { content, totalInput, totalOutput } = await streamWithToolCalls({
-      res, client, model, messages: fullMessages, tools: toolDefinitions,
+      res, client, model, messages: fullMessages, tools: toolDefinitions, userId,
     });
 
     if (content) {
       saveMessage(userId, 'assistant', content);
-      try { appendToJournal(message, content); } catch { /* non-critical */ }
+      try { appendToJournal(message, content, userId); } catch { /* non-critical */ }
     }
 
     if (needsSummary) {

@@ -19,8 +19,6 @@
         <router-link to="/settings" class="nav-btn">SETTINGS</router-link>
       </div>
       
-      <div class="date-time" v-if="isHome">{{ currentTime }}</div>
-      
       <div class="lang-switch">
         <button :class="{ active: locale === 'zh' }" @click="setLocale('zh')">中</button>
         <button :class="{ active: locale === 'en' }" @click="setLocale('en')">EN</button>
@@ -33,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchMe, logout, isAdmin, type AuthUser } from '../../lib/auth'
 import QuotaIndicator from './QuotaIndicator.vue'
@@ -57,35 +55,20 @@ function setLocale(lang: string) {
 
   if (isHome.value) {
     router.push(lang === 'en' ? '/en' : '/')
-  } else if (route.path.startsWith('/en/discover/')) {
-    if (lang === 'zh') router.push(route.path.replace('/en/discover/', '/discover/'))
-  } else if (route.path.startsWith('/discover/')) {
+  } else if (route.path === '/en/discover' || route.path.startsWith('/en/discover/')) {
+    if (lang === 'zh') router.push(route.path.replace('/en/discover', '/discover'))
+  } else if (route.path === '/discover' || route.path.startsWith('/discover/')) {
     if (lang === 'en') router.push('/en' + route.path)
+  } else if (route.path.startsWith('/en/')) {
+    if (lang === 'zh') router.push(route.path.replace(/^\/en/, ''))
   } else {
-    window.location.reload()
+    if (lang === 'en') router.push('/en' + route.path)
+    else window.location.reload()
   }
-}
-
-// Time display
-const currentTime = ref('')
-let timer: number
-
-const updateTime = () => {
-  const now = new Date()
-  currentTime.value = now.toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit'
-  }).replace(/\//g, '-')
 }
 
 onMounted(async () => {
   user.value = await fetchMe()
-  updateTime()
-  timer = window.setInterval(updateTime, 1000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
 })
 
 function handleLogout() {
@@ -201,15 +184,6 @@ function openLogin() {
 }
 .nav-btn:hover { color: #0077FF; }
 
-.date-time {
-  padding: 0 24px;
-  color: var(--c-text-sub, #555);
-  display: flex;
-  align-items: center;
-  height: 100%;
-  border-right: 1px solid var(--c-grid, rgba(0, 160, 255, 0.15));
-}
-
 .lang-switch {
   display: flex;
   align-items: center;
@@ -267,7 +241,7 @@ function openLogin() {
   .site-header.is-home {
     left: 0;
   }
-  .top-links, .date-time {
+  .top-links {
     display: none;
   }
   .header-left {

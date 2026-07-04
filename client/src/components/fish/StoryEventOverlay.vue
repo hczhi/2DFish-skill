@@ -158,7 +158,7 @@ function typewriterEffect(text: string) {
   padding: 16px 28px;
   background: rgba(10, 20, 40, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border-radius: 10px;
   backdrop-filter: blur(12px);
 }
 

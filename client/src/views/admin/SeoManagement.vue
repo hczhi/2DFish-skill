@@ -13,35 +13,49 @@
         <button class="btn-primary" @click="showForm = true">添加页面</button>
       </div>
 
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>路径</th>
-            <th>标题</th>
-            <th>描述</th>
-            <th>优先级</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in pages" :key="p.id">
-            <td><code>{{ p.path }}</code></td>
-            <td class="title-cell">{{ p.title }}</td>
-            <td class="desc-cell">{{ p.description?.slice(0, 40) }}{{ p.description?.length > 40 ? '...' : '' }}</td>
-            <td>{{ p.priority }}</td>
-            <td>
-              <span class="badge" :class="p.no_index ? 'badge-red' : 'badge-green'">
-                {{ p.no_index ? 'noindex' : '索引' }}
-              </span>
-            </td>
-            <td>
-              <button class="btn-sm" @click="editPage(p)">编辑</button>
-              <button class="btn-sm btn-danger" @click="deletePage(p.id)">删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="hc-table-container">
+        <table class="hc-table">
+          <thead>
+            <tr>
+              <th>路径</th>
+              <th>语言</th>
+              <th>标题</th>
+              <th>描述</th>
+              <th>优先级</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in pages" :key="p.id">
+              <td><code style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-family: monospace;">{{ p.path }}</code></td>
+              <td>
+                <span :class="['hc-badge', (!p.locale || p.locale === 'zh') ? 'hc-badge-blue' : 'hc-badge-gray']">{{ p.locale || 'zh' }}</span>
+              </td>
+              <td>
+                <div style="font-weight: 600; color: var(--c-text-main);">{{ p.title }}</div>
+              </td>
+              <td>
+                <div style="font-size: 12px; color: var(--c-text-sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 250px;">
+                  {{ p.description }}
+                </div>
+              </td>
+              <td>{{ p.priority }}</td>
+              <td>
+                <span :class="['hc-badge', p.no_index ? 'hc-badge-red' : 'hc-badge-green']">
+                  {{ p.no_index ? 'noindex' : '索引' }}
+                </span>
+              </td>
+              <td>
+                <div class="table-actions">
+                  <button class="hc-btn hc-btn-secondary" @click="editPage(p)">编辑</button>
+                  <button class="hc-btn hc-btn-danger" @click="deletePage(p.id)">删除</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="tips">
         <p><strong>说明：</strong>每个路径对应一个 SEO 配置，Google 爬虫访问时会看到注入的 meta 标签。</p>
@@ -138,6 +152,13 @@
             <input v-model="form.path" placeholder="/" :disabled="!!editingPage" />
           </div>
           <div class="form-row">
+            <label>语言 *</label>
+            <select v-model="form.locale" :disabled="!!editingPage">
+              <option value="zh">中文 (zh)</option>
+              <option value="en">English (en)</option>
+            </select>
+          </div>
+          <div class="form-row">
             <label>页面标题 * <small>(显示在浏览器标签和搜索结果)</small></label>
             <input v-model="form.title" placeholder="摸鱼缸 - AI 桌面养鱼游戏 | QiaoNan" />
             <small :class="{ warn: form.title.length > 60 }">{{ form.title.length }}/60 字符</small>
@@ -207,7 +228,7 @@ import HcModal from '../../components/common/HcModal.vue'
 const tab = ref<'pages' | 'globals' | 'generate'>('pages')
 
 interface SeoPage {
-  id: string; path: string; title: string; description: string; keywords: string;
+  id: string; path: string; locale: string; title: string; description: string; keywords: string;
   og_title: string; og_description: string; og_image: string; canonical: string;
   no_index: number; json_ld: string; priority: number; changefreq: string;
 }
@@ -219,7 +240,7 @@ const editingPage = ref<SeoPage | null>(null)
 const savingGlobals = ref(false)
 
 const defaultForm = () => ({
-  path: '', title: '', description: '', keywords: '',
+  path: '', locale: 'zh', title: '', description: '', keywords: '',
   og_title: '', og_description: '', og_image: '', canonical: '',
   no_index: false, json_ld: '', priority: 0.5, changefreq: 'weekly',
 })
@@ -240,7 +261,7 @@ async function loadGlobals() {
 function editPage(p: SeoPage) {
   editingPage.value = p
   form.value = {
-    path: p.path, title: p.title, description: p.description, keywords: p.keywords,
+    path: p.path, locale: p.locale || 'zh', title: p.title, description: p.description, keywords: p.keywords,
     og_title: p.og_title, og_description: p.og_description, og_image: p.og_image,
     canonical: p.canonical, no_index: !!p.no_index, json_ld: p.json_ld,
     priority: p.priority, changefreq: p.changefreq,
@@ -314,27 +335,25 @@ async function handleGenerate() {
   display: flex; 
   gap: 16px; 
   margin-bottom: 32px; 
-  border-bottom: 2px solid var(--c-text-main, #111); 
+  border-bottom: 1px solid #e5e7eb; 
 }
 .section-tabs button { 
   padding: 12px 24px; 
   background: none; 
-  border: 2px solid transparent; 
-  font-family: var(--font-mono); 
+  border: none;
+  border-bottom: 2px solid transparent; 
+  font-family: var(--font-sans, sans-serif); 
   font-size: 14px; 
-  font-weight: bold;
-  text-transform: uppercase;
+  font-weight: 600;
   cursor: pointer; 
   color: var(--c-text-sub); 
-  margin-bottom: -2px; 
-  transition: all 0.2s;
+  margin-bottom: -1px; 
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .section-tabs button:hover { color: var(--c-text-main); }
 .section-tabs button.active { 
-  color: var(--c-text-main); 
-  border: 2px solid var(--c-text-main); 
-  border-bottom-color: #fff; 
-  background: #fff; 
+  color: #3B5BDB; 
+  border-bottom-color: #3B5BDB; 
 }
 
 .section-header { 
@@ -343,7 +362,7 @@ async function handleGenerate() {
   align-items: flex-end; 
   margin-bottom: 24px; 
 }
-.section-header h2 { font-size: 24px; margin: 0; }
+.section-header h2 { font-size: 24px; margin: 0; font-family: var(--font-sans, sans-serif); font-weight: 700; }
 
 .data-table code { background: #f5f5f5; padding: 4px 8px; border: 1px solid var(--c-border); font-family: var(--font-mono); font-size: 11px; }
 .title-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: bold; }
@@ -354,9 +373,10 @@ async function handleGenerate() {
 .tips { 
   margin-top: 24px; 
   padding: 24px; 
-  background: #f8f8f8; 
-  border: 2px dashed var(--c-text-main);
-  font-family: var(--font-mono);
+  background: #f9fafb; 
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  font-family: var(--font-sans, sans-serif);
   font-size: 13px; 
   color: var(--c-text-sub); 
   line-height: 1.8; 
@@ -364,64 +384,66 @@ async function handleGenerate() {
 .tips a { color: var(--c-blue-primary); text-decoration: none; font-weight: bold; }
 .tips a:hover { text-decoration: underline; }
 
-.globals-form { max-width: 600px; }
+.globals-form { max-width: 600px; margin-top: 24px; }
 
 .modal-wide { width: 640px; padding: 0; }
-.modal-wide h3 { padding: 24px 32px; margin: 0; border-bottom: 2px solid var(--c-text-main); background: #f8f8f8; }
+.modal-wide h3 { padding: 24px 32px; margin: 0; border-bottom: 1px solid var(--c-border); background: #fdfdfd; }
 .form-grid { padding: 24px 32px; }
-.form-grid .form-row small { font-family: var(--font-mono); font-size: 11px; color: var(--c-text-sub); display: block; margin-top: 4px; }
+.form-grid .form-row small { font-family: var(--font-sans, sans-serif); font-size: 12px; color: var(--c-text-sub); display: block; margin-top: 6px; }
 .form-grid .form-row small.warn { color: #dc2626; font-weight: bold; }
 .form-row-inline { display: flex; gap: 24px; }
 .form-row-inline .form-row { flex: 1; }
-.form-checks { margin: 16px 0; font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
+.form-checks { margin: 16px 0; font-family: var(--font-sans, sans-serif); font-size: 13px; font-weight: 600; }
 .form-checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 0 !important; }
 
 .generate-info { 
-  background: #f8f8f8; 
-  border: 2px solid var(--c-text-main);
+  background: #f9fafb; 
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
   padding: 24px; 
+  margin-top: 24px;
   margin-bottom: 32px; 
   font-size: 14px; 
   line-height: 1.8; 
 }
 .generate-info ul { margin: 16px 0; padding-left: 24px; }
 .generate-info li { margin: 8px 0; }
-.generate-info .note { margin-top: 16px; color: var(--c-text-sub); font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
-.generate-info code { background: #fff; padding: 2px 6px; border: 1px solid var(--c-text-main); font-family: var(--font-mono); font-size: 12px; }
+.generate-info .note { margin-top: 16px; color: var(--c-text-sub); font-family: var(--font-sans, sans-serif); font-size: 13px; }
+.generate-info code { background: #fff; padding: 2px 6px; border: 1px solid #e5e7eb; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
 
 .btn-generate { 
-  padding: 16px 32px; 
+  padding: 12px 24px; 
   background: #10b981; 
   color: #fff; 
-  border: 2px solid #10b981; 
-  font-family: var(--font-mono);
-  font-size: 16px; 
-  font-weight: bold; 
-  text-transform: uppercase;
+  border: 1px solid transparent; 
+  border-radius: 8px;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 14px; 
+  font-weight: 600; 
   cursor: pointer; 
-  transition: all 0.2s; 
-  box-shadow: 6px 6px 0 var(--c-text-main);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); 
 }
 .btn-generate:hover { 
-  transform: translate(-2px, -2px);
-  box-shadow: 8px 8px 0 var(--c-text-main);
+  background: #059669;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 .btn-generate:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
 
 .generate-result { 
   margin-top: 32px; 
   padding: 24px; 
-  border: 2px solid var(--c-text-main); 
+  border-radius: 10px;
   font-size: 14px; 
 }
-.generate-result.success { background: #ecfdf5; box-shadow: 8px 8px 0 #10b981; }
-.generate-result.error { background: #fef2f2; box-shadow: 8px 8px 0 #dc2626; }
-.generate-result h4 { margin: 0 0 16px; font-size: 18px; font-family: var(--font-serif); font-weight: 700; text-transform: uppercase; }
+.generate-result.success { background: #ecfdf5; border: 1px solid #a7f3d0; }
+.generate-result.error { background: #fef2f2; border: 1px solid #fecaca; }
+.generate-result h4 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
 .result-section { margin: 12px 0; }
 .result-section ul { padding-left: 24px; margin: 8px 0; }
 .result-section li { margin: 4px 0; font-family: var(--font-mono); font-size: 13px; }
-.result-section code { background: #fff; padding: 2px 6px; border: 1px solid var(--c-text-main); }
+.result-section code { background: #fff; padding: 2px 6px; border: 1px solid #e5e7eb; border-radius: 4px; }
 .error-list li { color: #dc2626; font-weight: bold; }
-.result-dir { margin-top: 24px; color: var(--c-text-sub); font-family: var(--font-mono); font-size: 13px; font-weight: bold; }
-.result-dir code { background: #fff; padding: 4px 8px; border: 1px solid var(--c-text-main); color: var(--c-text-main); }
+.result-dir { margin-top: 24px; color: var(--c-text-sub); font-family: var(--font-sans, sans-serif); font-size: 13px; }
+.result-dir code { background: #fff; padding: 4px 8px; border: 1px solid #e5e7eb; border-radius: 4px; color: var(--c-text-main); }
 </style>

@@ -40,18 +40,20 @@
 
       <div class="left-panel-footer">
         <div class="footer-links">
-          <!-- <a href="#">PRIVACY</a>
-          <a href="#">TERMS</a> -->
+          <router-link :to="locale === 'en' ? '/en/privacy' : '/privacy'">PRIVACY</router-link>
+          <router-link :to="locale === 'en' ? '/en/terms' : '/terms'">TERMS</router-link>
+          <a href="mailto:364317853@qq.com">CONTACT</a>
         </div>
         <div class="footer-copyright">
-          &copy; {{ new Date().getFullYear() }} mmPla Team. All rights reserved.
+          &copy; {{ new Date().getFullYear() }} QiaoNan. All rights reserved.
         </div>
       </div>
     </aside>
 
     <!-- 右侧内容列表 -->
     <main class="main-content">
-      
+      <AdSlot position="top" />
+
       <div class="bento-grid">
         <router-link
           v-for="item in navItems"
@@ -95,11 +97,47 @@
         </router-link>
       </div>
 
+      <!-- 专题推荐 (大画幅磁贴画廊排版) -->
+      <div class="topics-section" v-if="topics.length > 0">
+        <div class="gallery-header">
+          <h2 class="gallery-title">FEATURED TOPICS</h2>
+          <span class="gallery-subtitle">Explore Our Curated Collections</span>
+        </div>
+        
+        <div class="gallery-grid">
+          <router-link
+            v-for="(t, index) in topics"
+            :key="t.id"
+            :to="locale === 'en' ? `/en/discover/topic/${t.slug}` : `/discover/topic/${t.slug}`"
+            class="gallery-item"
+          >
+            <div class="gallery-visual">
+              <img v-if="t.cover_image" :src="t.cover_image" class="gallery-img" alt="cover" loading="lazy" width="1100" height="360" />
+              <div v-else class="gallery-img-placeholder" :style="{ background: t.bg_color || '#f3f4f6' }"></div>
+              <div class="gallery-overlay"></div>
+            </div>
+            
+            <div class="gallery-content">
+              <div class="gallery-meta">
+                <span class="gallery-index">0{{ index + 1 }}</span>
+              </div>
+              <h3 class="gallery-item-title">{{ t.title }}</h3>
+              <p class="gallery-item-desc" v-if="t.description">{{ t.description }}</p>
+            </div>
+          </router-link>
+        </div>
+      </div>
+
+      <AdSlot position="mid-banner" />
+
       <!-- 响应式模块：资讯 Feed 流 -->
       <div class="ultra-wide-feed" v-if="feedItems.length > 0 || discoverArticles.length > 0">
         <div class="feed-header">
           <h2 class="feed-title">DISCOVER</h2>
-          <span class="feed-subtitle">Personalized Content Recommendations</span>
+          <span class="feed-subtitle">{{ locale === 'en' ? 'Personalized Content Recommendations' : '精选内容推荐' }}</span>
+          <router-link :to="locale === 'en' ? '/en/discover' : '/discover'" class="feed-more">
+            {{ locale === 'en' ? 'View All' : '查看更多' }} &rarr;
+          </router-link>
         </div>
         <div class="feed-masonry">
           <!-- Discover Articles (internal) -->
@@ -108,16 +146,17 @@
             :key="'article-' + article.id"
             :to="locale === 'en' ? `/en/discover/${article.slug}` : `/discover/${article.slug}`"
             target="_blank"
-            class="feed-card"
+            class="feed-item-wrapper"
           >
-            <div class="feed-image" :style="{ height: '220px', background: article.bg_color }">
-              <span class="feed-emoji">{{ article.icon }}</span>
+            <div class="feed-image-card" :style="{ height: '220px', background: article.bg_color }">
+              <img v-if="article.cover_image" :src="article.cover_image" class="feed-cover-img" alt="cover" loading="lazy" width="400" height="220" />
+              <span v-else class="feed-emoji">{{ article.icon }}</span>
             </div>
-            <div class="feed-info">
-              <h3 class="feed-text">{{ article.title }}</h3>
-              <div class="feed-meta">
-                <div class="feed-author">
-                  <div class="author-avatar" :style="{ background: article.avatar_color }"></div>
+            <div class="feed-info-external">
+              <h3 class="feed-text-external">{{ article.title }}</h3>
+              <div class="feed-meta-external">
+                <div class="feed-author-external">
+                  <div class="author-avatar-external" :style="{ background: article.avatar_color }"></div>
                   <span>{{ article.author }}</span>
                 </div>
               </div>
@@ -130,19 +169,20 @@
             :key="feed.id"
             :href="feed.link || undefined"
             :target="feed.link ? '_blank' : undefined"
-            class="feed-card"
+            class="feed-item-wrapper"
           >
-            <div class="feed-image" :style="{ height: feed.image_height + 'px', background: feed.bg_color }">
-              <span class="feed-emoji">{{ feed.icon }}</span>
+            <div class="feed-image-card" :style="{ height: feed.image_height + 'px', background: feed.bg_color }">
+              <img v-if="feed.cover_image" :src="feed.cover_image" class="feed-cover-img" alt="cover" loading="lazy" width="400" height="220" />
+              <span v-else class="feed-emoji">{{ feed.icon }}</span>
             </div>
-            <div class="feed-info">
-              <h3 class="feed-text">{{ feed.title }}</h3>
-              <div class="feed-meta">
-                <div class="feed-author">
-                  <div class="author-avatar" :style="{ background: feed.avatar_color }"></div>
+            <div class="feed-info-external">
+              <h3 class="feed-text-external">{{ feed.title }}</h3>
+              <div class="feed-meta-external">
+                <div class="feed-author-external">
+                  <div class="author-avatar-external" :style="{ background: feed.avatar_color }"></div>
                   <span>{{ feed.author }}</span>
                 </div>
-                <div class="feed-likes">
+                <div class="feed-likes-external">
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
                   <span>{{ feed.likes }}</span>
                 </div>
@@ -162,6 +202,7 @@ import { fetchMe, type AuthUser } from '../lib/auth'
 import { fetchQuota } from '../lib/quota'
 import SiteHeader from '../components/common/SiteHeader.vue'
 import SiteFooter from '../components/common/SiteFooter.vue'
+import AdSlot from '../components/common/AdSlot.vue'
 import { startFishTank } from '../game/FishDrawingAPI'
 
 const route = useRoute()
@@ -193,6 +234,7 @@ interface FeedItem {
   link: string
   likes: number
   image_height: number
+  cover_image?: string
 }
 
 interface DiscoverArticle {
@@ -204,11 +246,24 @@ interface DiscoverArticle {
   icon: string
   bg_color: string
   avatar_color: string
+  cover_image?: string
+}
+
+interface TopicItem {
+  id: string
+  slug: string
+  icon: string
+  bg_color: string
+  title: string
+  description: string
+  article_count: number
+  cover_image?: string
 }
 
 const navItems = ref<NavItem[]>([])
 const feedItems = ref<FeedItem[]>([])
 const discoverArticles = ref<DiscoverArticle[]>([])
+const topics = ref<TopicItem[]>([])
 const locale = computed(() => route.path === '/en' ? 'en' : 'zh')
 
 // --- Fish Widget Logic ---
@@ -317,6 +372,7 @@ function getGridClass(item: NavItem): string {
 
 watch(locale, () => {
   loadDiscoverArticles()
+  loadTopics()
 })
 
 onMounted(async () => {
@@ -361,12 +417,23 @@ async function loadHomeData() {
     if (feedsRes.ok) feedItems.value = await feedsRes.json()
   } catch { /* silent */ }
   loadDiscoverArticles()
+  loadTopics()
+}
+
+async function loadTopics() {
+  try {
+    const res = await fetch(`/api/discover/topics?locale=${locale.value}`)
+    if (res.ok) topics.value = await res.json()
+  } catch { /* silent */ }
 }
 
 async function loadDiscoverArticles() {
   try {
-    const res = await fetch(`/api/discover/articles?locale=${locale.value}`)
-    if (res.ok) discoverArticles.value = await res.json()
+    const res = await fetch(`/api/discover/articles?locale=${locale.value}&limit=50`)
+    if (res.ok) {
+      const data = await res.json()
+      discoverArticles.value = data.items || data
+    }
   } catch { /* silent */ }
 }
 </script>
@@ -374,18 +441,18 @@ async function loadDiscoverArticles() {
 <style scoped>
 /* HC Design System 基础变量 */
 .home-container {
-  --c-grid: rgba(67, 97, 238, 0.08); /* 浅蓝色网格线 */
+  --c-grid: rgba(67, 97, 238, 0.04); /* 网格线进一步变淡，更加无感高级 */
   --c-blue-primary: #4361EE; /* 品牌蓝 */
   --c-text-main: #111827;
   --c-text-sub: #6b7280;
-  --c-border: #e5e7eb;
+  --c-border: rgba(0,0,0,0.06); /* 边框变淡 */
   --font-serif: var(--font-sans); /* 统一移除衬线体 */
   --font-mono: "JetBrains Mono", "Courier New", monospace;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
 
   position: relative;
   height: 100vh;
-  background-color: #f9fafb; /* 浅灰底色 */
+  background-color: #fafafa; /* 极其微弱的暖白灰，比纯白更有质感 */
   color: var(--c-text-main);
   font-family: var(--font-sans);
   overflow: hidden;
@@ -408,21 +475,24 @@ async function loadDiscoverArticles() {
 .left-panel {
   width: 360px;
   height: 100vh;
-  border-right: 1px solid var(--c-grid);
+  /* 移除生硬的实线边框，改用弥散阴影和背景色区分层级 */
+  border-right: none;
+  box-shadow: 1px 0 24px rgba(0,0,0,0.02);
   display: flex;
   flex-direction: column;
   padding: 60px 40px;
   z-index: 10;
-  background: #fff;
+  background: #ffffff;
   overflow-y: auto;
   flex-shrink: 0;
   position: relative;
 }
 
 .left-panel-footer {
-  margin-top: auto; /* Pushes the footer to the bottom */
+  margin-top: auto;
   padding-top: 48px;
-  border-top: 1px dashed var(--c-grid);
+  /* 弱化分割线 */
+  border-top: 1px solid rgba(0,0,0,0.04);
 }
 
 .footer-links {
@@ -626,21 +696,21 @@ async function loadDiscoverArticles() {
 
 .bento-card {
   position: relative;
-  border: 1px solid var(--c-border);
-  border-radius: 20px;
+  /* 去除边框，纯靠极浅的弥散阴影撑起体积，类似 iOS/VisionOS 卡片 */
+  border: none;
+  border-radius: 10px; /* 圆角加大到 24px，更现代 */
   background: #fff;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02), 0 2px 8px rgba(0,0,0,0.02);
+  transition: box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .bento-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0,0,0,0.03);
 }
 
 /* 差异化拼图尺寸 — 由后台 grid_span 字段控制 */
@@ -673,7 +743,14 @@ async function loadDiscoverArticles() {
   object-fit: cover;
   position: absolute;
   top: 0; left: 0;
+  /* 恢复写死的 cubic-bezier 避免变量失效 */
   transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), filter 0.6s ease;
+}
+
+/* 悬浮交互：图片放大并微微变暗 */
+.bento-card.is-editorial:hover .editorial-bg-image {
+  transform: scale(1.08); /* 仅放大内部图片 */
+  filter: brightness(0.9);
 }
 
 /* 深色渐变遮罩，保证文字可读性 */
@@ -682,16 +759,6 @@ async function loadDiscoverArticles() {
   top: 0; left: 0; right: 0; bottom: 0;
   background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 50%, transparent 100%);
   opacity: 0.8;
-  transition: opacity 0.4s ease;
-}
-
-/* 悬浮交互：图片放大并微微变暗，遮罩加深 */
-.bento-card.is-editorial:hover .editorial-bg-image {
-  transform: scale(1.08);
-  filter: brightness(0.9);
-}
-.bento-card.is-editorial:hover .editorial-overlay {
-  opacity: 1;
 }
 
 .bg-pattern {
@@ -715,82 +782,113 @@ async function loadDiscoverArticles() {
   background: transparent; 
 }
 
-/* ================== 信息面板 (Info Panel) ================== */
+/* ================== 核心交互：Bento & Topic 卡片重构 ================== */
 
+/* 1. Bento Card 基础与背景 */
 .card-info-panel {
   position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  padding: 24px;
+  z-index: 2;
 }
 
-/* 针对 Editorial 杂志风卡片，应用极其特殊的排版 */
-.bento-card.is-editorial .card-info-panel {
-  padding-bottom: 24px;
+.card-body {
+  position: relative; /* 作为文字滑出的绝对定位锚点 */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
+/* 2. Bento Card 文字排版 */
+.card-title {
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--c-text-main);
+  /* 标题默认乖乖待在底部，不作任何偏移 */
+  transform: translateY(0);
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.is-featured .card-title {
+  font-size: 24px;
+}
+
+.card-desc {
+  /* 描述文字绝对定位到标题的正下方 */
+  position: absolute;
+  top: 100%; 
+  left: 0;
+  right: 0;
+  margin-top: 8px; /* 与标题的间距 */
+  font-size: 14px;
+  color: var(--c-text-sub);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* 初始状态隐藏并微微靠下 */
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.card-footer {
+  /* Footer 也藏到下面，和描述拉开距离 */
+  position: absolute;
+  top: calc(100% + 48px);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+/* 3. Bento Card Hover 丝滑滑出逻辑 */
+/* 计算需要向上腾出的空间：大概是描述(约42px) + 间距(8px) = 50px */
+.bento-card:hover .card-title {
+  transform: translateY(-50px);
+}
+.bento-card:hover .card-desc {
+  opacity: 1;
+  transform: translateY(-50px);
+  pointer-events: auto;
+  transition-delay: 0.05s; /* 错落滑出 */
+}
+.bento-card:hover .card-footer {
+  opacity: 1;
+  transform: translateY(-50px);
+  pointer-events: auto;
+  transition-delay: 0.1s; /* 最后滑出 */
+}
+
+/* 4. 针对 Editorial 杂志风卡片的样式覆写 */
 .bento-card.is-editorial .card-title {
   color: #ffffff;
-  font-size: 28px; /* 夸张的杂志大标题 */
+  font-size: 20px;
   letter-spacing: -0.5px;
   text-shadow: 0 4px 12px rgba(0,0,0,0.4);
-  margin-bottom: 0;
-  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
-
 .bento-card.is-editorial .card-desc {
   color: rgba(255, 255, 255, 0.85);
-  /* 隐藏描述：利用 max-height 和 opacity 实现滑出 */
-  max-height: 0;
-  opacity: 0;
-  transform: translateY(10px);
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  margin-top: 0;
 }
-
-.bento-card.is-editorial .card-footer {
-  max-height: 0;
-  opacity: 0;
-  transform: translateY(10px);
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  margin-top: 0;
-  padding-bottom: 0;
-  overflow: hidden;
-}
-
-/* Hover 时，杂志风卡片的信息滑出 */
-.bento-card.is-editorial:hover .card-title {
-  transform: translateY(-8px);
-}
-.bento-card.is-editorial:hover .card-desc {
-  max-height: 100px;
-  opacity: 1;
-  transform: translateY(0);
-  margin-top: 8px;
-}
-.bento-card.is-editorial:hover .card-footer {
-  max-height: 50px;
-  opacity: 1;
-  transform: translateY(0);
-  margin-top: 20px;
-}
-
-/* ======================================================= */
 
 /* 如果是没有图片的普通纯色卡片，恢复常规布局 */
 .bento-card:not(.is-editorial) .card-content {
   background: linear-gradient(to bottom, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.2) 100%);
   backdrop-filter: blur(4px);
 }
-.bento-card:not(.is-editorial):hover .card-content {
-  background: linear-gradient(to bottom, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.5) 100%);
-}
-.bento-card:not(.is-editorial) .card-info-panel {
-  padding-bottom: 24px;
-}
 
-/* 重新分配内边距到 info-panel 内部 */
+/* 顶部图标/Badge区 */
 .card-header {
   position: absolute;
   top: 24px;
@@ -799,7 +897,7 @@ async function loadDiscoverArticles() {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  z-index: 2; /* 悬浮在图片上方 */
+  z-index: 2;
 }
 
 .card-header .icon {
@@ -807,42 +905,8 @@ async function loadDiscoverArticles() {
   filter: drop-shadow(0 4px 12px rgba(0,0,0,0.15));
   background: rgba(255, 255, 255, 0.8);
   padding: 8px;
-  border-radius: 16px;
+  border-radius: 10px;
   backdrop-filter: blur(8px);
-}
-
-.card-body {
-  padding: 24px 24px 0 24px;
-}
-
-.card-title {
-  font-family: var(--font-sans);
-  font-size: 20px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
-  color: var(--c-text-main);
-}
-.is-featured .card-title {
-  font-size: 28px;
-}
-
-.card-desc {
-  font-size: 14px;
-  color: var(--c-text-sub);
-  margin: 0;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.card-footer {
-  margin-top: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 24px 24px 24px;
 }
 
 .meta-tag {
@@ -862,13 +926,6 @@ async function loadDiscoverArticles() {
   font-family: var(--font-mono);
   font-size: 18px;
   color: var(--c-blue-primary);
-  opacity: 0;
-  transform: translateX(-10px);
-  transition: all 0.3s;
-}
-.bento-card:hover .arrow {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .badge {
@@ -882,130 +939,301 @@ async function loadDiscoverArticles() {
   font-weight: 600;
 }
 
+/* ================= TOPICS 专题推荐 (Magnetic Gallery Style) ================= */
+.topics-section {
+  margin-top: 80px;
+  padding-top: 48px;
+  border-top: 1px solid var(--c-border);
+}
+
+.gallery-header {
+  margin-bottom: 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+.gallery-title {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  font-weight: 900;
+  margin: 0 0 4px 0;
+  letter-spacing: -1px;
+  color: var(--c-text-main);
+}
+
+.gallery-subtitle {
+  font-family: var(--font-mono);
+  color: var(--c-blue-primary);
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gallery-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.gallery-item {
+  display: block;
+  position: relative;
+  height: 360px;
+  border-radius: 10px;
+  overflow: hidden;
+  text-decoration: none;
+  color: #fff;
+  /* 基础阴影 */
+  box-shadow: 0 8px 32px rgba(0,0,0,0.04);
+  /* 平滑过渡 */
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gallery-item:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 24px 48px rgba(0,0,0,0.12);
+}
+
+.gallery-visual {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1;
+}
+
+.gallery-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.gallery-img-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.gallery-item:hover .gallery-img {
+  transform: scale(1.05);
+}
+
+.gallery-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  /* 左侧和底部加深渐变，确保文字清晰 */
+  background: linear-gradient(to right, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.2) 60%, transparent 100%),
+              linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 50%);
+  transition: opacity 0.5s ease;
+}
+.gallery-item:hover .gallery-overlay {
+  opacity: 0.9;
+}
+
+.gallery-content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 60%;
+  padding: 40px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.gallery-meta {
+  margin-bottom: 16px;
+}
+
+.gallery-index {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--c-blue-primary);
+  background: rgba(255,255,255,0.9);
+  padding: 4px 12px;
+  border-radius: 10px;
+  backdrop-filter: blur(4px);
+}
+
+.gallery-item-title {
+  font-family: var(--font-sans);
+  font-size: 36px;
+  font-weight: 800;
+  margin: 0 0 12px 0;
+  line-height: 1.2;
+  letter-spacing: -1px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.gallery-item-desc {
+  font-size: 16px;
+  color: rgba(255,255,255,0.85);
+  line-height: 1.6;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 响应式调整 */
+@media (max-width: 900px) {
+  .gallery-item {
+    height: 280px;
+  }
+  .gallery-content {
+    width: 100%;
+    padding: 24px;
+  }
+  .gallery-item-title {
+    font-size: 28px;
+  }
+}
+
 /* ================= DISCOVER Feed 流 ================= */
 .ultra-wide-feed {
   display: block; /* 移除宽屏限制，全尺寸可用 */
   margin-top: 64px;
-  padding-top: 48px;
-  border-top: 2px solid var(--c-text-main);
 }
 
 .feed-header {
   margin-bottom: 40px;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.feed-more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-blue-primary);
+  text-decoration: none;
+  letter-spacing: 1px;
+  transition: opacity 0.2s;
+}
+.feed-more:hover {
+  opacity: 0.7;
 }
 
 .feed-title {
   font-family: var(--font-sans);
-  font-size: 48px;
-  font-weight: 800;
-  margin: 0 0 8px 0;
-  letter-spacing: -1.5px;
+  font-size: 56px; /* 进一步拉大标题，强化杂志排版感 */
+  font-weight: 900;
+  margin: 0 0 4px 0;
+  letter-spacing: -2px;
   text-transform: uppercase;
+  color: var(--c-text-main);
 }
 
 .feed-subtitle {
   font-family: var(--font-mono);
-  color: var(--c-text-sub);
+  color: var(--c-blue-primary); /* 副标题使用品牌色提亮 */
   text-transform: uppercase;
-  letter-spacing: 3px;
+  letter-spacing: 4px;
   font-size: 12px;
+  font-weight: 600;
 }
 
 /* 瀑布流响应式布局 */
 .feed-masonry {
   columns: 1;
-  column-gap: 24px;
+  column-gap: 20px;
 }
-@media (min-width: 768px) { .feed-masonry { columns: 2; } }
+@media (min-width: 640px) { .feed-masonry { columns: 2; } }
 @media (min-width: 1024px) { .feed-masonry { columns: 3; } }
 @media (min-width: 1440px) { .feed-masonry { columns: 4; } }
+@media (min-width: 1800px) { .feed-masonry { columns: 5; } }
 
-.feed-card {
-  display: block; /* 解决 a 标签 inline 导致的排版错乱 */
+.feed-item-wrapper {
+  display: block;
   text-decoration: none;
   color: inherit;
   break-inside: avoid;
-  margin-bottom: 24px;
-  background: #fff;
-  border: 1px solid var(--c-border);
-  border-radius: 20px;
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  margin-bottom: 24px; /* 增加底部间距以容纳外部文字 */
   cursor: pointer;
   position: relative;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
 }
 
-.feed-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.08);
-}
-
-.feed-image {
+/* 独立的图片卡片（仅卡片部分有圆角和底色） */
+.feed-image-card {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 56px;
-  border-bottom: 1px solid var(--c-border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 12px; /* 图片和标题之间的间距 */
+  position: relative;
+  /* 移除阴影和 Hover 缩放动画，添加截图中的浅色外边框 */
+  border: 1px solid rgba(0,0,0,0.04);
+  box-shadow: none;
+  transition: none;
 }
 
-.feed-info {
-  padding: 24px;
-  background: #fff;
+.feed-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-.feed-text {
+/* 外部信息区（不再有白底和内边距） */
+.feed-info-external {
+  padding: 0 4px; /* 微微缩进一点点对齐图片圆角视觉 */
+}
+
+.feed-text-external {
   font-family: var(--font-sans);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: 0 0 20px 0;
+  font-size: 14px; /* 贴近小红书日常字号 */
+  font-weight: 500;
+  line-height: 1.5;
+  margin: 0 0 8px 0;
   color: var(--c-text-main);
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  transition: color 0.3s;
 }
 
-.feed-meta {
+.feed-meta-external {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
   color: var(--c-text-sub);
   font-family: var(--font-sans);
-  border-top: 1px solid var(--c-border);
-  padding-top: 16px;
 }
 
-.feed-author {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.author-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-}
-
-.feed-likes {
+.feed-author-external {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--c-text-main);
 }
-.feed-likes svg {
-  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+.author-avatar-external {
+  width: 18px; /* 头像再小一点 */
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.05);
 }
-.feed-card:hover .feed-likes svg {
-  transform: scale(1.2);
-  stroke: var(--c-blue-primary);
+
+.feed-likes-external {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--c-text-sub);
+}
+.feed-likes-external svg {
+  transition: transform 0.2s ease;
+}
+.feed-item-wrapper:hover .feed-likes-external svg {
+  transform: scale(1.1);
+  stroke: #ff4d4f; /* 悬浮时心形变红 */
 }
 
 /* ================= 响应式 ================= */

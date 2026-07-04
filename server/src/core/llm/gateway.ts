@@ -18,34 +18,22 @@ export class QuotaExceededError extends Error {
   }
 }
 
-export function resolveLLMConfig(userId: string): { client: OpenAI; model: string; bypassQuota: boolean } {
+export function resolveLLMConfig(): { client: OpenAI; model: string } {
   const db = getDatabase();
-
-  const user = db.prepare('SELECT api_key, api_base_url, model FROM user WHERE id = ?').get(userId) as {
-    api_key: string | null; api_base_url: string | null; model: string | null;
-  } | undefined;
-
-  if (user?.api_key) {
-    const client = new OpenAI({
-      apiKey: user.api_key,
-      baseURL: user.api_base_url || 'https://api.openai.com/v1',
-    });
-    return { client, model: user.model || 'gpt-4o', bypassQuota: true };
-  }
 
   const sysKey = db.prepare("SELECT value FROM system_config WHERE key = 'platform_api_key'").get() as { value: string } | undefined;
   const sysBase = db.prepare("SELECT value FROM system_config WHERE key = 'platform_api_base_url'").get() as { value: string } | undefined;
   const sysModel = db.prepare("SELECT value FROM system_config WHERE key = 'platform_model'").get() as { value: string } | undefined;
 
   if (!sysKey?.value) {
-    throw new Error('AI not configured. No user key or platform key available. Please set API Key in Settings or contact admin.');
+    throw new Error('AI not configured. Contact admin to set the platform API key.');
   }
 
   const client = new OpenAI({
     apiKey: sysKey.value,
     baseURL: sysBase?.value || 'https://api.openai.com/v1',
   });
-  return { client, model: sysModel?.value || 'gpt-4o', bypassQuota: false };
+  return { client, model: sysModel?.value || 'gpt-4o' };
 }
 
 export function checkAndDeductQuota(userId: string): void {
@@ -93,11 +81,9 @@ export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
 ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
-  const { client, model, bypassQuota } = resolveLLMConfig(options.userId);
+  const { client, model } = resolveLLMConfig();
 
-  if (!bypassQuota) {
-    checkAndDeductQuota(options.userId);
-  }
+  checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
   const response = await client.chat.completions.create({ ...params, model });
@@ -125,11 +111,9 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  const { client, model, bypassQuota } = resolveLLMConfig(options.userId);
+  const { client, model } = resolveLLMConfig();
 
-  if (!bypassQuota) {
-    checkAndDeductQuota(options.userId);
-  }
+  checkAndDeductQuota(options.userId);
 
   const stream = await client.chat.completions.create({ ...params, model, stream: true });
 

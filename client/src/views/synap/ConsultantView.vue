@@ -42,8 +42,12 @@ onMounted(async () => {
 onUnmounted(() => { abortController?.abort() })
 
 function scrollToBottom() { nextTick(() => { if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight }) }
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function renderMarkdown(text: string): string {
-  return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>').replace(/\n/g, '<br>')
+  return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>').replace(/\n/g, '<br>')
 }
 
 function stopStreaming() { abortController?.abort() }
@@ -91,7 +95,7 @@ async function sendMessage() {
 .consultant-view { height: 100%; display: flex; flex-direction: column; }
 .system-msg { text-align: center; color: var(--text-muted); font-size: 12px; padding: 8px; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
-.message { max-width: 80%; padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; }
+.message { max-width: 80%; padding: 12px 16px; border-radius: 10px; font-size: 14px; line-height: 1.6; }
 .message.user { align-self: flex-end; background: var(--primary); color: white; }
 .message.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border-light); }
 .cursor { animation: blink 1s infinite; }
