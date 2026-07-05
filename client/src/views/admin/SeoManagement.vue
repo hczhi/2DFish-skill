@@ -57,6 +57,8 @@
         </table>
       </div>
 
+      <AdminPagination v-if="pages.length" v-model="currentPage" :total="totalPages" :total-pages="totalPagesCount" />
+
       <div class="tips">
         <p><strong>说明：</strong>每个路径对应一个 SEO 配置，Google 爬虫访问时会看到注入的 meta 标签。</p>
         <p>sitemap.xml 和 robots.txt 根据此配置自动生成。</p>
@@ -221,9 +223,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 const tab = ref<'pages' | 'globals' | 'generate'>('pages')
 
@@ -233,7 +236,11 @@ interface SeoPage {
   no_index: number; json_ld: string; priority: number; changefreq: string;
 }
 
+const PAGE_SIZE = 20
 const pages = ref<SeoPage[]>([])
+const totalPages = ref(0)
+const currentPage = ref(1)
+const totalPagesCount = computed(() => Math.ceil(totalPages.value / PAGE_SIZE))
 const globals = ref<Record<string, string>>({})
 const showForm = ref(false)
 const editingPage = ref<SeoPage | null>(null)
@@ -246,11 +253,14 @@ const defaultForm = () => ({
 })
 const form = ref(defaultForm())
 
+watch(currentPage, loadPages)
 onMounted(() => { loadPages(); loadGlobals() })
 
 async function loadPages() {
-  const res = await authFetch('/api/seo/admin/pages')
-  pages.value = await res.json()
+  const res = await authFetch(`/api/seo/admin/pages?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
+  const data = await res.json()
+  pages.value = data.items
+  totalPages.value = data.total
 }
 
 async function loadGlobals() {

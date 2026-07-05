@@ -89,10 +89,14 @@
             <AdSlot position="sidebar" />
 
             <!-- Article metadata below ad -->
-            <div class="sidebar-meta" v-if="article.author">
-              <div class="sidebar-meta-item">
+            <div class="sidebar-meta" v-if="article.author || article.updated_at">
+              <div class="sidebar-meta-item" v-if="article.author">
                 <span class="sidebar-meta-label">{{ locale === 'en' ? 'Author' : '作者' }}</span>
                 <span class="sidebar-meta-value">{{ article.author }}</span>
+              </div>
+              <div class="sidebar-meta-item" v-if="article.updated_at">
+                <span class="sidebar-meta-label">{{ locale === 'en' ? 'Updated' : '更新时间' }}</span>
+                <span class="sidebar-meta-value">{{ formatDate(article.updated_at) }}</span>
               </div>
             </div>
           </div>
@@ -132,6 +136,7 @@ interface ArticleData {
   summary: string
   seo_title: string
   seo_description: string
+  updated_at?: string
   recommendations?: RecItem[]
 }
 
@@ -181,6 +186,10 @@ async function loadArticle() {
     nextArticle.value = null
   }
   loading.value = false
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 onMounted(loadArticle)

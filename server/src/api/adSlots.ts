@@ -33,9 +33,14 @@ adSlotsRouter.get('/', (req: Request, res: Response) => {
 // ADMIN: List all ad slots
 adSlotsRouter.get('/admin/list', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
-  const slots = db.prepare('SELECT * FROM ad_slots ORDER BY page_pattern ASC, sort_order ASC').all();
-  res.json(slots);
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM ad_slots').get() as { total: number };
+  const slots = db.prepare('SELECT * FROM ad_slots ORDER BY page_pattern ASC, sort_order ASC LIMIT ? OFFSET ?').all(pageSize, offset);
+  res.json({ items: slots, total, page, page_size: pageSize });
 });
 
 // ADMIN: Create ad slot

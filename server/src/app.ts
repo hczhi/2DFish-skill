@@ -27,7 +27,9 @@ import { discoverRouter } from './api/discover.js';
 import { topicsRouter } from './api/topics.js';
 import { analyticsRouter } from './api/analytics.js';
 import { adSlotsRouter } from './api/adSlots.js';
+import { uploadRouter } from './api/upload.js';
 import { initWorkspace } from './services/workspaceService.js';
+import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 
 dotenv.config();
 
@@ -129,6 +131,9 @@ app.use('/api/analytics', analyticsRouter);
 // Ad slots (public reads + admin management)
 app.use('/api/ad-slots', adSlotsRouter);
 
+// File upload (admin only)
+app.use('/api/upload', uploadRouter);
+
 // Static uploads
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
 
@@ -185,6 +190,8 @@ if (process.env.NODE_ENV === 'production') {
 initDatabase();
 initWorkspace();
 ensureAdminUser();
+startLogCleanupScheduler();
+cleanupOldLogs();
 
 const server = app.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`[mmPla] Server running on http://localhost:${PORT}`);

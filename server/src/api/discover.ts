@@ -116,15 +116,24 @@ discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
 
 discoverRouter.get('/admin/articles', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
 
-  const articles = db.prepare(
-    'SELECT * FROM discover_articles ORDER BY sort_order ASC, created_at DESC'
-  ).all() as ArticleRow[];
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM discover_articles').get() as { total: number };
 
-  const contents = db.prepare(
-    'SELECT * FROM discover_article_contents'
-  ).all() as ArticleContentRow[];
+  const articles = db.prepare(
+    'SELECT * FROM discover_articles ORDER BY sort_order ASC, created_at DESC LIMIT ? OFFSET ?'
+  ).all(pageSize, offset) as ArticleRow[];
+
+  const articleIds = articles.map(a => a.id);
+  let contents: ArticleContentRow[] = [];
+  if (articleIds.length > 0) {
+    contents = db.prepare(
+      `SELECT * FROM discover_article_contents WHERE article_id IN (${articleIds.map(() => '?').join(',')})`
+    ).all(...articleIds) as ArticleContentRow[];
+  }
 
   const contentMap: Record<string, ArticleContentRow[]> = {};
   for (const c of contents) {
@@ -132,13 +141,13 @@ discoverRouter.get('/admin/articles', (req: Request, res: Response) => {
     contentMap[c.article_id].push(c);
   }
 
-  const result = articles.map(a => ({
+  const items = articles.map(a => ({
     ...a,
     visible_locales: JSON.parse(a.visible_locales || '[]'),
     contents: contentMap[a.id] || [],
   }));
 
-  res.json(result);
+  res.json({ items, total, page, page_size: pageSize });
 });
 
 discoverRouter.get('/admin/articles/:id', (req: Request, res: Response) => {

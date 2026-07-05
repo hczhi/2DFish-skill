@@ -18,6 +18,7 @@
         <router-link to="/admin/modules" class="nav-item" active-class="active" @click="sidebarOpen = false">模块管理</router-link>
         <router-link to="/admin/seo" class="nav-item" active-class="active" @click="sidebarOpen = false">SEO 管理</router-link>
         <router-link to="/admin/ads" class="nav-item" active-class="active" @click="sidebarOpen = false">广告管理</router-link>
+        <router-link to="/admin/upload" class="nav-item" active-class="active" @click="sidebarOpen = false">图片上传</router-link>
       </nav>
     </aside>
     <main class="admin-main">

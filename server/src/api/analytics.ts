@@ -155,15 +155,18 @@ analyticsRouter.get('/stats/page', (req: Request, res: Response) => {
 analyticsRouter.get('/stats/recent', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
 
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM page_views').get() as { total: number };
   const recent = db.prepare(`
     SELECT path, referrer, user_agent, ip, created_at
     FROM page_views
     ORDER BY created_at DESC
-    LIMIT ?
-  `).all(limit) as Array<{ path: string; referrer: string; user_agent: string; ip: string; created_at: string }>;
+    LIMIT ? OFFSET ?
+  `).all(pageSize, offset) as Array<{ path: string; referrer: string; user_agent: string; ip: string; created_at: string }>;
 
-  res.json(recent);
+  res.json({ items: recent, total, page, page_size: pageSize });
 });

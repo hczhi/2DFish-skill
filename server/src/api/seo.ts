@@ -84,9 +84,14 @@ ${urls}
 
 seoRouter.get('/admin/pages', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
-  const pages = db.prepare('SELECT * FROM seo_pages ORDER BY path ASC, locale ASC').all();
-  res.json(pages);
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM seo_pages').get() as { total: number };
+  const pages = db.prepare('SELECT * FROM seo_pages ORDER BY path ASC, locale ASC LIMIT ? OFFSET ?').all(pageSize, offset);
+  res.json({ items: pages, total, page, page_size: pageSize });
 });
 
 seoRouter.post('/admin/pages', (req: Request, res: Response) => {

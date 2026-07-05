@@ -57,6 +57,7 @@
         </tbody>
       </table>
     </div>
+    <AdminPagination v-if="articles.length" v-model="currentPage" :total="totalArticles" :total-pages="totalPages" />
     <p v-if="articles.length === 0" class="empty">暂无文章，点击上方按钮新建</p>
 
     <!-- Generate Result -->
@@ -83,9 +84,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 const showGenerateResult = computed({
   get: () => !!generateResult.value,
@@ -123,14 +125,21 @@ interface GenerateResult {
   errors: string[]
 }
 
+const PAGE_SIZE = 20
 const articles = ref<Article[]>([])
+const totalArticles = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalArticles.value / PAGE_SIZE))
 const generateResult = ref<GenerateResult | null>(null)
 
+watch(currentPage, loadArticles)
 onMounted(() => { loadArticles() })
 
 async function loadArticles() {
-  const res = await authFetch('/api/discover/admin/articles')
-  articles.value = await res.json()
+  const res = await authFetch(`/api/discover/admin/articles?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
+  const data = await res.json()
+  articles.value = data.items
+  totalArticles.value = data.total
 }
 
 function getTitle(a: Article): string {

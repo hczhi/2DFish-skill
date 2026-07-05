@@ -34,6 +34,47 @@
       </div>
     </div>
 
+    <h2 class="section-title">腾讯云 COS 对象存储</h2>
+    <p class="desc">配置腾讯云 COS，用于后台图片上传。存储桶需开启公有读权限。</p>
+
+    <div class="config-card">
+      <div class="form-group">
+        <label>SecretId</label>
+        <div class="input-row">
+          <input v-model="form.cos_secret_id" type="password" placeholder="AKIDxxxxxxxx" class="input" />
+          <button class="btn-primary" @click="save('cos_secret_id', form.cos_secret_id)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_secret_id">当前: {{ current.cos_secret_id.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>SecretKey</label>
+        <div class="input-row">
+          <input v-model="form.cos_secret_key" type="password" placeholder="xxxxxxxx" class="input" />
+          <button class="btn-primary" @click="save('cos_secret_key', form.cos_secret_key)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_secret_key">当前: {{ current.cos_secret_key.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>Bucket</label>
+        <div class="input-row">
+          <input v-model="form.cos_bucket" placeholder="qiaonan-1318719556" class="input" />
+          <button class="btn-primary" @click="save('cos_bucket', form.cos_bucket)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_bucket">当前: {{ current.cos_bucket.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>Region</label>
+        <div class="input-row">
+          <input v-model="form.cos_region" placeholder="ap-guangzhou" class="input" />
+          <button class="btn-primary" @click="save('cos_region', form.cos_region)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_region">当前: {{ current.cos_region.value }}</span>
+      </div>
+    </div>
+
     <p class="success" v-if="saved">已保存</p>
   </div>
 </template>
@@ -42,7 +83,7 @@
 import { ref, onMounted } from 'vue'
 import { apiGet, apiPost } from '../../lib/api'
 
-const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '' })
+const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '', cos_secret_id: '', cos_secret_key: '', cos_bucket: '', cos_region: '' })
 const current = ref<Record<string, { value: string; updated_at: string }>>({})
 const saved = ref(false)
 
@@ -111,12 +152,18 @@ onMounted(loadConfig)
   font-family: var(--font-sans, sans-serif); 
 }
 
-.success { 
-  color: #10b981; 
+.section-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 48px 0 12px;
+}
+
+.success {
+  color: #10b981;
   font-family: var(--font-mono);
-  font-size: 14px; 
+  font-size: 14px;
   font-weight: bold;
-  margin-top: 24px; 
+  margin-top: 24px;
   text-transform: uppercase;
 }
 </style>

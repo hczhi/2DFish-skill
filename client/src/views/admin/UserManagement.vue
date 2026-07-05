@@ -41,6 +41,7 @@
           </tr>
         </tbody>
       </table>
+      <AdminPagination v-model="currentPage" :total="totalUsers" :total-pages="totalPages" />
     </div>
 
     <!-- Create User Dialog -->
@@ -142,6 +143,7 @@
                 </tr>
               </tbody>
             </table>
+            <AdminPagination v-model="logsPage" :total="totalLogs" :total-pages="totalLogsPages" />
           </div>
           <p v-else class="empty-hint">暂无调用记录</p>
         </div>
@@ -151,9 +153,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { api, apiGet, apiPost, apiDelete } from '../../lib/api'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 interface UserRow {
   id: string; username: string; role: string; total_ai_calls: number;
@@ -175,7 +178,11 @@ interface AccessLog {
   path: string; status_code: number; ip: string; created_at: string;
 }
 
+const PAGE_SIZE = 20
 const users = ref<UserRow[]>([])
+const totalUsers = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalUsers.value / PAGE_SIZE))
 const showCreate = ref(false)
 const newUser = ref({ username: '', password: '' })
 const createError = ref('')
@@ -184,13 +191,17 @@ const showTokenPanel = ref(false)
 const tokenUser = ref<UserRow | null>(null)
 const userTokens = ref<ModuleToken[]>([])
 const tokenLogs = ref<AccessLog[]>([])
+const totalLogs = ref(0)
+const logsPage = ref(1)
+const totalLogsPages = computed(() => Math.ceil(totalLogs.value / PAGE_SIZE))
 const availableModules = ref<ModuleConfig[]>([])
 const newTokenModule = ref('')
 const generatedToken = ref('')
 
 async function loadUsers() {
-  const data = await apiGet('/api/admin/users')
+  const data = await apiGet(`/api/admin/users?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
   users.value = data.users
+  totalUsers.value = data.total
 }
 
 async function createUser() {
@@ -228,13 +239,14 @@ async function loadUserTokens(userId: string) {
 }
 
 async function loadModules() {
-  const data = await apiGet<{ modules: ModuleConfig[] }>('/api/admin/modules')
+  const data = await apiGet<{ modules: ModuleConfig[]; total: number }>('/api/admin/modules?page_size=100')
   availableModules.value = data.modules.filter(m => m.enabled)
 }
 
 async function loadUserLogs(userId: string) {
-  const data = await apiGet<{ logs: AccessLog[] }>(`/api/admin/users/${userId}/token-logs?days=7&limit=50`)
+  const data = await apiGet<{ logs: AccessLog[]; total: number }>(`/api/admin/users/${userId}/token-logs?days=7&page=${logsPage.value}&page_size=${PAGE_SIZE}`)
   tokenLogs.value = data.logs
+  totalLogs.value = data.total
 }
 
 async function generateToken() {
@@ -277,6 +289,11 @@ function formatDateTime(iso: string) {
   const d = new Date(iso)
   return `${d.toLocaleDateString('zh-CN')} ${d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
 }
+
+watch(currentPage, loadUsers)
+watch(logsPage, () => {
+  if (tokenUser.value) loadUserLogs(tokenUser.value.id)
+})
 
 onMounted(loadUsers)
 </script>

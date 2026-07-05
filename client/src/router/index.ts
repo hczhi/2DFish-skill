@@ -103,6 +103,7 @@ const router = createRouter({
         { path: 'modules', name: 'admin-modules', component: () => import('../views/admin/ModuleConfig.vue') },
         { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsDashboard.vue') },
         { path: 'ads', name: 'admin-ads', component: () => import('../views/admin/AdSlotManagement.vue') },
+        { path: 'upload', name: 'admin-upload', component: () => import('../views/admin/UploadPage.vue') },
       ],
     },
     {

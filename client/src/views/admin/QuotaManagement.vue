@@ -22,11 +22,11 @@
               <div style="font-weight: 600; color: var(--c-text-main);">{{ q.username }}</div>
             </td>
             <td>
-              <input 
-                type="number" 
-                :value="q.daily_limit" 
+              <input
+                type="number"
+                :value="q.daily_limit"
                 min="0"
-                @change="updateLimit(q.user_id, ($event.target as HTMLInputElement).value)" 
+                @change="updateLimit(q.user_id, ($event.target as HTMLInputElement).value)"
                 style="width: 80px; padding: 6px 12px; border: 1px solid var(--c-border); border-radius: 6px; text-align: center; outline: none; transition: border-color 0.2s;"
                 onfocus="this.style.borderColor='var(--c-blue-primary)'"
                 onblur="this.style.borderColor='var(--c-border)'"
@@ -42,25 +42,33 @@
           </tr>
         </tbody>
       </table>
+      <AdminPagination v-model="currentPage" :total="totalQuotas" :total-pages="totalPages" />
     </div>
     <p v-else class="empty">暂无额度记录（用户首次调用 AI 时自动创建）</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { apiGet } from '../../lib/api'
 import { api } from '../../lib/api'
+import AdminPagination from '../../components/common/AdminPagination.vue'
+
+const PAGE_SIZE = 20
 
 interface QuotaRow {
   user_id: string; username: string; daily_limit: number; used_today: number; last_reset_date: string;
 }
 
 const quotas = ref<QuotaRow[]>([])
+const totalQuotas = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalQuotas.value / PAGE_SIZE))
 
 async function loadQuotas() {
-  const data = await apiGet('/api/admin/quotas')
+  const data = await apiGet(`/api/admin/quotas?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
   quotas.value = data.quotas
+  totalQuotas.value = data.total
 }
 
 async function updateLimit(userId: string, value: string) {
@@ -73,6 +81,7 @@ async function updateLimit(userId: string, value: string) {
   await loadQuotas()
 }
 
+watch(currentPage, loadQuotas)
 onMounted(loadQuotas)
 </script>
 

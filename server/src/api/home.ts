@@ -28,9 +28,14 @@ homeRouter.get('/feeds', (_req: Request, res: Response) => {
 
 homeRouter.get('/admin/modules', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
-  const modules = db.prepare('SELECT * FROM home_modules ORDER BY sort_order ASC, created_at ASC').all();
-  res.json(modules);
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM home_modules').get() as { total: number };
+  const modules = db.prepare('SELECT * FROM home_modules ORDER BY sort_order ASC, created_at ASC LIMIT ? OFFSET ?').all(pageSize, offset);
+  res.json({ items: modules, total, page, page_size: pageSize });
 });
 
 homeRouter.post('/admin/modules', (req: Request, res: Response) => {
@@ -130,9 +135,14 @@ homeRouter.put('/admin/modules/sort', (req: Request, res: Response) => {
 
 homeRouter.get('/admin/feeds', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
-  const feeds = db.prepare('SELECT * FROM home_feeds ORDER BY sort_order ASC, created_at DESC').all();
-  res.json(feeds);
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM home_feeds').get() as { total: number };
+  const feeds = db.prepare('SELECT * FROM home_feeds ORDER BY sort_order ASC, created_at DESC LIMIT ? OFFSET ?').all(pageSize, offset);
+  res.json({ items: feeds, total, page, page_size: pageSize });
 });
 
 homeRouter.post('/admin/feeds', (req: Request, res: Response) => {

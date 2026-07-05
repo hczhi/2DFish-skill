@@ -53,6 +53,7 @@
         </tbody>
       </table>
     </div>
+    <AdminPagination v-if="topics.length" v-model="currentPage" :total="totalTopics" :total-pages="totalPages" />
     <p v-else style="color: var(--c-text-sub);">暂无专题，点击上方按钮创建</p>
 
     <!-- Edit / Create Modal -->
@@ -140,9 +141,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { api, apiGet, apiPost, apiDelete } from '../../lib/api'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 interface TopicContentRow {
   locale: string
@@ -167,7 +169,11 @@ interface TopicRow {
   contents: TopicContentRow[]
 }
 
+const PAGE_SIZE = 20
 const topics = ref<TopicRow[]>([])
+const totalTopics = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalTopics.value / PAGE_SIZE))
 const showEditor = ref(false)
 const editing = ref<TopicRow | null>(null)
 const form = ref(emptyForm())
@@ -197,8 +203,9 @@ function formatDate(iso: string) {
 }
 
 async function loadTopics() {
-  const data = await apiGet<TopicRow[]>('/api/discover/topics/admin/list')
-  topics.value = data
+  const data = await apiGet<{ items: TopicRow[]; total: number }>(`/api/discover/topics/admin/list?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
+  topics.value = data.items
+  totalTopics.value = data.total
 }
 
 function openCreate() {
@@ -282,6 +289,7 @@ async function deleteTopic(t: TopicRow) {
   await loadTopics()
 }
 
+watch(currentPage, loadTopics)
 onMounted(loadTopics)
 </script>
 

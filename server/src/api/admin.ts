@@ -10,8 +10,13 @@ adminRouter.use(requireAdmin);
 
 // --- User Management ---
 
-adminRouter.get('/users', (_req: Request, res: Response) => {
+adminRouter.get('/users', (req: Request, res: Response) => {
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
       (SELECT COUNT(*) FROM ai_logs WHERE user_id = u.id) as total_ai_calls,
@@ -19,8 +24,9 @@ adminRouter.get('/users', (_req: Request, res: Response) => {
     FROM user u
     LEFT JOIN ai_quota q ON q.user_id = u.id
     ORDER BY u.created_at ASC
-  `).all();
-  res.json({ users });
+    LIMIT ? OFFSET ?
+  `).all(pageSize, offset);
+  res.json({ users, total, page, page_size: pageSize });
 });
 
 adminRouter.post('/users', (req: Request, res: Response) => {
@@ -95,9 +101,14 @@ adminRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
 
 // --- Quota Management ---
 
-adminRouter.get('/quotas', (_req: Request, res: Response) => {
+adminRouter.get('/quotas', (req: Request, res: Response) => {
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
   const quotas = db.prepare(`
     SELECT u.id as user_id, u.username,
       COALESCE(q.daily_limit, 10) as daily_limit,
@@ -106,8 +117,9 @@ adminRouter.get('/quotas', (_req: Request, res: Response) => {
     FROM user u
     LEFT JOIN ai_quota q ON q.user_id = u.id
     ORDER BY u.username ASC
-  `).all(today);
-  res.json({ quotas });
+    LIMIT ? OFFSET ?
+  `).all(today, pageSize, offset);
+  res.json({ quotas, total, page, page_size: pageSize });
 });
 
 adminRouter.patch('/quotas/:userId', (req: Request, res: Response) => {
@@ -175,7 +187,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 // --- System Config ---
 
-const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model'];
+const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region'];
 
 adminRouter.get('/config', (_req: Request, res: Response) => {
   const db = getDatabase();
@@ -217,10 +229,15 @@ adminRouter.delete('/config/:key', (req: Request, res: Response) => {
 
 // --- Module Configs ---
 
-adminRouter.get('/modules', (_req: Request, res: Response) => {
+adminRouter.get('/modules', (req: Request, res: Response) => {
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
-  const modules = db.prepare('SELECT * FROM module_configs ORDER BY created_at ASC').all();
-  res.json({ modules });
+
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM module_configs').get() as { total: number };
+  const modules = db.prepare('SELECT * FROM module_configs ORDER BY created_at ASC LIMIT ? OFFSET ?').all(pageSize, offset);
+  res.json({ modules, total, page, page_size: pageSize });
 });
 
 adminRouter.patch('/modules/:id', (req: Request, res: Response) => {
@@ -347,31 +364,36 @@ adminRouter.delete('/tokens/:id', (req: Request, res: Response) => {
 // --- Token Access Logs ---
 
 adminRouter.get('/users/:id/token-logs', (req: Request, res: Response) => {
-  const { module_id, days = '7', limit = '100' } = req.query;
+  const { module_id, days = '7' } = req.query;
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const safeDays = Math.min(Math.max(Number(days) || 7, 1), 365);
-  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 1000);
   const db = getDatabase();
 
   const since = new Date();
   since.setDate(since.getDate() - safeDays);
   const sinceStr = since.toISOString();
 
-  let query = `
-    SELECT l.*, mc.name as module_name
-    FROM token_access_logs l
-    LEFT JOIN module_configs mc ON mc.id = l.module_id
-    WHERE l.user_id = ? AND l.created_at >= ?
-  `;
+  let whereClause = 'WHERE l.user_id = ? AND l.created_at >= ?';
   const params: any[] = [req.params.id, sinceStr];
 
   if (module_id) {
-    query += ' AND l.module_id = ?';
+    whereClause += ' AND l.module_id = ?';
     params.push(module_id);
   }
 
-  query += ' ORDER BY l.created_at DESC LIMIT ?';
-  params.push(safeLimit);
+  const { total } = db.prepare(`
+    SELECT COUNT(*) as total FROM token_access_logs l ${whereClause}
+  `).get(...params) as { total: number };
 
-  const logs = db.prepare(query).all(...params);
-  res.json({ logs });
+  const logs = db.prepare(`
+    SELECT l.*, mc.name as module_name
+    FROM token_access_logs l
+    LEFT JOIN module_configs mc ON mc.id = l.module_id
+    ${whereClause}
+    ORDER BY l.created_at DESC LIMIT ? OFFSET ?
+  `).all(...params, pageSize, offset);
+
+  res.json({ logs, total, page, page_size: pageSize });
 });

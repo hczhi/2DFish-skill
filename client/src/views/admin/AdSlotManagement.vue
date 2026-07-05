@@ -43,6 +43,8 @@
       </table>
     </div>
 
+    <AdminPagination v-if="slots.length" v-model="currentPage" :total="totalSlots" :total-pages="totalPages" />
+
     <div class="help-section">
       <h3>使用说明</h3>
       <table class="help-table">
@@ -102,8 +104,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 interface AdSlot {
   id: string
@@ -118,7 +121,11 @@ interface AdSlot {
   updated_at: string
 }
 
+const PAGE_SIZE = 20
 const slots = ref<AdSlot[]>([])
+const totalSlots = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalSlots.value / PAGE_SIZE))
 const showModal = ref(false)
 const editingSlot = ref<AdSlot | null>(null)
 
@@ -133,12 +140,17 @@ const defaultForm = () => ({
 })
 const form = ref(defaultForm())
 
+watch(currentPage, loadSlots)
 onMounted(() => loadSlots())
 
 async function loadSlots() {
   try {
-    const res = await authFetch('/api/ad-slots/admin/list')
-    if (res.ok) slots.value = await res.json()
+    const res = await authFetch(`/api/ad-slots/admin/list?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
+    if (res.ok) {
+      const data = await res.json()
+      slots.value = data.items
+      totalSlots.value = data.total
+    }
   } catch { /* */ }
 }
 

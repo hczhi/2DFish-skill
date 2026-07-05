@@ -64,6 +64,7 @@
           </tbody>
         </table>
       </div>
+      <AdminPagination v-if="modules.length" v-model="modulesPage" :total="totalModules" :total-pages="totalModulesPages" />
       <p v-if="modules.length === 0" class="empty">暂无模块，点击上方按钮添加</p>
     </div>
 
@@ -125,6 +126,7 @@
           </tbody>
         </table>
       </div>
+      <AdminPagination v-if="feeds.length" v-model="feedsPage" :total="totalFeeds" :total-pages="totalFeedsPages" />
       <p v-if="feeds.length === 0" class="empty">暂无推荐内容</p>
     </div>
 
@@ -180,10 +182,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
+const PAGE_SIZE = 20
 const tab = ref<'modules' | 'feeds'>('modules')
 
 interface HomeModule {
@@ -198,7 +202,15 @@ interface HomeFeed {
 }
 
 const modules = ref<HomeModule[]>([])
+const totalModules = ref(0)
+const modulesPage = ref(1)
+const totalModulesPages = computed(() => Math.ceil(totalModules.value / PAGE_SIZE))
+
 const feeds = ref<HomeFeed[]>([])
+const totalFeeds = ref(0)
+const feedsPage = ref(1)
+const totalFeedsPages = computed(() => Math.ceil(totalFeeds.value / PAGE_SIZE))
+
 const showFeedForm = ref(false)
 const editingFeed = ref<HomeFeed | null>(null)
 
@@ -210,15 +222,21 @@ const defaultFeedForm = () => ({
 
 const feedForm = ref(defaultFeedForm())
 
+watch(modulesPage, loadModules)
+watch(feedsPage, loadFeeds)
 onMounted(() => { loadModules(); loadFeeds() })
 
 async function loadModules() {
-  const res = await authFetch('/api/home/admin/modules')
-  modules.value = await res.json()
+  const res = await authFetch(`/api/home/admin/modules?page=${modulesPage.value}&page_size=${PAGE_SIZE}`)
+  const data = await res.json()
+  modules.value = data.items
+  totalModules.value = data.total
 }
 async function loadFeeds() {
-  const res = await authFetch('/api/home/admin/feeds')
-  feeds.value = await res.json()
+  const res = await authFetch(`/api/home/admin/feeds?page=${feedsPage.value}&page_size=${PAGE_SIZE}`)
+  const data = await res.json()
+  feeds.value = data.items
+  totalFeeds.value = data.total
 }
 
 async function deleteModule(id: string) {

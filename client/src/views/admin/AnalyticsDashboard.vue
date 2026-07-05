@@ -105,17 +105,23 @@
             </tr>
           </tbody>
         </table>
+        <AdminPagination v-if="recentViews.length" v-model="recentPage" :total="totalRecent" :total-pages="totalRecentPages" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { authFetch } from '../../lib/auth'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
+const PAGE_SIZE = 20
 const days = ref(7)
 const loadingRecent = ref(false)
+const recentPage = ref(1)
+const totalRecent = ref(0)
+const totalRecentPages = computed(() => Math.ceil(totalRecent.value / PAGE_SIZE))
 
 interface DailyTrend {
   date: string
@@ -198,13 +204,17 @@ async function loadStats() {
 async function loadRecent() {
   loadingRecent.value = true
   try {
-    const res = await authFetch('/api/analytics/stats/recent?limit=30')
+    const res = await authFetch(`/api/analytics/stats/recent?page=${recentPage.value}&page_size=${PAGE_SIZE}`)
     if (res.ok) {
-      recentViews.value = await res.json()
+      const data = await res.json()
+      recentViews.value = data.items
+      totalRecent.value = data.total
     }
   } catch { /* silent */ }
   loadingRecent.value = false
 }
+
+watch(recentPage, loadRecent)
 
 onMounted(() => {
   loadStats()

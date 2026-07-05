@@ -47,6 +47,7 @@
         </table>
       </div>
 
+      <AdminPagination v-if="modules.length" v-model="currentPage" :total="totalModules" :total-pages="totalPages" />
       <button class="btn-primary" @click="showAddModule = true" style="margin-top: 16px;">+ 添加模块</button>
     </section>
 
@@ -97,9 +98,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { apiGet, apiPost, api } from '../../lib/api'
 import HcModal from '../../components/common/HcModal.vue'
+import AdminPagination from '../../components/common/AdminPagination.vue'
 
 interface ModuleConfig {
   id: string
@@ -110,18 +112,24 @@ interface ModuleConfig {
   created_at: string
 }
 
+const PAGE_SIZE = 20
 const modules = ref<ModuleConfig[]>([])
+const totalModules = ref(0)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.ceil(totalModules.value / PAGE_SIZE))
 const showEditModule = ref(false)
 const showAddModule = ref(false)
 const editingModule = ref<ModuleConfig | null>(null)
 const moduleForm = ref({ name: '', description: '', allowedPathsText: '' })
 const newModuleForm = ref({ id: '', name: '', description: '', allowedPathsText: '' })
 
+watch(currentPage, loadModules)
 onMounted(loadModules)
 
 async function loadModules() {
-  const data = await apiGet<{ modules: ModuleConfig[] }>('/api/admin/modules')
+  const data = await apiGet<{ modules: ModuleConfig[]; total: number }>(`/api/admin/modules?page=${currentPage.value}&page_size=${PAGE_SIZE}`)
   modules.value = data.modules
+  totalModules.value = data.total
 }
 
 function parseAllowedPaths(json: string): string[] {

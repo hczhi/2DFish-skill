@@ -83,10 +83,22 @@ topicsRouter.get('/:slug', (req: Request, res: Response) => {
 
 topicsRouter.get('/admin/list', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
   const db = getDatabase();
 
-  const topics = db.prepare('SELECT * FROM discover_topics ORDER BY sort_order ASC, created_at DESC').all() as TopicRow[];
-  const contents = db.prepare('SELECT * FROM discover_topic_contents').all() as TopicContentRow[];
+  const { total } = db.prepare('SELECT COUNT(*) as total FROM discover_topics').get() as { total: number };
+
+  const topics = db.prepare('SELECT * FROM discover_topics ORDER BY sort_order ASC, created_at DESC LIMIT ? OFFSET ?').all(pageSize, offset) as TopicRow[];
+
+  const topicIds = topics.map(t => t.id);
+  let contents: TopicContentRow[] = [];
+  if (topicIds.length > 0) {
+    contents = db.prepare(
+      `SELECT * FROM discover_topic_contents WHERE topic_id IN (${topicIds.map(() => '?').join(',')})`
+    ).all(...topicIds) as TopicContentRow[];
+  }
 
   const contentMap: Record<string, TopicContentRow[]> = {};
   for (const c of contents) {
@@ -94,13 +106,13 @@ topicsRouter.get('/admin/list', (req: Request, res: Response) => {
     contentMap[c.topic_id].push(c);
   }
 
-  const result = topics.map(t => ({
+  const items = topics.map(t => ({
     ...t,
     visible_locales: JSON.parse(t.visible_locales || '[]'),
     contents: contentMap[t.id] || [],
   }));
 
-  res.json(result);
+  res.json({ items, total, page, page_size: pageSize });
 });
 
 topicsRouter.get('/admin/:id', (req: Request, res: Response) => {
