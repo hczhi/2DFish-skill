@@ -130,8 +130,9 @@ onMounted(async () => {
 
 async function loadModule(id: string) {
   try {
-    const res = await authFetch('/api/home/admin/modules')
-    const modules = await res.json()
+    const res = await authFetch('/api/home/admin/modules?page_size=100')
+    const data = await res.json()
+    const modules = data.items || data
     const mod = modules.find((m: any) => m.id === id)
     if (mod) {
       form.value = {
