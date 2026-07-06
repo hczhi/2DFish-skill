@@ -115,6 +115,36 @@ topicsRouter.get('/admin/list', (req: Request, res: Response) => {
   res.json({ items, total, page, page_size: pageSize });
 });
 
+// Lightweight list for select dropdowns (no pagination, minimal fields)
+topicsRouter.get('/admin/options', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const db = getDatabase();
+
+  const topics = db.prepare('SELECT id, slug FROM discover_topics ORDER BY sort_order ASC, created_at DESC').all() as Array<{ id: string; slug: string }>;
+
+  const topicIds = topics.map(t => t.id);
+  let contents: Array<{ topic_id: string; locale: string; title: string }> = [];
+  if (topicIds.length > 0) {
+    contents = db.prepare(
+      `SELECT topic_id, locale, title FROM discover_topic_contents WHERE topic_id IN (${topicIds.map(() => '?').join(',')})`
+    ).all(...topicIds) as Array<{ topic_id: string; locale: string; title: string }>;
+  }
+
+  const contentMap: Record<string, Record<string, string>> = {};
+  for (const c of contents) {
+    if (!contentMap[c.topic_id]) contentMap[c.topic_id] = {};
+    contentMap[c.topic_id][c.locale] = c.title;
+  }
+
+  const options = topics.map(t => ({
+    id: t.id,
+    slug: t.slug,
+    title: contentMap[t.id]?.zh || contentMap[t.id]?.en || t.slug,
+  }));
+
+  res.json(options);
+});
+
 topicsRouter.get('/admin/:id', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();

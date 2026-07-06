@@ -95,7 +95,7 @@ uploadRouter.post('/image', (req: Request, res: Response) => {
         });
       });
 
-      const url = `https://${cosConfig.Bucket}.cos.${cosConfig.Region}.myqcloud.com/${key}`;
+      const url = `http://file.qiaonan.vip/${key}`;
       res.json({ url, key });
     } catch (e: any) {
       console.error('[upload] COS upload failed:', e.message);

@@ -150,6 +150,39 @@ discoverRouter.get('/admin/articles', (req: Request, res: Response) => {
   res.json({ items, total, page, page_size: pageSize });
 });
 
+// Lightweight list for select dropdowns (no pagination, minimal fields)
+discoverRouter.get('/admin/articles-options', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+  const db = getDatabase();
+
+  const articles = db.prepare(
+    'SELECT id, slug FROM discover_articles ORDER BY sort_order ASC, created_at DESC'
+  ).all() as Array<{ id: string; slug: string }>;
+
+  const articleIds = articles.map(a => a.id);
+  let contents: Array<{ article_id: string; locale: string; title: string }> = [];
+  if (articleIds.length > 0) {
+    contents = db.prepare(
+      `SELECT article_id, locale, title FROM discover_article_contents WHERE article_id IN (${articleIds.map(() => '?').join(',')})`
+    ).all(...articleIds) as Array<{ article_id: string; locale: string; title: string }>;
+  }
+
+  const contentMap: Record<string, Record<string, string>> = {};
+  for (const c of contents) {
+    if (!contentMap[c.article_id]) contentMap[c.article_id] = {};
+    contentMap[c.article_id][c.locale] = c.title;
+  }
+
+  const options = articles.map(a => ({
+    id: a.id,
+    slug: a.slug,
+    title_zh: contentMap[a.id]?.zh || '',
+    title_en: contentMap[a.id]?.en || '',
+  }));
+
+  res.json(options);
+});
+
 discoverRouter.get('/admin/articles/:id', (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();

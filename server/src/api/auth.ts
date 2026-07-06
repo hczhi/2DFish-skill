@@ -25,7 +25,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
   }
 
   const payload = { id: user.id, username: user.username, role: user.role || 'user', tv: user.token_version || 1 };
-  const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '30d' });
+  const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '7d' });
 
   res.json({ token, user: payload });
 });
@@ -40,15 +40,19 @@ authRouter.post('/register', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Username must be 2-30 characters (letters, numbers, underscores, or Chinese characters)' });
     return;
   }
-  if (!password || password.length < 6) {
-    res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (!password || password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters' });
+    return;
+  }
+  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+    res.status(400).json({ error: 'Password must contain both letters and numbers' });
     return;
   }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT id FROM user WHERE username = ?').get(username);
   if (existing) {
-    res.status(409).json({ error: 'Username already taken' });
+    res.status(409).json({ error: 'Registration failed, please try a different username' });
     return;
   }
 
@@ -62,7 +66,7 @@ authRouter.post('/register', (req: Request, res: Response) => {
   ).run(id, username, passwordHash, now, now);
 
   const payload = { id, username, role: 'user', tv: 1 };
-  const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '30d' });
+  const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '7d' });
 
   res.status(201).json({ token, user: payload });
 });

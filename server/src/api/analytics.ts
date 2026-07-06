@@ -8,6 +8,14 @@ analyticsRouter.post('/pageview', (req: Request, res: Response) => {
   const { path, referrer, session_id } = req.body;
   if (!path) { res.status(400).json({ error: 'path required' }); return; }
 
+  // Input validation: path must look like a URL path, max 500 chars
+  if (typeof path !== 'string' || path.length > 500 || !/^\/[a-zA-Z0-9\-_\/%.]*$/.test(path)) {
+    res.json({ ok: true });
+    return;
+  }
+  const sanitizedReferrer = typeof referrer === 'string' ? referrer.slice(0, 1000).replace(/[<>"']/g, '') : '';
+  const sanitizedSessionId = typeof session_id === 'string' ? session_id.slice(0, 100).replace(/[^a-zA-Z0-9\-_]/g, '') : '';
+
   const db = getDatabase();
   const ua = req.headers['user-agent'] || '';
   const ip = req.headers['x-forwarded-for'] as string || req.socket.remoteAddress || '';
@@ -20,11 +28,11 @@ analyticsRouter.post('/pageview', (req: Request, res: Response) => {
   }
 
   // Deduplicate: same session_id + path within 30 seconds
-  if (session_id) {
+  if (sanitizedSessionId) {
     const recent = db.prepare(`
       SELECT id FROM page_views
       WHERE session_id = ? AND path = ? AND created_at > datetime('now', '-30 seconds')
-    `).get(session_id, path);
+    `).get(sanitizedSessionId, path);
     if (recent) {
       res.json({ ok: true });
       return;
@@ -35,7 +43,7 @@ analyticsRouter.post('/pageview', (req: Request, res: Response) => {
   db.prepare(`
     INSERT INTO page_views (path, referrer, user_agent, ip, session_id, user_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(path, referrer || '', ua, ip, session_id || '', userId, now);
+  `).run(path, sanitizedReferrer, ua, ip, sanitizedSessionId, userId, now);
 
   // Update daily aggregate
   const today = now.split('T')[0];
@@ -45,10 +53,10 @@ analyticsRouter.post('/pageview', (req: Request, res: Response) => {
 
   if (existing) {
     // Check if this session is new for today
-    const isNewSession = session_id ? !db.prepare(`
+    const isNewSession = sanitizedSessionId ? !db.prepare(`
       SELECT id FROM page_views
       WHERE session_id = ? AND path = ? AND date(created_at) = ? AND id != last_insert_rowid()
-    `).get(session_id, path, today) : true;
+    `).get(sanitizedSessionId, path, today) : true;
 
     db.prepare('UPDATE page_views_daily SET pv = pv + 1' + (isNewSession ? ', uv = uv + 1' : '') + ' WHERE id = ?')
       .run(existing.id);

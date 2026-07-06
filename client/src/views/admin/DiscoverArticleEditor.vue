@@ -138,12 +138,30 @@
 
             <div class="rec-list" v-show="recTab === 'zh'">
               <div class="rec-item" v-for="(rec, idx) in form.recommendations.zh" :key="idx">
-                <select v-model="rec.recommended_article_id">
-                  <option value="">-- 选择文章 --</option>
-                  <option v-for="a in availableArticles" :key="a.id" :value="a.id" :disabled="a.id === articleId">
-                    {{ a.title_zh || a.slug }}
-                  </option>
-                </select>
+                <div class="searchable-select" :ref="el => {}">
+                  <input
+                    type="text"
+                    class="search-input"
+                    :placeholder="getSelectedTitle(rec.recommended_article_id, 'zh') || '搜索文章...'"
+                    v-model="recSearchQuery[`zh_${idx}`]"
+                    @focus="openRecDropdown(`zh_${idx}`)"
+                    @input="openRecDropdown(`zh_${idx}`)"
+                  />
+                  <div class="search-dropdown" v-if="activeDropdown === `zh_${idx}`">
+                    <div
+                      v-for="a in filteredArticles('zh', recSearchQuery[`zh_${idx}`] || '')"
+                      :key="a.id"
+                      class="search-option"
+                      :class="{ disabled: a.id === articleId, selected: a.id === rec.recommended_article_id }"
+                      @mousedown.prevent="selectArticle(rec, a.id, `zh_${idx}`)"
+                    >
+                      {{ a.title_zh || a.slug }}
+                    </div>
+                    <div class="search-empty" v-if="filteredArticles('zh', recSearchQuery[`zh_${idx}`] || '').length === 0">
+                      无匹配结果
+                    </div>
+                  </div>
+                </div>
                 <button type="button" class="btn-sm btn-danger" @click="removeRec('zh', idx)">移除</button>
               </div>
               <button type="button" class="btn-sm" @click="addRec('zh')" :disabled="form.recommendations.zh.length >= 5">
@@ -153,12 +171,30 @@
 
             <div class="rec-list" v-show="recTab === 'en'">
               <div class="rec-item" v-for="(rec, idx) in form.recommendations.en" :key="idx">
-                <select v-model="rec.recommended_article_id">
-                  <option value="">-- Select Article --</option>
-                  <option v-for="a in availableArticles" :key="a.id" :value="a.id" :disabled="a.id === articleId">
-                    {{ a.title_en || a.slug }}
-                  </option>
-                </select>
+                <div class="searchable-select">
+                  <input
+                    type="text"
+                    class="search-input"
+                    :placeholder="getSelectedTitle(rec.recommended_article_id, 'en') || 'Search articles...'"
+                    v-model="recSearchQuery[`en_${idx}`]"
+                    @focus="openRecDropdown(`en_${idx}`)"
+                    @input="openRecDropdown(`en_${idx}`)"
+                  />
+                  <div class="search-dropdown" v-if="activeDropdown === `en_${idx}`">
+                    <div
+                      v-for="a in filteredArticles('en', recSearchQuery[`en_${idx}`] || '')"
+                      :key="a.id"
+                      class="search-option"
+                      :class="{ disabled: a.id === articleId, selected: a.id === rec.recommended_article_id }"
+                      @mousedown.prevent="selectArticle(rec, a.id, `en_${idx}`)"
+                    >
+                      {{ a.title_en || a.slug }}
+                    </div>
+                    <div class="search-empty" v-if="filteredArticles('en', recSearchQuery[`en_${idx}`] || '').length === 0">
+                      No results
+                    </div>
+                  </div>
+                </div>
                 <button type="button" class="btn-sm btn-danger" @click="removeRec('en', idx)">Remove</button>
               </div>
               <button type="button" class="btn-sm" @click="addRec('en')" :disabled="form.recommendations.en.length >= 5">
@@ -216,7 +252,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { authFetch } from '../../lib/auth'
 
@@ -287,35 +323,73 @@ function removeRec(locale: 'zh' | 'en', idx: number) {
   form.value.recommendations[locale].splice(idx, 1)
 }
 
+const recSearchQuery = ref<Record<string, string>>({})
+const activeDropdown = ref<string | null>(null)
+
+function openRecDropdown(key: string) {
+  activeDropdown.value = key
+}
+
+function closeRecDropdown() {
+  activeDropdown.value = null
+}
+
+function selectArticle(rec: RecItem, id: string, key: string) {
+  if (id === articleId.value) return
+  rec.recommended_article_id = id
+  recSearchQuery.value[key] = ''
+  activeDropdown.value = null
+}
+
+function getSelectedTitle(id: string, locale: 'zh' | 'en'): string {
+  if (!id) return ''
+  const a = availableArticles.value.find(x => x.id === id)
+  if (!a) return ''
+  return locale === 'zh' ? (a.title_zh || a.slug) : (a.title_en || a.slug)
+}
+
+function filteredArticles(locale: 'zh' | 'en', query: string) {
+  const q = query.toLowerCase().trim()
+  return availableArticles.value.filter(a => {
+    if (a.id === articleId.value) return false
+    if (!q) return true
+    const title = locale === 'zh' ? (a.title_zh || '') : (a.title_en || '')
+    return title.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q)
+  })
+}
+
+function handleGlobalClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  if (!target.closest('.searchable-select')) {
+    closeRecDropdown()
+  }
+}
+
 onMounted(async () => {
+  document.addEventListener('click', handleGlobalClick)
   await Promise.all([loadAvailableArticles(), loadAvailableTopics()])
   if (isEditing.value) {
     await loadArticle(articleId.value!)
   }
 })
 
+onUnmounted(() => {
+  document.removeEventListener('click', handleGlobalClick)
+})
+
 async function loadAvailableArticles() {
   try {
-    const res = await authFetch('/api/discover/admin/articles')
-    const articles = await res.json()
-    availableArticles.value = articles.map((a: any) => ({
-      id: a.id,
-      slug: a.slug,
-      title_zh: a.contents?.find((c: any) => c.locale === 'zh')?.title || '',
-      title_en: a.contents?.find((c: any) => c.locale === 'en')?.title || '',
-    }))
+    const res = await authFetch('/api/discover/admin/articles-options')
+    const data = await res.json()
+    availableArticles.value = Array.isArray(data) ? data : (data.items || [])
   } catch { /* silent */ }
 }
 
 async function loadAvailableTopics() {
   try {
-    const res = await authFetch('/api/discover/topics/admin/list')
-    const topics = await res.json()
-    availableTopics.value = topics.map((t: any) => ({
-      id: t.id,
-      slug: t.slug,
-      title: t.contents?.find((c: any) => c.locale === 'zh')?.title || t.contents?.[0]?.title || t.slug,
-    }))
+    const res = await authFetch('/api/discover/topics/admin/options')
+    const data = await res.json()
+    availableTopics.value = Array.isArray(data) ? data : (data.items || [])
   } catch { /* silent */ }
 }
 
@@ -663,9 +737,67 @@ async function saveArticle() {
   display: flex;
   gap: 8px;
   align-items: center;
+  margin-bottom: 8px;
 }
-.rec-item select {
+
+.searchable-select {
   flex: 1;
+  position: relative;
+}
+.search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #f9fafb;
+  transition: border-color 0.2s;
+}
+.search-input:focus {
+  outline: none;
+  border-color: #3B5BDB;
+  background: #fff;
+}
+.search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+.search-option {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-option:hover {
+  background: #f0f4ff;
+}
+.search-option.selected {
+  background: #e0e7ff;
+  font-weight: 600;
+}
+.search-option.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.search-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--c-text-sub);
+  text-align: center;
 }
 
 /* Analysis Section */

@@ -56,11 +56,14 @@ app.use(cors({
   credentials: true,
 }));
 // Security headers
+app.disable('x-powered-by');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://pagead2.googlesyndication.com; frame-src https://googleads.g.doubleclick.net");
   next();
 });
 
@@ -87,11 +90,13 @@ app.use(authMiddleware);
 app.use(moduleGuard);
 
 // Rate limiting for API endpoints
-app.use('/api/auth', rateLimit(60, 60_000));
+app.use('/api/auth/login', rateLimit(5, 60_000));
+app.use('/api/auth/register', rateLimit(3, 60_000));
+app.use('/api/auth', rateLimit(30, 60_000));
 app.use('/api/ai', rateLimit(30, 60_000));
 app.use('/api/chat', rateLimit(20, 60_000));
 app.use('/api/consultant', rateLimit(20, 60_000));
-app.use('/api/analytics', rateLimit(60, 60_000));
+app.use('/api/analytics', rateLimit(30, 60_000));
 
 // Public routes
 app.use('/api/auth', authRouter);
