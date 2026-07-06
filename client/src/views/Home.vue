@@ -43,6 +43,7 @@
           <router-link :to="locale === 'en' ? '/en/privacy' : '/privacy'">PRIVACY</router-link>
           <router-link :to="locale === 'en' ? '/en/terms' : '/terms'">TERMS</router-link>
           <a href="mailto:364317853@qq.com">CONTACT</a>
+          <a href="/sitemap.xml">SITEMAP</a>
         </div>
         <div class="footer-copyright">
           &copy; {{ new Date().getFullYear() }} QiaoNan. All rights reserved.

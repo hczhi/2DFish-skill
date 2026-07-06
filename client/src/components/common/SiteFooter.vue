@@ -9,6 +9,7 @@
         <router-link :to="locale === 'en' ? '/en/privacy' : '/privacy'">{{ locale === 'en' ? 'Privacy' : '隐私政策' }}</router-link>
         <router-link :to="locale === 'en' ? '/en/terms' : '/terms'">{{ locale === 'en' ? 'Terms' : '服务条款' }}</router-link>
         <a href="mailto:364317853@qq.com">{{ locale === 'en' ? 'Contact' : '联系我们' }}</a>
+        <a href="/sitemap.xml">{{ locale === 'en' ? 'Sitemap' : '网站地图' }}</a>
       </div>
     </div>
   </footer>
