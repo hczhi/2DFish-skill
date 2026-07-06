@@ -45,6 +45,10 @@ seoRouter.get('/robots.txt', (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/plain');
   res.send(`User-agent: *
 Allow: /
+Allow: /api/discover/
+Allow: /api/seo/
+Allow: /api/home/
+Allow: /api/analytics/pageview
 Disallow: /api/
 Disallow: /admin/
 Disallow: /settings/

@@ -97,6 +97,8 @@ function openLogin() {
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   letter-spacing: 1px;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 /* On Home page, the header only spans the right side if left panel exists */
@@ -154,6 +156,7 @@ function openLogin() {
   display: flex;
   align-items: center;
   height: 100%;
+  min-width: 0;
 }
 
 .top-links {
@@ -238,6 +241,9 @@ function openLogin() {
 }
 
 @media (max-width: 768px) {
+  .site-header {
+    height: 56px;
+  }
   .site-header.is-home {
     left: 0;
   }
@@ -247,8 +253,24 @@ function openLogin() {
   .header-left {
     padding-left: 16px;
   }
+  .header-right {
+    flex-shrink: 0;
+  }
+  .brand-text {
+    font-size: 16px;
+  }
+  .lang-switch {
+    padding: 0 8px;
+  }
+  .lang-switch button {
+    min-width: 36px;
+    padding: 4px 8px;
+    font-size: 10px;
+  }
   .auth-btn {
-    padding: 0 20px;
+    padding: 0 18px;
+    font-size: 11px;
+    letter-spacing: 1.5px;
   }
 }
 </style>

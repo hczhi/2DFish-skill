@@ -51,7 +51,7 @@
     </aside>
 
     <!-- 右侧内容列表 -->
-    <main class="main-content">
+    <main class="main-content" v-show="homeDataLoaded">
       <AdSlot position="top" />
 
       <div class="bento-grid">
@@ -201,7 +201,6 @@ import { useRoute } from 'vue-router'
 import { fetchMe, type AuthUser } from '../lib/auth'
 import { fetchQuota } from '../lib/quota'
 import SiteHeader from '../components/common/SiteHeader.vue'
-import SiteFooter from '../components/common/SiteFooter.vue'
 import AdSlot from '../components/common/AdSlot.vue'
 import { startFishTank } from '../game/FishDrawingAPI'
 
@@ -407,6 +406,8 @@ onUnmounted(() => {
   if (stopFishTank) stopFishTank()
 })
 
+const homeDataLoaded = ref(false)
+
 async function loadHomeData() {
   try {
     const [modulesRes, feedsRes] = await Promise.all([
@@ -416,6 +417,10 @@ async function loadHomeData() {
     if (modulesRes.ok) navItems.value = await modulesRes.json()
     if (feedsRes.ok) feedItems.value = await feedsRes.json()
   } catch { /* silent */ }
+  homeDataLoaded.value = true
+  // Remove SSG placeholder once Vue has real data
+  const ssgEl = document.getElementById('ssg-content')
+  if (ssgEl) ssgEl.remove()
   loadDiscoverArticles()
   loadTopics()
 }
@@ -451,12 +456,13 @@ async function loadDiscoverArticles() {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
 
   position: relative;
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   background-color: #fafafa; /* 极其微弱的暖白灰，比纯白更有质感 */
   color: var(--c-text-main);
   font-family: var(--font-sans);
-  overflow: hidden;
   display: flex;
+  overflow-x: clip;
 }
 
 /* 蓝底网格背景 */
@@ -676,7 +682,8 @@ async function loadDiscoverArticles() {
 /* ================= 右侧内容区 ================= */
 .main-content {
   flex: 1;
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   margin-top: 50px; /* 为顶部导航栏留出空间 */
   padding: 40px;
   position: relative;
@@ -1270,16 +1277,20 @@ async function loadDiscoverArticles() {
     flex-direction: column;
     height: auto;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow: visible;
   }
   
   .left-panel {
     width: 100%;
     height: auto;
-    padding: 24px;
+    padding: 84px 20px 24px;
     border-right: none;
     border-bottom: 1px solid var(--c-grid);
     overflow: visible;
+    box-shadow: none;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(18px);
   }
 
   .sidebar-modules {
@@ -1306,12 +1317,46 @@ async function loadDiscoverArticles() {
     padding: 16px;
     height: auto;
     overflow: visible;
+    min-height: 0;
+    padding-bottom: 48px;
   }
 
   .bento-grid {
     grid-template-columns: 1fr;
     grid-auto-rows: 200px; /* 小屏幕稍微减小卡片高度 */
     gap: 16px;
+  }
+
+  .topics-section {
+    margin-top: 48px;
+    padding-top: 32px;
+  }
+
+  .gallery-header,
+  .feed-header {
+    margin-bottom: 24px;
+  }
+
+  .gallery-title {
+    font-size: 24px;
+  }
+
+  .gallery-subtitle,
+  .feed-subtitle {
+    letter-spacing: 2px;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .feed-title {
+    font-size: 40px;
+    letter-spacing: -1px;
+  }
+
+  .feed-more {
+    position: static;
+    margin-top: 12px;
+    align-self: flex-start;
   }
 
   .bento-span-2x2, .bento-span-2x1, .bento-span-1x2 {
@@ -1321,6 +1366,23 @@ async function loadDiscoverArticles() {
 }
 
 @media (max-width: 480px) {
+  .left-panel {
+    padding: 76px 16px 20px;
+  }
+
+  .brand-name {
+    font-size: 34px;
+  }
+
+  .left-panel-footer {
+    padding-top: 20px;
+  }
+
+  .footer-links {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
   .card-title {
     font-size: 18px;
   }
@@ -1332,6 +1394,22 @@ async function loadDiscoverArticles() {
   }
   .card-content {
     padding: 16px;
+  }
+
+  .gallery-item {
+    height: 220px;
+  }
+
+  .gallery-content {
+    padding: 20px;
+  }
+
+  .gallery-item-title {
+    font-size: 22px;
+  }
+
+  .feed-title {
+    font-size: 34px;
   }
 }
 </style>

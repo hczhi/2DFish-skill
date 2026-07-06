@@ -71,6 +71,17 @@ app.use('/api/files', express.json({ limit: '5mb' }));
 app.use('/api/discover', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '512kb' }));
 
+// Trailing slash redirect (SEO canonical)
+app.use((req, res, next) => {
+  if (req.path !== '/' && req.path.endsWith('/') && !req.path.startsWith('/api/')) {
+    const clean = req.path.slice(0, -1);
+    const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, clean + query);
+    return;
+  }
+  next();
+});
+
 // Request logger
 app.use((req, res, next) => {
   const start = Date.now();

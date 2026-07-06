@@ -130,11 +130,24 @@ html.dark {
   --shadow-dock: 0 16px 32px -8px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+html {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-size: 15px;
   line-height: 1.6;
 }

@@ -153,11 +153,12 @@ const locale = computed(() => route.path.startsWith('/en') ? 'en' : 'zh')
 
 <style scoped>
 .legal-page {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   background: #fafafa;
+  overflow-x: clip;
 }
 
 .legal-main {
@@ -212,5 +213,19 @@ const locale = computed(() => route.path.startsWith('/en') ? 'en' : 'zh')
 
 section {
   margin-bottom: 24px;
+}
+
+@media (max-width: 768px) {
+  .legal-main {
+    padding: 88px 16px 56px;
+  }
+
+  .legal-main h1 {
+    font-size: 28px;
+  }
+
+  .legal-main h2 {
+    font-size: 18px;
+  }
 }
 </style>

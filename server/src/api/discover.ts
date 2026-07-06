@@ -82,6 +82,7 @@ discoverRouter.get('/articles', (req: Request, res: Response) => {
 
 discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
   const locale = (req.query.locale as string) || 'zh';
+  const slug = req.params.slug.replace(/\/+$/, '');
   const db = getDatabase();
 
   const article = db.prepare(`
@@ -92,7 +93,7 @@ discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
     LEFT JOIN discover_topics t ON t.id = a.topic_id AND t.status = 'published'
     LEFT JOIN discover_topic_contents tc ON tc.topic_id = t.id AND tc.locale = ?
     WHERE a.slug = ? AND a.status = 'published'
-  `).get(locale, locale, req.params.slug) as (ArticleRow & ArticleContentRow & { topic_slug: string | null; topic_title: string | null }) | undefined;
+  `).get(locale, locale, slug) as (ArticleRow & ArticleContentRow & { topic_slug: string | null; topic_title: string | null }) | undefined;
 
   if (!article) {
     res.status(404).json({ error: 'not found' });

@@ -194,6 +194,49 @@ ${allFeedCards}
     </div>`;
 }
 
+function renderDiscoverListContent(articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>, topics: Array<{ slug: string; title: string }>, locale: string): string {
+  const topicTags = topics.map(t =>
+    `        <a href="${locale === 'en' ? `/en/discover/topic/${escapeHtml(t.slug)}` : `/discover/topic/${escapeHtml(t.slug)}`}" class="topic-tag">${escapeHtml(t.title || t.slug)}</a>`
+  ).join('\n');
+
+  const articleCards = articles.map(a => {
+    if (!a.title) return '';
+    const link = locale === 'en' ? `/en/discover/${escapeHtml(a.slug)}` : `/discover/${escapeHtml(a.slug)}`;
+    const coverHtml = a.cover_image
+      ? `<img src="${escapeHtml(a.cover_image)}" class="cover-img" alt="" loading="lazy" />`
+      : `<span class="cover-icon">${escapeHtml(a.icon)}</span>`;
+    return `        <article class="article-card">
+          <a href="${link}" class="article-link">
+            <div class="article-cover" style="background: ${escapeHtml(a.bg_color || '#f0f5ff')}">
+              ${coverHtml}
+            </div>
+            <div class="article-info">
+              <h2 class="article-title">${escapeHtml(a.title)}</h2>
+              ${a.summary ? `<p class="article-summary">${escapeHtml(a.summary)}</p>` : ''}
+              ${a.author ? `<div class="article-meta"><div class="article-author"><div class="author-avatar" style="background: ${escapeHtml(a.avatar_color || '#0077ff')}"></div><span>${escapeHtml(a.author)}</span></div></div>` : ''}
+            </div>
+          </a>
+        </article>`;
+  }).filter(Boolean).join('\n');
+
+  return `
+    <div class="ssg-discover-content" id="ssg-content">
+      <main class="discover-main">
+        <header class="discover-header">
+          <h1 class="discover-title">${locale === 'en' ? 'Discover' : '发现'}</h1>
+          <p class="discover-subtitle">${locale === 'en' ? 'Explore all articles and topics' : '浏览全部文章与专题'}</p>
+        </header>
+        ${topics.length > 0 ? `<nav class="topic-filters">
+        <a href="${locale === 'en' ? '/en/discover' : '/discover'}" class="topic-tag active">${locale === 'en' ? 'All' : '全部'}</a>
+${topicTags}
+        </nav>` : ''}
+        <div class="articles-grid">
+${articleCards}
+        </div>
+      </main>
+    </div>`;
+}
+
 export interface SSGResult {
   success: boolean;
   generated: string[];
@@ -297,7 +340,7 @@ export function generateStaticPages(): SSGResult {
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
       const homepageContent = renderHomepageContent(modules, feeds, discoverArticles);
-      html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
+      html = html.replace('<div id="app"></div>', `${homepageContent}\n<div id="app"></div>`);
 
       const outputPath = path.join(CLIENT_DIST, hp.outputFile);
       const outputDir = path.dirname(outputPath);
@@ -308,6 +351,54 @@ export function generateStaticPages(): SSGResult {
       result.generated.push(hp.pagePath);
     } catch (e: any) {
       result.errors.push(`${hp.pagePath}: ${e.message}`);
+    }
+  }
+
+  // Generate discover list pages — /discover and /en/discover
+  const discoverLocales: Array<{ locale: string; pagePath: string; outputFile: string }> = [
+    { locale: 'zh', pagePath: '/discover', outputFile: 'discover/index.html' },
+    { locale: 'en', pagePath: '/en/discover', outputFile: 'en/discover/index.html' },
+  ];
+
+  for (const dl of discoverLocales) {
+    try {
+      const discoverSeo = seoPages.find(p => p.path === '/discover' && (p as any).locale === dl.locale)
+        || seoPages.find(p => p.path === '/discover')
+        || null;
+
+      const discoverArticles = db.prepare(`
+        SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, a.cover_image, c.title, c.summary
+        FROM discover_articles a
+        LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
+        WHERE a.status = 'published' AND a.visible_locales LIKE '%"' || ? || '"%'
+        ORDER BY a.sort_order ASC, a.created_at DESC
+      `).all(dl.locale, dl.locale) as Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>;
+
+      const discoverTopics = db.prepare(`
+        SELECT t.slug, c.title
+        FROM discover_topics t
+        LEFT JOIN discover_topic_contents c ON c.topic_id = t.id AND c.locale = ?
+        WHERE t.status = 'published' AND t.visible_locales LIKE '%"' || ? || '"%'
+        ORDER BY t.sort_order ASC
+      `).all(dl.locale, dl.locale) as Array<{ slug: string; title: string }>;
+
+      let html = baseHtml;
+      const metaTags = buildSeoMetaTags(discoverSeo, globals, dl.pagePath);
+      const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/discover" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en/discover" />\n    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/discover" />\n`;
+      html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
+
+      const discoverContent = renderDiscoverListContent(discoverArticles, discoverTopics, dl.locale);
+      html = html.replace('<div id="app"></div>', `${discoverContent}\n<div id="app"></div>`);
+
+      const outputPath = path.join(CLIENT_DIST, dl.outputFile);
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      fs.writeFileSync(outputPath, html, 'utf-8');
+      result.generated.push(dl.pagePath);
+    } catch (e: any) {
+      result.errors.push(`${dl.pagePath}: ${e.message}`);
     }
   }
 

@@ -154,7 +154,7 @@ const sanitizedContent = computed(() => {
 
 async function loadArticle() {
   loading.value = true
-  const slug = route.params.slug as string
+  const slug = (route.params.slug as string).replace(/\/+$/, '')
   locale.value = route.path.startsWith('/en/') ? 'en' : 'zh'
 
   try {
@@ -226,11 +226,12 @@ watch(() => route.fullPath, loadArticle)
 
 <style scoped>
 .article-layout {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   background-color: #ffffff;
+  overflow-x: clip;
 }
 
 .article-main {
@@ -634,20 +635,46 @@ watch(() => route.fullPath, loadArticle)
 }
 
 @media (max-width: 768px) {
+  .article-main {
+    padding: 92px 16px 56px;
+  }
+  .breadcrumb {
+    margin-bottom: 24px;
+    font-size: 12px;
+  }
+  .breadcrumb .current {
+    max-width: 160px;
+  }
   .article-title {
     font-size: 32px;
+    margin-bottom: 24px;
   }
   .article-body {
     font-size: 16px;
+    line-height: 1.75;
   }
   .article-body :deep(h2) {
     font-size: 24px;
   }
-  .article-body :deep(blockquote) {
+  .article-body :deep(h3) {
     font-size: 20px;
+  }
+  .article-body :deep(blockquote) {
+    padding: 20px;
+    font-size: 17px;
   }
   .rec-grid {
     grid-template-columns: 1fr;
+  }
+  .article-nav {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .article-nav-link,
+  .article-nav-next {
+    max-width: 100%;
+    margin-left: 0;
+    text-align: left;
   }
 }
 </style>

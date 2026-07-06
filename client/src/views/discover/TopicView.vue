@@ -148,15 +148,16 @@ onMounted(loadTopic)
 
 <style scoped>
 .topic-page {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   background-color: #fafafa;
   background-image:
     linear-gradient(rgba(59, 91, 219, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(59, 91, 219, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
+  overflow-x: clip;
 }
 
 .topic-scroll {
@@ -249,9 +250,15 @@ onMounted(loadTopic)
 }
 
 @media (max-width: 768px) {
+  .topic-scroll {
+    padding-top: 56px;
+  }
+
   .topic-two-col {
+    width: auto;
     max-width: calc(100% - 32px);
     padding: 20px 0 56px;
+    gap: 24px;
   }
 
   .state-card {

@@ -2,7 +2,7 @@
   <div class="discover-layout">
     <SiteHeader @locale-changed="handleLocaleChange" />
 
-    <main class="discover-main">
+    <main class="discover-main" v-show="dataLoaded">
 
       <header class="discover-header">
         <h1 class="discover-title">{{ locale === 'en' ? 'Discover' : '发现' }}</h1>
@@ -128,6 +128,7 @@ interface TopicItem {
 const articles = ref<DiscoverArticle[]>([])
 const topics = ref<TopicItem[]>([])
 const loading = ref(true)
+const dataLoaded = ref(false)
 const currentPage = ref(1)
 const pageSize = 12
 const totalArticles = ref(0)
@@ -168,9 +169,11 @@ async function loadTopics() {
   } catch { /* silent */ }
 }
 
-onMounted(() => {
-  loadArticles()
-  loadTopics()
+onMounted(async () => {
+  await Promise.all([loadArticles(), loadTopics()])
+  dataLoaded.value = true
+  const ssgEl = document.getElementById('ssg-content')
+  if (ssgEl) ssgEl.remove()
 })
 
 watch(locale, () => {
@@ -193,11 +196,12 @@ watch(currentPage, () => {
 
 <style scoped>
 .discover-layout {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   background-color: #fafafa;
+  overflow-x: clip;
 }
 
 .discover-main {
@@ -421,11 +425,22 @@ watch(currentPage, () => {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .discover-layout {
+    overflow: visible;
+  }
   .discover-main {
-    padding: 80px 16px 60px;
+    padding: 88px 16px 56px;
   }
   .discover-title {
     font-size: 32px;
+  }
+  .topic-filters {
+    gap: 10px;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+  }
+  .topic-tag {
+    padding: 8px 14px;
   }
   .articles-grid {
     grid-template-columns: 1fr;
