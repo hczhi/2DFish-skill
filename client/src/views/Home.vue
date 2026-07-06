@@ -51,7 +51,7 @@
     </aside>
 
     <!-- 右侧内容列表 -->
-    <main class="main-content" v-show="homeDataLoaded">
+    <main class="main-content">
       <AdSlot position="top" />
 
       <div class="bento-grid">
@@ -406,8 +406,6 @@ onUnmounted(() => {
   if (stopFishTank) stopFishTank()
 })
 
-const homeDataLoaded = ref(false)
-
 async function loadHomeData() {
   try {
     const [modulesRes, feedsRes] = await Promise.all([
@@ -417,10 +415,8 @@ async function loadHomeData() {
     if (modulesRes.ok) navItems.value = await modulesRes.json()
     if (feedsRes.ok) feedItems.value = await feedsRes.json()
   } catch { /* silent */ }
-  homeDataLoaded.value = true
-  // Remove SSG placeholder once Vue has real data
-  const ssgEl = document.getElementById('ssg-content')
-  if (ssgEl) ssgEl.remove()
+  const ssgCss = document.getElementById('ssg-critical-css')
+  if (ssgCss) ssgCss.remove()
   loadDiscoverArticles()
   loadTopics()
 }

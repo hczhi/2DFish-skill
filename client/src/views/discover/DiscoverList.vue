@@ -2,7 +2,7 @@
   <div class="discover-layout">
     <SiteHeader @locale-changed="handleLocaleChange" />
 
-    <main class="discover-main" v-show="dataLoaded">
+    <main class="discover-main">
 
       <header class="discover-header">
         <h1 class="discover-title">{{ locale === 'en' ? 'Discover' : '发现' }}</h1>
@@ -128,7 +128,6 @@ interface TopicItem {
 const articles = ref<DiscoverArticle[]>([])
 const topics = ref<TopicItem[]>([])
 const loading = ref(true)
-const dataLoaded = ref(false)
 const currentPage = ref(1)
 const pageSize = 12
 const totalArticles = ref(0)
@@ -171,9 +170,8 @@ async function loadTopics() {
 
 onMounted(async () => {
   await Promise.all([loadArticles(), loadTopics()])
-  dataLoaded.value = true
-  const ssgEl = document.getElementById('ssg-content')
-  if (ssgEl) ssgEl.remove()
+  const ssgCss = document.getElementById('ssg-critical-css')
+  if (ssgCss) ssgCss.remove()
 })
 
 watch(locale, () => {

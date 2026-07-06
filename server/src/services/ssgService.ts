@@ -100,6 +100,68 @@ interface DiscoverFeedItem {
   summary: string;
 }
 
+function getHomepageCriticalCss(): string {
+  return `<style id="ssg-critical-css">
+#ssg-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; margin-top: 50px; }
+#ssg-content .bento-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); grid-auto-rows: 240px; gap: 24px; width: 100%; }
+#ssg-content .bento-card { position: relative; border: none; border-radius: 10px; background: #fff; overflow: hidden; text-decoration: none; color: inherit; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,0.02), 0 2px 8px rgba(0,0,0,0.02); }
+#ssg-content .bento-span-2x2 { grid-column: span 2; grid-row: span 2; }
+#ssg-content .bento-span-2x1 { grid-column: span 2; }
+#ssg-content .bento-span-1x2 { grid-row: span 2; }
+#ssg-content .card-bg { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: none; }
+#ssg-content .bg-image { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
+#ssg-content .bg-pattern { width: 100%; height: 100%; position: absolute; top: 0; left: 0; opacity: 0.8; }
+#ssg-content .card-content { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; padding: 24px; }
+#ssg-content .card-title { font-size: 18px; font-weight: 700; margin: 0; color: #111827; }
+#ssg-content .card-desc { font-size: 14px; color: #6b7280; line-height: 1.5; margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#ssg-content .card-header .icon { font-size: 28px; }
+#ssg-content .card-body { margin-top: auto; }
+#ssg-content .ultra-wide-feed { margin-top: 64px; }
+#ssg-content .feed-header { margin-bottom: 40px; }
+#ssg-content .feed-title { font-size: 56px; font-weight: 900; margin: 0 0 4px; letter-spacing: -2px; text-transform: uppercase; color: #111827; }
+#ssg-content .feed-subtitle { color: #3b5bdb; text-transform: uppercase; letter-spacing: 4px; font-size: 12px; font-weight: 600; }
+#ssg-content .feed-masonry { columns: 1; column-gap: 20px; }
+@media (min-width: 640px) { #ssg-content .feed-masonry { columns: 2; } }
+@media (min-width: 1024px) { #ssg-content .feed-masonry { columns: 3; } }
+@media (min-width: 1440px) { #ssg-content .feed-masonry { columns: 4; } }
+#ssg-content .feed-card { display: block; text-decoration: none; color: inherit; break-inside: avoid; margin-bottom: 24px; }
+#ssg-content .feed-image { width: 100%; display: flex; align-items: center; justify-content: center; font-size: 56px; border-radius: 10px; overflow: hidden; margin-bottom: 12px; border: 1px solid rgba(0,0,0,0.04); }
+#ssg-content .feed-emoji { font-size: 56px; }
+#ssg-content .feed-info { padding: 0 4px; }
+#ssg-content .feed-text { font-size: 14px; font-weight: 500; line-height: 1.5; margin: 0 0 8px; color: #111827; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#ssg-content .feed-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #6b7280; }
+#ssg-content .feed-author { display: flex; align-items: center; gap: 6px; }
+#ssg-content .author-avatar { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.05); }
+#ssg-content footer { margin-top: 64px; padding: 24px 0; text-align: center; font-size: 13px; color: #9ca3af; }
+@media (max-width: 900px) { #ssg-content .bento-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); } #ssg-content .bento-span-2x2, #ssg-content .bento-span-2x1, #ssg-content .bento-span-1x2 { grid-column: span 1; grid-row: span 1; } }
+</style>`;
+}
+
+function getDiscoverListCriticalCss(): string {
+  return `<style id="ssg-critical-css">
+#ssg-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1100px; margin: 0 auto; padding: 100px 24px 80px; }
+#ssg-content .discover-header { margin-bottom: 32px; }
+#ssg-content .discover-title { font-size: 48px; font-weight: 900; margin: 0 0 8px; letter-spacing: -2px; color: #111827; }
+#ssg-content .discover-subtitle { font-size: 16px; color: #6b7280; margin: 0; }
+#ssg-content .topic-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+#ssg-content .topic-tag { display: inline-block; padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 500; text-decoration: none; color: #4b5563; background: #f3f4f6; border: 1px solid rgba(0,0,0,0.04); }
+#ssg-content .topic-tag.active { background: #4361EE; color: #fff; border-color: #4361EE; }
+#ssg-content .articles-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; }
+#ssg-content .article-card { border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.03); }
+#ssg-content .article-link { display: block; text-decoration: none; color: inherit; }
+#ssg-content .article-cover { width: 100%; height: 200px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#ssg-content .cover-img { width: 100%; height: 100%; object-fit: cover; }
+#ssg-content .cover-icon { font-size: 48px; }
+#ssg-content .article-info { padding: 20px; }
+#ssg-content .article-title { font-size: 17px; font-weight: 700; margin: 0 0 8px; color: #111827; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#ssg-content .article-summary { font-size: 14px; color: #6b7280; margin: 0 0 12px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#ssg-content .article-meta { display: flex; align-items: center; }
+#ssg-content .article-author { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6b7280; }
+#ssg-content .author-avatar { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.05); }
+@media (max-width: 768px) { #ssg-content { padding: 88px 16px 56px; } #ssg-content .discover-title { font-size: 32px; } #ssg-content .articles-grid { grid-template-columns: 1fr; gap: 20px; } #ssg-content .article-cover { height: 160px; } }
+</style>`;
+}
+
 function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discoverArticles: DiscoverFeedItem[] = []): string {
   const moduleCards = modules.map(item => {
     const spanClass = item.grid_span === '2x2' ? 'bento-span-2x2' :
@@ -340,7 +402,8 @@ export function generateStaticPages(): SSGResult {
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
       const homepageContent = renderHomepageContent(modules, feeds, discoverArticles);
-      html = html.replace('<div id="app"></div>', `${homepageContent}\n<div id="app"></div>`);
+      html = html.replace('</head>', `${getHomepageCriticalCss()}\n</head>`);
+      html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
 
       const outputPath = path.join(CLIENT_DIST, hp.outputFile);
       const outputDir = path.dirname(outputPath);
@@ -388,7 +451,8 @@ export function generateStaticPages(): SSGResult {
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
       const discoverContent = renderDiscoverListContent(discoverArticles, discoverTopics, dl.locale);
-      html = html.replace('<div id="app"></div>', `${discoverContent}\n<div id="app"></div>`);
+      html = html.replace('</head>', `${getDiscoverListCriticalCss()}\n</head>`);
+      html = html.replace('<div id="app"></div>', `<div id="app">${discoverContent}</div>`);
 
       const outputPath = path.join(CLIENT_DIST, dl.outputFile);
       const outputDir = path.dirname(outputPath);
@@ -832,6 +896,127 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
   return result;
 }
 
+export function renderDynamicPageHtml(reqPath: string): string | null {
+  const baseHtml = getBaseTemplate();
+  if (!baseHtml) return null;
+
+  const db = getDatabase();
+  const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
+  const globals: Record<string, string> = {};
+  for (const r of globalRows) globals[r.key] = r.value;
+  const siteUrl = globals.site_url || '';
+
+  const normalizedPath = reqPath.replace(/\/+$/, '');
+
+  // Match article: /discover/:slug or /en/discover/:slug (but not /discover/topic/...)
+  const articleMatch = normalizedPath.match(/^(?:\/(en))?\/discover\/(?!topic\/)([^/]+)$/);
+  if (articleMatch) {
+    const locale = articleMatch[1] || 'zh';
+    const slug = articleMatch[2];
+
+    const article = db.prepare(`
+      SELECT a.* FROM discover_articles a WHERE a.slug = ? AND a.status = 'published'
+    `).get(slug) as DiscoverArticle | undefined;
+    if (!article) return null;
+
+    const content = db.prepare(`
+      SELECT * FROM discover_article_contents WHERE article_id = ? AND locale = ?
+    `).get(article.id, locale) as DiscoverArticleContent | undefined;
+    if (!content || !content.title) return null;
+
+    const recommendations = db.prepare(`
+      SELECT ra.slug, ra.icon, ra.bg_color, ra.author, rc.title, rc.summary
+      FROM discover_article_recommendations r
+      JOIN discover_articles ra ON ra.id = r.recommended_article_id AND ra.status = 'published'
+      LEFT JOIN discover_article_contents rc ON rc.article_id = ra.id AND rc.locale = ?
+      WHERE r.article_id = ? AND r.locale = ?
+      ORDER BY r.sort_order ASC LIMIT 5
+    `).all(locale, article.id, locale) as RecommendedItem[];
+
+    const pagePath = locale === 'zh' ? `/discover/${slug}` : `/${locale}/discover/${slug}`;
+    const seoPage: SeoPage = {
+      path: pagePath,
+      title: content.seo_title || content.title,
+      description: content.seo_description || content.summary,
+      keywords: content.seo_keywords || '',
+      og_title: content.seo_title || content.title,
+      og_description: content.seo_description || content.summary,
+      og_image: article.cover_image || '',
+      canonical: siteUrl ? `${siteUrl}${pagePath}` : '',
+      no_index: 0,
+      json_ld: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        'headline': content.title,
+        'description': content.seo_description || content.summary,
+        'author': { '@type': 'Person', 'name': article.author || 'QiaoNan' },
+        'datePublished': article.created_at,
+        'dateModified': article.updated_at,
+        'image': article.cover_image || siteUrl + '/og-default.png',
+      }),
+    };
+
+    let html = baseHtml;
+    html = html.replace(/<title>.*?<\/title>/, buildSeoMetaTags(seoPage, globals, pagePath));
+    const articleHtml = renderArticleContent(article, content, locale, recommendations);
+    html = html.replace('<div id="app"></div>', `<div id="app">${articleHtml}</div>`);
+    return html;
+  }
+
+  // Match topic: /discover/topic/:slug or /en/discover/topic/:slug
+  const topicMatch = normalizedPath.match(/^(?:\/(en))?\/discover\/topic\/([^/]+)$/);
+  if (topicMatch) {
+    const locale = topicMatch[1] || 'zh';
+    const slug = topicMatch[2];
+
+    const topic = db.prepare(`
+      SELECT * FROM discover_topics WHERE slug = ? AND status = 'published'
+    `).get(slug) as DiscoverTopic | undefined;
+    if (!topic) return null;
+
+    const content = db.prepare(`
+      SELECT * FROM discover_topic_contents WHERE topic_id = ? AND locale = ?
+    `).get(topic.id, locale) as DiscoverTopicContent | undefined;
+    if (!content || !content.title) return null;
+
+    const articles = db.prepare(`
+      SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, ac.title, ac.summary
+      FROM discover_articles a
+      LEFT JOIN discover_article_contents ac ON ac.article_id = a.id AND ac.locale = ?
+      WHERE a.topic_id = ? AND a.status = 'published'
+        AND a.visible_locales LIKE '%"' || ? || '"%'
+      ORDER BY a.sort_order ASC, a.created_at DESC
+    `).all(locale, topic.id, locale) as Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>;
+
+    const pagePath = locale === 'zh' ? `/discover/topic/${slug}` : `/${locale}/discover/topic/${slug}`;
+    const seoPage: SeoPage = {
+      path: pagePath,
+      title: content.seo_title || content.title,
+      description: content.seo_description || content.description,
+      keywords: content.seo_keywords || '',
+      og_title: content.seo_title || content.title,
+      og_description: content.seo_description || content.description,
+      og_image: topic.cover_image || '',
+      canonical: siteUrl ? `${siteUrl}${pagePath}` : '',
+      no_index: 0,
+      json_ld: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        'name': content.title,
+        'description': content.description,
+      }),
+    };
+
+    let html = baseHtml;
+    html = html.replace(/<title>.*?<\/title>/, buildSeoMetaTags(seoPage, globals, pagePath));
+    const topicHtml = renderTopicContent(topic, content, locale, articles);
+    html = html.replace('<div id="app"></div>', `<div id="app">${topicHtml}</div>`);
+    return html;
+  }
+
+  return null;
+}
+
 export function regenerateSitemapAndRobots(): { generated: string[]; errors: string[] } {
   const generated: string[] = [];
   const errors: string[] = [];
@@ -851,6 +1036,10 @@ export function regenerateSitemapAndRobots(): { generated: string[]; errors: str
   try {
     const robotsTxt = `User-agent: *
 Allow: /
+Allow: /api/discover/
+Allow: /api/seo/
+Allow: /api/home/
+Allow: /api/analytics/pageview
 Disallow: /api/
 Disallow: /admin/
 Disallow: /settings/

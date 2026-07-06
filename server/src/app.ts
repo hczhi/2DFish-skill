@@ -30,6 +30,7 @@ import { adSlotsRouter } from './api/adSlots.js';
 import { uploadRouter } from './api/upload.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
+import { renderDynamicPageHtml } from './services/ssgService.js';
 
 dotenv.config();
 
@@ -176,6 +177,14 @@ if (fs.existsSync(clientDistPath)) {
         res.send(fs.readFileSync(subPageFile, 'utf-8'));
         return;
       }
+    }
+
+    // Dynamic SSR for article/topic pages without pre-generated SSG files
+    const dynamicHtml = renderDynamicPageHtml(req.path);
+    if (dynamicHtml) {
+      res.setHeader('Content-Type', 'text/html');
+      res.send(dynamicHtml);
+      return;
     }
 
     // Fallback to root index.html
