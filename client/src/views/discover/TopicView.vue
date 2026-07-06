@@ -67,6 +67,7 @@ interface TopicData {
   description: string
   seo_title: string
   seo_description: string
+  seo_keywords: string
   articles: TopicArticle[]
 }
 
@@ -90,8 +91,15 @@ async function loadTopic() {
     if (res.ok) {
       topic.value = await res.json()
       resolveTemplate(topic.value!.template || 'default')
-      if (topic.value?.seo_title || topic.value?.title) {
-        document.title = topic.value.seo_title || topic.value.title
+      if (topic.value) {
+        const t = topic.value
+        document.title = t.seo_title || t.title
+        setMeta('description', t.seo_description || t.description || '')
+        setMeta('keywords', t.seo_keywords || '')
+        setMetaProperty('og:title', t.seo_title || t.title)
+        setMetaProperty('og:description', t.seo_description || t.description || '')
+        setMetaProperty('twitter:title', t.seo_title || t.title)
+        setMetaProperty('twitter:description', t.seo_description || t.description || '')
       }
     } else {
       topic.value = null
@@ -112,6 +120,26 @@ function resolveTemplate(name: string) {
       errorComponent: DefaultTopic as any,
     })
   }
+}
+
+function setMeta(name: string, content: string) {
+  let el = document.querySelector(`meta[name="${name}"]`)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute('name', name)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
+}
+
+function setMetaProperty(property: string, content: string) {
+  let el = document.querySelector(`meta[property="${property}"]`)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute('property', property)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
 }
 
 watch(() => route.fullPath, loadTopic)

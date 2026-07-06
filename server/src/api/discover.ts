@@ -100,14 +100,14 @@ discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
   }
 
   const recommendations = db.prepare(`
-    SELECT ra.slug, ra.icon, ra.bg_color, ra.avatar_color, ra.author, rc.title, rc.summary
+    SELECT ra.slug, ra.icon, ra.bg_color, ra.avatar_color, ra.author, ra.cover_image, rc.title, rc.summary
     FROM discover_article_recommendations r
     JOIN discover_articles ra ON ra.id = r.recommended_article_id AND ra.status = 'published'
     LEFT JOIN discover_article_contents rc ON rc.article_id = ra.id AND rc.locale = ?
     WHERE r.article_id = ? AND r.locale = ?
     ORDER BY r.sort_order ASC
     LIMIT 5
-  `).all(locale, article.id, locale) as Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>;
+  `).all(locale, article.id, locale) as Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>;
 
   res.json({ ...article, recommendations });
 });

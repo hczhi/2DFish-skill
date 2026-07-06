@@ -31,8 +31,13 @@ export function useSeo() {
   const route = useRoute()
 
   async function applySeo(path: string) {
-    const locale = getLocaleFromPath(path)
     const normalizedPath = getNormalizedPath(path)
+
+    // Skip pages that manage their own SEO (articles, topics)
+    if (/^\/discover\/[^/]+$/.test(normalizedPath) && normalizedPath !== '/discover') return
+    if (/^\/discover\/topic\/[^/]+$/.test(normalizedPath)) return
+
+    const locale = getLocaleFromPath(path)
     const cacheKey = `${normalizedPath}:${locale}`
 
     if (!cache[cacheKey]) {

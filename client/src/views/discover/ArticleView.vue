@@ -136,6 +136,7 @@ interface ArticleData {
   summary: string
   seo_title: string
   seo_description: string
+  seo_keywords: string
   updated_at?: string
   recommendations?: RecItem[]
 }
@@ -160,8 +161,15 @@ async function loadArticle() {
     const res = await fetch(`/api/discover/articles/${slug}?locale=${locale.value}`)
     if (res.ok) {
       article.value = await res.json()
-      if (article.value?.seo_title || article.value?.title) {
-        document.title = article.value.seo_title || article.value.title
+      if (article.value) {
+        const a = article.value
+        document.title = a.seo_title || a.title
+        setMeta('description', a.seo_description || a.summary || '')
+        setMeta('keywords', a.seo_keywords || '')
+        setMetaProperty('og:title', a.seo_title || a.title)
+        setMetaProperty('og:description', a.seo_description || a.summary || '')
+        setMetaProperty('twitter:title', a.seo_title || a.title)
+        setMetaProperty('twitter:description', a.seo_description || a.summary || '')
       }
       // Derive prev/next from recommendations
       const recs = article.value?.recommendations
@@ -186,6 +194,26 @@ async function loadArticle() {
     nextArticle.value = null
   }
   loading.value = false
+}
+
+function setMeta(name: string, content: string) {
+  let el = document.querySelector(`meta[name="${name}"]`)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute('name', name)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
+}
+
+function setMetaProperty(property: string, content: string) {
+  let el = document.querySelector(`meta[property="${property}"]`)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute('property', property)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
 }
 
 function formatDate(iso: string): string {
