@@ -754,7 +754,7 @@ export function regenerateSitemapAndRobots(): { generated: string[]; errors: str
   const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
   const globals: Record<string, string> = {};
   for (const r of globalRows) globals[r.key] = r.value;
-  const siteUrl = globals.site_url || 'https://your-domain.com';
+  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
 
   // robots.txt
   try {

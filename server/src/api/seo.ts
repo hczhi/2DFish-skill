@@ -40,7 +40,7 @@ seoRouter.get('/sitemap', (_req: Request, res: Response) => {
 seoRouter.get('/robots.txt', (_req: Request, res: Response) => {
   const db = getDatabase();
   const globals = getGlobals(db);
-  const siteUrl = globals.site_url || 'https://your-domain.com';
+  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
 
   res.setHeader('Content-Type', 'text/plain');
   res.send(`User-agent: *
@@ -57,26 +57,98 @@ Sitemap: ${siteUrl}/sitemap.xml
 // Dynamic sitemap.xml
 seoRouter.get('/sitemap.xml', (_req: Request, res: Response) => {
   const db = getDatabase();
+  const globals = getGlobals(db);
+  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+
+  const urls: string[] = [];
+
+  // 1. Static pages from seo_pages table
   const pages = db.prepare('SELECT path, locale, priority, changefreq, updated_at FROM seo_pages WHERE no_index = 0 ORDER BY priority DESC').all() as Array<{
     path: string; locale: string; priority: number; changefreq: string; updated_at: string;
   }>;
-  const globals = getGlobals(db);
-  const siteUrl = globals.site_url || 'https://your-domain.com';
-
-  const urls = pages.map(p => {
+  for (const p of pages) {
     const fullPath = (p.locale && p.locale !== 'zh') ? `/en${p.path}` : p.path;
-    return `  <url>
-    <loc>${siteUrl}${fullPath}</loc>
-    <lastmod>${p.updated_at.split('T')[0]}</lastmod>
-    <changefreq>${p.changefreq}</changefreq>
-    <priority>${p.priority}</priority>
-  </url>`;
-  }).join('\n');
+    urls.push(`  <url>
+    <loc>${siteUrl}${fullPath}</loc>${p.updated_at ? `\n    <lastmod>${p.updated_at.split('T')[0]}</lastmod>` : ''}
+    <changefreq>${p.changefreq || 'weekly'}</changefreq>
+    <priority>${p.priority || 0.5}</priority>
+  </url>`);
+  }
+
+  // 2. Published articles (auto-included, both zh and en)
+  const articles = db.prepare(`
+    SELECT a.slug, a.visible_locales, a.updated_at
+    FROM discover_articles a
+    WHERE a.status = 'published'
+    ORDER BY a.created_at DESC
+  `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
+
+  const existingPaths = new Set(pages.map(p => {
+    return (p.locale && p.locale !== 'zh') ? `/en${p.path}` : p.path;
+  }));
+
+  for (const a of articles) {
+    const locales: string[] = JSON.parse(a.visible_locales || '["zh"]');
+    const lastmod = a.updated_at ? a.updated_at.split('T')[0] : '';
+    if (locales.includes('zh')) {
+      const path = `/discover/${a.slug}`;
+      if (!existingPaths.has(path)) {
+        urls.push(`  <url>
+    <loc>${siteUrl}${path}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>`);
+      }
+    }
+    if (locales.includes('en')) {
+      const path = `/en/discover/${a.slug}`;
+      if (!existingPaths.has(path)) {
+        urls.push(`  <url>
+    <loc>${siteUrl}${path}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>`);
+      }
+    }
+  }
+
+  // 3. Published topics
+  const topics = db.prepare(`
+    SELECT slug, visible_locales, updated_at
+    FROM discover_topics
+    WHERE status = 'published'
+    ORDER BY sort_order ASC
+  `).all() as Array<{ slug: string; visible_locales: string; updated_at: string }>;
+
+  for (const t of topics) {
+    const locales: string[] = JSON.parse(t.visible_locales || '["zh"]');
+    const lastmod = t.updated_at ? t.updated_at.split('T')[0] : '';
+    if (locales.includes('zh')) {
+      const path = `/discover/topic/${t.slug}`;
+      if (!existingPaths.has(path)) {
+        urls.push(`  <url>
+    <loc>${siteUrl}${path}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>`);
+      }
+    }
+    if (locales.includes('en')) {
+      const path = `/en/discover/topic/${t.slug}`;
+      if (!existingPaths.has(path)) {
+        urls.push(`  <url>
+    <loc>${siteUrl}${path}</loc>${lastmod ? `\n    <lastmod>${lastmod}</lastmod>` : ''}
+    <changefreq>weekly</changefreq>
+    <priority>0.6</priority>
+  </url>`);
+      }
+    }
+  }
 
   res.setHeader('Content-Type', 'application/xml');
   res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
+${urls.join('\n')}
 </urlset>`);
 });
 
