@@ -162,14 +162,14 @@ function getDiscoverListCriticalCss(): string {
 </style>`;
 }
 
-function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discoverArticles: DiscoverFeedItem[] = []): string {
+function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discoverArticles: DiscoverFeedItem[] = [], siteUrl: string = ''): string {
   const moduleCards = modules.map(item => {
     const spanClass = item.grid_span === '2x2' ? 'bento-span-2x2' :
       item.grid_span === '2x1' ? 'bento-span-2x1' :
       item.grid_span === '1x2' ? 'bento-span-1x2' : '';
     const featuredClass = item.featured ? 'is-featured' : '';
 
-    return `      <a href="${escapeHtml(item.path)}" class="bento-card ${spanClass} ${featuredClass}">
+    return `      <a href="${escapeHtml(item.path.startsWith('/') ? siteUrl + item.path : item.path)}" class="bento-card ${spanClass} ${featuredClass}">
         <div class="card-bg">
           ${item.image_url
             ? `<img src="${escapeHtml(item.image_url)}" class="bg-image" alt="${escapeHtml(item.title)}" />`
@@ -191,7 +191,7 @@ function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discove
 
   const articleCards = discoverArticles.map(article => {
     if (!article.title) return '';
-    return `        <a href="/discover/${escapeHtml(article.slug)}" class="feed-card">
+    return `        <a href="${siteUrl}/discover/${escapeHtml(article.slug)}" class="feed-card">
           <div class="feed-image" style="height: 220px; background: ${escapeHtml(article.bg_color)}">
             <span class="feed-emoji">${escapeHtml(article.icon)}</span>
           </div>
@@ -256,14 +256,14 @@ ${allFeedCards}
     </div>`;
 }
 
-function renderDiscoverListContent(articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>, topics: Array<{ slug: string; title: string }>, locale: string): string {
+function renderDiscoverListContent(articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>, topics: Array<{ slug: string; title: string }>, locale: string, siteUrl: string = ''): string {
   const topicTags = topics.map(t =>
-    `        <a href="${locale === 'en' ? `/en/discover/topic/${escapeHtml(t.slug)}` : `/discover/topic/${escapeHtml(t.slug)}`}" class="topic-tag">${escapeHtml(t.title || t.slug)}</a>`
+    `        <a href="${locale === 'en' ? `${siteUrl}/en/discover/topic/${escapeHtml(t.slug)}` : `${siteUrl}/discover/topic/${escapeHtml(t.slug)}`}" class="topic-tag">${escapeHtml(t.title || t.slug)}</a>`
   ).join('\n');
 
   const articleCards = articles.map(a => {
     if (!a.title) return '';
-    const link = locale === 'en' ? `/en/discover/${escapeHtml(a.slug)}` : `/discover/${escapeHtml(a.slug)}`;
+    const link = locale === 'en' ? `${siteUrl}/en/discover/${escapeHtml(a.slug)}` : `${siteUrl}/discover/${escapeHtml(a.slug)}`;
     const coverHtml = a.cover_image
       ? `<img src="${escapeHtml(a.cover_image)}" class="cover-img" alt="" loading="lazy" />`
       : `<span class="cover-icon">${escapeHtml(a.icon)}</span>`;
@@ -289,7 +289,7 @@ function renderDiscoverListContent(articles: Array<{ slug: string; icon: string;
           <p class="discover-subtitle">${locale === 'en' ? 'Explore all articles and topics' : '浏览全部文章与专题'}</p>
         </header>
         ${topics.length > 0 ? `<nav class="topic-filters">
-        <a href="${locale === 'en' ? '/en/discover' : '/discover'}" class="topic-tag active">${locale === 'en' ? 'All' : '全部'}</a>
+        <a href="${locale === 'en' ? `${siteUrl}/en/discover` : `${siteUrl}/discover`}" class="topic-tag active">${locale === 'en' ? 'All' : '全部'}</a>
 ${topicTags}
         </nav>` : ''}
         <div class="articles-grid">
@@ -401,7 +401,7 @@ export function generateStaticPages(): SSGResult {
       const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en" />\n    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/" />\n`;
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
-      const homepageContent = renderHomepageContent(modules, feeds, discoverArticles);
+      const homepageContent = renderHomepageContent(modules, feeds, discoverArticles, siteUrl);
       html = html.replace('</head>', `${getHomepageCriticalCss()}\n</head>`);
       html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
 
@@ -450,7 +450,7 @@ export function generateStaticPages(): SSGResult {
       const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/discover" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en/discover" />\n    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/discover" />\n`;
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
-      const discoverContent = renderDiscoverListContent(discoverArticles, discoverTopics, dl.locale);
+      const discoverContent = renderDiscoverListContent(discoverArticles, discoverTopics, dl.locale, siteUrl);
       html = html.replace('</head>', `${getDiscoverListCriticalCss()}\n</head>`);
       html = html.replace('<div id="app"></div>', `<div id="app">${discoverContent}</div>`);
 
@@ -528,12 +528,12 @@ interface RecommendedItem {
   summary: string;
 }
 
-function renderArticleContent(article: DiscoverArticle, content: DiscoverArticleContent, locale: string, recommendations: RecommendedItem[] = []): string {
+function renderArticleContent(article: DiscoverArticle, content: DiscoverArticleContent, locale: string, recommendations: RecommendedItem[] = [], siteUrl: string = ''): string {
   const recsHtml = recommendations.length > 0 ? `
         <section class="article-recommendations">
           <h2>${locale === 'en' ? 'Recommended' : '热门推荐'}</h2>
           <div class="rec-grid">
-${recommendations.map(r => `            <a href="${locale === 'zh' ? `/discover/${escapeHtml(r.slug)}` : `/${locale}/discover/${escapeHtml(r.slug)}`}" class="rec-card">
+${recommendations.map(r => `            <a href="${locale === 'zh' ? `${siteUrl}/discover/${escapeHtml(r.slug)}` : `${siteUrl}/${locale}/discover/${escapeHtml(r.slug)}`}" class="rec-card">
               <div class="rec-icon" style="background: ${escapeHtml(r.bg_color)}">${escapeHtml(r.icon)}</div>
               <div class="rec-info">
                 <h3>${escapeHtml(r.title)}</h3>
@@ -600,8 +600,8 @@ interface DiscoverTopicContent {
   seo_keywords: string;
 }
 
-function renderTopicContent(topic: DiscoverTopic, content: DiscoverTopicContent, locale: string, articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>): string {
-  const articlesHtml = articles.map(a => `            <a href="${locale === 'zh' ? `/discover/${escapeHtml(a.slug)}` : `/${locale}/discover/${escapeHtml(a.slug)}`}" class="topic-article-card">
+function renderTopicContent(topic: DiscoverTopic, content: DiscoverTopicContent, locale: string, articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; title: string; summary: string }>, siteUrl: string = ''): string {
+  const articlesHtml = articles.map(a => `            <a href="${locale === 'zh' ? `${siteUrl}/discover/${escapeHtml(a.slug)}` : `${siteUrl}/${locale}/discover/${escapeHtml(a.slug)}`}" class="topic-article-card">
               <div class="topic-article-icon" style="background: ${escapeHtml(a.bg_color)}">${escapeHtml(a.icon)}</div>
               <div class="topic-article-info">
                 <h3>${escapeHtml(a.title)}</h3>
@@ -738,7 +738,7 @@ export function generateTopicPage(topic: DiscoverTopic, contents: DiscoverTopicC
 
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags + topicBreadcrumbScript);
 
-      const topicHtml = renderTopicContent(topic, content, locale, articles);
+      const topicHtml = renderTopicContent(topic, content, locale, articles, siteUrl);
       html = html.replace('<div id="app"></div>', `<div id="app">${topicHtml}</div>`);
 
       const dir = path.join(CLIENT_DIST, pagePath.replace(/^\//, ''));
@@ -868,7 +868,7 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
 
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags + breadcrumbScript);
 
-      const articleHtml = renderArticleContent(article, content, locale, recommendations);
+      const articleHtml = renderArticleContent(article, content, locale, recommendations, siteUrl);
       html = html.replace('<div id="app"></div>', `<div id="app">${articleHtml}</div>`);
 
       const dir = path.join(CLIENT_DIST, pagePath.replace(/^\//, ''));
@@ -958,7 +958,7 @@ export function renderDynamicPageHtml(reqPath: string): string | null {
 
     let html = baseHtml;
     html = html.replace(/<title>.*?<\/title>/, buildSeoMetaTags(seoPage, globals, pagePath));
-    const articleHtml = renderArticleContent(article, content, locale, recommendations);
+    const articleHtml = renderArticleContent(article, content, locale, recommendations, siteUrl);
     html = html.replace('<div id="app"></div>', `<div id="app">${articleHtml}</div>`);
     return html;
   }
@@ -1009,7 +1009,7 @@ export function renderDynamicPageHtml(reqPath: string): string | null {
 
     let html = baseHtml;
     html = html.replace(/<title>.*?<\/title>/, buildSeoMetaTags(seoPage, globals, pagePath));
-    const topicHtml = renderTopicContent(topic, content, locale, articles);
+    const topicHtml = renderTopicContent(topic, content, locale, articles, siteUrl);
     html = html.replace('<div id="app"></div>', `<div id="app">${topicHtml}</div>`);
     return html;
   }
