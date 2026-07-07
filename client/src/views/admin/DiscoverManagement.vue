@@ -111,7 +111,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { authFetch } from '../../lib/auth'
+import { authFetch, getToken } from '../../lib/auth'
 import HcModal from '../../components/common/HcModal.vue'
 import AdminPagination from '../../components/common/AdminPagination.vue'
 
@@ -175,7 +175,7 @@ const showBatchModal = computed({
   set: (val) => { if (!val) { batchProgress.value = null; batchDone.value = false } }
 })
 const progressPercent = computed(() => {
-  if (!batchProgress.value) return 0
+  if (!batchProgress.value || !batchProgress.value.total) return 0
   return Math.round((batchProgress.value.current / batchProgress.value.total) * 100)
 })
 
@@ -235,11 +235,16 @@ async function batchGenerate() {
   batchDone.value = false
 
   try {
-    const token = localStorage.getItem('token')
+    const token = getToken()
     const res = await fetch('/api/discover/admin/articles/batch-generate', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
 
     const reader = res.body?.getReader()
     if (!reader) return
@@ -271,9 +276,8 @@ async function batchGenerate() {
     loadArticles()
   } catch (e: any) {
     batchDone.value = true
-    if (batchProgress.value) {
-      batchProgress.value.failed = (batchProgress.value.failed || 0) + 1
-    }
+    batchProgress.value = { current: 0, total: 0, success: 0, failed: 0, slug: '', ok: false }
+    alert('批量生成失败: ' + (e.message || 'Network error'))
   }
 }
 
