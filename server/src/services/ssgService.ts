@@ -49,7 +49,7 @@ function escapeHtml(str: string): string {
 }
 
 function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>, pagePath: string, locale?: string): string {
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
   const siteName = globals.site_name || 'QiaoNan';
   const title = page?.title || `${siteName} - AI 效率工具平台`;
   const description = page?.description || globals.site_description || '';
@@ -377,7 +377,7 @@ export function generateStaticPages(): SSGResult {
     { locale: 'en', pagePath: '/en', outputFile: 'en/index.html' },
   ];
 
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
   const modules = db.prepare('SELECT * FROM home_modules WHERE visible = 1 ORDER BY sort_order ASC, created_at ASC').all() as HomeModule[];
   const feeds = db.prepare('SELECT * FROM home_feeds WHERE visible = 1 ORDER BY sort_order ASC, created_at DESC').all() as HomeFeed[];
 
@@ -672,7 +672,7 @@ export function generateTopicPage(topic: DiscoverTopic, contents: DiscoverTopicC
   const globals: Record<string, string> = {};
   for (const r of globalRows) globals[r.key] = r.value;
 
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   for (const locale of locales) {
     const content = contents.find(c => c.locale === locale);
@@ -787,7 +787,7 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
   const globals: Record<string, string> = {};
   for (const r of globalRows) globals[r.key] = r.value;
 
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   for (const locale of locales) {
     const content = contents.find(c => c.locale === locale);
@@ -904,7 +904,7 @@ export function renderDynamicPageHtml(reqPath: string): string | null {
   const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
   const globals: Record<string, string> = {};
   for (const r of globalRows) globals[r.key] = r.value;
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   const normalizedPath = reqPath.replace(/\/+$/, '');
 
@@ -1030,7 +1030,7 @@ export function regenerateSitemapAndRobots(): { generated: string[]; errors: str
   const globalRows = db.prepare('SELECT key, value FROM seo_global').all() as Array<{ key: string; value: string }>;
   const globals: Record<string, string> = {};
   for (const r of globalRows) globals[r.key] = r.value;
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   // robots.txt
   try {

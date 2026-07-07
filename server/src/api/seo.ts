@@ -40,7 +40,7 @@ seoRouter.get('/sitemap', (_req: Request, res: Response) => {
 seoRouter.get('/robots.txt', (_req: Request, res: Response) => {
   const db = getDatabase();
   const globals = getGlobals(db);
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   res.setHeader('Content-Type', 'text/plain');
   res.send(`User-agent: *
@@ -62,7 +62,7 @@ Sitemap: ${siteUrl}/sitemap.xml
 seoRouter.get('/sitemap.xml', (_req: Request, res: Response) => {
   const db = getDatabase();
   const globals = getGlobals(db);
-  const siteUrl = globals.site_url || 'https://www.qiaonan.vip';
+  const siteUrl = globals.site_url || 'https://qiaonx.com';
 
   const urls: string[] = [];
 
