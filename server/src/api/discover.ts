@@ -415,6 +415,51 @@ discoverRouter.post('/admin/articles/:id/generate', (req: Request, res: Response
   res.json(result);
 });
 
+discoverRouter.post('/admin/articles/batch-generate', (req: Request, res: Response) => {
+  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
+
+  const db = getDatabase();
+  const publishedArticles = db.prepare(
+    "SELECT * FROM discover_articles WHERE status = 'published' AND visible_locales != '[]'"
+  ).all() as ArticleRow[];
+
+  const total = publishedArticles.length;
+  if (total === 0) {
+    res.json({ total: 0, success: 0, failed: 0, results: [] });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  let success = 0;
+  let failed = 0;
+
+  for (let i = 0; i < publishedArticles.length; i++) {
+    const article = publishedArticles[i];
+    const contents = db.prepare(
+      'SELECT * FROM discover_article_contents WHERE article_id = ?'
+    ).all(article.id) as ArticleContentRow[];
+    const locales: string[] = JSON.parse(article.visible_locales || '[]');
+
+    const result = generateArticlePage(article, contents, locales);
+    if (result.success) {
+      success++;
+      db.prepare('UPDATE discover_articles SET static_generated_at = ? WHERE id = ?')
+        .run(new Date().toISOString(), article.id);
+    } else {
+      failed++;
+    }
+
+    const progress = { current: i + 1, total, success, failed, slug: article.slug, ok: result.success };
+    res.write(`data: ${JSON.stringify(progress)}\n\n`);
+  }
+
+  res.write(`data: ${JSON.stringify({ done: true, total, success, failed })}\n\n`);
+  res.end();
+});
+
 // --- SEO & AI Detection Skills ---
 
 function loadSkill(skillName: string): string {

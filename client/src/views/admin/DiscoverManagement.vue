@@ -2,7 +2,10 @@
   <div class="discover-admin">
     <div class="section-header">
       <h2>DISCOVER 文章管理</h2>
-      <router-link to="/admin/discover/edit" class="btn-primary" style="text-decoration: none;">新建文章</router-link>
+      <div class="header-actions">
+        <button class="hc-btn hc-btn-secondary" style="color: #10B981; border-color: #10B981;" @click="batchGenerate" :disabled="batchProgress !== null">批量生成静态页</button>
+        <router-link to="/admin/discover/edit" class="btn-primary" style="text-decoration: none;">新建文章</router-link>
+      </div>
     </div>
 
     <div class="hc-table-container">
@@ -59,6 +62,29 @@
     </div>
     <AdminPagination v-if="articles.length" v-model="currentPage" :total="totalArticles" :total-pages="totalPages" />
     <p v-if="articles.length === 0" class="empty">暂无文章，点击上方按钮新建</p>
+
+    <!-- Batch Generate Progress -->
+    <HcModal v-model="showBatchModal" :title="batchDone ? '批量生成完成' : '批量生成静态页'" max-width="500px" :show-close="batchDone">
+      <div class="batch-progress" v-if="batchProgress">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <div class="progress-stats">
+          <span>{{ batchProgress.current }} / {{ batchProgress.total }}</span>
+          <span>{{ progressPercent }}%</span>
+        </div>
+        <div class="progress-detail">
+          <span class="stat-success">成功: {{ batchProgress.success }}</span>
+          <span class="stat-failed" v-if="batchProgress.failed">失败: {{ batchProgress.failed }}</span>
+        </div>
+        <div class="progress-current" v-if="!batchDone">
+          正在生成: <code>{{ batchProgress.slug }}</code>
+        </div>
+      </div>
+      <template #footer>
+        <button v-if="batchDone" class="btn-primary" @click="closeBatchModal">关闭</button>
+      </template>
+    </HcModal>
 
     <!-- Generate Result -->
     <HcModal v-model="showGenerateResult" title="静态页面生成结果" max-width="600px" @close="generateResult = null">
@@ -132,6 +158,27 @@ const currentPage = ref(1)
 const totalPages = computed(() => Math.ceil(totalArticles.value / PAGE_SIZE))
 const generateResult = ref<GenerateResult | null>(null)
 
+interface BatchProgress {
+  current: number
+  total: number
+  success: number
+  failed: number
+  slug: string
+  ok: boolean
+  done?: boolean
+}
+
+const batchProgress = ref<BatchProgress | null>(null)
+const batchDone = ref(false)
+const showBatchModal = computed({
+  get: () => batchProgress.value !== null,
+  set: (val) => { if (!val) { batchProgress.value = null; batchDone.value = false } }
+})
+const progressPercent = computed(() => {
+  if (!batchProgress.value) return 0
+  return Math.round((batchProgress.value.current / batchProgress.value.total) * 100)
+})
+
 watch(currentPage, loadArticles)
 onMounted(() => { loadArticles() })
 
@@ -180,21 +227,121 @@ async function generateStatic(article: Article) {
     generateResult.value = { success: false, generated: [], errors: [e.message || 'Network error'] }
   }
 }
+
+async function batchGenerate() {
+  if (!confirm('将为所有已发布文章重新生成静态页面，确定继续？')) return
+
+  batchProgress.value = { current: 0, total: 0, success: 0, failed: 0, slug: '', ok: true }
+  batchDone.value = false
+
+  try {
+    const token = localStorage.getItem('token')
+    const res = await fetch('/api/discover/admin/articles/batch-generate', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+
+    const reader = res.body?.getReader()
+    if (!reader) return
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = JSON.parse(line.slice(6))
+        if (data.done) {
+          batchDone.value = true
+          batchProgress.value = { current: data.total, total: data.total, success: data.success, failed: data.failed, slug: '', ok: true }
+        } else {
+          batchProgress.value = data
+        }
+      }
+    }
+
+    batchDone.value = true
+    loadArticles()
+  } catch (e: any) {
+    batchDone.value = true
+    if (batchProgress.value) {
+      batchProgress.value.failed = (batchProgress.value.failed || 0) + 1
+    }
+  }
+}
+
+function closeBatchModal() {
+  batchProgress.value = null
+  batchDone.value = false
+}
 </script>
 
 <style scoped>
 /* 使用 AdminLayout 注入的全局 Brutalist 样式，移除重复样式 */
 .discover-admin { max-width: 1200px; }
 
-.section-header { 
-  display: flex; 
-  justify-content: space-between; 
-  align-items: flex-end; 
-  margin-bottom: 32px; 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 32px;
 }
-.section-header h2 { 
-  font-size: 24px; 
-  margin: 0; 
+.section-header h2 {
+  font-size: 24px;
+  margin: 0;
+}
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.batch-progress { padding: 16px 0; }
+.progress-bar-wrap {
+  width: 100%;
+  height: 24px;
+  background: #f3f4f6;
+  border: 2px solid var(--c-text-main);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: #10B981;
+  transition: width 0.3s ease;
+}
+.progress-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.progress-detail {
+  margin-top: 12px;
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+}
+.stat-success { color: #10B981; font-weight: 600; }
+.stat-failed { color: #dc2626; font-weight: 600; }
+.progress-current {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--c-text-sub);
+}
+.progress-current code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border: 1px solid var(--c-border);
+  font-family: var(--font-mono);
 }
 
 .data-table code { background: #f5f5f5; padding: 4px 8px; border: 1px solid var(--c-border); font-family: var(--font-mono); font-size: 11px; }
