@@ -329,7 +329,7 @@ interface DiscoverArticleContent {
   seo_keywords: string;
 }
 
-const FAVICON_URL = 'http://file.qiaonan.vip/uploads/2026/07/09/898225d6-3d06-43b7-9e07-61956a677aec.jpeg';
+const FAVICON_URL = 'https://file.qiaonan.vip/uploads/2026/07/09/898225d6-3d06-43b7-9e07-61956a677aec.jpeg';
 
 function getBaseTemplate(): string | null {
   const templatePath = path.join(CLIENT_DIST, TEMPLATE_FILE);
