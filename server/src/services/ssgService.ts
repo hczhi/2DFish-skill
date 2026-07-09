@@ -329,23 +329,31 @@ interface DiscoverArticleContent {
   seo_keywords: string;
 }
 
+const FAVICON_URL = 'http://file.qiaonan.vip/uploads/2026/07/09/898225d6-3d06-43b7-9e07-61956a677aec.jpeg';
+
 function getBaseTemplate(): string | null {
   const templatePath = path.join(CLIENT_DIST, TEMPLATE_FILE);
   const indexPath = path.join(CLIENT_DIST, 'index.html');
 
+  let html: string | null = null;
+
   // If base template already exists, use it
   if (fs.existsSync(templatePath)) {
-    return fs.readFileSync(templatePath, 'utf-8');
-  }
-
-  // First time: backup original index.html as base template
-  if (fs.existsSync(indexPath)) {
-    const html = fs.readFileSync(indexPath, 'utf-8');
+    html = fs.readFileSync(templatePath, 'utf-8');
+  } else if (fs.existsSync(indexPath)) {
+    // First time: backup original index.html as base template
+    html = fs.readFileSync(indexPath, 'utf-8');
     fs.writeFileSync(templatePath, html, 'utf-8');
-    return html;
   }
 
-  return null;
+  if (html) {
+    html = html.replace(
+      /<link rel="icon"[^>]*href="[^"]*"[^>]*\/?>/,
+      `<link rel="icon" type="image/jpeg" href="${FAVICON_URL}" />`
+    );
+  }
+
+  return html;
 }
 
 export function generateStaticPages(): SSGResult {
