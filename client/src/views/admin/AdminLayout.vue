@@ -19,6 +19,14 @@
         <router-link to="/admin/seo" class="nav-item" active-class="active" @click="sidebarOpen = false">SEO 管理</router-link>
         <router-link to="/admin/ads" class="nav-item" active-class="active" @click="sidebarOpen = false">广告管理</router-link>
         <router-link to="/admin/upload" class="nav-item" active-class="active" @click="sidebarOpen = false">图片上传</router-link>
+        <div class="nav-group" :class="{ active: isUiReviewActive }">
+          <div class="nav-item nav-group-title">UI 测评</div>
+          <div class="nav-submenu">
+            <router-link to="/admin/ui-review-records" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">评测记录</router-link>
+            <router-link to="/admin/ui-review-rules" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">评分规则</router-link>
+            <router-link to="/admin/ui-style-skills" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">风格 Skill</router-link>
+          </div>
+        </div>
       </nav>
     </aside>
     <main class="admin-main">
@@ -28,12 +36,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { fetchMe, isAdmin } from '../../lib/auth'
 
 const router = useRouter()
+const route = useRoute()
 const sidebarOpen = ref(false)
+
+const isUiReviewActive = computed(() => {
+  const path = route.path
+  return path.startsWith('/admin/ui-review') || path.startsWith('/admin/ui-style')
+})
 
 onMounted(async () => {
   const user = await fetchMe()
@@ -329,6 +343,64 @@ onMounted(async () => {
   background: var(--c-text-main);
   color: #fff;
   border-left: 4px solid var(--c-blue-primary);
+}
+.nav-divider {
+  height: 1px;
+  background: var(--c-border);
+  margin: 8px 24px;
+}
+.nav-group {
+  position: relative;
+}
+.nav-group-title {
+  cursor: default;
+}
+.nav-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  min-width: 160px;
+  background: #fff;
+  border: 2px solid var(--c-text-main);
+  box-shadow: 6px 6px 0 rgba(0,0,0,0.08);
+  z-index: 20;
+}
+.nav-group:hover .nav-submenu {
+  display: flex;
+  flex-direction: column;
+}
+.nav-group:hover .nav-group-title {
+  background: rgba(0, 119, 255, 0.05);
+  padding-left: 32px;
+}
+.nav-group.active .nav-group-title {
+  background: var(--c-text-main);
+  color: #fff;
+  border-left: 4px solid var(--c-blue-primary);
+}
+.nav-sub-item {
+  display: block;
+  padding: 12px 20px;
+  color: var(--c-text-main);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--c-border);
+  transition: all 0.2s;
+}
+.nav-sub-item:last-child {
+  border-bottom: none;
+}
+.nav-sub-item:hover {
+  background: rgba(0, 119, 255, 0.05);
+  padding-left: 28px;
+}
+.nav-sub-item.active {
+  background: var(--c-text-main);
+  color: #fff;
 }
 .admin-main {
   flex: 1;

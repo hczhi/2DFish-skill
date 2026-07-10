@@ -22,7 +22,7 @@ const upload = multer({
   },
 });
 
-function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: string; Region: string } | null {
+export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: string; Region: string } | null {
   const db = getDatabase();
   const rows = db.prepare("SELECT key, value FROM system_config WHERE key IN ('cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region')").all() as Array<{ key: string; value: string }>;
 

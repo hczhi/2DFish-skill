@@ -32,6 +32,7 @@ const locale = computed(() => route.path.startsWith('/en') ? 'en' : 'zh')
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   color: var(--c-text-sub, #555);
+  margin-top: auto;
 }
 
 @media (min-width: 769px) {

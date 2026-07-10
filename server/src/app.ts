@@ -28,6 +28,7 @@ import { topicsRouter } from './api/topics.js';
 import { analyticsRouter } from './api/analytics.js';
 import { adSlotsRouter } from './api/adSlots.js';
 import { uploadRouter } from './api/upload.js';
+import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
@@ -37,8 +38,16 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Gzip compression
-app.use(compression());
+// Gzip compression (skip SSE streams)
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers.accept === 'text/event-stream') return false;
+    if (req.headers['x-no-compression']) return false;
+    const ct = res.getHeader('Content-Type');
+    if (ct && String(ct).includes('text/event-stream')) return false;
+    return compression.filter(req, res);
+  }
+}));
 
 // CORS configuration
 const corsOrigin = (() => {
@@ -95,6 +104,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Static uploads (public, before auth)
+app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
+
 // Auth middleware — applied globally, determines public/optional/protected per route
 app.use(authMiddleware);
 
@@ -148,11 +160,12 @@ app.use('/api/analytics', analyticsRouter);
 // Ad slots (public reads + admin management)
 app.use('/api/ad-slots', adSlotsRouter);
 
+// UI Review
+app.use('/api/ui-review', rateLimit(60, 60_000));
+app.use('/api/ui-review', uiReviewRouter);
+
 // File upload (admin only)
 app.use('/api/upload', uploadRouter);
-
-// Static uploads
-app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
 
 // Production: serve compiled frontend (SSG writes directly into client/dist/)
 const clientDistPath = path.resolve(process.cwd(), '../client/dist');
@@ -215,6 +228,7 @@ if (process.env.NODE_ENV === 'production') {
 initDatabase();
 initWorkspace();
 ensureAdminUser();
+seedUiReviewDefaults();
 startLogCleanupScheduler();
 cleanupOldLogs();
 
@@ -226,7 +240,6 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
 function shutdown() {
   console.log('[mmPla] Shutting down gracefully...');
   server.close(() => {
-    const { getDatabase } = require('./db/index.js');
     try { getDatabase().close(); } catch { /* already closed */ }
     process.exit(0);
   });

@@ -7,7 +7,6 @@
     <!-- 左侧大字号标题 -->
     <aside class="left-panel">
       <div class="brand-group" @mousemove="handleLogoMouseMove" @mouseleave="handleLogoMouseLeave">
-        <div class="label">CURRENT PLATFORM</div>
         <h1 class="brand-name" ref="brandNameRef">
           <span class="letter" style="animation-delay: 0.0s">Q</span>
           <span class="letter" style="animation-delay: 0.05s">i</span>
@@ -102,7 +101,6 @@
       <div class="topics-section" v-if="topics.length > 0">
         <div class="gallery-header">
           <h2 class="gallery-title">FEATURED TOPICS</h2>
-          <span class="gallery-subtitle">Explore Our Curated Collections</span>
         </div>
         
         <div class="gallery-grid">
@@ -149,8 +147,8 @@
             target="_blank"
             class="feed-item-wrapper"
           >
-            <div class="feed-image-card" :style="{ height: '220px', background: article.bg_color }">
-              <img v-if="article.cover_image" :src="article.cover_image" class="feed-cover-img" alt="cover" loading="lazy" width="400" height="220" />
+            <div class="feed-image-card" :style="{ height: getCardHeight(article.id) + 'px', background: article.bg_color }">
+              <img v-if="article.cover_image" :src="article.cover_image" class="feed-cover-img" alt="cover" loading="lazy" />
               <span v-else class="feed-emoji">{{ article.icon }}</span>
             </div>
             <div class="feed-info-external">
@@ -172,8 +170,8 @@
             :target="feed.link ? '_blank' : undefined"
             class="feed-item-wrapper"
           >
-            <div class="feed-image-card" :style="{ height: feed.image_height + 'px', background: feed.bg_color }">
-              <img v-if="feed.cover_image" :src="feed.cover_image" class="feed-cover-img" alt="cover" loading="lazy" width="400" height="220" />
+            <div class="feed-image-card" :style="{ height: (feed.image_height || getCardHeight(feed.id)) + 'px', background: feed.bg_color }">
+              <img v-if="feed.cover_image" :src="feed.cover_image" class="feed-cover-img" alt="cover" loading="lazy" />
               <span v-else class="feed-emoji">{{ feed.icon }}</span>
             </div>
             <div class="feed-info-external">
@@ -304,9 +302,9 @@ function handleLogoMouseMove(e: MouseEvent) {
       // Calculate physics: Upward translation and Color shift based on mouse proximity
       const yOffset = -8 * intensity
       
-      // Interpolate color from Base to Active (Brand Blue to Pastel Purple)
+      // Interpolate color from Base to Active
       const baseColor = { r: 17, g: 24, b: 39 } // #111827
-      const activeColor = { r: 177, g: 151, b: 252 } // #B197FC
+      const activeColor = { r: 67, g: 97, b: 238 } // #4361EE
       
       const r = Math.round(baseColor.r + (activeColor.r - baseColor.r) * intensity)
       const g = Math.round(baseColor.g + (activeColor.g - baseColor.g) * intensity)
@@ -330,7 +328,7 @@ function handleLogoMouseMove(e: MouseEvent) {
     if (distToRight < 0.2) {
       const intensity = 1 - (distToRight / 0.2)
       dot.style.transform = `scale(${1 + 0.5 * intensity})`
-      dot.style.backgroundColor = '#B197FC'
+      dot.style.backgroundColor = '#4361EE'
     } else {
       dot.style.transform = 'scale(1)'
       dot.style.backgroundColor = 'var(--c-blue-primary)'
@@ -438,6 +436,16 @@ async function loadDiscoverArticles() {
     }
   } catch { /* silent */ }
 }
+
+function getCardHeight(id: string | number): number {
+  const str = String(id)
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const heights = [220, 260, 300, 340, 280]
+  return heights[Math.abs(hash) % heights.length]
+}
 </script>
 
 <style scoped>
@@ -459,6 +467,7 @@ async function loadDiscoverArticles() {
   color: var(--c-text-main);
   font-family: var(--font-sans);
   display: flex;
+  align-items: flex-start;
   overflow-x: clip;
 }
 
@@ -480,7 +489,7 @@ async function loadDiscoverArticles() {
   height: 100vh;
   /* 移除生硬的实线边框，改用弥散阴影和背景色区分层级 */
   border-right: none;
-  box-shadow: 1px 0 24px rgba(0,0,0,0.02);
+  box-shadow: 1px 0 32px rgba(67, 97, 238, 0.04);
   display: flex;
   flex-direction: column;
   padding: 60px 40px;
@@ -488,7 +497,8 @@ async function loadDiscoverArticles() {
   background: #ffffff;
   overflow-y: auto;
   flex-shrink: 0;
-  position: relative;
+  position: sticky;
+  top: 0;
 }
 
 .left-panel-footer {
@@ -549,6 +559,11 @@ async function loadDiscoverArticles() {
   display: inline-flex;
   align-items: baseline;
   cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.brand-name:active {
+  transform: scale(0.98);
 }
 
 .brand-name .letter {
@@ -702,19 +717,24 @@ async function loadDiscoverArticles() {
   position: relative;
   /* 去除边框，纯靠极浅的弥散阴影撑起体积，类似 iOS/VisionOS 卡片 */
   border: none;
-  border-radius: 10px; /* 圆角加大到 24px，更现代 */
+  border-radius: 24px; /* 统一为 24px 圆角 */
   background: #fff;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02), 0 2px 8px rgba(0,0,0,0.02);
-  transition: box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 8px 24px rgba(67, 97, 238, 0.03), 0 2px 8px rgba(67, 97, 238, 0.02);
+  transition: box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease;
 }
 
 .bento-card:hover {
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0,0,0,0.03);
+  box-shadow: 0 16px 40px rgba(67, 97, 238, 0.08), 0 4px 12px rgba(67, 97, 238, 0.04);
+}
+
+.bento-card:active {
+  transform: scale(0.98);
+  box-shadow: 0 4px 16px rgba(67, 97, 238, 0.04);
 }
 
 /* 差异化拼图尺寸 — 由后台 grid_span 字段控制 */
@@ -906,10 +926,10 @@ async function loadDiscoverArticles() {
 
 .card-header .icon {
   font-size: 32px;
-  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.15));
+  filter: drop-shadow(0 4px 12px rgba(67, 97, 238, 0.15));
   background: rgba(255, 255, 255, 0.8);
   padding: 8px;
-  border-radius: 10px;
+  border-radius: 16px;
   backdrop-filter: blur(8px);
 }
 
@@ -919,7 +939,7 @@ async function loadDiscoverArticles() {
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 9999px;
   text-transform: uppercase;
   letter-spacing: 1px;
   font-weight: 600;
@@ -938,7 +958,7 @@ async function loadDiscoverArticles() {
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: 9999px;
   letter-spacing: 1px;
   font-weight: 600;
 }
@@ -961,17 +981,8 @@ async function loadDiscoverArticles() {
   font-size: 32px;
   font-weight: 900;
   margin: 0 0 4px 0;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
   color: var(--c-text-main);
-}
-
-.gallery-subtitle {
-  font-family: var(--font-mono);
-  color: var(--c-blue-primary);
-  text-transform: uppercase;
-  letter-spacing: 4px;
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .gallery-grid {
@@ -984,19 +995,23 @@ async function loadDiscoverArticles() {
   display: block;
   position: relative;
   height: 360px;
-  border-radius: 10px;
+  border-radius: 24px;
   overflow: hidden;
   text-decoration: none;
   color: #fff;
   /* 基础阴影 */
-  box-shadow: 0 8px 32px rgba(0,0,0,0.04);
+  box-shadow: 0 8px 32px rgba(67, 97, 238, 0.05);
   /* 平滑过渡 */
-  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease;
 }
 
 .gallery-item:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 24px 48px rgba(0,0,0,0.12);
+  box-shadow: 0 24px 48px rgba(67, 97, 238, 0.1);
+}
+
+.gallery-item:active {
+  transform: scale(0.98);
+  box-shadow: 0 8px 24px rgba(67, 97, 238, 0.05);
 }
 
 .gallery-visual {
@@ -1056,7 +1071,7 @@ async function loadDiscoverArticles() {
   color: var(--c-blue-primary);
   background: rgba(255,255,255,0.9);
   padding: 4px 12px;
-  border-radius: 10px;
+  border-radius: 9999px;
   backdrop-filter: blur(4px);
 }
 
@@ -1066,7 +1081,7 @@ async function loadDiscoverArticles() {
   font-weight: 800;
   margin: 0 0 12px 0;
   line-height: 1.2;
-  letter-spacing: -1px;
+  letter-spacing: -1.5px;
   text-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
@@ -1123,13 +1138,16 @@ async function loadDiscoverArticles() {
 .feed-more:hover {
   opacity: 0.7;
 }
+.feed-more:active {
+  transform: translateY(1px);
+}
 
 .feed-title {
   font-family: var(--font-sans);
   font-size: 56px; /* 进一步拉大标题，强化杂志排版感 */
   font-weight: 900;
   margin: 0 0 4px 0;
-  letter-spacing: -2px;
+  letter-spacing: -2.5px;
   text-transform: uppercase;
   color: var(--c-text-main);
 }
@@ -1154,13 +1172,19 @@ async function loadDiscoverArticles() {
 @media (min-width: 1800px) { .feed-masonry { columns: 5; } }
 
 .feed-item-wrapper {
-  display: block;
+  display: inline-block;
+  width: 100%;
   text-decoration: none;
   color: inherit;
   break-inside: avoid;
-  margin-bottom: 24px; /* 增加底部间距以容纳外部文字 */
+  margin-bottom: 32px;
   cursor: pointer;
   position: relative;
+  transition: transform 0.2s ease;
+}
+
+.feed-item-wrapper:active {
+  transform: scale(0.98);
 }
 
 /* 独立的图片卡片（仅卡片部分有圆角和底色） */
@@ -1170,12 +1194,11 @@ async function loadDiscoverArticles() {
   align-items: center;
   justify-content: center;
   font-size: 56px;
-  border-radius: 10px;
+  border-radius: 24px;
   overflow: hidden;
-  margin-bottom: 12px; /* 图片和标题之间的间距 */
+  margin-bottom: 16px;
   position: relative;
-  /* 移除阴影和 Hover 缩放动画，添加截图中的浅色外边框 */
-  border: 1px solid rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.03);
   box-shadow: none;
   transition: none;
 }
@@ -1184,6 +1207,11 @@ async function loadDiscoverArticles() {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.feed-item-wrapper:hover .feed-cover-img {
+  transform: scale(1.04);
 }
 
 /* 外部信息区（不再有白底和内边距） */
@@ -1193,10 +1221,10 @@ async function loadDiscoverArticles() {
 
 .feed-text-external {
   font-family: var(--font-sans);
-  font-size: 14px; /* 贴近小红书日常字号 */
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.5;
-  margin: 0 0 8px 0;
+  margin: 0 0 10px 0;
   color: var(--c-text-main);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1272,6 +1300,7 @@ async function loadDiscoverArticles() {
 @media (max-width: 768px) {
   .home-container {
     flex-direction: column;
+    align-items: stretch;
     height: auto;
     min-height: 100vh;
     min-height: 100dvh;
@@ -1288,6 +1317,7 @@ async function loadDiscoverArticles() {
     box-shadow: none;
     background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(18px);
+    position: relative;
   }
 
   .sidebar-modules {
@@ -1338,7 +1368,6 @@ async function loadDiscoverArticles() {
     font-size: 24px;
   }
 
-  .gallery-subtitle,
   .feed-subtitle {
     letter-spacing: 2px;
     font-size: 11px;

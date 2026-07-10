@@ -32,9 +32,9 @@
           </div>
         </aside>
       </div>
-
-      <SiteFooter />
     </main>
+
+    <SiteFooter />
   </div>
 </template>
 

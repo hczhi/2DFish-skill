@@ -15,6 +15,7 @@ import { migration_013 } from './013_token_version.js';
 import { migration_014 } from './014_ad_slots.js';
 import { migration_015 } from './015_ad_slot_height.js';
 import { migration_016 } from './016_discover_admin_module.js';
+import { migration_017 } from './017_ui_review.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -33,4 +34,5 @@ export const allMigrations: Migration[] = [
   migration_014,
   migration_015,
   migration_016,
+  migration_017,
 ];

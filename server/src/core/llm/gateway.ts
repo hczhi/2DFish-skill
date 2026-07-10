@@ -13,7 +13,8 @@ export class QuotaExceededError extends Error {
   remaining = 0;
   dailyLimit: number;
   constructor(dailyLimit: number) {
-    super('quota_exceeded');
+    super(`今日 AI 额度已用完（${dailyLimit}次/天），请联系管理员提升额度。\nDaily AI quota exceeded (${dailyLimit}/day). Please contact admin to increase your limit.`);
+    this.name = 'QuotaExceededError';
     this.dailyLimit = dailyLimit;
   }
 }
