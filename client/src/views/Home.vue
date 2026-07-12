@@ -58,7 +58,7 @@
         <router-link
           v-for="item in navItems"
           :key="item.id"
-          :to="item.path"
+          :to="locale === 'en' ? `/en${item.path}` : item.path"
           target="_blank"
           class="bento-card"
           :class="[getGridClass(item), item.featured ? 'is-featured' : '', item.image_url ? 'is-editorial' : '']"
@@ -85,8 +85,8 @@
             
             <div class="card-info-panel">
               <div class="card-body">
-                <h2 class="card-title">{{ item.title }}</h2>
-                <p class="card-desc">{{ item.description }}</p>
+                <h2 class="card-title">{{ getItemTitle(item) }}</h2>
+                <p class="card-desc">{{ getItemDesc(item) }}</p>
               </div>
               <div class="card-footer" v-if="item.featured">
                 <span class="meta-tag">{{ item.category || 'Tool' }}</span>
@@ -435,6 +435,24 @@ async function loadDiscoverArticles() {
       discoverArticles.value = data.items || data
     }
   } catch { /* silent */ }
+}
+
+const moduleI18n: Record<string, { title: string; description: string }> = {
+  '/tender': { title: 'Bid Recommendations', description: 'AI-powered bid matching with multi-dimensional scoring' },
+  '/ui-review': { title: 'UI Review', description: 'AI design critic that tells you exactly what to fix' },
+  '/fish': { title: 'Fish Tank', description: 'AI-powered desktop fish game with stealth mode' },
+  '/board': { title: 'Wisdom Board', description: 'Eastern wisdom flip board — Confucius, I Ching, Buddhism' },
+  '/synap': { title: 'Knowledge Hub', description: 'AI chat, consultant, content creation, workspace' },
+}
+
+function getItemTitle(item: NavItem): string {
+  if (locale.value === 'en' && moduleI18n[item.path]) return moduleI18n[item.path].title
+  return item.title
+}
+
+function getItemDesc(item: NavItem): string {
+  if (locale.value === 'en' && moduleI18n[item.path]) return moduleI18n[item.path].description
+  return item.description
 }
 
 function getCardHeight(id: string | number): number {

@@ -19,6 +19,7 @@
         <router-link to="/admin/seo" class="nav-item" active-class="active" @click="sidebarOpen = false">SEO 管理</router-link>
         <router-link to="/admin/ads" class="nav-item" active-class="active" @click="sidebarOpen = false">广告管理</router-link>
         <router-link to="/admin/upload" class="nav-item" active-class="active" @click="sidebarOpen = false">图片上传</router-link>
+        <router-link to="/admin/tender" class="nav-item" active-class="active" @click="sidebarOpen = false">标讯管理</router-link>
         <div class="nav-group" :class="{ active: isUiReviewActive }">
           <div class="nav-item nav-group-title">UI 测评</div>
           <div class="nav-submenu">
@@ -270,7 +271,7 @@ onMounted(async () => {
   display: flex;
   height: 100vh;
   overflow: hidden;
-  --c-grid: rgba(0, 160, 255, 0.15);
+  --c-grid: rgba(0, 0, 0, 0.02);
   --c-blue-primary: #0077FF;
   --c-text-main: #111111;
   --c-text-sub: #555555;
@@ -279,7 +280,7 @@ onMounted(async () => {
   --font-mono: "JetBrains Mono", "Courier New", monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   font-family: var(--font-sans);
-  background-color: #ffffff;
+  background-color: #fbfbfd;
   color: var(--c-text-main);
 }
 .admin-sidebar {
@@ -321,6 +322,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   padding: 0;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 .nav-item {
   display: block;
@@ -406,7 +410,7 @@ onMounted(async () => {
   flex: 1;
   overflow-y: auto;
   padding: 48px;
-  background: #ffffff;
+  background: #fbfbfd;
   position: relative;
 }
 .admin-main::before {

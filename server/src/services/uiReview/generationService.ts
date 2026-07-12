@@ -1,9 +1,15 @@
 import type { Response } from 'express';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { aiGateway, aiGatewayStream, QuotaExceededError } from '../../core/llm/gateway.js';
 import { getDatabase } from '../../db/index.js';
 import type { CrawlResult } from './crawlerService.js';
 import type { RuleResult } from './ruleEngine.js';
 import type { ReferenceAnalysis } from './analysisService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export interface ReviewData {
   url: string;
@@ -14,6 +20,12 @@ export interface ReviewData {
   llmAnalysis: string;
   crawlData: CrawlResult;
   techStack: string[];
+}
+
+export interface UserPreferences {
+  targetStyle: string;       // e.g. 'minimal', 'premium', 'brand-consistent', 'creative'
+  priorityDimensions: string[];  // e.g. ['typography', 'colorHarmony'] — user picks 2-3 from scored dims
+  preserveElements: string[];    // e.g. ['brand-color', 'logo-position', 'navigation-structure']
 }
 
 function loadBestMatchingSkillTemplate(industryType: string): { name: string; skill_template: string; design_features: any } | null {
@@ -42,70 +54,196 @@ function loadBestMatchingSkillTemplate(industryType: string): { name: string; sk
   };
 }
 
+const DIMENSION_TO_SECTION: Record<string, string> = {
+  typography: '排版层级',
+  colorHarmony: '色彩和谐',
+  spacing: '间距与留白',
+  layout: '布局结构',
+  consistency: '视觉一致性',
+  aesthetics: '整体质感与细节',
+};
+
+let _knowledgeBaseCache: string | null = null;
+
+function loadKnowledgeBase(): string {
+  if (_knowledgeBaseCache) return _knowledgeBaseCache;
+  try {
+    const kbPath = resolve(__dirname, '../../../../skills/UI_TASTE_KNOWLEDGE.md');
+    _knowledgeBaseCache = readFileSync(kbPath, 'utf-8');
+    return _knowledgeBaseCache;
+  } catch {
+    return '';
+  }
+}
+
+function extractRelevantKnowledge(dimensionScores: Record<string, number>): string {
+  const kb = loadKnowledgeBase();
+  if (!kb) return '';
+
+  // Find dimensions scoring below 75 — these need knowledge injection
+  const weakDimensions = Object.entries(dimensionScores)
+    .filter(([, score]) => score < 75)
+    .sort(([, a], [, b]) => a - b)
+    .map(([dim]) => dim);
+
+  if (weakDimensions.length === 0) return '';
+
+  const sections: string[] = [];
+  for (const dim of weakDimensions.slice(0, 4)) {
+    const sectionTitle = DIMENSION_TO_SECTION[dim];
+    if (!sectionTitle) continue;
+
+    // Extract the relevant section from the knowledge base
+    const sectionRegex = new RegExp(`## \\d+\\. ${sectionTitle}[^]*?(?=\\n## \\d+\\.|$)`);
+    const match = kb.match(sectionRegex);
+    if (match) {
+      sections.push(`### ${dim} (得分: ${dimensionScores[dim]}/100)\n${match[0].slice(0, 1200)}`);
+    }
+  }
+
+  return sections.join('\n\n');
+}
+
+/**
+ * Build the dimension scores summary for the diagnosis section.
+ */
+function formatDimensionScores(scores: Record<string, number>): string {
+  return Object.entries(scores)
+    .sort(([, a], [, b]) => a - b) // worst first
+    .map(([dim, score]) => `- **${dim}**: ${score}/100`)
+    .join('\n');
+}
+
+/**
+ * Group failed rules by dimension for structured diagnosis output.
+ */
+function groupRulesByDimension(rules: RuleResult[]): Record<string, RuleResult[]> {
+  const groups: Record<string, RuleResult[]> = {};
+  for (const rule of rules) {
+    if (!groups[rule.dimension]) groups[rule.dimension] = [];
+    groups[rule.dimension].push(rule);
+  }
+  return groups;
+}
+
 export async function generateSkillMarkdown(
   reviewData: ReviewData,
   referenceAnalysis?: ReferenceAnalysis,
-  userId?: string
+  userId?: string,
+  userPreferences?: UserPreferences
 ): Promise<string> {
   const failedRules = reviewData.ruleResults.filter(r => !r.passed);
+  const groupedIssues = groupRulesByDimension(failedRules);
 
   // Load the best matching skill template from admin-managed skills
   const styleSkill = loadBestMatchingSkillTemplate(reviewData.industryType);
 
-  const prompt = `You are a UI/UX optimization expert. Generate a concise, actionable optimization skill document (in Markdown) for an AI agent to improve this webpage.
+  // Extract relevant knowledge based on weak dimensions
+  const relevantKnowledge = extractRelevantKnowledge(reviewData.dimensionScores);
 
-## Page Info
+  // Build grouped issues text
+  const groupedIssuesText = Object.keys(groupedIssues)
+    .sort((a, b) => (reviewData.dimensionScores[a] || 100) - (reviewData.dimensionScores[b] || 100))
+    .map(dim => {
+      const rules = groupedIssues[dim];
+      const items = rules.map((r, i) =>
+        `${i + 1}. [${r.severity.toUpperCase()}] ${r.name}: ${r.details}${r.affectedElements?.length ? '\n   影响元素: ' + r.affectedElements.join(', ') : ''}`
+      ).join('\n');
+      return `### ${dim} (${reviewData.dimensionScores[dim] || '?'}/100)\n${items}`;
+    })
+    .join('\n\n');
+
+  // Determine industry benchmark
+  const industryBenchmark = reviewData.industryType === 'saas'
+    ? '标杆：Linear、Vercel、Notion。特征：极度克制、功能优先、无衬线字体、中性色底 + 单一强调色。'
+    : reviewData.industryType === 'ecommerce'
+      ? '标杆：Apple Store、Shopify。特征：产品图片为核心、留白慷慨、可适度使用衬线体。'
+      : reviewData.industryType === 'content'
+        ? '标杆：Medium、Substack。特征：阅读体验优先、排版极致、单栏为主、最小化干扰。'
+        : '标杆：Stripe、Linear Marketing。特征：视觉冲击力强、叙事性布局、克制但有记忆点。';
+
+  const prompt = `你是一位资深前端设计工程师，拥有 10 年以上审美经验。你的任务是为这个网页生成一份"AI 可执行的修改指令清单"——用户会直接把这份输出复制给 Cursor/Claude 等 AI 编程工具来执行修改。
+
+## 核心原则
+1. 每条指令必须精确到选择器和属性值，不要泛泛而谈
+2. 指令分三级：[CSS调优]（只改样式值）、[结构调整]（调整 HTML 结构）、[布局重构]（重新设计 section 布局）
+3. 按影响力排序：先输出能最大幅度提升观感的改动
+4. 说明"为什么改"——让执行的 AI 理解设计意图，而不是盲目执行
+
+---
+
+## 被评审页面信息
 - URL: ${reviewData.url}
-- Industry: ${reviewData.industryType}
-- Tech Stack: ${reviewData.techStack.join(', ')}
-- Total Score: ${reviewData.totalScore}/100
+- 技术栈: ${reviewData.techStack.join(', ')}
+- 综合得分: ${reviewData.totalScore}/100
+- 行业: ${reviewData.industryType || 'general'}
+- 行业基准: ${industryBenchmark}
 
-## Issues Found (sorted by priority)
-${failedRules.map((r, i) => `${i + 1}. [${r.severity.toUpperCase()}] ${r.name} (${r.dimension}): ${r.details}${r.affectedElements?.length ? '\n   Elements: ' + r.affectedElements.join(', ') : ''}`).join('\n')}
+## 各维度得分
+${formatDimensionScores(reviewData.dimensionScores)}
 
-## Existing Design Tokens
-- Fonts: ${reviewData.crawlData.fonts.join(', ')}
-- Colors: ${reviewData.crawlData.colors.slice(0, 10).join(', ')}
+## 检测到的具体问题
+${groupedIssuesText}
 
-${styleSkill ? `## Design System Baseline (from "${styleSkill.name}")
-The following design protocol MUST be followed as the primary style authority:
+## 页面当前设计参数
+- 字体: ${reviewData.crawlData.fonts.join(', ') || '未检测到'}
+- 颜色: ${reviewData.crawlData.colors.slice(0, 10).join(', ') || '未检测到'}
+- DOM 结构摘要: ${reviewData.crawlData.domSummary?.slice(0, 500) || '无'}
 
-${styleSkill.skill_template}
-
-### Design Features
-- Palette: ${styleSkill.design_features.palette?.join(', ') || 'not specified'}
-- Spacing: ${styleSkill.design_features.spacing_style || 'not specified'}
-- Layout: ${styleSkill.design_features.layout || 'not specified'}
-- Font Style: ${styleSkill.design_features.font_style || 'not specified'}
-- Border Radius: ${styleSkill.design_features.border_radius || 'not specified'}
-- Shadow: ${styleSkill.design_features.shadow || 'not specified'}
-- Vibe: ${styleSkill.design_features.vibe || 'not specified'}
-` : ''}
-${referenceAnalysis ? `## Reference Style (User-Provided Image)
-The user uploaded a reference screenshot as the target aesthetic. The generated skill MUST guide the design toward this reference:
-- Target Palette: ${referenceAnalysis.palette.join(', ')}
-- Spacing Style: ${referenceAnalysis.spacingStyle}
-- Layout Approach: ${referenceAnalysis.layoutCharacteristics}
-- Font Style: ${referenceAnalysis.fontStyle}
-- Overall Vibe: ${referenceAnalysis.overallVibe}
-
-When the reference style conflicts with the Design System Baseline above, PRIORITIZE the reference style — it represents the user's explicit intent.
+${styleSkill ? `## 设计系统参考 ("${styleSkill.name}")
+- 色板: ${styleSkill.design_features.palette?.join(', ') || '继承页面'}
+- 间距风格: ${styleSkill.design_features.spacing_style || '一致的 8px 网格'}
+- 布局: ${styleSkill.design_features.layout || '标准'}
+- 字体风格: ${styleSkill.design_features.font_style || '现代无衬线'}
+- 圆角: ${styleSkill.design_features.border_radius || '统一'}
+- 阴影: ${styleSkill.design_features.shadow || '环境色调阴影'}
 ` : ''}
 
-## Output Requirements
-Generate a skill document with:
-1. A brief context section (what page this is, what tech stack)
-2. Priority fixes list - each with: specific CSS selector, current value, target value, and the actual CSS code to change
-3. Design constraints section - what NOT to modify (preserve brand identity, keep functional elements)
-4. The fixes should use the page's existing design tokens where possible, unless the reference style explicitly overrides them
-${referenceAnalysis ? '5. A "Style Migration" section — specific changes needed to move the design toward the reference image aesthetic' : ''}
-${styleSkill ? '6. All generated CSS must comply with the Design System Baseline rules (shadow quality, border-radius consistency, typography discipline, etc.)' : ''}
+## 审美标准参考（针对薄弱维度）
+${relevantKnowledge || '（所有维度得分 ≥ 75，无需额外参考）'}
 
-Keep it concise and directly executable. Use code blocks for CSS changes.`;
+---
+
+## 输出格式（严格遵循）
+
+输出一份可以直接复制给 AI 编程工具的指令文档，格式如下：
+
+\`\`\`
+你是一个高级前端工程师，需要按以下清单优化这个页面的视觉设计。
+每条改动都有明确的选择器和目标值，请逐条执行。
+不要改动业务逻辑和数据绑定，只调整视觉呈现。
+
+页面：${reviewData.url}
+技术栈：${reviewData.techStack.join(', ')}
+核心问题：[用1-2句话概括这个页面最大的视觉问题]
+
+---
+
+[逐条列出修改指令，每条格式如下]
+
+[级别] 标题
+选择器/目标区域：xxx
+现状：具体描述当前的问题状态
+改为：具体的目标状态（包含属性值或结构描述）
+原因：为什么这样改能提升观感
+${/* 如果涉及代码 */''}\`\`\`css
+具体的 CSS 代码
+${''}\`\`\`
+\`\`\`
+
+## 输出规则
+- 输出 8-15 条修改指令
+- 前 3 条应该是影响最大的改动（通常是布局或排版问题）
+- 每条指令必须具体到这个页面的真实选择器或元素
+- [布局重构] 级别的指令要描述目标布局的视觉效果
+- [CSS调优] 级别的指令要给出具体的 CSS 属性和值
+- 不要输出泛泛的建议如"优化间距"，要说"padding: 16px → 32px"
+- 如果当前字体是系统默认字体，推荐具体的替代字体
+- 总输出 1000-1500 字，密实有料，不灌水`;
 
   try {
     const { response } = await aiGateway(
-      { messages: [{ role: 'user', content: prompt }], temperature: 0.4, max_tokens: 2500 },
+      { messages: [{ role: 'user', content: prompt }], temperature: 0.6, max_tokens: 8000 },
       { userId: userId || 'system', source: 'ui-review', operation: 'generate-skill' }
     );
 
@@ -118,7 +256,7 @@ Keep it concise and directly executable. Use code blocks for CSS changes.`;
     return response.choices[0]?.message?.content || '';
   } catch (e) {
     console.error('[ui-review] Skill generation failed:', e);
-    return `# UI Optimization Skill\n\nGeneration failed. Please retry.`;
+    return `# UI 优化指令\n\n生成失败，请重试。`;
   }
 }
 
@@ -127,61 +265,65 @@ export async function streamPreviewHtml(
   referenceAnalysis: ReferenceAnalysis | undefined,
   skillMarkdown: string,
   userId: string,
-  res: Response
+  res: Response,
+  userPreferences?: UserPreferences
 ): Promise<string> {
   const failedRules = reviewData.ruleResults.filter(r => !r.passed);
 
-  // Truncate skill markdown to key sections if too long (keep under ~1500 chars for prompt budget)
-  const skillContext = skillMarkdown
-    ? skillMarkdown.slice(0, 2000)
-    : '';
+  const targetStyle = userPreferences?.targetStyle || 'professional';
+  const preserveElements = userPreferences?.preserveElements || [];
 
-  const prompt = `You are a frontend developer. Generate a SINGLE self-contained HTML file that shows the OPTIMIZED first screen of this webpage.
+  const styleDescription = targetStyle === 'minimal'
+    ? 'Clean, reduced, generous whitespace, restrained palette'
+    : targetStyle === 'premium'
+      ? 'Luxurious, refined typography, subtle depth, sophisticated color'
+      : targetStyle === 'brand-consistent'
+        ? 'On-brand, cohesive, matching existing brand guidelines exactly'
+        : targetStyle === 'creative'
+          ? 'Bold, expressive, dynamic, visually memorable'
+          : 'Professional, balanced, modern';
 
-## Requirements
-- Output a complete HTML file with inline <style> in <head>
-- Replace all images with colored placeholder <div> blocks (use relevant colors, add a text label like "Hero Image" or "Logo")
-- Only render the FIRST SCREEN (above the fold, ~900px height)
-- Apply all the fixes listed below
-- Use modern CSS, clean typography, proper spacing
-- The page should look professional and polished
-- STRICTLY NO <a> tags — replace all links with <span> styled the same way
-- STRICTLY NO JavaScript — no <script> tags, no inline event handlers (onclick, onload, etc.), no javascript: URLs
-- This is a pure static CSS preview only
+  // Load admin skill design tokens
+  const styleSkill = loadBestMatchingSkillTemplate(reviewData.industryType);
+  const designTokens = styleSkill?.design_features || {};
 
-## Page Context
+  const prompt = `You are a CSS optimization specialist. Generate a targeted CSS stylesheet that fixes the design issues on this webpage.
+
+## Output Format
+Output ONLY valid CSS code. No HTML, no markdown fences, no explanations.
+Add a short /* comment */ before each rule group to name the issue being fixed.
+
+## Design System Tokens (authority)
+- Palette: ${designTokens.palette?.join(', ') || reviewData.crawlData.colors.slice(0, 5).join(', ')}
+- Font: ${designTokens.font_style || 'modern sans-serif, tight tracking for headings'}
+- Spacing: ${designTokens.spacing_style || 'consistent 8px grid'}
+- Border Radius: ${designTokens.border_radius || 'consistent'}
+- Shadow: ${designTokens.shadow || 'environmental, no pure black'}
+- Aesthetic: ${styleDescription}
+
+## Page Info
 - URL: ${reviewData.url}
-- Industry: ${reviewData.industryType}
-- Tech Stack: ${reviewData.techStack.join(', ')}
-- Current Score: ${reviewData.totalScore}/100
+- Current fonts: ${reviewData.crawlData.fonts.slice(0, 4).join(', ')}
+- Current colors: ${reviewData.crawlData.colors.slice(0, 8).join(', ')}
 
-## Page Structure
+## DOM Structure
 ${reviewData.crawlData.domSummary}
 
-## Fixes to Apply
-${failedRules.slice(0, 10).map(r => `- ${r.name}: ${r.details}`).join('\n')}
+## Issues to Fix
+${failedRules.slice(0, 12).map((r, i) => `${i + 1}. [${r.severity}] ${r.name}: ${r.details}${r.affectedElements?.length ? ' → ' + r.affectedElements.slice(0, 3).join(', ') : ''}`).join('\n')}
 
-## Design Direction
-- Fonts in use: ${reviewData.crawlData.fonts.slice(0, 3).join(', ')}
-- Colors in use: ${reviewData.crawlData.colors.slice(0, 8).join(', ')}
-${referenceAnalysis ? `
-## Reference Style Target
-The user wants the design to look like this reference:
-- Vibe: ${referenceAnalysis.overallVibe}
-- Palette: ${referenceAnalysis.palette.join(', ')}
-- Spacing: ${referenceAnalysis.spacingStyle}
-- Layout: ${referenceAnalysis.layoutCharacteristics}
-- Font Style: ${referenceAnalysis.fontStyle}
-Apply this aesthetic throughout the generated HTML.` : ''}
+${referenceAnalysis ? `## Reference Style Target
+- Vibe: ${referenceAnalysis.overallVibe}, Palette: ${referenceAnalysis.palette.join(', ')}, Spacing: ${referenceAnalysis.spacingStyle}, Font: ${referenceAnalysis.fontStyle}` : ''}
+${preserveElements.length ? `## DO NOT touch: ${preserveElements.join(', ')}` : ''}
 
-${skillContext ? `## Optimization Skill (MUST FOLLOW)
-The following skill document was generated for this page. Your HTML/CSS code MUST implement the rules and fixes described here. This is your primary style authority:
+## Rules
+- Use the page's real CSS selectors from the DOM structure.
+- 20-40 rules max. Each fixes one specific issue.
+- Use !important only when needed for specificity.
+- Start with @import for a premium Google Font if current fonts are generic.
+- Output CSS only, starting now:`;
 
-${skillContext}` : ''}
-
-Output ONLY the HTML code, no markdown fences, no explanation. Start with <!DOCTYPE html>.`;
-
-  // Set up SSE — disable compression buffering
+  // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -196,13 +338,13 @@ Output ONLY the HTML code, no markdown fences, no explanation. Start with <!DOCT
 
   send({ status: 'connecting' });
 
-  let fullHtml = '';
+  let cssOutput = '';
 
   try {
     send({ status: 'generating' });
 
     const { stream, onComplete } = await aiGatewayStream(
-      { messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 4000 },
+      { messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 3000 },
       { userId, source: 'ui-review', operation: 'generate-preview' }
     );
 
@@ -213,9 +355,9 @@ Output ONLY the HTML code, no markdown fences, no explanation. Start with <!DOCT
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || '';
       if (content) {
-        fullHtml += content;
+        cssOutput += content;
         outputTokens++;
-        send({ html: content });
+        send({ css: content });
       }
       if (chunk.usage) {
         inputTokens = chunk.usage.prompt_tokens || 0;
@@ -223,9 +365,17 @@ Output ONLY the HTML code, no markdown fences, no explanation. Start with <!DOCT
       }
     }
 
+    // Strip markdown fences if LLM wrapped it
+    let cleanCss = cssOutput.trim();
+    if (cleanCss.startsWith('```')) {
+      cleanCss = cleanCss.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '');
+    }
+
     onComplete(inputTokens, outputTokens, Date.now() - startTime);
-    send({ done: true });
+    send({ cssComplete: cleanCss, done: true });
     res.end();
+
+    return cleanCss;
   } catch (e: any) {
     console.error('[ui-review] Preview stream error:', e);
     const msg = e instanceof QuotaExceededError
@@ -235,5 +385,5 @@ Output ONLY the HTML code, no markdown fences, no explanation. Start with <!DOCT
     res.end();
   }
 
-  return fullHtml;
+  return '';
 }

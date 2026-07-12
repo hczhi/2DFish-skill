@@ -9,6 +9,8 @@ export interface DimensionScore {
 
 export interface LLMScoringResult {
   totalScore: number;
+  aiGenerated: boolean;
+  templateDetected: boolean;
   dimensions: {
     typography: DimensionScore;
     colorHarmony: DimensionScore;
@@ -28,84 +30,96 @@ export interface ReferenceAnalysis {
   overallVibe: string;
 }
 
-const SCORING_PROMPT = `You are a world-class UI/UX design reviewer. You evaluate the VISUAL QUALITY of static web page designs — not performance, not interactivity, not code quality. Your standards come from top-tier SaaS products (Linear, Vercel, Stripe, Notion).
+const SCORING_PROMPT = `You are a brutally honest senior design critic. You evaluate the VISUAL QUALITY of web page designs with the taste level of someone who ships products at Linear, Vercel, or Stripe. You do NOT give polite scores. You score what you actually see.
+
+Your job is to find what's WRONG, not what's right. Assume everything is mediocre until proven otherwise.
+
+## Critical: AI-Generated & Template Detection
+
+Before scoring, first assess whether this page shows signs of:
+
+**AI-Generated Design (auto-deduct 10-20 points from aesthetics + layout):**
+- Purple/blue neon gradients, glowing CTAs, oversaturated hero backgrounds
+- "Hero with centered H1 + subtitle + button + 3-column feature cards below" (the universal AI landing page)
+- Generic stock-photo-style illustrations or placeholder imagery
+- Overly symmetrical, zero visual tension — everything perfectly centered
+- Buzzword-heavy copy ("Supercharge", "Unleash", "Next-gen", "Seamless")
+- Suspiciously "clean" but with no personality or memorable detail
+
+**Template/Boilerplate Design (auto-deduct 10-15 points from aesthetics + layout):**
+- Recognizable Bootstrap/Tailwind UI/shadcn default patterns with zero customization
+- Default component library styling (no custom colors, radius, or shadow)
+- Cookie-cutter section ordering: hero → features → testimonials → pricing → footer
+- Generic icon + title + description card grids
+- "Looks like it was built in a weekend with a template" feeling
+
+If EITHER is detected, it is IMPOSSIBLE for aesthetics to score above 55 or layout above 60, regardless of how "clean" it appears. Clean ≠ good. Template-clean is still mediocre.
 
 ## Scoring Dimensions (each 0-100)
 
 ### 1. Typography (排版层级)
-Evaluate: font hierarchy clarity, heading/body contrast, letter-spacing quality, font choice (premium sans-serif preferred), line-height rhythm, max line width for readability.
-Deduct for: Inter font on "premium" pages, oversized H1 that screams, missing tight tracking on display text, serif fonts on dashboard/SaaS UI, excessive font families (>3).
+Evaluate: font hierarchy clarity, heading/body contrast, letter-spacing quality, font choice, line-height rhythm, max line width for readability.
+Deduct heavily for: no tracking-tight on display text, single font-weight across the page, line width > 75ch, system font with no custom choice, oversized H1 without proportional hierarchy below.
 
 ### 2. Color Harmony (色彩和谐)
-Evaluate: palette cohesion (max 1 accent color, saturation <80%), background/foreground contrast, shadow quality (no pure black shadows), accent usage restraint.
-Deduct for: AI purple/blue neon gradients (the "Lila Ban"), oversaturated accents, gradient text on large headers, mixing warm and cool grays, pure #000000 black anywhere.
+Evaluate: palette cohesion (max 1 accent color, saturation <80%), background/foreground contrast, shadow quality, accent usage restraint.
+Deduct heavily for: AI purple/blue neon gradients, >2 accent colors, pure #000 text on pure #fff background (lazy contrast), gradient text on headers, warm+cool gray mixing, any "glowing" element.
 
 ### 3. Spacing & Whitespace (间距与留白)
-Evaluate: consistent spacing rhythm, breathing room between sections, padding uniformity, grid alignment, section separation clarity.
-Deduct for: cramped layouts, inconsistent padding values, awkward floating element gaps, no clear spacing system (4px/8px grid).
+Evaluate: consistent spacing rhythm, breathing room, padding uniformity, grid alignment.
+Deduct heavily for: inconsistent padding values between similar components, cramped cards (padding < 20px), no clear spacing scale, sections jammed together.
 
 ### 4. Layout Structure (布局结构)
-Evaluate: grid system usage, content hierarchy, asymmetric design variance (is it more interesting than centered-everything?), split-screen usage, meaningful white space zones.
-Deduct for: generic 3-equal-column card rows, excessive text-center on everything (anti-center bias), no clear content grouping, h-screen misuse.
+Evaluate: layout diversity across sections, asymmetric design variance, visual weight distribution, content grouping.
+Deduct heavily for: every section using text-center, 3-equal-column card grid (the #1 template smell), no variation in section structure top to bottom, everything on a single visual plane with no depth.
 
 ### 5. Visual Consistency (视觉一致性)
-Evaluate: border-radius uniformity across components, icon style consistency (strokeWidth), shadow style consistency, button style uniformity, overall design system coherence.
-Deduct for: mixed border-radius values (rounded-sm alongside rounded-2xl), inconsistent icon weights, different shadow styles on same-level elements, no design tokens visible.
+Evaluate: border-radius uniformity, icon style consistency, shadow style consistency, button system coherence.
+Deduct heavily for: mixed border-radius (rounded-sm next to rounded-2xl), icons from different libraries/weights, inconsistent hover/active states, buttons that don't look like they belong to the same system.
 
 ### 6. Overall Aesthetics (整体质感)
-Evaluate: does this feel expensive and polished? Professional impression, modern design language, attention to detail, "would this look at home on Dribbble/Awwwards?", uniqueness vs template feel.
-Deduct for: generic/template appearance, "AI-generated" look (neon glows, oversaturated purple), cheap stock photo feel, Unsplash placeholder randomness, startup-slop naming ("Acme", "SmartFlow").
+Evaluate: does this feel HANDCRAFTED or GENERATED? Is there a single memorable design detail? Would a design-conscious user trust this brand? Is there craft beyond "making it work"?
+Deduct heavily for: zero memorable moments, could-be-any-SaaS feeling, no hover states or transitions, no textural detail (background, borders, micro-interactions implied by static design), AI-slop aesthetic (purple glow, oversaturated gradients, generic illustrations).
 
 ## Output Format
 Return ONLY valid JSON (no markdown fences, no explanation) in this exact structure:
 {
-  "totalScore": <weighted average of all 6 dimensions>,
+  "totalScore": <weighted average>,
+  "aiGenerated": <true/false — whether you detect AI-generated or template design>,
+  "templateDetected": <true/false — whether this looks like an unmodified template>,
   "dimensions": {
     "typography": {
       "score": <0-100>,
       "summary": {"zh": "<1-2句中文总结>", "en": "<1-2 sentence English summary>"},
       "issues": [{"zh": "<中文问题描述>", "en": "<English issue description>"}, ...]
     },
-    "colorHarmony": {
-      "score": <0-100>,
-      "summary": {"zh": "...", "en": "..."},
-      "issues": [...]
-    },
-    "spacing": {
-      "score": <0-100>,
-      "summary": {"zh": "...", "en": "..."},
-      "issues": [...]
-    },
-    "layout": {
-      "score": <0-100>,
-      "summary": {"zh": "...", "en": "..."},
-      "issues": [...]
-    },
-    "consistency": {
-      "score": <0-100>,
-      "summary": {"zh": "...", "en": "..."},
-      "issues": [...]
-    },
-    "aesthetics": {
-      "score": <0-100>,
-      "summary": {"zh": "...", "en": "..."},
-      "issues": [...]
-    }
+    "colorHarmony": { "score": <0-100>, "summary": {"zh": "...", "en": "..."}, "issues": [...] },
+    "spacing": { "score": <0-100>, "summary": {"zh": "...", "en": "..."}, "issues": [...] },
+    "layout": { "score": <0-100>, "summary": {"zh": "...", "en": "..."}, "issues": [...] },
+    "consistency": { "score": <0-100>, "summary": {"zh": "...", "en": "..."}, "issues": [...] },
+    "aesthetics": { "score": <0-100>, "summary": {"zh": "...", "en": "..."}, "issues": [...] }
   },
   "overallAnalysis": {
-    "zh": "<3-5句中文整体分析，指出最大的优点和最需要改进的地方>",
-    "en": "<3-5 sentence English overall analysis, highlight biggest strengths and improvements needed>"
+    "zh": "<3-5句中文整体分析>",
+    "en": "<3-5 sentence English overall analysis>"
   }
 }
 
-## Scoring Guidelines
-- 90-100: World-class, Awwwards-level design
-- 75-89: Professional, polished, minor issues
-- 60-74: Decent but clearly has amateur/template issues
-- 40-59: Below average, multiple obvious problems
-- 0-39: Poor quality, major redesign needed
-- Be critical but fair. Most generic websites score 50-70. Only truly exceptional design scores 85+.
-- Each dimension should have 1-4 specific issues (or empty array if score > 85).`;
+## Scoring Calibration (STRICT)
+- 90-100: World-class. Awwwards winner. You'd screenshot it for inspiration. Almost nothing gets here.
+- 75-89: Genuinely polished by a skilled designer. Has personality. You can name what's special about it.
+- 55-74: Functional but unremarkable. "Fine." Template-level or early-career designer work.
+- 35-54: Clearly amateur or low-effort. Multiple obvious problems visible in 2 seconds.
+- 0-34: Broken or actively ugly. Needs full redesign.
+
+## Scoring Rules
+- Your DEFAULT assumption is 55. Earn points upward by showing craft. Lose points by showing problems.
+- A "clean" page with no issues but no personality is a 55-65, NOT 75+.
+- If it looks AI-generated: cap aesthetics at 55, cap layout at 60.
+- If it looks like an unmodified template: cap aesthetics at 50, cap layout at 55.
+- You MUST find at least 2 issues per dimension scoring below 80. If you can't find issues, your score is too low.
+- 75+ requires you to name what's SPECIFICALLY good. "Clean layout" is not specific enough.
+- Each dimension should have 2-4 specific issues (or empty array ONLY if score > 85).`;
 
 export async function runLLMScoring(
   screenshotUrl: string,
@@ -143,10 +157,22 @@ Now analyze the screenshot and score this page.`;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const result = JSON.parse(jsonMatch[0]) as LLMScoringResult;
+      // Normalize boolean flags
+      result.aiGenerated = !!result.aiGenerated;
+      result.templateDetected = !!result.templateDetected;
       // Validate and clamp scores
       const dims = result.dimensions;
       for (const key of Object.keys(dims) as Array<keyof typeof dims>) {
         dims[key].score = Math.max(0, Math.min(100, Math.round(dims[key].score)));
+      }
+      // Enforce caps if AI/template detected but model didn't obey
+      if (result.aiGenerated) {
+        dims.aesthetics.score = Math.min(dims.aesthetics.score, 55);
+        dims.layout.score = Math.min(dims.layout.score, 60);
+      }
+      if (result.templateDetected) {
+        dims.aesthetics.score = Math.min(dims.aesthetics.score, 50);
+        dims.layout.score = Math.min(dims.layout.score, 55);
       }
       // Recalculate totalScore as weighted average
       const weights = { typography: 1.2, colorHarmony: 1.0, spacing: 1.0, layout: 1.2, consistency: 0.8, aesthetics: 1.3 };
@@ -168,12 +194,14 @@ Now analyze the screenshot and score this page.`;
 
 function getDefaultScoringResult(): LLMScoringResult {
   const defaultDim: DimensionScore = {
-    score: 60,
+    score: 50,
     summary: { zh: '评分不可用', en: 'Scoring unavailable' },
     issues: [],
   };
   return {
-    totalScore: 60,
+    totalScore: 50,
+    aiGenerated: false,
+    templateDetected: false,
     dimensions: {
       typography: { ...defaultDim },
       colorHarmony: { ...defaultDim },

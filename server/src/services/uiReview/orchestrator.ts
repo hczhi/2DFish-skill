@@ -3,6 +3,7 @@ import { getDatabase } from '../../db/index.js';
 import { crawlPage, type CrawlResult } from './crawlerService.js';
 import { runLLMScoring, analyzeReferenceImage } from './analysisService.js';
 import { generateSkillMarkdown, type ReviewData } from './generationService.js';
+import { runProDimensionAnalysis, generateExecutionPlan } from './proAnalysisService.js';
 import { getCosConfig } from '../../api/upload.js';
 
 // Simple in-memory event store for SSE progress
@@ -63,7 +64,7 @@ export async function executeReview(reviewId: string, userId: string): Promise<v
       }, (err) => err ? reject(err) : resolve());
     });
 
-    screenshotUrl = `http://file.qiaonan.vip/${cosKey}`;
+    screenshotUrl = `https://file.qiaonan.vip/${cosKey}`;
 
     db.prepare('UPDATE ui_reviews SET screenshot_url = ?, crawl_data = ? WHERE id = ?').run(
       screenshotUrl,
@@ -118,9 +119,46 @@ export async function executeReview(reviewId: string, userId: string): Promise<v
       reviewId
     );
 
+    // Step 2.5: Pro deep analysis (if pro mode)
+    if (review.mode === 'pro') {
+      emitProgress(reviewId, 'analyzing', 'Running deep analysis on weak dimensions...');
+
+      // Convert screenshot to base64 data URI to avoid model-side download timeouts
+      let screenshotForPro = screenshotUrl;
+      if (crawlData!.screenshot && crawlData!.screenshot.length > 0) {
+        const b64 = Buffer.from(crawlData!.screenshot).toString('base64');
+        screenshotForPro = `data:image/png;base64,${b64}`;
+      }
+
+      // Find dimensions scoring below 75
+      const weakDimensions = Object.entries(scoringResult.dimensions)
+        .filter(([, data]) => data.score < 75)
+        .sort(([, a], [, b]) => a.score - b.score)
+        .slice(0, 4);
+
+      const dimensionAnalyses = [];
+      for (const [dim, data] of weakDimensions) {
+        emitProgress(reviewId, 'analyzing', `Deep analyzing: ${dim}...`);
+        const analysis = await runProDimensionAnalysis(
+          dim, data.score, data.issues, screenshotForPro, crawlData!, userId
+        );
+        dimensionAnalyses.push(analysis);
+      }
+
+      emitProgress(reviewId, 'analyzing', 'Generating execution plan...');
+      const planResult = await generateExecutionPlan(
+        scoringResult, dimensionAnalyses, crawlData!, review.url, userId
+      );
+
+      const proAnalysis = { dimensionAnalyses, ...planResult };
+      db.prepare('UPDATE ui_reviews SET pro_analysis = ? WHERE id = ?').run(
+        JSON.stringify(proAnalysis), reviewId
+      );
+    }
+
     // Step 3: Generate
     updateStatus(reviewId, 'generating');
-    emitProgress(reviewId, 'generating', 'Generating optimization skill...');
+    emitProgress(reviewId, 'generating', 'Generating fix instructions...');
 
     const reviewDataForGen: ReviewData = {
       url: review.url,

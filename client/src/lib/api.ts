@@ -27,8 +27,19 @@ export async function api(url: string, options: RequestInit = {}): Promise<Respo
   return response;
 }
 
-export async function apiGet<T = any>(url: string): Promise<T> {
-  const res = await api(url);
+export async function apiGet<T = any>(url: string, params?: Record<string, any>): Promise<T> {
+  let fullUrl = url;
+  if (params) {
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') {
+        searchParams.set(key, String(value));
+      }
+    }
+    const qs = searchParams.toString();
+    if (qs) fullUrl += `?${qs}`;
+  }
+  const res = await api(fullUrl);
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: 'Request failed' }));
     throw new Error(data.error || `HTTP ${res.status}`);
@@ -39,6 +50,30 @@ export async function apiGet<T = any>(url: string): Promise<T> {
 export async function apiPost<T = any>(url: string, body?: unknown): Promise<T> {
   const res = await api(url, {
     method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function apiPut<T = any>(url: string, body?: unknown): Promise<T> {
+  const res = await api(url, {
+    method: 'PUT',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function apiPatch<T = any>(url: string, body?: unknown): Promise<T> {
+  const res = await api(url, {
+    method: 'PATCH',
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {

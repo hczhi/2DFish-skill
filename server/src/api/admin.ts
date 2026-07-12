@@ -187,7 +187,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 // --- System Config ---
 
-const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region'];
+const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
 
 adminRouter.get('/config', (_req: Request, res: Response) => {
   const db = getDatabase();

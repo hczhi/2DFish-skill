@@ -4,7 +4,7 @@ import { getDatabase } from '../db/index.js';
 import { executeReview, getProgressEvents } from '../services/uiReview/orchestrator.js';
 import { crawlPage } from '../services/uiReview/crawlerService.js';
 import { runSingleRule, type RuleConfig } from '../services/uiReview/ruleEngine.js';
-import { streamPreviewHtml, type ReviewData } from '../services/uiReview/generationService.js';
+import { streamPreviewHtml, generateSkillMarkdown, type ReviewData, type UserPreferences } from '../services/uiReview/generationService.js';
 
 export const uiReviewRouter = Router();
 
@@ -266,19 +266,21 @@ uiReviewRouter.delete('/admin/reviews/:id', (req, res) => {
 
 uiReviewRouter.post('/start', async (req, res) => {
   const userId = req.user!.id;
-  const { url, referenceImageUrl } = req.body;
+  const { url, referenceImageUrl, mode } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
+
+  const reviewMode = mode === 'pro' ? 'pro' : 'standard';
 
   const db = getDatabase();
   const now = new Date().toISOString();
   const id = uuidv4();
 
   db.prepare(`
-    INSERT INTO ui_reviews (id, user_id, url, reference_image_url, status, created_at)
-    VALUES (?, ?, ?, ?, 'pending', ?)
-  `).run(id, userId, url, referenceImageUrl || '', now);
+    INSERT INTO ui_reviews (id, user_id, url, reference_image_url, mode, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(id, userId, url, referenceImageUrl || '', reviewMode, now);
 
-  res.json({ id, status: 'pending' });
+  res.json({ id, status: 'pending', mode: reviewMode });
 
   // Kick off async review pipeline (fire-and-forget)
   executeReview(id, userId).catch(err => {
@@ -328,6 +330,7 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
 
   const userId = req.user!.id;
   const { id } = req.params;
+  const { preferences } = req.body || {};
 
   const db = getDatabase();
   const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ? AND user_id = ?').get(id, userId) as any;
@@ -360,9 +363,55 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
   };
 
   const skillMarkdown = review.skill_markdown || '';
-  const previewHtml = await streamPreviewHtml(reviewData, referenceAnalysis, skillMarkdown, userId, res);
+  const previewHtml = await streamPreviewHtml(reviewData, referenceAnalysis, skillMarkdown, userId, res, preferences);
   if (previewHtml) {
     db.prepare('UPDATE ui_reviews SET preview_html = ? WHERE id = ?').run(previewHtml, id);
+  }
+});
+
+// Regenerate skill markdown with user preferences
+uiReviewRouter.post('/:id/regenerate-skill', async (req, res) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+  const { preferences } = req.body || {};
+
+  const db = getDatabase();
+  const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ? AND user_id = ?').get(id, userId) as any;
+  if (!review) return res.status(404).json({ error: 'Not found' });
+  if (review.status !== 'completed') return res.status(400).json({ error: 'Review not completed yet' });
+
+  let crawlDataParsed;
+  try { crawlDataParsed = JSON.parse(review.crawl_data || '{}'); } catch { crawlDataParsed = {}; }
+  let ruleResults;
+  try { ruleResults = JSON.parse(review.rule_results || '[]'); } catch { ruleResults = []; }
+  let dimensionScores;
+  try { dimensionScores = JSON.parse(review.dimension_scores || '{}'); } catch { dimensionScores = {}; }
+  let referenceAnalysis;
+  try { referenceAnalysis = review.reference_analysis ? JSON.parse(review.reference_analysis) : undefined; } catch { referenceAnalysis = undefined; }
+
+  const reviewData: ReviewData = {
+    url: review.url,
+    industryType: review.industry_type || 'corporate',
+    totalScore: review.total_score,
+    dimensionScores,
+    ruleResults,
+    llmAnalysis: review.llm_analysis || '',
+    crawlData: {
+      ...crawlDataParsed,
+      screenshot: Buffer.alloc(0),
+      html: '',
+      elementData: [],
+    },
+    techStack: crawlDataParsed.techStack || [],
+  };
+
+  try {
+    const skillMarkdown = await generateSkillMarkdown(reviewData, referenceAnalysis, userId, preferences);
+    db.prepare('UPDATE ui_reviews SET skill_markdown = ? WHERE id = ?').run(skillMarkdown, id);
+    res.json({ skill_markdown: skillMarkdown });
+  } catch (e: any) {
+    console.error('[ui-review] Skill regeneration failed:', e);
+    res.status(500).json({ error: e.message || 'Skill regeneration failed' });
   }
 });
 

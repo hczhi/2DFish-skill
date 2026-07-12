@@ -16,6 +16,15 @@ import { migration_014 } from './014_ad_slots.js';
 import { migration_015 } from './015_ad_slot_height.js';
 import { migration_016 } from './016_discover_admin_module.js';
 import { migration_017 } from './017_ui_review.js';
+import { migration_018 } from './018_ui_review_pro_mode.js';
+import { migration_019 } from './019_tender_system.js';
+import { migration_020 } from './020_tender_home_module.js';
+import { migration_021 } from './021_tender_ai_fields.js';
+import { migration_022 } from './022_tender_keyword_pool.js';
+import { migration_023 } from './023_tender_content_hash.js';
+import { migration_024 } from './024_tender_status.js';
+import { migration_025 } from './025_tender_user_feedback.js';
+import { migration_026 } from './026_performance_indexes.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -35,4 +44,13 @@ export const allMigrations: Migration[] = [
   migration_015,
   migration_016,
   migration_017,
+  migration_018,
+  migration_019,
+  migration_020,
+  migration_021,
+  migration_022,
+  migration_023,
+  migration_024,
+  migration_025,
+  migration_026,
 ];

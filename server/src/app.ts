@@ -29,6 +29,7 @@ import { analyticsRouter } from './api/analytics.js';
 import { adSlotsRouter } from './api/adSlots.js';
 import { uploadRouter } from './api/upload.js';
 import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
+import { tenderRouter } from './api/tender.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
@@ -163,6 +164,10 @@ app.use('/api/ad-slots', adSlotsRouter);
 // UI Review
 app.use('/api/ui-review', rateLimit(60, 60_000));
 app.use('/api/ui-review', uiReviewRouter);
+
+// Tender (bid recommendation)
+app.use('/api/tender', rateLimit(60, 60_000));
+app.use('/api/tender', tenderRouter);
 
 // File upload (admin only)
 app.use('/api/upload', uploadRouter);

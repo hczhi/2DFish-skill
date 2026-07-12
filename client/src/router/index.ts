@@ -112,6 +112,7 @@ const router = createRouter({
         { path: 'ui-style-skills', name: 'admin-ui-style-skills', component: () => import('../views/admin/UiStyleSkills.vue') },
         { path: 'ui-style-skills/create', name: 'admin-ui-style-skill-create', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'ui-style-skills/:id/edit', name: 'admin-ui-style-skill-edit', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
+        { path: 'tender', name: 'admin-tender', component: () => import('../views/admin/TenderManagement.vue') },
       ],
     },
     {
@@ -124,6 +125,18 @@ const router = createRouter({
       path: '/en/ui-review',
       name: 'ui-review-en',
       component: () => import('../views/uiReview/UiReviewPage.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/tender',
+      name: 'tender',
+      component: () => import('../views/tender/TenderPage.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/en/tender',
+      name: 'tender-en',
+      component: () => import('../views/tender/TenderPage.vue'),
       meta: { requiresAuth: true },
     },
     {

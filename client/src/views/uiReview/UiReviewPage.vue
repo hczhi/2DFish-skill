@@ -2,24 +2,28 @@
   <div class="page-wrapper">
     <SiteHeader />
 
-    <!-- Ambient Background Orbs -->
     <main class="ui-review-page">
       <!-- Hero Section -->
       <section v-if="!currentReview" class="hero-section">
         <!-- Text Overlay -->
         <div class="hero-text-overlay">
-          <div class="hero-badge animate-fade-up delay-1">{{ locale === 'en' ? 'AI-Powered Design Optimization Engine' : 'AI 驱动的设计优化引擎' }}</div>
+          <div class="hero-badge animate-fade-up delay-1">{{ locale === 'en' ? 'AI-Driven Design Optimization Engine' : 'AI 驱动的设计优化引擎' }}</div>
           <h1 class="hero-title animate-fade-up delay-2">
             <template v-if="locale === 'en'">
-              Elevate Your Product<br/>
-              With <strong>Premium Design</strong>
+              <span class="serif-text"><span class="highlight-char">M</span>ake Your Product Design</span><br/><strong>More Premium</strong>
             </template>
             <template v-else>
-              让你的产品设计<br/>
-              更具<strong>高级质感</strong>
+              <span class="serif-text"><span class="highlight-char">让</span>你的产品设计</span><br/><strong>更具高级质感</strong>
             </template>
           </h1>
-          <p class="hero-subtitle animate-fade-up delay-3">{{ locale === 'en' ? 'Enter your product URL to get pixel-perfect optimization aligned with top-tier SaaS standards.' : '输入你的产品网址，获取对标顶尖 SaaS 平台的像素级优化方案与重构代码。' }}</p>
+          <p class="hero-subtitle animate-fade-up delay-3">
+            <template v-if="locale === 'en'">
+              Enter your product URL and get pixel-perfect optimization plans and refactored code benchmarked against top-tier SaaS platforms.
+            </template>
+            <template v-else>
+              输入你的产品网址，获取对标顶尖 SaaS 平台的像素级优化方案与重构代码。
+            </template>
+          </p>
           
           <div class="input-container animate-fade-up delay-4">
             <div class="unified-search-bar" :class="{ 'is-focused': isFocused }">
@@ -27,36 +31,27 @@
               <input
                 v-model="url"
                 type="url"
-                :placeholder="locale === 'en' ? 'Enter product URL, e.g. https://your-website.com' : '输入产品网址，例如 https://your-website.com'"
+                :placeholder="locale === 'en' ? 'https://your-site.com' : 'https://你的网站.com'"
                 class="unified-input"
                 @focus="isFocused = true"
                 @blur="isFocused = false"
                 @keyup.enter="startReview"
               />
               <div class="bar-actions">
-                <button class="icon-btn" :class="{ active: showAdvanced || referenceImageUrl }" @click="showAdvanced = !showAdvanced" title="上传参考风格">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                </button>
                 <button class="start-btn" @click="startReview" :disabled="!url || loading">
-                  {{ loading ? (locale === 'en' ? 'Analyzing...' : '分析中...') : (locale === 'en' ? 'Start Review' : '开始优化') }}
+                  {{ loading ? (locale === 'en' ? 'Looking...' : '正在看...') : (locale === 'en' ? 'Review My Page' : '帮我看看') }}
                 </button>
               </div>
             </div>
-            
-            <transition name="modal-fade">
-              <div v-show="showAdvanced" class="advanced-modal-overlay" @click.self="showAdvanced = false">
-                <div class="advanced-modal">
-                  <button class="modal-close-btn" @click="showAdvanced = false">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                  <div class="advanced-modal-header">
-                    <label>{{ locale === 'en' ? 'Reference Style' : '参考风格' }} <span>{{ locale === 'en' ? '(optional)' : '(可选)' }}</span></label>
-                    <p class="hint">{{ locale === 'en' ? 'Upload a style reference screenshot. AI will use it as a visual benchmark.' : '上传你期望的风格截图，AI 将以此为视觉基准生成重构方案' }}</p>
-                  </div>
-                  <ImageUpload v-model="referenceImageUrl" />
-                </div>
-              </div>
-            </transition>
+            <div class="mode-selector">
+              <button :class="['mode-btn', { active: reviewMode === 'standard' }]" @click="reviewMode = 'standard'">
+                {{ locale === 'en' ? 'Quick' : '快速' }}
+              </button>
+              <button :class="['mode-btn mode-btn-pro', { active: reviewMode === 'pro' }]" @click="reviewMode = 'pro'">
+                PRO
+              </button>
+              <span class="mode-hint">{{ reviewMode === 'pro' ? (locale === 'en' ? 'Deep analysis + phased fix plan' : '深度分析 + 分阶段修改方案') : (locale === 'en' ? 'Score + fix instructions' : '评分 + 修改指令') }}</span>
+            </div>
           </div>
         </div>
       </section>
@@ -68,15 +63,15 @@
         <div class="parallax-case">
           <div class="case-text-container">
             <h2 class="case-title">
-              <template v-if="locale === 'en'">See the<br/>Difference</template>
-              <template v-else>重塑<br/>视觉体验</template>
+              <template v-if="locale === 'en'">Same AI,<br/>Different Result</template>
+              <template v-else>同一个 AI<br/>不同的结果</template>
             </h2>
             <p class="case-desc">
               <template v-if="locale === 'en'">
-                Swipe to compare the generic AI layout with our <strong>HC Design engineered</strong> output. Notice the typography scale, ambient shadows, and precise spacing.
+                Left: you told AI "make it prettier". Right: I told AI <strong>exactly what to fix</strong>.
               </template>
               <template v-else>
-                拖拽滑块对比默认 AI 廉价感排版与 <strong>HC Design 规范</strong> 重构后的顶级 SaaS 质感。<br/>注意字距收紧、弥散环境光以及不对称分割布局带来的张力。
+                左边：你跟 AI 说"好看一点"。右边：我告诉 AI <strong>具体改哪里</strong>。
               </template>
             </p>
           </div>
@@ -94,22 +89,22 @@
       <!-- Instructions Section -->
       <section v-if="!currentReview" class="instructions-section">
         <div class="instructions-container">
-          <h2 class="instructions-title">{{ locale === 'en' ? 'How to Use' : '使用教程' }}</h2>
+          <h2 class="instructions-title">{{ locale === 'en' ? 'How It Works' : '怎么用' }}</h2>
           <div class="instructions-grid">
             <div class="instruction-card">
               <div class="instruction-icon">01</div>
-              <h3>{{ locale === 'en' ? 'Submit URL' : '提交网址' }}</h3>
-              <p>{{ locale === 'en' ? 'Enter the link to the product or page you want to optimize.' : '输入您想要优化的产品或页面链接。' }}</p>
+              <h3>{{ locale === 'en' ? 'Show Me' : '给我看' }}</h3>
+              <p>{{ locale === 'en' ? 'Paste your URL. That\'s all I need.' : '贴个网址就行。' }}</p>
             </div>
             <div class="instruction-card">
               <div class="instruction-icon">02</div>
-              <h3>{{ locale === 'en' ? 'AI Analysis' : 'AI 解析' }}</h3>
-              <p>{{ locale === 'en' ? 'Our AI engine crawls the DOM and evaluates it against HC Design standards.' : '我们的 AI 引擎将抓取页面 DOM 并基于 HC Design 规范进行评估。' }}</p>
+              <h3>{{ locale === 'en' ? 'I\'ll Point Out' : '我来指出' }}</h3>
+              <p>{{ locale === 'en' ? 'Typography, color, spacing, layout, consistency, craft — I\'ll score each and tell you what\'s off.' : '排版、配色、间距、布局、一致性、质感——逐项打分，哪里不行直接说。' }}</p>
             </div>
             <div class="instruction-card">
               <div class="instruction-icon">03</div>
-              <h3>{{ locale === 'en' ? 'Get Report & Code' : '获取报告与代码' }}</h3>
-              <p>{{ locale === 'en' ? 'Review the detailed aesthetic score and instantly preview the refactored design.' : '查看详细的美学评分，并即时预览重构后的设计代码。' }}</p>
+              <h3>{{ locale === 'en' ? 'You Go Fix' : '你去改' }}</h3>
+              <p>{{ locale === 'en' ? 'Copy my instructions into Cursor or Claude. Each fix has the exact selector and value — just execute.' : '把指令复制进 Cursor 或 Claude，每条都有选择器和值，直接执行。' }}</p>
             </div>
           </div>
         </div>
@@ -119,9 +114,9 @@
       <section v-else-if="currentReview.status !== 'completed' && currentReview.status !== 'failed'" class="progress-section">
         <div class="progress-container">
           <div class="progress-info">
-            <div class="progress-badge">ANALYZING</div>
-            <h2 class="progress-title">{{ locale === 'en' ? 'Deep Analysis in Progress' : '正在深度重构' }}<span class="blinking-cursor">_</span></h2>
-            <p class="progress-subtitle">{{ locale === 'en' ? 'AI is analyzing page structure and applying design standards' : 'AI 正在解析页面结构并应用 HC Design 规范' }}</p>
+            <div :class="['progress-badge', { 'progress-badge-pro': reviewMode === 'pro' }]">{{ reviewMode === 'pro' ? 'PRO ANALYSIS' : 'REVIEWING' }}</div>
+            <h2 class="progress-title">{{ reviewMode === 'pro' ? (locale === 'en' ? 'Deep diving into your design' : '正在深度解剖你的设计') : (locale === 'en' ? 'Let me take a look' : '让我看看') }}<span class="blinking-cursor">_</span></h2>
+            <p class="progress-subtitle">{{ reviewMode === 'pro' ? (locale === 'en' ? 'Running multi-dimensional analysis with industry benchmarks' : '正在做多维度深度分析和行业对标') : (locale === 'en' ? 'Checking your page against what good design actually looks like' : '正在对照专业设计标准审视你的页面') }}</p>
             
             <div class="vertical-step-list">
               <div v-for="(step, index) in steps" :key="step.key" 
@@ -145,8 +140,12 @@
             <div class="scanner-container" :class="{ 'has-image': currentReview.screenshot_url }">
               <div class="scanner-line"></div>
               <div class="scanner-overlay"></div>
+              
+              <!-- Real Image -->
               <img v-if="currentReview.screenshot_url" :src="currentReview.screenshot_url" class="scanned-image" alt="页面截图" />
-              <div v-else class="skeleton-wireframe">
+              
+              <!-- Skeleton (when no image yet) -->
+              <div v-if="!currentReview.screenshot_url" class="skeleton-wireframe">
                 <div class="skel-header"></div>
                 <div class="skel-body">
                   <div class="skel-hero"></div>
@@ -157,6 +156,28 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Analysis Elements (active during analyzing) -->
+              <div class="analysis-overlay" :class="{ active: currentReview.status === 'analyzing' }">
+                <div class="measure-line horizontal" style="top: 30%"></div>
+                <div class="measure-line vertical" style="left: 40%"></div>
+                <div class="measure-line horizontal" style="top: 70%"></div>
+                <div class="analysis-dot" style="top: 30%; left: 40%"></div>
+                <div class="analysis-dot" style="top: 70%; left: 40%"></div>
+                <div class="analysis-box" style="top: 20%; left: 20%; width: 30%; height: 20%"></div>
+                <div class="analysis-box" style="top: 50%; left: 50%; width: 40%; height: 30%"></div>
+              </div>
+
+              <!-- Code Stream (active during generating) -->
+              <div class="code-stream-overlay" :class="{ active: currentReview.status === 'generating' }">
+                <div class="code-typing">
+                  > Analyzing DOM structure...<br>
+                  > Found typography scale issues.<br>
+                  > Calculating spacing metrics...<br>
+                  > Generating CSS overrides...<br>
+                  <span class="terminal-cursor">_</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -165,9 +186,9 @@
       <!-- Error Section -->
       <section v-else-if="currentReview.status === 'failed'" class="error-section">
         <div class="error-card">
-          <h2>{{ locale === 'en' ? 'Review Failed' : '评测失败' }}</h2>
-          <p>{{ currentReview.error_message || (locale === 'en' ? 'Unknown error, please retry' : '未知错误，请重试') }}</p>
-          <button class="start-btn" @click="reset">{{ locale === 'en' ? 'Start Over' : '重新开始' }}</button>
+          <h2>{{ locale === 'en' ? 'Something went wrong' : '出了点问题' }}</h2>
+          <p>{{ currentReview.error_message || (locale === 'en' ? 'Could not access the page. Check the URL and try again.' : '无法访问页面，检查网址后再试一次。') }}</p>
+          <button class="start-btn" @click="reset">{{ locale === 'en' ? 'Try Again' : '再试一次' }}</button>
         </div>
       </section>
 
@@ -175,11 +196,14 @@
       <section v-else class="result-section">
         <div class="result-header">
           <div class="result-tabs">
-            <button :class="{ active: activeTab === 'report' }" @click="activeTab = 'report'">{{ locale === 'en' ? 'Report' : '评测报告' }}</button>
-            <button :class="{ active: activeTab === 'preview' }" @click="activeTab = 'preview'">{{ locale === 'en' ? 'Preview' : '优化预览' }}</button>
-            <button :class="{ active: activeTab === 'export' }" @click="activeTab = 'export'">{{ locale === 'en' ? 'Export Skill' : '导出 Skill' }}</button>
+            <button :class="{ active: activeTab === 'report' }" @click="activeTab = 'report'">{{ locale === 'en' ? 'What\'s Wrong' : '问题在哪' }}</button>
+            <button v-if="currentReview.mode === 'pro'" :class="['pro-tab-btn', { active: activeTab === 'pro' }]" @click="activeTab = 'pro'">
+              <span class="pro-tab-badge">PRO</span>
+              {{ locale === 'en' ? 'Deep Analysis' : '深度分析' }}
+            </button>
+            <button :class="{ active: activeTab === 'export' }" @click="activeTab = 'export'">{{ locale === 'en' ? 'How to Fix' : '怎么改' }}</button>
           </div>
-          <button class="reset-btn" @click="reset">{{ locale === 'en' ? 'New Review' : '重新评测' }}</button>
+          <button class="reset-btn" @click="reset">{{ locale === 'en' ? 'Review Another' : '换一个' }}</button>
         </div>
 
         <!-- Report Tab -->
@@ -187,7 +211,7 @@
           <div class="score-overview animate-fade-up delay-1">
             <div class="total-score">
               <span class="score-number">{{ displayScore }}</span>
-              <span class="score-label">{{ locale === 'en' ? 'Design Quality Score' : '综合质感得分' }}</span>
+              <span class="score-label">{{ locale === 'en' ? 'Overall' : '综合评分' }}</span>
             </div>
             <div class="dimension-scores">
               <div v-for="dim in dimensionKeys" :key="dim" class="dim-item">
@@ -200,11 +224,11 @@
             </div>
           </div>
           <div v-if="overallAnalysisText" class="analysis-section animate-fade-up delay-2">
-            <h3>{{ locale === 'en' ? 'AI Analysis' : 'AI 深度解析' }}</h3>
+            <h3>{{ locale === 'en' ? 'My Take' : '我的判断' }}</h3>
             <div class="analysis-content">{{ overallAnalysisText }}</div>
           </div>
           <div v-if="dimensionIssues.length" class="issues-section animate-fade-up delay-3">
-            <h3>{{ locale === 'en' ? 'Issues Found' : '发现的视觉问题' }}</h3>
+            <h3>{{ locale === 'en' ? 'Specific Problems' : '具体问题' }}</h3>
             <div class="issues-list">
               <div v-for="(group, idx) in dimensionIssues" :key="idx" class="issue-item">
                 <div class="issue-header">
@@ -221,44 +245,88 @@
           </div>
         </div>
 
-        <!-- Preview Tab -->
-        <div v-if="activeTab === 'preview'" class="tab-content">
-          <div class="preview-container-full">
-            <div class="preview-main">
-              <div v-if="!previewHtml && !previewLoading && !previewError" class="preview-placeholder">
-                <p>{{ locale === 'en' ? 'Generate optimized code and live preview based on HC Design standards' : '一键生成基于 HC Design 规范的重构代码与实时预览' }}</p>
-                <button class="start-btn" @click="generatePreview">{{ locale === 'en' ? 'Generate Preview' : '生成优化预览' }}</button>
+        <!-- Pro Deep Analysis Tab -->
+        <div v-if="activeTab === 'pro' && currentReview.mode === 'pro'" class="tab-content">
+          <div v-if="proAnalysis" class="pro-section">
+            <!-- Industry Comparison -->
+            <div class="pro-comparison animate-fade-up delay-1">
+              <h3>{{ locale === 'en' ? 'Industry Comparison' : '行业对标' }}</h3>
+              <p>{{ locale === 'en' ? proAnalysis.industryComparison?.en : proAnalysis.industryComparison?.zh }}</p>
+              <div class="pro-score-estimate">
+                <span class="label">{{ locale === 'en' ? 'Estimated score after fix:' : '修复后预估分数：' }}</span>
+                <span class="value">{{ proAnalysis.estimatedScoreAfterFix }}/100</span>
               </div>
-              <div v-if="previewError" class="preview-error">
-                <p>{{ previewError }}</p>
-                <button class="btn-secondary" @click="previewError = ''; generatePreview()">{{ locale === 'en' ? 'Retry' : '重试' }}</button>
+            </div>
+
+            <!-- Dimension Deep Analyses -->
+            <div class="pro-dimensions animate-fade-up delay-2">
+              <h3>{{ locale === 'en' ? 'Dimension Deep Dive' : '维度深度剖析' }}</h3>
+              <div v-for="(dim, idx) in proAnalysis.dimensionAnalyses" :key="idx" class="pro-dim-card">
+                <div class="pro-dim-header">
+                  <span class="pro-dim-name">{{ locale === 'en' ? dimensionLabelsEn[dim.dimension] : dimensionLabelsZh[dim.dimension] }}</span>
+                  <span class="pro-dim-score">{{ dim.score }}/100</span>
+                </div>
+                <p class="pro-dim-analysis">{{ locale === 'en' ? dim.deepAnalysis?.en : dim.deepAnalysis?.zh }}</p>
+                <div v-if="dim.benchmark" class="pro-dim-benchmark">{{ dim.benchmark }}</div>
+                <div class="pro-issues-grid">
+                  <div v-for="(issue, i) in dim.specificIssues" :key="i" class="pro-issue-item">
+                    <div class="pro-issue-meta">
+                      <span :class="['pro-issue-severity', issue.severity]">{{ issue.severity }}</span>
+                      <span class="pro-issue-cost">{{ issue.fixCost }}</span>
+                      <span class="pro-issue-location">{{ issue.location }}</span>
+                    </div>
+                    <div class="pro-issue-diff">
+                      <div class="pro-diff-current">{{ issue.current }}</div>
+                      <div class="pro-diff-arrow">→</div>
+                      <div class="pro-diff-expected">{{ issue.expected }}</div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div v-if="previewLoading || previewHtml" class="preview-live">
-                <div class="preview-live-tabs">
-                  <button :class="{ active: previewView === 'preview' }" @click="previewView = 'preview'">{{ locale === 'en' ? 'Preview' : '预览模式' }}</button>
-                  <button :class="{ active: previewView === 'code' }" @click="previewView = 'code'">{{ locale === 'en' ? 'Source' : '源码模式' }}</button>
+            </div>
+
+            <!-- Execution Plan -->
+            <div class="pro-plan animate-fade-up delay-3">
+              <h3>{{ locale === 'en' ? 'Execution Plan' : '执行方案' }}</h3>
+              <div class="pro-phases">
+                <div class="pro-phase">
+                  <div class="pro-phase-header">
+                    <span class="pro-phase-num">1</span>
+                    <span class="pro-phase-title">{{ locale === 'en' ? 'Quick wins (1-2h)' : '快速见效（1-2小时）' }}</span>
+                  </div>
+                  <p>{{ proAnalysis.executionPlan?.phase1 }}</p>
                 </div>
-                <div v-if="previewLoading" class="preview-status-bar">
-                  <div class="loading-spinner-sm"></div>
-                  <span>{{ previewStatus }}</span>
+                <div class="pro-phase">
+                  <div class="pro-phase-header">
+                    <span class="pro-phase-num">2</span>
+                    <span class="pro-phase-title">{{ locale === 'en' ? 'Structure (half day)' : '结构优化（半天）' }}</span>
+                  </div>
+                  <p>{{ proAnalysis.executionPlan?.phase2 }}</p>
                 </div>
-                <iframe v-show="previewView === 'preview'" :srcdoc="cleanedPreviewHtml" class="preview-iframe" sandbox=""></iframe>
-                <div v-show="previewView === 'code'" class="code-panel" ref="codePanelRef">
-                  <pre><code>{{ previewRawHtml }}</code></pre>
+                <div class="pro-phase">
+                  <div class="pro-phase-header">
+                    <span class="pro-phase-num">3</span>
+                    <span class="pro-phase-title">{{ locale === 'en' ? 'Polish (optional)' : '锦上添花（可选）' }}</span>
+                  </div>
+                  <p>{{ proAnalysis.executionPlan?.phase3 }}</p>
                 </div>
               </div>
             </div>
           </div>
+          <div v-else class="pro-loading">
+            <p>{{ locale === 'en' ? 'Deep analysis is being generated...' : '深度分析正在生成中...' }}</p>
+          </div>
         </div>
 
-        <!-- Export Tab -->
+        <!-- AI Instructions Tab -->
         <div v-if="activeTab === 'export'" class="tab-content">
           <div class="export-section">
+            <p class="export-hint">{{ locale === 'en' ? 'Copy this into Cursor or Claude. It knows what to do.' : '复制到 Cursor 或 Claude 里，它知道该怎么改。' }}</p>
             <div class="export-actions">
-              <button class="start-btn" @click="downloadSkill">{{ locale === 'en' ? 'Download Skill' : '下载 Skill 文档' }}</button>
-              <button class="btn-secondary" @click="copySkill">{{ locale === 'en' ? 'Copy to Clipboard' : '复制到剪贴板' }}</button>
+              <button class="start-btn" @click="copySkill">{{ locale === 'en' ? 'Copy' : '复制' }}</button>
+              <button class="btn-secondary" @click="downloadSkill">{{ locale === 'en' ? 'Download' : '下载' }}</button>
             </div>
-            <pre class="skill-content">{{ currentReview.skill_markdown || (locale === 'en' ? 'No skill document yet. Please wait for review to complete.' : '暂无 Skill 文档，请等待评测完成') }}</pre>
+            <pre class="skill-content">{{ currentReview.skill_markdown || (locale === 'en' ? 'Still working on it...' : '还在生成中...') }}</pre>
           </div>
         </div>
       </section>
@@ -272,8 +340,6 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiGet, apiPost } from '../../lib/api'
-import { getToken } from '../../lib/auth'
-import ImageUpload from '../../components/common/ImageUpload.vue'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 import BeforeAfterSlider from '../../components/common/BeforeAfterSlider.vue'
@@ -282,19 +348,11 @@ const route = useRoute()
 const locale = computed(() => route.path.startsWith('/en/') ? 'en' : 'zh')
 
 const url = ref('')
-const referenceImageUrl = ref('')
 const loading = ref(false)
 const currentReview = ref<any>(null)
-const activeTab = ref<'report' | 'preview' | 'export'>('report')
-const previewHtml = ref('')
-const previewRawHtml = ref('')
-const previewLoading = ref(false)
-const previewStatus = ref('正在连接...')
-const previewError = ref('')
-const previewView = ref<'preview' | 'code'>('code')
-const codePanelRef = ref<HTMLElement | null>(null)
+const activeTab = ref<'report' | 'pro' | 'export'>('report')
 const isFocused = ref(false)
-const showAdvanced = ref(false)
+const reviewMode = ref<'standard' | 'pro'>('standard')
 
 const displayScore = ref(0)
 let scoreTimer: any = null
@@ -313,6 +371,13 @@ onUnmounted(() => {
   window.removeEventListener('scroll', updateScroll)
   if (pollTimer) clearInterval(pollTimer)
   if (scoreTimer) clearInterval(scoreTimer)
+})
+
+
+watch(() => currentReview.value?.status, (newVal) => {
+  if (newVal === 'completed' && currentReview.value?.mode === 'pro') {
+    activeTab.value = 'pro'
+  }
 })
 
 watch(() => currentReview.value?.total_score, (newVal) => {
@@ -338,22 +403,14 @@ watch(() => currentReview.value?.total_score, (newVal) => {
   }
 })
 
-const cleanedPreviewHtml = computed(() => {
-  let html = previewHtml.value
-  // Strip markdown code fences if LLM wrapped it
-  if (html.startsWith('```')) {
-    html = html.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '')
-  }
-  return html
-})
 let pollTimer: any = null
 
 const steps = [
   { key: 'pending', label: '准备中', labelEn: 'Preparing' },
-  { key: 'crawling', label: '爬取页面', labelEn: 'Crawling Page' },
-  { key: 'analyzing', label: 'AI 评分中', labelEn: 'AI Scoring' },
-  { key: 'generating', label: '生成建议', labelEn: 'Generating Suggestions' },
-  { key: 'completed', label: '完成', labelEn: 'Complete' },
+  { key: 'crawling', label: '打开页面', labelEn: 'Opening page' },
+  { key: 'analyzing', label: '审视设计', labelEn: 'Reviewing design' },
+  { key: 'generating', label: '写修改方案', labelEn: 'Writing fix plan' },
+  { key: 'completed', label: '好了', labelEn: 'Done' },
 ]
 
 const dimensionKeys = ['typography', 'colorHarmony', 'spacing', 'layout', 'consistency', 'aesthetics']
@@ -376,9 +433,15 @@ const dimensionLabelsEn: Record<string, string> = {
   aesthetics: 'Overall Aesthetics',
 }
 
+
 const parsedDimensions = computed(() => {
   if (!currentReview.value?.dimension_scores) return null
   try { return JSON.parse(currentReview.value.dimension_scores) } catch { return null }
+})
+
+const proAnalysis = computed(() => {
+  if (!currentReview.value?.pro_analysis) return null
+  try { return JSON.parse(currentReview.value.pro_analysis) } catch { return null }
 })
 
 function getDimScore(dim: string): number {
@@ -429,7 +492,7 @@ async function startReview() {
   try {
     const result = await apiPost('/api/ui-review/start', {
       url: url.value,
-      referenceImageUrl: referenceImageUrl.value || undefined,
+      mode: reviewMode.value,
     })
     currentReview.value = { id: result.id, status: 'pending', url: url.value }
     startPolling(result.id)
@@ -453,75 +516,6 @@ function startPolling(id: string) {
   }, 10000)
 }
 
-async function generatePreview() {
-  if (!currentReview.value?.id) return
-  previewLoading.value = true
-  previewHtml.value = ''
-  previewRawHtml.value = ''
-  previewError.value = ''
-  previewStatus.value = '正在连接...'
-  previewView.value = 'code'
-  try {
-    const res = await fetch(`/api/ui-review/${currentReview.value.id}/preview`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-        'Authorization': `Bearer ${getToken()}`,
-      },
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      previewError.value = err.error || res.statusText
-      previewLoading.value = false
-      return
-    }
-    const reader = res.body?.getReader()
-    if (!reader) {
-      previewError.value = '无法读取响应流'
-      previewLoading.value = false
-      return
-    }
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.status === 'connecting') previewStatus.value = '正在连接 AI...'
-            else if (data.status === 'generating') previewStatus.value = '正在生成 HTML...'
-            else if (data.html) {
-              previewRawHtml.value += data.html
-              previewHtml.value += data.html
-              // Auto-scroll code panel
-              if (codePanelRef.value) {
-                codePanelRef.value.scrollTop = codePanelRef.value.scrollHeight
-              }
-            }
-            else if (data.error) {
-              previewError.value = data.error
-              previewLoading.value = false
-            }
-            else if (data.done) {
-              previewLoading.value = false
-              previewView.value = 'preview'
-            }
-          } catch {}
-        }
-      }
-    }
-  } catch (e: any) {
-    previewError.value = e.message || '网络错误'
-  } finally {
-    previewLoading.value = false
-  }
-}
 
 function downloadSkill() {
   if (!currentReview.value?.skill_markdown) return
@@ -536,21 +530,16 @@ function downloadSkill() {
 async function copySkill() {
   if (!currentReview.value?.skill_markdown) return
   await navigator.clipboard.writeText(currentReview.value.skill_markdown)
-  alert('已复制到剪贴板')
+  alert(locale.value === 'en' ? 'Copied. Paste it into Cursor and run.' : '已复制，粘贴到 Cursor 里执行吧。')
 }
 
 function reset() {
   currentReview.value = null
-  previewHtml.value = ''
   displayScore.value = 0
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (scoreTimer) { clearInterval(scoreTimer); scoreTimer = null }
 }
 
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
-  if (scoreTimer) clearInterval(scoreTimer)
-})
 </script>
 
 <style scoped>
@@ -594,7 +583,7 @@ onUnmounted(() => {
   padding: 32px;
   width: 100%;
   max-width: 600px;
-  box-shadow: 0 24px 64px rgba(59, 91, 219, 0.12), 0 8px 16px rgba(59, 91, 219, 0.04);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.12), 0 8px 16px rgba(0, 0, 0, 0.04);
   position: relative;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -643,33 +632,6 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-/* Ambient Orbs */
-.ambient-orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(100px);
-  opacity: 0.6;
-  animation: float 20s infinite ease-in-out;
-  z-index: 0;
-  pointer-events: none;
-}
-.orb-1 {
-  top: -100px; left: -100px;
-  width: 500px; height: 500px;
-  background: rgba(59, 91, 219, 0.15);
-}
-.orb-2 {
-  bottom: 100px; right: -100px;
-  width: 600px; height: 600px;
-  background: rgba(59, 91, 219, 0.08);
-  animation-delay: -10s;
-}
-
-@keyframes float {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(30px, -50px) scale(1.1); }
-  66% { transform: translate(-20px, 20px) scale(0.9); }
-}
 
 /* Animations */
 .animate-fade-up {
@@ -683,11 +645,12 @@ onUnmounted(() => {
 .delay-5 { animation-delay: 0.5s; }
 
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(30px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(40px) scale(0.98); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 .ui-review-page {
+  box-sizing: border-box;
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;
@@ -698,13 +661,13 @@ onUnmounted(() => {
 
 /* Hero Section */
 .hero-section {
+  box-sizing: border-box;
   position: relative;
-  width: 100vw;
-  margin-left: calc(-50vw + 50%);
-  margin-right: calc(-50vw + 50%);
-  padding: 64px 24px; /* Reduced top padding */
+  width: 100%;
+  padding: 0px 24px 80px 24px;
   background: transparent;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }
@@ -713,46 +676,63 @@ onUnmounted(() => {
   position: relative;
   z-index: 10;
   text-align: center;
-  max-width: 800px;
-  padding: 0 24px;
+  max-width: 840px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 
 .hero-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   padding: 6px 16px;
-  background: rgba(59, 91, 219, 0.1);
-  backdrop-filter: blur(8px);
-  color: #3B5BDB;
+  background: rgba(59, 91, 219, 0.08);
+  color: #3b5bdb;
   border: 1px solid rgba(59, 91, 219, 0.2);
-  border-radius: 9999px;
+  border-radius: 100px;
   font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 24px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 40px;
 }
 
 .hero-title {
-  font-size: 56px;
-  font-weight: 800;
-  margin: 0 0 24px 0;
-  letter-spacing: -2px;
+  font-size: 80px;
+  font-weight: 900;
+  margin: 0 0 32px 0;
+  letter-spacing: -0.04em;
   color: #111827;
   line-height: 1.1;
 }
 
+.serif-text {
+  font-family: "Source Han Serif SC", "Noto Serif SC", STZhongsong, serif;
+  font-weight: 800;
+}
+
+.highlight-char {
+  background: #E5E7EB;
+  padding: 0 4px;
+  display: inline-block;
+  line-height: 1;
+}
+
 .hero-title strong {
-  background: linear-gradient(135deg, #111827 0%, #3B5BDB 100%);
+  background: linear-gradient(135deg, #111827, #3b5bdb);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   display: inline-block;
+  padding-top: 8px;
 }
 
 .hero-subtitle {
   color: #4B5563;
-  font-size: 17px;
-  max-width: 580px;
+  font-size: 18px;
+  max-width: 640px;
   margin: 0 auto 48px;
-  line-height: 1.6;
+  line-height: 1.7;
   font-weight: 500;
 }
 
@@ -764,11 +744,11 @@ onUnmounted(() => {
 }
 
 .instructions-title {
-  text-align: left;
-  font-size: 32px;
+  text-align: center;
+  font-size: 36px;
   font-weight: 800;
-  letter-spacing: -1px;
-  margin-bottom: 48px;
+  letter-spacing: -0.04em;
+  margin-bottom: 64px;
   color: #111827;
 }
 
@@ -780,63 +760,67 @@ onUnmounted(() => {
 
 .instruction-card {
   text-align: left;
-  border-top: 1px solid #E5E7EB;
+  border-top: 2px solid #111827;
   padding-top: 24px;
   background: transparent;
   border-radius: 0;
-  box-shadow: none;
-  transition: transform 0.3s ease;
-}
-
-.instruction-card:hover {
-  transform: translateY(-4px);
   box-shadow: none;
 }
 
 .instruction-icon {
   font-family: var(--font-mono, monospace);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
-  color: #9CA3AF;
-  margin-bottom: 16px;
+  color: #111827;
+  margin-bottom: 24px;
 }
 
 .instruction-card h3 {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
   margin-bottom: 12px;
   color: #111827;
+  letter-spacing: -0.02em;
 }
 
 .instruction-card p {
-  font-size: 15px;
-  color: #6B7280;
+  font-size: 16px;
+  color: #4B5563;
   line-height: 1.6;
 }
 
 /* Unified Input Container */
 .input-container {
-  max-width: 720px;
+  box-sizing: border-box;
+  max-width: 640px;
+  width: 100%;
   margin: 0 auto;
   position: relative;
   z-index: 10;
 }
 
 .unified-search-bar {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
+  background: #ffffff;
   border-radius: 16px;
-  padding: 8px 8px 8px 20px;
-  box-shadow: 0 8px 32px rgba(59, 91, 219, 0.06), 0 2px 8px rgba(59, 91, 219, 0.04), inset 0 0 0 1px rgba(59, 91, 219, 0.1);
+  padding: 8px 8px 8px 24px;
+  box-shadow: 0 16px 32px -8px rgba(17, 24, 39, 0.08), 0 0 0 1px rgba(17, 24, 39, 0.05);
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  border: none;
 }
 
 .unified-search-bar.is-focused {
-  background: #FFFFFF;
-  box-shadow: 0 16px 48px rgba(59, 91, 219, 0.15), 0 4px 16px rgba(59, 91, 219, 0.08), inset 0 0 0 1px rgba(59, 91, 219, 0.3);
-  transform: translateY(-2px);
+  background: #ffffff;
+  box-shadow: 0 40px 80px -16px rgba(17, 24, 39, 0.12), 0 0 0 1px rgba(17, 24, 39, 0.1);
+  transform: translateY(-4px);
+  outline: none;
+  border: none;
+}
+
+.unified-search-bar:focus-within {
+  outline: none;
 }
 
 .search-icon {
@@ -851,7 +835,8 @@ onUnmounted(() => {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 500;
   color: #111827;
   outline: none;
   min-width: 0;
@@ -892,8 +877,8 @@ onUnmounted(() => {
 }
 
 .icon-btn.active {
-  color: #3B5BDB;
-  background: rgba(59, 91, 219, 0.1);
+  color: #111827;
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .icon-btn svg {
@@ -904,9 +889,9 @@ onUnmounted(() => {
 .start-btn {
   position: relative;
   overflow: hidden;
-  padding: 0 28px;
-  height: 44px;
-  background: #3B5BDB;
+  padding: 0 32px;
+  height: 48px;
+  background: #8892B0;
   color: #fff;
   border: none;
   border-radius: 12px;
@@ -932,13 +917,13 @@ onUnmounted(() => {
 }
 
 .start-btn:hover:not(:disabled) {
-  background: #2B45A8;
+  background: #6B7280;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 91, 219, 0.3);
+  box-shadow: 0 4px 12px rgba(107, 114, 128, 0.3);
 }
 
 .start-btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98);
 }
 
 .start-btn:disabled {
@@ -954,7 +939,7 @@ onUnmounted(() => {
 
 /* Parallax Cases Section */
 .parallax-cases-section {
-  margin-top: 160px;
+  margin-top: 60px;
   margin-bottom: 120px;
   display: flex;
   flex-direction: column;
@@ -965,9 +950,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 64px;
+  gap: 48px;
   width: 100%;
-  max-width: 100%; /* Remove max-width constraint */
+  max-width: 100%;
   margin: 0;
 }
 
@@ -977,16 +962,16 @@ onUnmounted(() => {
   text-align: center;
   will-change: transform, opacity;
   z-index: 2;
-  padding: 0 24px; /* Add padding back here for text */
+  padding: 0 24px;
 }
 
 .case-title {
-  font-size: 56px;
-  font-weight: 800;
+  font-size: 64px;
+  font-weight: 900;
   color: #111827;
   margin: 0 0 24px 0;
   line-height: 1.1;
-  letter-spacing: -1.5px;
+  letter-spacing: -0.04em;
 }
 
 .case-desc {
@@ -997,7 +982,7 @@ onUnmounted(() => {
 }
 
 .case-desc strong {
-  background: linear-gradient(135deg, #111827 0%, #3B5BDB 100%);
+  background: linear-gradient(135deg, #111827 0%, #111827 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   display: inline;
@@ -1009,7 +994,7 @@ onUnmounted(() => {
   aspect-ratio: 16 / 11; /* Increase height for a taller display area */
   border-radius: 32px;
   overflow: hidden;
-  box-shadow: 0 40px 80px rgba(59, 91, 219, 0.15), 0 16px 32px rgba(59, 91, 219, 0.05), 0 0 0 1px rgba(59, 91, 219, 0.05);
+  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.15), 0 16px 32px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
   will-change: transform, opacity;
   background: #fff; /* Solid background, no transparency */
   position: relative;
@@ -1034,8 +1019,8 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(24px);
   border-radius: 32px;
-  box-shadow: 0 32px 64px rgba(59, 91, 219, 0.08), 0 2px 12px rgba(0, 0, 0, 0.03), inset 0 0 0 1px rgba(255,255,255,0.8);
-  border: 1px solid rgba(59, 91, 219, 0.05);
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.08), 0 2px 12px rgba(0, 0, 0, 0.03), inset 0 0 0 1px rgba(255,255,255,0.8);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   align-items: stretch;
   overflow: hidden;
   min-height: 560px;
@@ -1056,8 +1041,8 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 2px;
-  color: #3B5BDB;
-  background: rgba(59, 91, 219, 0.1);
+  color: #111827;
+  background: rgba(0, 0, 0, 0.1);
   padding: 6px 12px;
   border-radius: 9999px;
   align-self: flex-start;
@@ -1070,6 +1055,11 @@ onUnmounted(() => {
   50% { opacity: 0.5; }
 }
 
+.progress-badge-pro {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+}
+
 .progress-title {
   font-size: 40px;
   font-weight: 900;
@@ -1080,7 +1070,7 @@ onUnmounted(() => {
 }
 
 .blinking-cursor {
-  color: #3B5BDB;
+  color: #111827;
   animation: blink 1s step-end infinite;
 }
 
@@ -1132,7 +1122,7 @@ onUnmounted(() => {
 }
 
 .vertical-step-item.done .step-line {
-  background: #3B5BDB;
+  background: #111827;
 }
 
 .vertical-step-item .step-dot {
@@ -1146,19 +1136,19 @@ onUnmounted(() => {
 }
 
 .vertical-step-item.active .step-dot {
-  background: #3B5BDB;
-  box-shadow: 0 0 0 4px rgba(59, 91, 219, 0.2);
+  background: #111827;
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.2);
   animation: pulseDot 2s infinite;
 }
 
 @keyframes pulseDot {
-  0% { box-shadow: 0 0 0 0 rgba(59, 91, 219, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(59, 91, 219, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 91, 219, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
 }
 
 .vertical-step-item.done .step-dot {
-  background: #3B5BDB;
+  background: #111827;
 }
 
 .step-content {
@@ -1187,7 +1177,7 @@ onUnmounted(() => {
 }
 
 .vertical-step-item.active .step-status-text {
-  color: #3B5BDB;
+  color: #111827;
 }
 
 .progress-visual {
@@ -1224,8 +1214,8 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 2px;
-  background: #3B5BDB;
-  box-shadow: 0 0 20px 2px #3B5BDB, 0 4px 10px rgba(59, 91, 219, 0.4);
+  background: #111827;
+  box-shadow: 0 0 20px 2px #111827, 0 4px 10px rgba(0, 0, 0, 0.4);
   z-index: 10;
   animation: scan 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
@@ -1240,7 +1230,7 @@ onUnmounted(() => {
 .scanner-overlay {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(to bottom, transparent, rgba(59, 91, 219, 0.08) 50%, transparent);
+  background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.08) 50%, transparent);
   background-size: 100% 200%;
   animation: scanBg 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   z-index: 9;
@@ -1265,6 +1255,97 @@ onUnmounted(() => {
 @keyframes imageReveal {
   0% { opacity: 0; transform: scale(1.05); filter: blur(10px); }
   100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+/* Analysis Overlay Animations */
+.analysis-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 15;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.analysis-overlay.active {
+  opacity: 1;
+}
+
+.measure-line {
+  position: absolute;
+  background: rgba(59, 91, 219, 0.4);
+}
+
+.measure-line.horizontal {
+  left: 0; right: 0; height: 1px;
+  animation: scanLineH 4s ease-in-out infinite alternate;
+}
+
+.measure-line.vertical {
+  top: 0; bottom: 0; width: 1px;
+  animation: scanLineV 5s ease-in-out infinite alternate;
+}
+
+.analysis-dot {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #3b5bdb;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 4px rgba(59, 91, 219, 0.2);
+  animation: pulseDot 2s infinite;
+}
+
+.analysis-box {
+  position: absolute;
+  border: 1px dashed rgba(59, 91, 219, 0.6);
+  background: rgba(59, 91, 219, 0.05);
+  animation: breatheBox 3s ease-in-out infinite alternate;
+}
+
+@keyframes scanLineH {
+  0% { transform: translateY(-50px); opacity: 0.2; }
+  100% { transform: translateY(50px); opacity: 0.8; }
+}
+
+@keyframes scanLineV {
+  0% { transform: translateX(-50px); opacity: 0.2; }
+  100% { transform: translateX(50px); opacity: 0.8; }
+}
+
+@keyframes breatheBox {
+  0% { transform: scale(0.98); opacity: 0.4; }
+  100% { transform: scale(1.02); opacity: 1; }
+}
+
+/* Code Stream Overlay */
+.code-stream-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(17, 24, 39, 0.85);
+  backdrop-filter: blur(4px);
+  z-index: 25;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  display: flex;
+  align-items: flex-end;
+  padding: 32px;
+}
+
+.code-stream-overlay.active {
+  opacity: 1;
+}
+
+.code-typing {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #10B981;
+  text-shadow: 0 0 4px rgba(16, 185, 129, 0.4);
+}
+
+.terminal-cursor {
+  animation: blink 1s step-end infinite;
 }
 
 .skeleton-wireframe {
@@ -1390,6 +1471,27 @@ onUnmounted(() => {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0,0,0,0.02);
 }
 
+.pro-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pro-tab-btn.active {
+  background: linear-gradient(135deg, #fffbeb, #fff) !important;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.pro-tab-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
 .reset-btn {
   padding: 8px 16px;
   background: #F9FAFB;
@@ -1448,7 +1550,7 @@ onUnmounted(() => {
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: #3B5BDB;
+  color: #111827;
   margin-top: 12px;
 }
 
@@ -1484,7 +1586,7 @@ onUnmounted(() => {
 
 .dim-fill {
   height: 100%;
-  background: #3B5BDB;
+  background: #111827;
   border-radius: 9999px;
   transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1518,7 +1620,7 @@ onUnmounted(() => {
   color: #4B5563;
   background: transparent;
   padding: 0 0 0 24px;
-  border-left: 3px solid #3B5BDB;
+  border-left: 3px solid #111827;
   border-radius: 0;
   white-space: pre-wrap;
   position: relative;
@@ -1531,7 +1633,7 @@ onUnmounted(() => {
   left: -12px;
   font-family: var(--font-serif, serif);
   font-size: 80px;
-  color: rgba(59, 91, 219, 0.1);
+  color: rgba(0, 0, 0, 0.1);
   line-height: 1;
   pointer-events: none;
 }
@@ -1688,50 +1790,126 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.preview-live-tabs {
-  display: flex;
-  border-bottom: 1px solid #E5E7EB;
-  background: #F9FAFB;
+.css-preview-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 0;
+  min-height: 500px;
 }
 
-.preview-live-tabs button {
-  padding: 12px 24px;
-  border: none;
-  background: none;
-  font-size: 14px;
+.css-preview-left {
+  border-right: 1px solid #E5E7EB;
+  display: flex;
+  flex-direction: column;
+}
+
+.css-preview-right {
+  display: flex;
+  flex-direction: column;
+}
+
+.css-preview-label {
+  padding: 10px 16px;
+  font-size: 12px;
   font-weight: 600;
   color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #F9FAFB;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.css-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #F9FAFB;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.copy-css-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  margin-right: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4B5563;
+  background: #fff;
+  border: 1px solid #D1D5DB;
+  border-radius: 6px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
 }
 
-.preview-live-tabs button.active {
-  color: #3B5BDB;
-  border-bottom-color: #3B5BDB;
-  background: #fff;
+.copy-css-btn:hover {
+  background: #F3F4F6;
+  color: #1F2937;
 }
 
-.preview-iframe {
+.screenshot-container {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  background: #F3F4F6;
+}
+
+.screenshot-img {
   width: 100%;
-  height: 600px;
-  border: none;
-  background: #fff;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.screenshot-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #9CA3AF;
+  font-size: 14px;
 }
 
 .code-panel {
   background: #111827;
   color: #E5E7EB;
-  padding: 24px;
+  padding: 20px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   line-height: 1.6;
-  height: 600px;
+  flex: 1;
   overflow: auto;
+  max-height: 500px;
 }
 
 .code-panel pre {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.css-usage-hint {
+  padding: 14px 20px;
+  background: #F0FDF4;
+  border-top: 1px solid #BBF7D0;
+  font-size: 13px;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.css-usage-hint strong {
+  color: #14532D;
+}
+
+@media (max-width: 768px) {
+  .css-preview-layout {
+    grid-template-columns: 1fr;
+  }
+  .css-preview-left {
+    border-right: none;
+    border-bottom: 1px solid #E5E7EB;
+    max-height: 250px;
+  }
 }
 
 .preview-status-bar {
@@ -1750,7 +1928,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   border: 2px solid #E5E7EB;
-  border-top-color: #3B5BDB;
+  border-top-color: #111827;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -1764,6 +1942,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.export-hint {
+  font-size: 14px;
+  color: #6B7280;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .export-actions {
@@ -1797,6 +1982,509 @@ onUnmounted(() => {
 .error-card h2 { color: #DC2626; margin: 0 0 16px 0; }
 .error-card p { color: #7F1D1D; margin: 0 0 32px 0; }
 
+/* Preferences Panel */
+.preferences-panel {
+  background: rgba(67, 97, 238, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 20px;
+  padding: 32px;
+  margin-bottom: 32px;
+}
+
+.pref-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pref-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.pref-skip {
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: #9CA3AF;
+  cursor: pointer;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.pref-skip:hover {
+  color: #6B7280;
+  text-decoration: underline;
+}
+
+.pref-desc {
+  font-size: 14px;
+  color: #6B7280;
+  margin: 0 0 24px 0;
+  line-height: 1.5;
+}
+
+.pref-group {
+  margin-bottom: 20px;
+}
+
+.pref-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+  letter-spacing: 0.02em;
+}
+
+.pref-hint {
+  font-weight: 400;
+  color: #9CA3AF;
+}
+
+.pref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pref-chip {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #4B5563;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pref-chip:hover {
+  border-color: rgba(0, 0, 0, 0.4);
+  color: #111827;
+}
+
+.pref-chip.active {
+  background: rgba(0, 0, 0, 0.1);
+  border-color: #111827;
+  color: #111827;
+  font-weight: 600;
+}
+
+.pref-chip-toggle.active {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.3);
+  color: #111827;
+}
+
+.pref-checks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.pref-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pref-check-item:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+.pref-check-item.checked {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+.pref-check-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pref-check-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #111827;
+  cursor: pointer;
+}
+
+.pref-check-item .check-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.pref-check-item.checked .check-label {
+  color: #111827;
+  font-weight: 600;
+}
+
+.pref-actions {
+  margin-top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pref-confirm-btn {
+  padding: 0 32px;
+  height: 42px;
+}
+
+/* Preferences Panel Transition */
+.pref-fade-enter-active, .pref-fade-leave-active {
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.pref-fade-enter-from, .pref-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* Mode Selector */
+.mode-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.mode-btn {
+  padding: 6px 16px;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: #4B5563;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #111827;
+}
+
+.mode-btn.active {
+  background: #111827;
+  border-color: #111827;
+  color: #fff;
+}
+
+.mode-btn-pro.active {
+  background: #059669;
+  border-color: #059669;
+}
+
+.mode-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: 8px;
+}
+
+/* Pro Section */
+.pro-section {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+.pro-comparison {
+  background: #ffffff;
+  border-left: 4px solid #111827;
+  border-top: 1px solid rgba(0,0,0,0.05);
+  border-right: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-radius: 0 16px 16px 0;
+  padding: 32px 40px;
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.03);
+}
+
+.pro-comparison h3 {
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 16px;
+  color: #111827;
+  letter-spacing: -0.02em;
+}
+
+.pro-comparison p {
+  font-size: 15px;
+  line-height: 1.8;
+  color: #4B5563;
+}
+
+.pro-score-estimate {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.pro-score-estimate .label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pro-score-estimate .value {
+  font-family: var(--font-sans, sans-serif);
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: -2px;
+  color: #111827;
+  line-height: 1;
+}
+
+/* Pro Dimensions */
+.pro-dimensions h3 {
+  font-size: 24px;
+  font-weight: 800;
+  margin-bottom: 24px;
+  color: #111827;
+  letter-spacing: -0.03em;
+}
+
+.pro-dim-card {
+  background: transparent;
+  border: none;
+  border-top: 2px solid #111827;
+  border-radius: 0;
+  padding: 24px 0;
+  margin-bottom: 40px;
+}
+
+.pro-dim-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.pro-dim-name {
+  font-weight: 800;
+  font-size: 20px;
+  color: #111827;
+  letter-spacing: -0.02em;
+}
+
+.pro-dim-score {
+  font-family: var(--font-mono, monospace);
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.pro-dim-analysis {
+  font-size: 15px;
+  line-height: 1.8;
+  color: #4B5563;
+  margin-bottom: 24px;
+}
+
+.pro-dim-benchmark {
+  font-size: 14px;
+  color: #111827;
+  padding: 16px 20px;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  margin-bottom: 32px;
+  border-left: 3px solid #111827;
+  font-weight: 500;
+}
+
+/* Pro Issues Grid */
+.pro-issues-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pro-issue-item {
+  background: transparent;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0;
+  padding: 24px 0;
+}
+.pro-issue-item:last-child {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.pro-issue-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.pro-issue-severity {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+
+.pro-issue-severity.critical {
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+}
+
+.pro-issue-severity.major {
+  background: #fef3c7;
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
+.pro-issue-severity.minor {
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid rgba(75, 85, 99, 0.2);
+}
+
+.pro-issue-cost {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid rgba(0,0,0,0.05);
+}
+
+.pro-issue-location {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.pro-issue-diff {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  background: #fafafa;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px dashed rgba(0,0,0,0.1);
+  margin-top: 12px;
+}
+
+.pro-diff-current {
+  color: #ef4444;
+  flex: 1;
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.pro-diff-arrow {
+  color: #9ca3af;
+  flex-shrink: 0;
+  font-family: var(--font-mono, monospace);
+}
+
+.pro-diff-expected {
+  color: #059669;
+  flex: 1;
+  font-weight: 500;
+}
+
+/* Pro Execution Plan */
+.pro-plan h3 {
+  font-size: 24px;
+  font-weight: 800;
+  margin-bottom: 24px;
+  color: #111827;
+  letter-spacing: -0.03em;
+}
+
+.pro-phases {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.pro-phase {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
+  padding: 32px 24px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  transition: transform 0.2s;
+}
+
+.pro-phase:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.04);
+}
+
+.pro-phase-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.pro-phase-num {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+}
+
+.pro-phase-title {
+  font-weight: 800;
+  font-size: 16px;
+  color: #111827;
+}
+
+.pro-phase p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #4b5563;
+  white-space: pre-line;
+}
+
+/* Pro Loading */
+.pro-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .hero-title { font-size: 36px; }
@@ -1804,5 +2492,8 @@ onUnmounted(() => {
   .score-overview { flex-direction: column; gap: 32px; }
   .dimension-scores { grid-template-columns: 1fr; }
   .result-tabs { flex-wrap: wrap; gap: 16px; }
+  .pref-checks { grid-template-columns: repeat(2, 1fr); }
+  .pref-chips { gap: 6px; }
+  .preferences-panel { padding: 20px; }
 }
 </style>
