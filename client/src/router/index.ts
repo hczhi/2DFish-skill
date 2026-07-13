@@ -119,25 +119,21 @@ const router = createRouter({
       path: '/ui-review',
       name: 'ui-review',
       component: () => import('../views/uiReview/UiReviewPage.vue'),
-      meta: { requiresAuth: true },
     },
     {
       path: '/en/ui-review',
       name: 'ui-review-en',
       component: () => import('../views/uiReview/UiReviewPage.vue'),
-      meta: { requiresAuth: true },
     },
     {
       path: '/tender',
       name: 'tender',
       component: () => import('../views/tender/TenderPage.vue'),
-      meta: { requiresAuth: true },
     },
     {
       path: '/en/tender',
       name: 'tender-en',
       component: () => import('../views/tender/TenderPage.vue'),
-      meta: { requiresAuth: true },
     },
     {
       path: '/discover',

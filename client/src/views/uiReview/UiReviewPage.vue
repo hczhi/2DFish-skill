@@ -47,7 +47,7 @@
               <button :class="['mode-btn', { active: reviewMode === 'standard' }]" @click="reviewMode = 'standard'">
                 {{ locale === 'en' ? 'Quick' : '快速' }}
               </button>
-              <button :class="['mode-btn mode-btn-pro', { active: reviewMode === 'pro' }]" @click="reviewMode = 'pro'">
+              <button :class="['mode-btn mode-btn-pro', { active: reviewMode === 'pro' }]" @click="selectProMode">
                 PRO
               </button>
               <span class="mode-hint">{{ reviewMode === 'pro' ? (locale === 'en' ? 'Deep analysis + phased fix plan' : '深度分析 + 分阶段修改方案') : (locale === 'en' ? 'Score + fix instructions' : '评分 + 修改指令') }}</span>
@@ -340,6 +340,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiGet, apiPost } from '../../lib/api'
+import { getToken } from '../../lib/auth'
+import { openLoginModal } from '../../lib/loginModal'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 import BeforeAfterSlider from '../../components/common/BeforeAfterSlider.vue'
@@ -484,6 +486,14 @@ function stepDone(key: string) {
   const currentIdx = order.indexOf(currentReview.value?.status)
   const stepIdx = order.indexOf(key)
   return stepIdx < currentIdx
+}
+
+function selectProMode() {
+  if (!getToken()) {
+    openLoginModal(window.location.pathname, '使用 PRO 模式需要登录')
+    return
+  }
+  reviewMode.value = 'pro'
 }
 
 async function startReview() {
