@@ -8,6 +8,12 @@ import { streamPreviewHtml, generateSkillMarkdown, type ReviewData, type UserPre
 
 export const uiReviewRouter = Router();
 
+function getAdminUserId(): string {
+  const db = getDatabase();
+  const admin = db.prepare("SELECT id FROM user WHERE role = 'admin' LIMIT 1").get() as any;
+  return admin?.id || 'anonymous';
+}
+
 // ==================== Admin: Rules CRUD ====================
 
 uiReviewRouter.get('/admin/rules', (req, res) => {
@@ -265,11 +271,17 @@ uiReviewRouter.delete('/admin/reviews/:id', (req, res) => {
 // ==================== User: Review Operations ====================
 
 uiReviewRouter.post('/start', async (req, res) => {
-  const userId = req.user!.id;
   const { url, referenceImageUrl, mode } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
   const reviewMode = mode === 'pro' ? 'pro' : 'standard';
+
+  // Pro mode requires login
+  if (reviewMode === 'pro' && !req.user) {
+    return res.status(401).json({ error: 'PRO mode requires login' });
+  }
+
+  const userId = req.user?.id || getAdminUserId();
 
   const db = getDatabase();
   const now = new Date().toISOString();
@@ -290,7 +302,7 @@ uiReviewRouter.post('/start', async (req, res) => {
 
 // SSE progress stream
 uiReviewRouter.get('/:id/stream', (req, res) => {
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const { id } = req.params;
 
   const db = getDatabase();
@@ -328,7 +340,7 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
   (req as any).headers['x-no-compression'] = 'true';
   (res as any).flush = (res as any).flush || (() => {});
 
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const { id } = req.params;
   const { preferences } = req.body || {};
 
@@ -371,7 +383,7 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
 
 // Regenerate skill markdown with user preferences
 uiReviewRouter.post('/:id/regenerate-skill', async (req, res) => {
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const { id } = req.params;
   const { preferences } = req.body || {};
 
@@ -416,7 +428,7 @@ uiReviewRouter.post('/:id/regenerate-skill', async (req, res) => {
 });
 
 uiReviewRouter.get('/history', (req, res) => {
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const db = getDatabase();
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
   const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
@@ -431,7 +443,7 @@ uiReviewRouter.get('/history', (req, res) => {
 });
 
 uiReviewRouter.get('/:id/skill', (req, res) => {
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const db = getDatabase();
   const review = db.prepare('SELECT skill_markdown FROM ui_reviews WHERE id = ? AND user_id = ?').get(req.params.id, userId) as any;
   if (!review) return res.status(404).json({ error: 'Review not found' });
@@ -440,7 +452,7 @@ uiReviewRouter.get('/:id/skill', (req, res) => {
 });
 
 uiReviewRouter.get('/:id', (req, res) => {
-  const userId = req.user!.id;
+  const userId = req.user?.id || getAdminUserId();
   const db = getDatabase();
   const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ? AND user_id = ?').get(req.params.id, userId);
   if (!review) return res.status(404).json({ error: 'Review not found' });

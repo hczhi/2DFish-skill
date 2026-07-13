@@ -40,6 +40,10 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   { path: /^\/api\/discover\/topics(?!\/admin)/, method: 'GET', level: 'public' },
   { path: '/api/analytics/pageview', method: 'POST', level: 'public' },
   { path: /^\/api\/ad-slots(?!\/admin)/, method: 'GET', level: 'public' },
+
+  // OPTIONAL — anonymous users use admin quota for AI features
+  { path: '/api/ai/board/chat', method: 'POST', level: 'optional' },
+  { path: /^\/api\/ui-review\/(?!admin)/, level: 'optional' },
 ];
 
 function getAuthLevel(req: Request): AuthLevel {
