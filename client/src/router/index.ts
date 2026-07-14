@@ -126,6 +126,24 @@ const router = createRouter({
       component: () => import('../views/uiReview/UiReviewPage.vue'),
     },
     {
+      path: '/xhs',
+      name: 'xhs-home',
+      component: () => import('../views/xhs/XhsHome.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/xhs/studio',
+      name: 'xhs-studio',
+      component: () => import('../views/xhs/XhsStudio.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/xhs/calibration',
+      name: 'xhs-calibration',
+      component: () => import('../views/xhs/XhsCalibration.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/tender',
       name: 'tender',
       component: () => import('../views/tender/TenderPage.vue'),

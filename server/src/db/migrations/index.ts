@@ -25,6 +25,9 @@ import { migration_023 } from './023_tender_content_hash.js';
 import { migration_024 } from './024_tender_status.js';
 import { migration_025 } from './025_tender_user_feedback.js';
 import { migration_026 } from './026_performance_indexes.js';
+import { migration_027 } from './027_xhs_scoring.js';
+import { migration_028 } from './028_xhs_home_module.js';
+import { migration_029 } from './029_xhs_weights.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -53,4 +56,7 @@ export const allMigrations: Migration[] = [
   migration_024,
   migration_025,
   migration_026,
+  migration_027,
+  migration_028,
+  migration_029,
 ];

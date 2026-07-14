@@ -30,6 +30,7 @@ import { adSlotsRouter } from './api/adSlots.js';
 import { uploadRouter } from './api/upload.js';
 import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
 import { tenderRouter } from './api/tender.js';
+import { xhsRouter } from './api/xhs.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
@@ -168,6 +169,10 @@ app.use('/api/ui-review', uiReviewRouter);
 // Tender (bid recommendation)
 app.use('/api/tender', rateLimit(60, 60_000));
 app.use('/api/tender', tenderRouter);
+
+// XHS (小红书爆款诊断 + AI 陪写)
+app.use('/api/xhs', rateLimit(60, 60_000));
+app.use('/api/xhs', xhsRouter);
 
 // File upload (admin only)
 app.use('/api/upload', uploadRouter);
