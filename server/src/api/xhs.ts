@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
 import { scoreNote, getWeights, setWeight, type XhsNoteInput, type XhsDimensionKey } from '../services/xhs/scoringService.js';
-import { aiGatewayStream } from '../core/llm/gateway.js';
+import { aiGateway, aiGatewayStream } from '../core/llm/gateway.js';
+import { getSkillForSlot } from '../services/skillRegistryService.js';
+import * as uws from '../services/userWritingSkillService.js';
 
 export const xhsRouter = Router();
 
@@ -216,10 +218,14 @@ xhsRouter.post('/ask', async (req, res) => {
   const { question, selection, title, body, niche } = req.body || {};
   if (!question) return res.status(400).json({ error: 'question is required' });
 
+  // 后台可在「Skill 管理」里给 xhs-ask 这个 slot 绑定写作风格 skill；
+  // 绑定了就把 skill 正文注入 system prompt，没绑定则退回原有硬编码行为。
+  const styleSkill = getSkillForSlot('xhs-ask');
+
   const systemPrompt = `你是一个资深小红书运营，正在帮用户打磨一篇笔记。
 回答要围绕"怎么让这篇更容易爆"来给建议，不要给通用的写作套话。
 建议要具体、可直接抄用（给出改写后的示例文字），语气像一个懂行的朋友在支招。
-${niche ? `\n用户赛道/人群：${niche}` : ''}`;
+${niche ? `\n用户赛道/人群：${niche}` : ''}${styleSkill ? `\n\n## 写作风格规范（改写示例时严格遵守）\n${styleSkill}` : ''}`;
 
   const contextText = `## 当前笔记全文
 标题：${title || '(未填)'}
@@ -268,4 +274,191 @@ ${question}`;
     if (!res.headersSent) res.status(500).json({ error: e.message || 'Ask failed' });
     else res.end();
   }
+});
+
+// ==================== 用户私有写作 Skill（调试台 + 写作台用）====================
+
+// 列出我的写作 skill
+xhsRouter.get('/skills', (req, res) => {
+  res.json({ skills: uws.listSkills(req.user!.id) });
+});
+
+// 新建
+xhsRouter.post('/skills', (req, res) => {
+  const { name, description } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+  res.status(201).json({ skill: uws.createSkill(req.user!.id, { name: String(name).trim(), description }) });
+});
+
+// AI 帮我搭第一版 skill（只返回预览草稿，不落库；由前端确认后再走 POST /skills + 写主文件）
+// POST /api/xhs/skills/scaffold  { description, samples?: string[] }
+xhsRouter.post('/skills/scaffold', async (req, res) => {
+  const { description, samples } = req.body || {};
+  const sampleList: string[] = Array.isArray(samples)
+    ? samples.map((s: any) => String(s || '').trim()).filter(Boolean).slice(0, 3)
+    : [];
+  if (!description && sampleList.length === 0) {
+    return res.status(400).json({ error: '请至少填写描述或提供一篇范文' });
+  }
+  const prompt = uws.buildScaffoldPrompt(String(description || ''), sampleList);
+  try {
+    const { response } = await aiGateway(
+      { messages: [{ role: 'user', content: prompt }], temperature: 0.6, max_tokens: 3000 },
+      { userId: req.user!.id, source: 'xhs', operation: 'skill-scaffold' }
+    );
+    const text = response.choices[0]?.message?.content || '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return res.status(502).json({ error: 'AI 返回格式异常', raw: text });
+    let parsed: any;
+    try { parsed = JSON.parse(m[0]); } catch { return res.status(502).json({ error: 'AI 返回无法解析', raw: text }); }
+    res.json({
+      suggestedName: parsed.suggestedName || '我的写作风格',
+      description: parsed.description || '',
+      mainBody: parsed.mainBody || '',
+    });
+  } catch (e: any) {
+    if (e?.name === 'QuotaExceededError') return res.status(429).json({ error: e.message, dailyLimit: e.dailyLimit });
+    console.error('[xhs] skill-scaffold failed:', e);
+    res.status(500).json({ error: e.message || 'Scaffold failed' });
+  }
+});
+
+// 详情
+xhsRouter.get('/skills/:id', (req, res) => {
+  const skill = uws.getSkill(req.params.id, req.user!.id);
+  if (!skill) return res.status(404).json({ error: 'not found' });
+  res.json({ skill });
+});
+
+// 改元信息
+xhsRouter.put('/skills/:id', (req, res) => {
+  const skill = uws.updateSkill(req.params.id, req.user!.id, { name: req.body?.name, description: req.body?.description });
+  if (!skill) return res.status(404).json({ error: 'not found' });
+  res.json({ skill });
+});
+
+// 删除
+xhsRouter.delete('/skills/:id', (req, res) => {
+  if (!uws.deleteSkill(req.params.id, req.user!.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
+});
+
+// 文件列表
+xhsRouter.get('/skills/:id/files', (req, res) => {
+  if (!uws.getSkill(req.params.id, req.user!.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ files: uws.listFiles(req.params.id, req.user!.id) });
+});
+
+// 新增引用文件
+xhsRouter.post('/skills/:id/files', (req, res) => {
+  const { filename, body } = req.body || {};
+  if (!filename || !/^[\w.\-]+$/.test(filename)) {
+    return res.status(400).json({ error: 'filename 必填，且只能含字母数字下划线点连字符' });
+  }
+  const file = uws.addFile(req.params.id, req.user!.id, { filename, body });
+  if (!file) return res.status(404).json({ error: 'not found' });
+  res.status(201).json({ file });
+});
+
+// 更新文件
+xhsRouter.put('/skills/files/:fileId', (req, res) => {
+  const file = uws.updateFile(req.params.fileId, req.user!.id, { filename: req.body?.filename, body: req.body?.body });
+  if (!file) return res.status(404).json({ error: 'not found' });
+  res.json({ file });
+});
+
+// 删除引用文件
+xhsRouter.delete('/skills/files/:fileId', (req, res) => {
+  const r = uws.deleteFile(req.params.fileId, req.user!.id);
+  if (!r.ok) return res.status(r.reason === 'not found' ? 404 : 400).json({ error: r.reason });
+  res.json({ ok: true });
+});
+
+// 预览组装后的完整 skill
+xhsRouter.get('/skills/:id/preview', (req, res) => {
+  if (!uws.getSkill(req.params.id, req.user!.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ assembled: uws.assembleSkillBody(req.params.id, req.user!.id).assembled });
+});
+
+// 用 skill 生成整篇（流式）
+// POST /api/xhs/skills/:id/generate  { topic }
+xhsRouter.post('/skills/:id/generate', async (req, res) => {
+  const { topic } = req.body || {};
+  if (!topic || !String(topic).trim()) return res.status(400).json({ error: 'topic is required' });
+  const skill = uws.getSkill(req.params.id, req.user!.id);
+  if (!skill) return res.status(404).json({ error: 'not found' });
+
+  const { assembled } = uws.assembleSkillBody(req.params.id, req.user!.id);
+  const systemPrompt = uws.buildGeneratePrompt(assembled);
+
+  try {
+    const { stream, onComplete } = await aiGatewayStream(
+      {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `请按上面的写作风格，就以下主题写一篇完整的小红书笔记：\n${topic}` },
+        ],
+        temperature: 0.8,
+      },
+      { userId: req.user!.id, source: 'xhs', operation: 'skill-generate' }
+    );
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    let output = '';
+    const start = Date.now();
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content || '';
+      if (delta) {
+        output += delta;
+        res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+      }
+    }
+    res.write('data: [DONE]\n\n');
+    res.end();
+    onComplete(0, Math.ceil(output.length / 4), Date.now() - start);
+  } catch (e: any) {
+    if (e?.name === 'QuotaExceededError') return res.status(429).json({ error: e.message, dailyLimit: e.dailyLimit });
+    console.error('[xhs] skill-generate failed:', e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Generate failed' });
+    else res.end();
+  }
+});
+
+// 调试闭环：根据产出 + 用户意见，让 AI 提炼通用规则、给出 skill 改进建议（不自动写回）
+// POST /api/xhs/skills/:id/refine  { output, feedback }
+xhsRouter.post('/skills/:id/refine', async (req, res) => {
+  const { output, feedback } = req.body || {};
+  if (!output || !feedback) return res.status(400).json({ error: 'output and feedback are required' });
+  const skill = uws.getSkill(req.params.id, req.user!.id);
+  if (!skill) return res.status(404).json({ error: 'not found' });
+
+  const { mainBody } = uws.assembleSkillBody(req.params.id, req.user!.id);
+  const prompt = uws.buildRefinePrompt(mainBody, String(output), String(feedback));
+
+  try {
+    const { response } = await aiGateway(
+      { messages: [{ role: 'user', content: prompt }], temperature: 0.4, max_tokens: 3000 },
+      { userId: req.user!.id, source: 'xhs', operation: 'skill-refine' }
+    );
+    const text = response.choices[0]?.message?.content || '';
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return res.status(502).json({ error: 'AI 返回格式异常', raw: text });
+    let parsed: any;
+    try { parsed = JSON.parse(m[0]); } catch { return res.status(502).json({ error: 'AI 返回无法解析', raw: text }); }
+    res.json({ changes: parsed.changes || [], newMainBody: parsed.newMainBody || mainBody });
+  } catch (e: any) {
+    if (e?.name === 'QuotaExceededError') return res.status(429).json({ error: e.message, dailyLimit: e.dailyLimit });
+    console.error('[xhs] skill-refine failed:', e);
+    res.status(500).json({ error: e.message || 'Refine failed' });
+  }
+});
+
+// 采纳 refine 结果：把新主文件写回
+// PUT /api/xhs/skills/:id/main  { body }
+xhsRouter.put('/skills/:id/main', (req, res) => {
+  const { body } = req.body || {};
+  if (typeof body !== 'string') return res.status(400).json({ error: 'body is required' });
+  if (!uws.setMainBody(req.params.id, req.user!.id, body)) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
 });

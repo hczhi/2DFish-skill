@@ -28,6 +28,10 @@ import { migration_026 } from './026_performance_indexes.js';
 import { migration_027 } from './027_xhs_scoring.js';
 import { migration_028 } from './028_xhs_home_module.js';
 import { migration_029 } from './029_xhs_weights.js';
+import { migration_030 } from './030_skill_registry.js';
+import { migration_031 } from './031_skill_files.js';
+import { migration_032 } from './032_seed_more_skills.js';
+import { migration_033 } from './033_user_writing_skills.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -59,4 +63,8 @@ export const allMigrations: Migration[] = [
   migration_027,
   migration_028,
   migration_029,
+  migration_030,
+  migration_031,
+  migration_032,
+  migration_033,
 ];

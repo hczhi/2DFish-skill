@@ -15,6 +15,17 @@
   </style>
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2781270181931210"
      crossorigin="anonymous"></script>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-JEBKHCGDEH"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    // send_page_view: false —— 关闭自动上报，page_view 统一由 Vue Router 的 afterEach 发送，
+    // 避免 SPA 首屏被 config + 路由守卫各发一次导致重复计数。
+    gtag('config', 'G-JEBKHCGDEH', { send_page_view: false });
+  </script>
 </head>
 <body>
   <div id="app"></div>

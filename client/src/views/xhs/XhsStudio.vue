@@ -28,6 +28,19 @@
         </div>
       </div>
 
+      <!-- 用写作 Skill 生成整篇 -->
+      <div class="skill-gen-bar">
+        <select v-model="genSkillId" class="hc-input skill-select">
+          <option value="">选择写作 Skill…</option>
+          <option v-for="s in writingSkills" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
+        <input v-model="genTopic" class="hc-input topic-input" placeholder="主题（如：油皮夏天不脱妆粉底推荐）" @keyup.enter="generateWithSkill" />
+        <button class="btn-primary" @click="generateWithSkill" :disabled="genLoading || !genSkillId || !genTopic.trim()">
+          {{ genLoading ? '生成中…' : '用 Skill 生成' }}
+        </button>
+        <router-link to="/xhs/skills" class="btn-ghost">管理 Skill</router-link>
+      </div>
+
       <input v-model="title" class="title-input" placeholder="标题（决定用户点不点开）" @input="scheduleScore" />
       <textarea
         ref="bodyRef"
@@ -156,6 +169,69 @@ const savedAt = ref('')
 
 const drafts = ref<any[]>([])
 const showDrafts = ref(false)
+
+// 用写作 skill 生成整篇
+interface WritingSkill { id: string; name: string }
+const writingSkills = ref<WritingSkill[]>([])
+const genSkillId = ref('')
+const genTopic = ref('')
+const genLoading = ref(false)
+
+async function loadWritingSkills() {
+  try {
+    const r = await apiGet<{ skills: WritingSkill[] }>('/api/xhs/skills')
+    writingSkills.value = r.skills
+  } catch { /* 忽略 */ }
+}
+
+async function generateWithSkill() {
+  if (!genSkillId.value || !genTopic.value.trim()) return
+  genLoading.value = true
+  // 生成结果直接写进标题/正文：第一行作标题，其余作正文
+  title.value = ''
+  body.value = ''
+  let acc = ''
+  try {
+    const res = await fetch(`/api/xhs/skills/${genSkillId.value}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+      body: JSON.stringify({ topic: genTopic.value }),
+    })
+    if (!res.ok || !res.body) throw new Error('生成失败')
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        const m = line.match(/^data: (.+)$/m)
+        if (!m || m[1] === '[DONE]') continue
+        try {
+          const { delta } = JSON.parse(m[1])
+          if (delta) {
+            acc += delta
+            const nl = acc.indexOf('\n')
+            if (nl === -1) {
+              title.value = acc
+            } else {
+              title.value = acc.slice(0, nl).replace(/^#+\s*/, '').trim()
+              body.value = acc.slice(nl + 1).trim()
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    scheduleScore()
+  } catch (e: any) {
+    body.value = '（生成失败：' + (e?.message || '未知错误') + '）'
+  } finally {
+    genLoading.value = false
+  }
+}
 
 let scoreTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -343,7 +419,7 @@ async function deleteDraft(id: string) {
   }
 }
 
-onMounted(loadDrafts)
+onMounted(() => { loadDrafts(); loadWritingSkills() })
 </script>
 
 <style scoped>
@@ -423,6 +499,20 @@ onMounted(loadDrafts)
 .draft-score { color: #E24A29; font-size: 11px; margin-left: 6px; }
 .draft-del { border: none; background: transparent; color: #d1d5db; cursor: pointer; font-size: 12px; padding: 4px 8px; }
 .draft-del:hover { color: #dc2626; }
+
+.skill-gen-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.skill-gen-bar .skill-select { flex: 0 0 auto; min-width: 150px; }
+.skill-gen-bar .topic-input { flex: 1; min-width: 160px; }
 
 .title-input {
   border: none;

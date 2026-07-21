@@ -29,6 +29,9 @@
               <span class="btn-icon">▶</span>
               进入小红书爆款写作台
             </router-link>
+            <router-link to="/xhs/skills" class="btn-skill">
+              写作 Skill
+            </router-link>
           </div>
         </div>
 
@@ -247,6 +250,25 @@ onMounted(() => {
   transform: translateY(-4px);
   box-shadow: 0 16px 32px rgba(226, 74, 41, 0.35);
   background: #f05431;
+}
+
+.btn-skill {
+  display: inline-flex;
+  align-items: center;
+  padding: 16px 28px;
+  border-radius: 9999px;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  color: #E24A29;
+  background: transparent;
+  border: 2px solid #E24A29;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-skill:hover {
+  transform: translateY(-4px);
+  background: #E24A29;
+  color: #fff;
 }
 
 .btn-icon {

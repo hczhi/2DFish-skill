@@ -20,9 +20,10 @@
         <router-link to="/admin/ads" class="nav-item" active-class="active" @click="sidebarOpen = false">广告管理</router-link>
         <router-link to="/admin/upload" class="nav-item" active-class="active" @click="sidebarOpen = false">图片上传</router-link>
         <router-link to="/admin/tender" class="nav-item" active-class="active" @click="sidebarOpen = false">标讯管理</router-link>
-        <div class="nav-group" :class="{ active: isUiReviewActive }">
+        <router-link to="/admin/skills" class="nav-item" active-class="active" @click="sidebarOpen = false">Skill 管理</router-link>
+        <div class="nav-group" :class="{ active: isUiReviewActive }" @mouseenter="openFlyout" @mouseleave="closeFlyout">
           <div class="nav-item nav-group-title">UI 测评</div>
-          <div class="nav-submenu">
+          <div class="nav-submenu" :class="{ show: flyoutOpen }" :style="flyoutStyle">
             <router-link to="/admin/ui-review-records" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">评测记录</router-link>
             <router-link to="/admin/ui-review-rules" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">评分规则</router-link>
             <router-link to="/admin/ui-style-skills" class="nav-sub-item" active-class="active" @click="sidebarOpen = false">风格 Skill</router-link>
@@ -49,6 +50,26 @@ const isUiReviewActive = computed(() => {
   const path = route.path
   return path.startsWith('/admin/ui-review') || path.startsWith('/admin/ui-style')
 })
+
+// 飞出子菜单：用 fixed 定位逃出 .admin-nav 的 overflow 裁剪
+const flyoutOpen = ref(false)
+const flyoutStyle = ref<Record<string, string>>({})
+
+function openFlyout(e: MouseEvent) {
+  const group = e.currentTarget as HTMLElement
+  const rect = group.getBoundingClientRect()
+  // 若靠近视口底部，则锚定底部向上展开，避免被裁
+  const submenuH = 3 * 41 + 4 // 3 项 * 约 41px + 边框
+  const top = rect.top + submenuH > window.innerHeight
+    ? Math.max(8, window.innerHeight - submenuH - 8)
+    : rect.top
+  flyoutStyle.value = { left: `${rect.right + 2}px`, top: `${top}px` }
+  flyoutOpen.value = true
+}
+
+function closeFlyout() {
+  flyoutOpen.value = false
+}
 
 onMounted(async () => {
   const user = await fetchMe()
@@ -361,16 +382,23 @@ onMounted(async () => {
 }
 .nav-submenu {
   display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  min-width: 160px;
+  position: fixed;
+  min-width: 180px;
   background: #fff;
   border: 2px solid var(--c-text-main);
   box-shadow: 6px 6px 0 rgba(0,0,0,0.08);
-  z-index: 20;
+  z-index: 200;
 }
-.nav-group:hover .nav-submenu {
+/* 桥接 hover 间隙，避免鼠标移向飞出层时子菜单闪退 */
+.nav-submenu::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+}
+.nav-submenu.show {
   display: flex;
   flex-direction: column;
 }

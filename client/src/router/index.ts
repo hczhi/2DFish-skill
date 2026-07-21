@@ -113,6 +113,9 @@ const router = createRouter({
         { path: 'ui-style-skills/create', name: 'admin-ui-style-skill-create', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'ui-style-skills/:id/edit', name: 'admin-ui-style-skill-edit', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'tender', name: 'admin-tender', component: () => import('../views/admin/TenderManagement.vue') },
+        { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
+        { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
+        { path: 'skills/:id/edit', name: 'admin-skill-edit', component: () => import('../views/admin/SkillEditor.vue') },
       ],
     },
     {
@@ -135,6 +138,12 @@ const router = createRouter({
       path: '/xhs/studio',
       name: 'xhs-studio',
       component: () => import('../views/xhs/XhsStudio.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/xhs/skills',
+      name: 'xhs-skills',
+      component: () => import('../views/xhs/XhsSkills.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -235,6 +244,16 @@ router.beforeEach(async (to, from) => {
 
 router.afterEach((to) => {
   trackPageView(to.fullPath);
+  // GA4：SPA 路由切换不会整页刷新，需手动补发 page_view（gtag 库在 index.html 里加载）。
+  // 与自建埋点一致，后台 /admin 不计入统计。
+  const gtag = (window as any).gtag;
+  if (typeof gtag === 'function' && !to.path.startsWith('/admin')) {
+    gtag('event', 'page_view', {
+      page_path: to.fullPath,
+      page_title: document.title,
+      page_location: window.location.href,
+    });
+  }
 });
 
 export default router;

@@ -1,5 +1,6 @@
 import { aiGateway } from '../../core/llm/gateway.js';
 import { getDatabase } from '../../db/index.js';
+import { getSkillForSlot } from '../skillRegistryService.js';
 
 // ==================== Types ====================
 
@@ -82,7 +83,7 @@ export function setWeight(dimension: XhsDimensionKey, weight: number): void {
 
 // ==================== A 部分：完整 Prompt ====================
 
-const SCORING_PROMPT = `你是一个操盘过上百个爆款笔记的资深小红书运营。你评判一篇笔记「能不能爆」的眼光极毒，从不说客套话。你的任务是找出这篇笔记为什么"火不了"，而不是夸它。
+export const SCORING_PROMPT = `你是一个操盘过上百个爆款笔记的资深小红书运营。你评判一篇笔记「能不能爆」的眼光极毒，从不说客套话。你的任务是找出这篇笔记为什么"火不了"，而不是夸它。
 
 默认假设：每篇笔记都是平庸的，除非它证明自己能抓住人。
 
@@ -179,7 +180,10 @@ function calcTotalScore(dims: Record<XhsDimensionKey, XhsDimensionScore>): numbe
 export async function scoreNote(note: XhsNoteInput, userId: string): Promise<XhsScoringResult> {
   const nicheLine = note.niche ? `\n## 赛道/目标人群\n${note.niche}\n` : '';
 
-  const contextPrompt = `${SCORING_PROMPT}
+  // 评分 prompt 现在由后台可编辑的 skill 提供（slot: xhs-score）；无绑定则退回内置常量。
+  const scoringPrompt = getSkillForSlot('xhs-score') || SCORING_PROMPT;
+
+  const contextPrompt = `${scoringPrompt}
 ${nicheLine}
 ## 待评估笔记
 标题：${note.title || '(未填写标题)'}

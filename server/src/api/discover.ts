@@ -3,6 +3,7 @@ import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 import { generateArticlePage, deleteArticleStaticPages } from '../services/ssgService.js';
 import { aiGateway } from '../core/llm/gateway.js';
+import { getSkillForSlot } from '../services/skillRegistryService.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -472,6 +473,11 @@ function loadSkill(skillName: string): string {
   return match ? match[1] : content;
 }
 
+// 优先用后台可编辑的 skill（按 slot 绑定）；没绑定则退回本地 skills/*.md 文件。
+function skillPrompt(slot: string, fallbackFile: string): string {
+  return getSkillForSlot(slot) || loadSkill(fallbackFile);
+}
+
 // SEO Score - analyze article SEO quality
 discoverRouter.post('/admin/articles/:id/seo-score', async (req: Request, res: Response) => {
   if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
@@ -487,7 +493,7 @@ discoverRouter.post('/admin/articles/:id/seo-score', async (req: Request, res: R
   if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
 
   try {
-    const skillPrompt = loadSkill('SEO_SCORE_SKILL');
+    const skillContent = skillPrompt('seo-score', 'SEO_SCORE_SKILL');
     const targetKeyword = req.body.target_keyword || '';
 
     const userMessage = `请对以下文章进行 SEO 评分分析：
@@ -503,7 +509,7 @@ URL Slug: ${article.slug}
 ${articleContent.content}`;
 
     const result = await aiGateway(
-      { messages: [{ role: 'system', content: skillPrompt }, { role: 'user', content: userMessage }], temperature: 0.3 },
+      { messages: [{ role: 'system', content: skillContent }, { role: 'user', content: userMessage }], temperature: 0.3 },
       { userId: req.user!.id, source: 'discover', operation: 'seo-score', requestSummary: `SEO score for: ${article.slug}` }
     );
 
@@ -538,7 +544,7 @@ discoverRouter.post('/admin/articles/:id/ai-detection', async (req: Request, res
   if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
 
   try {
-    const skillPrompt = loadSkill('AI_DETECTION_SKILL');
+    const skillContent = skillPrompt('ai-detection', 'AI_DETECTION_SKILL');
 
     const userMessage = `请检测以下文章的 AI 生成特征并打分：
 
@@ -549,7 +555,7 @@ discoverRouter.post('/admin/articles/:id/ai-detection', async (req: Request, res
 ${articleContent.content}`;
 
     const result = await aiGateway(
-      { messages: [{ role: 'system', content: skillPrompt }, { role: 'user', content: userMessage }], temperature: 0.3 },
+      { messages: [{ role: 'system', content: skillContent }, { role: 'user', content: userMessage }], temperature: 0.3 },
       { userId: req.user!.id, source: 'discover', operation: 'ai-detection', requestSummary: `AI detection for: ${article.slug}` }
     );
 
@@ -584,8 +590,8 @@ discoverRouter.post('/admin/articles/:id/full-analysis', async (req: Request, re
   if (!articleContent) { res.status(404).json({ error: `No content for locale: ${locale}` }); return; }
 
   try {
-    const seoSkill = loadSkill('SEO_SCORE_SKILL');
-    const aiSkill = loadSkill('AI_DETECTION_SKILL');
+    const seoSkill = skillPrompt('seo-score', 'SEO_SCORE_SKILL');
+    const aiSkill = skillPrompt('ai-detection', 'AI_DETECTION_SKILL');
     const targetKeyword = req.body.target_keyword || '';
 
     const combinedPrompt = `你是一名同时精通 SEO 优化和 AI 内容检测的专家。请对以下文章进行两方面分析，合并为一份报告。
