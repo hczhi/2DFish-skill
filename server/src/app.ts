@@ -64,6 +64,47 @@ const corsOrigin = (() => {
   return ['http://localhost:5173', 'http://localhost:3001'];
 })();
 
+// SDK 跨域：第三方域名不在全局 CORS 白名单里，且全局 cors() 会短路 OPTIONS 预检，
+// 所以必须在全局 cors() 之前，专门为 SDK token 换取接口开一个按 pk 白名单校验的口子。
+// 校验哪个 Origin 允许放在 tenderSdk 里做（换取 token 时按 pk 白名单核对）；
+// 这里对预检统一回显 Origin —— 预检不带 pk，真正的准入校验在 POST 时进行，
+// 即使预检放行，Origin 不在某个 pk 白名单里的 POST 仍会被 403 拒绝。
+app.use('/api/tender/sdk/token', (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
+// SDK 数据接口（带 scope 短 token 的只读 GET）同样需要跨域放行。
+// 注意：浏览器发的预检 OPTIONS 不带 Authorization 头，所以不能靠 Bearer 判断，
+// 只要有 Origin 就回显 CORS 头。真正的准入靠 JWT 签名 + scope 白名单闸门（tenderSdkGuard）：
+// 无有效 scope token 的跨域请求，即使 CORS 放行，业务层仍会 401/403 拒绝。
+app.use('/api/tender', (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Max-Age', '600');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+  }
+  next();
+});
+
 app.use(cors({
   origin: corsOrigin,
   credentials: true,
