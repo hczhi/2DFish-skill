@@ -13,9 +13,10 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
-      authMethod?: 'jwt' | 'api_token';
+      authMethod?: 'jwt' | 'api_token' | 'sdk';
       moduleId?: string;
       tokenId?: string;
+      tokenScope?: string;
     }
   }
 }
@@ -40,6 +41,9 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   { path: /^\/api\/discover\/topics(?!\/admin)/, method: 'GET', level: 'public' },
   { path: '/api/analytics/pageview', method: 'POST', level: 'public' },
   { path: /^\/api\/ad-slots(?!\/admin)/, method: 'GET', level: 'public' },
+  // SDK token exchange — pk + Origin whitelist validated inside the handler
+  { path: '/api/tender/sdk/token', method: 'POST', level: 'public' },
+  { path: '/api/tender/sdk/token', method: 'OPTIONS', level: 'public' },
 
   // OPTIONAL — anonymous users use admin quota for AI features
   { path: '/api/ai/board/chat', method: 'POST', level: 'optional' },
@@ -112,7 +116,7 @@ function tryParseAuth(req: Request, token: string): boolean {
   }
 
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as AuthUser & { tv?: number };
+    const payload = jwt.verify(token, getJwtSecret()) as AuthUser & { tv?: number; scope?: string };
     // Verify token version if present in JWT
     if (payload.tv !== undefined) {
       const db = getDatabase();
@@ -122,7 +126,15 @@ function tryParseAuth(req: Request, token: string): boolean {
       }
     }
     req.user = { id: payload.id, username: payload.username, role: payload.role };
-    req.authMethod = 'jwt';
+    // Scoped SDK tokens (e.g. tender:read) — never treated as full login sessions.
+    // Force role to 'user' so a scoped token can never reach admin-gated handlers.
+    if (payload.scope) {
+      req.user.role = 'user';
+      req.tokenScope = payload.scope;
+      req.authMethod = 'sdk';
+    } else {
+      req.authMethod = 'jwt';
+    }
     return true;
   } catch {
     return false;

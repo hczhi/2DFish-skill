@@ -110,6 +110,15 @@ app.use((req, res, next) => {
 // Static uploads (public, before auth)
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
 
+// Tender SDK bundle (public, CORS-open so any third-party page can <script src> it)
+const sdkDistPath = path.resolve(process.cwd(), '../sdk/dist');
+if (fs.existsSync(sdkDistPath)) {
+  app.use('/sdk', (_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    next();
+  }, express.static(sdkDistPath, { maxAge: '1h' }));
+}
+
 // Auth middleware — applied globally, determines public/optional/protected per route
 app.use(authMiddleware);
 

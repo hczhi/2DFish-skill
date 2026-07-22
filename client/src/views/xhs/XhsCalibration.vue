@@ -84,6 +84,7 @@
         <p class="empty" v-else>还没有草稿。先去写作台写几篇并诊断，发布后回来这里回填真实数据。</p>
       </div>
     </div>
+    </div>
     <SiteFooter />
   </div>
 </template>

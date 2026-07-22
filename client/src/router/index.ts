@@ -163,6 +163,16 @@ const router = createRouter({
       component: () => import('../views/tender/TenderPage.vue'),
     },
     {
+      path: '/tender/sdk-docs',
+      name: 'tender-sdk-docs',
+      component: () => import('../views/tender/TenderSdkDocs.vue'),
+    },
+    {
+      path: '/en/tender/sdk-docs',
+      name: 'tender-sdk-docs-en',
+      component: () => import('../views/tender/TenderSdkDocs.vue'),
+    },
+    {
       path: '/discover',
       name: 'discover-list',
       component: () => import('../views/discover/DiscoverList.vue'),

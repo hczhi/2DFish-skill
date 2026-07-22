@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../../lib/api'
 import { getToken } from '../../lib/auth'
@@ -9,7 +9,12 @@ import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 
 const route = useRoute()
+const router = useRouter()
 const locale = computed(() => route.path.startsWith('/en/') ? 'en' : 'zh')
+
+function goSdkDocs() {
+  router.push(locale.value === 'en' ? '/en/tender/sdk-docs' : '/tender/sdk-docs')
+}
 
 const activeTab = ref<'recommend' | 'browse' | 'settings'>('recommend')
 const tierFilter = ref('all')
@@ -291,6 +296,9 @@ async function submitFeedback() {
               </button>
               <button :class="{ active: activeTab === 'settings' }" @click="switchTab('settings')">
                 {{ locale === 'en' ? 'My Preferences' : '个人配置' }}
+              </button>
+              <button @click="goSdkDocs">
+                {{ locale === 'en' ? 'Get SDK' : '获取 SDK' }}
               </button>
             </div>
           </div>

@@ -1,0 +1,25 @@
+{
+  "name": "@qiaonan/tender-sdk",
+  "version": "0.1.0",
+  "description": "标讯智能推荐 前端 SDK — 供第三方项目嵌入",
+  "type": "module",
+  "main": "./dist/tender-sdk.umd.cjs",
+  "module": "./dist/tender-sdk.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/tender-sdk.js",
+      "require": "./dist/tender-sdk.umd.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "dev": "vite build --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

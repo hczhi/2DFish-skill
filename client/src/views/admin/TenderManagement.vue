@@ -37,7 +37,7 @@ function toggleLogDetail(index: number) {
 }
 
 const stats = ref<any>({})
-const activeTab = ref<'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring'>('list')
+const activeTab = ref<'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk'>('list')
 
 const enabledKeywords = computed(() => keywordPool.value.filter(k => k.enabled))
 
@@ -403,7 +403,7 @@ async function saveScoringConfig() {
   setTimeout(() => scoringSaved.value = false, 2000)
 }
 
-function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring') {
+function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk') {
   activeTab.value = tab
   if (tab === 'list') {
     loadTenders()
@@ -418,6 +418,84 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
   if (tab === 'keywords') loadKeywordPool()
   if (tab === 'scoring') loadScoringConfig()
   if (tab === 'logs') loadCrawlLogs()
+  if (tab === 'sdk') {
+    loadSdkKeys()
+    loadUsers()
+  }
+}
+
+// ==================== SDK 接入（第三方嵌入）====================
+const sdkKeys = ref<any[]>([])
+const sdkLoading = ref(false)
+const newSdkUserId = ref('')
+const newSdkName = ref('')
+const newSdkOrigins = ref('')
+const newSdkRateLimit = ref(60)
+const createdPk = ref('')
+
+async function loadSdkKeys() {
+  sdkLoading.value = true
+  try {
+    sdkKeys.value = await apiGet('/api/tender/admin/sdk-keys')
+  } catch (e: any) {
+    console.error(e)
+  } finally {
+    sdkLoading.value = false
+  }
+}
+
+async function createSdkKey() {
+  if (!newSdkUserId.value) { alert('请选择绑定用户'); return }
+  try {
+    const res = await apiPost('/api/tender/admin/sdk-keys', {
+      userId: newSdkUserId.value,
+      name: newSdkName.value.trim(),
+      allowedOrigins: newSdkOrigins.value,
+      rateLimit: newSdkRateLimit.value,
+    })
+    createdPk.value = res.pk
+    newSdkName.value = ''
+    newSdkOrigins.value = ''
+    newSdkUserId.value = ''
+    await loadSdkKeys()
+  } catch (e: any) {
+    alert(e.message || '创建失败')
+  }
+}
+
+async function toggleSdkKey(key: any) {
+  try {
+    await apiPatch(`/api/tender/admin/sdk-keys/${key.pk}`, { enabled: !key.enabled })
+    await loadSdkKeys()
+  } catch (e: any) {
+    alert(e.message || '操作失败')
+  }
+}
+
+async function editSdkOrigins(key: any) {
+  const cur = (key.allowed_origins || []).join('\n')
+  const val = prompt('域名白名单（每行一个，如 https://example.com）', cur)
+  if (val === null) return
+  try {
+    await apiPatch(`/api/tender/admin/sdk-keys/${key.pk}`, { allowedOrigins: val })
+    await loadSdkKeys()
+  } catch (e: any) {
+    alert(e.message || '保存失败')
+  }
+}
+
+async function deleteSdkKey(key: any) {
+  if (!confirm(`确认删除密钥 ${key.pk.slice(0, 20)}… ？第三方将立即无法换取 token。`)) return
+  try {
+    await apiDelete(`/api/tender/admin/sdk-keys/${key.pk}`)
+    await loadSdkKeys()
+  } catch (e: any) {
+    alert(e.message || '删除失败')
+  }
+}
+
+function copyText(text: string) {
+  navigator.clipboard?.writeText(text)
 }
 </script>
 
@@ -439,6 +517,7 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
       <button :class="{ active: activeTab === 'keywords' }" @click="switchAdminTab('keywords')">关键词库</button>
       <button :class="{ active: activeTab === 'scoring' }" @click="switchAdminTab('scoring')">评分配置</button>
       <button :class="{ active: activeTab === 'logs' }" @click="switchAdminTab('logs')">运行日志</button>
+      <button :class="{ active: activeTab === 'sdk' }" @click="switchAdminTab('sdk')">SDK 接入</button>
     </div>
 
     <!-- Global Task Status Banner (visible on all tabs) -->
@@ -802,6 +881,87 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
         </tbody>
       </table>
     </div>
+
+    <!-- SDK 接入 Tab -->
+    <div v-if="activeTab === 'sdk'" class="admin-content sdk-panel">
+      <div class="sdk-intro">
+        <p>为第三方纯前端项目签发 <b>publishable key（pk）</b>。第三方在页面引入 SDK 并配置 pk 后，SDK 会用 pk 向本平台换取 15 分钟的只读短 token，展示所绑定账号的标讯推荐。</p>
+        <ul>
+          <li>pk 是公开的，会出现在第三方页面 JS 里——安全靠 <b>绑定账号 + 域名白名单 + 只读 scope</b>，不靠保密。</li>
+          <li>一个 pk 对应本平台一个账号，第三方整站看到的是<b>同一份</b>推荐。</li>
+          <li>务必配置准确的域名白名单，别的网站盗用 pk 也换不到 token。</li>
+        </ul>
+      </div>
+
+      <div class="sdk-create card">
+        <h3>创建新密钥</h3>
+        <div class="sdk-form">
+          <div class="edit-form-group">
+            <label>绑定账号（推荐归属）</label>
+            <select v-model="newSdkUserId" class="edit-input">
+              <option value="">请选择用户</option>
+              <option v-for="u in userList" :key="u.id" :value="u.id">{{ u.username }}</option>
+            </select>
+          </div>
+          <div class="edit-form-group">
+            <label>备注名称</label>
+            <input v-model="newSdkName" class="edit-input" placeholder="如：XX公司官网" />
+          </div>
+          <div class="edit-form-group">
+            <label>域名白名单（每行一个）</label>
+            <textarea v-model="newSdkOrigins" rows="3" class="edit-textarea" placeholder="https://example.com&#10;https://www.example.com"></textarea>
+          </div>
+          <div class="edit-form-group">
+            <label>换取限流（次/分钟）</label>
+            <input v-model.number="newSdkRateLimit" type="number" class="edit-input" style="max-width:120px" />
+          </div>
+          <button class="btn-primary" @click="createSdkKey">生成密钥</button>
+        </div>
+        <div v-if="createdPk" class="sdk-created">
+          <p>✅ 已生成，请复制交给第三方（可随时在下方查看）：</p>
+          <code class="pk-value">{{ createdPk }}</code>
+          <button class="btn-secondary" @click="copyText(createdPk)">复制</button>
+        </div>
+      </div>
+
+      <table class="tender-table" v-if="sdkKeys.length">
+        <thead>
+          <tr>
+            <th>pk</th>
+            <th>绑定账号</th>
+            <th>备注</th>
+            <th>白名单域名</th>
+            <th>限流</th>
+            <th>状态</th>
+            <th>最近使用</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="k in sdkKeys" :key="k.pk">
+            <td>
+              <code class="pk-cell">{{ k.pk.slice(0, 16) }}…</code>
+              <button class="link-btn" @click="copyText(k.pk)">复制</button>
+            </td>
+            <td>{{ k.username || k.user_id }}</td>
+            <td>{{ k.name || '-' }}</td>
+            <td>
+              <span v-if="!k.allowed_origins.length" class="warn-text">未配置（无法使用）</span>
+              <span v-else>{{ k.allowed_origins.join(', ') }}</span>
+              <button class="link-btn" @click="editSdkOrigins(k)">编辑</button>
+            </td>
+            <td>{{ k.rate_limit }}/min</td>
+            <td><span :class="['status-badge', k.enabled ? 'completed' : 'failed']">{{ k.enabled ? '启用' : '禁用' }}</span></td>
+            <td>{{ k.last_used_at ? k.last_used_at.slice(0, 19).replace('T', ' ') : '-' }}</td>
+            <td>
+              <button class="link-btn" @click="toggleSdkKey(k)">{{ k.enabled ? '禁用' : '启用' }}</button>
+              <button class="link-btn danger" @click="deleteSdkKey(k)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else-if="!sdkLoading" class="empty-hint">还没有任何 SDK 密钥。</p>
+    </div>
   </div>
 
   <!-- Score Dialog -->
@@ -899,6 +1059,20 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
 </template>
 
 <style scoped>
+.sdk-intro { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 18px; margin-bottom:16px; font-size:13px; color:#475569; }
+.sdk-intro ul { margin:8px 0 0; padding-left:18px; }
+.sdk-intro li { margin:4px 0; }
+.sdk-create.card { border:1px solid #e2e8f0; border-radius:8px; padding:18px; margin-bottom:18px; }
+.sdk-create h3 { margin:0 0 12px; font-size:15px; }
+.sdk-form { display:flex; flex-direction:column; gap:10px; max-width:520px; }
+.sdk-created { margin-top:14px; padding:12px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; }
+.pk-value { display:block; word-break:break-all; font-family:monospace; margin:6px 0; color:#065f46; }
+.pk-cell { font-family:monospace; }
+.link-btn { background:none; border:none; color:#2563eb; cursor:pointer; font-size:12px; margin-left:6px; padding:0; }
+.link-btn.danger { color:#dc2626; }
+.warn-text { color:#dc2626; }
+.empty-hint { color:#94a3b8; padding:20px 0; }
+
 .tender-admin {
   padding: 24px;
 }

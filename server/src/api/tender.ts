@@ -4,8 +4,15 @@ import { getDatabase } from '../db/index.js';
 import { getCrawler, getAllPlatforms } from '../services/tender/crawlerRegistry.js';
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
+import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
 
 export const tenderRouter = Router();
+
+// SDK 相关：token 换取路由（PUBLIC）、admin 管理路由，以及 scope 短 token 的
+// 只读端点闸门 + CORS。guard 必须最先挂，才能在越权请求到达业务处理器前拦截。
+tenderRouter.use(tenderSdkGuard);
+registerSdkRoutes(tenderRouter);
+registerSdkAdminRoutes(tenderRouter);
 
 // ==================== User: Recommendations ====================
 
