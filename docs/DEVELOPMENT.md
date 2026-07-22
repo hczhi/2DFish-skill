@@ -26,6 +26,10 @@
 - [ ] 通知 admin 为需要的用户生成模块 Token
 - [ ] 第三方使用 `Authorization: Bearer mmPla_xxxxx` 调用
 
+> 💡 除了模块 Token，还有两类对外集成模式见 [INTEGRATION_PATTERNS.md](./INTEGRATION_PATTERNS.md)：
+> **纯前端 SDK**（第三方无后端，pk + Origin 白名单 + scope 只读 token）与
+> **外部消息推送**（平台事件 → 飞书等 IM 群机器人）。
+
 ## 代码风格
 
 ### TypeScript

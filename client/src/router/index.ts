@@ -203,6 +203,16 @@ const router = createRouter({
       component: () => import('../views/discover/ArticleView.vue'),
     },
     {
+      path: '/about',
+      name: 'about',
+      component: () => import('../views/About.vue'),
+    },
+    {
+      path: '/en/about',
+      name: 'about-en',
+      component: () => import('../views/About.vue'),
+    },
+    {
       path: '/privacy',
       name: 'privacy',
       component: () => import('../views/PrivacyPolicy.vue'),

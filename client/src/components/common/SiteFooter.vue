@@ -6,6 +6,7 @@
         &copy; {{ new Date().getFullYear() }} QiaoNan. All rights reserved.
       </div>
       <div class="links">
+        <router-link :to="locale === 'en' ? '/en/about' : '/about'">{{ locale === 'en' ? 'About' : '关于我们' }}</router-link>
         <router-link :to="locale === 'en' ? '/en/privacy' : '/privacy'">{{ locale === 'en' ? 'Privacy' : '隐私政策' }}</router-link>
         <router-link :to="locale === 'en' ? '/en/terms' : '/terms'">{{ locale === 'en' ? 'Terms' : '服务条款' }}</router-link>
         <a href="mailto:364317853@qq.com">{{ locale === 'en' ? 'Contact' : '联系我们' }}</a>

@@ -1133,6 +1133,16 @@ Sitemap: ${siteUrl}/sitemap.xml
     }).join('\n');
 
     const privacyTermsUrls = `  <url>
+    <loc>${siteUrl}/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/en/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
+  </url>
+  <url>
     <loc>${siteUrl}/privacy</loc>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
