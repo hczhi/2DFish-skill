@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
 import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
+import { pushTenderRecommendations, type FeishuTenderItem } from './feishuNotify.js';
 
 interface UserConfig {
   userId: string;
@@ -29,6 +30,7 @@ interface TenderRow {
   content_text: string;
   publish_date: string;
   keyword: string;
+  url?: string;
 }
 
 interface ScoreResult {
@@ -408,9 +410,9 @@ export async function runRecommendationsForAllUsers(
   let tenders: TenderRow[];
   if (tenderIds && tenderIds.length > 0) {
     const placeholders = tenderIds.map(() => '?').join(',');
-    tenders = db.prepare(`SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword FROM tenders WHERE id IN (${placeholders})`).all(...tenderIds) as TenderRow[];
+    tenders = db.prepare(`SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders WHERE id IN (${placeholders})`).all(...tenderIds) as TenderRow[];
   } else {
-    tenders = db.prepare('SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword FROM tenders ORDER BY publish_date DESC LIMIT 50').all() as TenderRow[];
+    tenders = db.prepare('SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders ORDER BY publish_date DESC LIMIT 50').all() as TenderRow[];
   }
 
   if (tenders.length === 0) return { processed: 0, users: 0 };
@@ -433,6 +435,14 @@ export async function runRecommendationsForAllUsers(
 
     let userProcessed = 0;
     let userSkipped = 0;
+
+    // 飞书推送：本轮该用户新产生的、达到阈值的推荐（评完统一推送一条）
+    const feishuPref = db.prepare(
+      'SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score FROM tender_user_preferences WHERE user_id = ?'
+    ).get(user.id) as any;
+    const feishuOn = !!feishuPref?.feishu_enabled && !!feishuPref?.feishu_webhook;
+    const feishuMinScore = feishuPref?.feishu_min_score ?? 55;
+    const feishuItems: FeishuTenderItem[] = [];
 
     for (const tender of tenders) {
       const existing = db.prepare('SELECT id FROM tender_recommendations WHERE user_id = ? AND tender_id = ?').get(user.id, tender.id) as any;
@@ -471,6 +481,18 @@ export async function runRecommendationsForAllUsers(
         );
         userProcessed++;
         processed++;
+        // 达到飞书推送阈值（且非 filter 档）则收集，评完统一推送
+        if (feishuOn && score.tier !== 'filter' && score.totalScore >= feishuMinScore) {
+          feishuItems.push({
+            title: tender.title,
+            purchaserName: tender.purchaser_name,
+            totalScore: score.totalScore,
+            tier: score.tier,
+            budgetAmount: tender.budget_amount,
+            regionName: tender.region_name,
+            url: tender.url ?? null,
+          });
+        }
         const llmDetail = score._prompt ? `📤 Prompt:\n${score._prompt.slice(0, 600)}...\n\n📥 Response:\n${score._response.slice(0, 600)}${score._response.length > 600 ? '...' : ''}` : undefined;
         onLog?.(`  [${userProcessed}] ${tender.title.slice(0, 25)} → ${score.tier} (${score.totalScore}分)`, llmDetail);
       } catch (e: any) {
@@ -484,6 +506,26 @@ export async function runRecommendationsForAllUsers(
     }
 
     onLog?.(`用户 ${user.id.slice(0, 8)} 完成：LLM评分 ${userProcessed} 条`);
+
+    // 飞书推送（失败不影响评分主流程）
+    if (feishuOn && feishuItems.length > 0) {
+      try {
+        const result = await pushTenderRecommendations(
+          feishuPref.feishu_webhook,
+          feishuPref.feishu_secret || undefined,
+          feishuItems,
+          Date.now()
+        );
+        if (result.ok) {
+          onLog?.(`  📮 飞书已推送 ${feishuItems.length} 条给用户 ${user.id.slice(0, 8)}`);
+        } else {
+          onLog?.(`  ⚠️ 飞书推送失败（code=${result.code ?? '?'} ${result.msg ?? ''}）`);
+        }
+      } catch (e: any) {
+        console.error(`[tender] Feishu push failed for user=${user.id}:`, e.message);
+        onLog?.(`  ⚠️ 飞书推送异常：${e.message}`);
+      }
+    }
   }
 
   onLog?.(`推荐评分全部完成：共处理 ${processed} 条`);

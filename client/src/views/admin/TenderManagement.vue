@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import { apiGet, apiPost, apiPatch, apiDelete } from '../../lib/api'
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../../lib/api'
 
 const tenders = ref<any[]>([])
 const total = ref(0)
@@ -37,7 +37,7 @@ function toggleLogDetail(index: number) {
 }
 
 const stats = ref<any>({})
-const activeTab = ref<'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk'>('list')
+const activeTab = ref<'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk' | 'feishu'>('list')
 
 const enabledKeywords = computed(() => keywordPool.value.filter(k => k.enabled))
 
@@ -403,7 +403,7 @@ async function saveScoringConfig() {
   setTimeout(() => scoringSaved.value = false, 2000)
 }
 
-function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk') {
+function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' | 'scoring' | 'sdk' | 'feishu') {
   activeTab.value = tab
   if (tab === 'list') {
     loadTenders()
@@ -421,6 +421,48 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
   if (tab === 'sdk') {
     loadSdkKeys()
     loadUsers()
+  }
+  if (tab === 'feishu') {
+    loadUsers()
+  }
+}
+
+// ==================== 飞书推送配置 ====================
+const feishuUserId = ref('')
+const feishuCfg = ref({ feishu_webhook: '', feishu_secret: '', feishu_enabled: false, feishu_min_score: 55 })
+const feishuSaved = ref(false)
+const feishuTesting = ref(false)
+
+async function loadFeishuCfg() {
+  if (!feishuUserId.value) return
+  try {
+    feishuCfg.value = await apiGet(`/api/tender/admin/feishu/${feishuUserId.value}`)
+  } catch (e: any) {
+    console.error(e)
+  }
+}
+
+async function saveFeishuCfg() {
+  if (!feishuUserId.value) { alert('请先选择用户'); return }
+  try {
+    await apiPut(`/api/tender/admin/feishu/${feishuUserId.value}`, feishuCfg.value)
+    feishuSaved.value = true
+    setTimeout(() => { feishuSaved.value = false }, 2000)
+  } catch (e: any) {
+    alert(e.message || '保存失败')
+  }
+}
+
+async function testFeishu() {
+  if (!feishuUserId.value) { alert('请先选择用户'); return }
+  feishuTesting.value = true
+  try {
+    await apiPost(`/api/tender/admin/feishu/${feishuUserId.value}/test`, {})
+    alert('测试消息已发送，请检查飞书群')
+  } catch (e: any) {
+    alert(e.message || '测试失败')
+  } finally {
+    feishuTesting.value = false
   }
 }
 
@@ -518,6 +560,7 @@ function copyText(text: string) {
       <button :class="{ active: activeTab === 'scoring' }" @click="switchAdminTab('scoring')">评分配置</button>
       <button :class="{ active: activeTab === 'logs' }" @click="switchAdminTab('logs')">运行日志</button>
       <button :class="{ active: activeTab === 'sdk' }" @click="switchAdminTab('sdk')">SDK 接入</button>
+      <button :class="{ active: activeTab === 'feishu' }" @click="switchAdminTab('feishu')">飞书推送</button>
     </div>
 
     <!-- Global Task Status Banner (visible on all tabs) -->
@@ -961,6 +1004,56 @@ function copyText(text: string) {
         </tbody>
       </table>
       <p v-else-if="!sdkLoading" class="empty-hint">还没有任何 SDK 密钥。</p>
+    </div>
+
+    <!-- 飞书推送 Tab -->
+    <div v-if="activeTab === 'feishu'" class="admin-content feishu-panel">
+      <div class="sdk-intro">
+        <p>为指定用户配置<b>飞书群机器人 webhook</b>。每次评分完成后，该用户本轮新产生、且分数达到阈值的推荐，会汇总成一条卡片消息推送到对应飞书群。</p>
+        <ul>
+          <li>在飞书群「设置 → 群机器人 → 添加自定义机器人」获取 webhook 地址。</li>
+          <li>若机器人开启了「签名校验」，把签名密钥填到「签名 secret」。</li>
+          <li>推送失败不影响评分本身，只在运行日志里记录。</li>
+        </ul>
+      </div>
+
+      <div class="sdk-create card">
+        <div class="edit-form-group">
+          <label>选择用户</label>
+          <select v-model="feishuUserId" class="edit-input" @change="loadFeishuCfg">
+            <option value="">请选择用户</option>
+            <option v-for="u in userList" :key="u.id" :value="u.id">{{ u.username }}</option>
+          </select>
+        </div>
+
+        <template v-if="feishuUserId">
+          <div class="edit-form-group">
+            <label class="force-checkbox">
+              <input type="checkbox" v-model="feishuCfg.feishu_enabled" />
+              启用飞书推送
+            </label>
+          </div>
+          <div class="edit-form-group">
+            <label>Webhook 地址</label>
+            <input v-model="feishuCfg.feishu_webhook" class="edit-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx" />
+          </div>
+          <div class="edit-form-group">
+            <label>签名 secret（可选，机器人开启加签时填）</label>
+            <input v-model="feishuCfg.feishu_secret" class="edit-input" placeholder="留空表示未开启签名校验" />
+          </div>
+          <div class="edit-form-group">
+            <label>推送分数阈值（≥ 此分才推送）</label>
+            <input v-model.number="feishuCfg.feishu_min_score" type="number" min="0" max="100" class="edit-input" style="max-width:120px" />
+          </div>
+          <div class="scoring-actions">
+            <button class="btn-primary" @click="saveFeishuCfg">保存配置</button>
+            <button class="btn-secondary" @click="testFeishu" :disabled="feishuTesting" style="margin-left:8px">
+              {{ feishuTesting ? '发送中…' : '发送测试消息' }}
+            </button>
+            <span v-if="feishuSaved" class="save-success" style="margin-left:10px">已保存</span>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 

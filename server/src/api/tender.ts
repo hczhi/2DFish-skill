@@ -4,6 +4,7 @@ import { getDatabase } from '../db/index.js';
 import { getCrawler, getAllPlatforms } from '../services/tender/crawlerRegistry.js';
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
+import { pushTenderRecommendations } from '../services/tender/feishuNotify.js';
 import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
 
 export const tenderRouter = Router();
@@ -678,6 +679,73 @@ tenderRouter.get('/admin/users', (req, res) => {
   const db = getDatabase();
   const users = db.prepare('SELECT id, username FROM user ORDER BY username').all();
   res.json(users);
+});
+
+// ==================== Admin: Feishu Notify Config (per user) ====================
+
+tenderRouter.get('/admin/feishu/:userId', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const db = getDatabase();
+  const row = db.prepare(
+    'SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score FROM tender_user_preferences WHERE user_id = ?'
+  ).get(req.params.userId) as any;
+  res.json({
+    feishu_webhook: row?.feishu_webhook || '',
+    feishu_secret: row?.feishu_secret || '',
+    feishu_enabled: !!row?.feishu_enabled,
+    feishu_min_score: row?.feishu_min_score ?? 55,
+  });
+});
+
+tenderRouter.put('/admin/feishu/:userId', (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score } = req.body;
+  const db = getDatabase();
+  const userId = req.params.userId;
+
+  // 确保该用户的 preferences 行存在（评分依赖它；用户可能还没配过偏好）
+  const existing = db.prepare('SELECT user_id FROM tender_user_preferences WHERE user_id = ?').get(userId);
+  if (!existing) {
+    db.prepare('INSERT INTO tender_user_preferences (user_id) VALUES (?)').run(userId);
+  }
+
+  db.prepare(`
+    UPDATE tender_user_preferences
+    SET feishu_webhook = ?, feishu_secret = ?, feishu_enabled = ?, feishu_min_score = ?
+    WHERE user_id = ?
+  `).run(
+    feishu_webhook || '',
+    feishu_secret || '',
+    feishu_enabled ? 1 : 0,
+    Number.isFinite(Number(feishu_min_score)) ? Number(feishu_min_score) : 55,
+    userId
+  );
+
+  res.json({ success: true });
+});
+
+// 发送一条测试消息，验证 webhook 配置是否正确
+tenderRouter.post('/admin/feishu/:userId/test', async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const db = getDatabase();
+  const row = db.prepare(
+    'SELECT feishu_webhook, feishu_secret FROM tender_user_preferences WHERE user_id = ?'
+  ).get(req.params.userId) as any;
+
+  if (!row?.feishu_webhook) return res.status(400).json({ error: '该用户未配置飞书 webhook' });
+
+  try {
+    const result = await pushTenderRecommendations(
+      row.feishu_webhook,
+      row.feishu_secret || undefined,
+      [{ title: '【测试】标讯推送配置成功', purchaserName: '示例采购人', totalScore: 88, tier: 'priority', budgetAmount: 1000000, regionName: '广东', url: null }],
+      Date.now()
+    );
+    if (result.ok) return res.json({ success: true });
+    return res.status(400).json({ error: `飞书返回 code=${result.code ?? '?'} ${result.msg ?? ''}` });
+  } catch (e: any) {
+    return res.status(400).json({ error: e.message || '推送失败' });
+  }
 });
 
 tenderRouter.get('/keywords-used', (req, res) => {

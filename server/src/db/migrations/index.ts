@@ -33,6 +33,7 @@ import { migration_031 } from './031_skill_files.js';
 import { migration_032 } from './032_seed_more_skills.js';
 import { migration_033 } from './033_user_writing_skills.js';
 import { migration_034 } from './034_sdk_keys.js';
+import { migration_035 } from './035_tender_feishu.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -69,4 +70,5 @@ export const allMigrations: Migration[] = [
   migration_032,
   migration_033,
   migration_034,
+  migration_035,
 ];
