@@ -25,12 +25,15 @@
             <span class="text-accent">把它变成自己的工作流、学习工具和创造工具。</span>
           </p>
           <div class="actions">
-            <router-link to="/xhs/studio" class="btn-start">
+            <router-link to="/xhs/writer" class="btn-start">
               <span class="btn-icon">▶</span>
-              进入小红书爆款写作台
+              进入 AI 辅助写作台
             </router-link>
             <router-link to="/xhs/skills" class="btn-skill">
               写作 Skill
+            </router-link>
+            <router-link to="/xhs/studio" class="btn-skill">
+              旧版写作台
             </router-link>
           </div>
         </div>

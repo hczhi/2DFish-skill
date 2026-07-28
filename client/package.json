@@ -9,6 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tiptap/extension-bubble-menu": "^3.29.1",
+    "@tiptap/extension-highlight": "^3.29.1",
+    "@tiptap/extension-placeholder": "^3.29.1",
+    "@tiptap/starter-kit": "^3.29.1",
+    "@tiptap/vue-3": "^3.29.1",
     "dompurify": "^3.4.11",
     "vue": "^3.4.0",
     "vue-router": "^4.3.0"

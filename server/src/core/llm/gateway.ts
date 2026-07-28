@@ -1,13 +1,36 @@
 import OpenAI from 'openai';
 import { getDatabase } from '../../db/index.js';
 import { logAIUsage } from './client.js';
+import { resolveLLMProvider, type LLMTier } from '../../services/aiProviderService.js';
 
 export interface GatewayOptions {
   userId: string;
   source: string;
   operation: string;
   requestSummary?: string;
+  /** 任务档位：'strong' 用于吐 JSON/结构化的硬任务，'fast' 用于走量成文，缺省走 default。 */
+  tier?: LLMTier;
 }
+
+/**
+ * 采样预设：把"温度/惩罚重复"按任务性质集中成几档，避免各路由各写一套、参数漂移。
+ * 用法：把预设 spread 进 aiGateway/aiGatewayStream 的 params（`{ ...SAMPLING.creative, messages, max_tokens }`）。
+ *
+ * 原理：LLM 天生挑最高概率、最顺的词（低困惑度）——这正是 AI 味的物理来源。
+ * 要"写得更像人、更有文采"，就得让它在创作型任务上敢挑不那么顺的词：
+ * - 高 temperature 放宽采样，presence/frequency_penalty 压制"又滑回高频套话"的倾向。
+ * 而评分/解析这类任务要的是稳定，必须低温、无惩罚。
+ */
+export const SAMPLING = {
+  /** 炼句/发散：要最大意外度。一次生成一堆候选再筛，靠数量博灵感。 */
+  brainstorm: { temperature: 1.05, presence_penalty: 0.6, frequency_penalty: 0.5 },
+  /** 生成/共写正文：要有文采但不能散。 */
+  creative: { temperature: 0.9, presence_penalty: 0.4, frequency_penalty: 0.3 },
+  /** 改写/去味/打磨：在原文基础上提意外度，温度中高、轻惩罚。 */
+  rewrite: { temperature: 0.8, presence_penalty: 0.3, frequency_penalty: 0.2 },
+  /** 评分/检测/解析 JSON：要稳定可复现，低温、无惩罚。 */
+  analytic: { temperature: 0.2 },
+} as const;
 
 export class QuotaExceededError extends Error {
   remaining = 0;
@@ -19,9 +42,24 @@ export class QuotaExceededError extends Error {
   }
 }
 
-export function resolveLLMConfig(): { client: OpenAI; model: string } {
-  const db = getDatabase();
+/**
+ * 解析文本模型连接信息。按任务档位取 provider：
+ *   1. ai_providers 表里该 tier 的启用 provider（取不到回落到 default tier）；
+ *   2. 都没有再回落到旧 system_config 的 platform_* 裸 key（保证老配置照常跑）。
+ * 无参调用 = default 档，行为与升级前完全一致（chat/consultant 直接用 client 的调用点不受影响）。
+ */
+export function resolveLLMConfig(tier: LLMTier = 'default'): { client: OpenAI; model: string } {
+  const provider = resolveLLMProvider(tier);
+  if (provider) {
+    const client = new OpenAI({
+      apiKey: provider.api_key,
+      baseURL: provider.base_url || 'https://api.openai.com/v1',
+    });
+    return { client, model: provider.model || 'gpt-4o' };
+  }
 
+  // 回落：旧 system_config（迁移前的裸 key，或表里一条都没启用时）
+  const db = getDatabase();
   const sysKey = db.prepare("SELECT value FROM system_config WHERE key = 'platform_api_key'").get() as { value: string } | undefined;
   const sysBase = db.prepare("SELECT value FROM system_config WHERE key = 'platform_api_base_url'").get() as { value: string } | undefined;
   const sysModel = db.prepare("SELECT value FROM system_config WHERE key = 'platform_model'").get() as { value: string } | undefined;
@@ -82,7 +120,7 @@ export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
 ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
-  const { client, model } = resolveLLMConfig();
+  const { client, model } = resolveLLMConfig(options.tier);
 
   checkAndDeductQuota(options.userId);
 
@@ -112,7 +150,7 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  const { client, model } = resolveLLMConfig();
+  const { client, model } = resolveLLMConfig(options.tier);
 
   checkAndDeductQuota(options.userId);
 

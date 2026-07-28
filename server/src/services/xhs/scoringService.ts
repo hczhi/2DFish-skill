@@ -31,13 +31,39 @@ export interface XhsScoringResult {
   topSuggestion: string;
   /** 2-3 句整体诊断 */
   overall: string;
+  /**
+   * 跑题诊断：只有传了 root（核心判断）才评。列出偏离核心判断的段落原句 + 为什么偏。
+   * 治"每段都对但合起来发散没魂"这个"写不好"的头号病根。
+   */
+  offTopic: Array<{ excerpt: string; why: string }>;
 }
+
+/** 文体：决定用哪套写作/评分手艺。auto = 交给模型自判。 */
+export type XhsGenre = 'story' | 'lyric' | 'punchline' | 'auto';
 
 export interface XhsNoteInput {
   title: string;
   body: string;
   /** 可选：赛道/人群，注入后评分更贴合 */
   niche?: string;
+  /** 可选：核心判断（立根选定的"根"）。传了就多做一维"跑题检测" */
+  root?: string;
+  /** 可选：文体。传了则按该文体的校正评分（见 SCORING_PROMPT 第零步）；缺省/auto 让模型自判。 */
+  genre?: XhsGenre;
+}
+
+/** 把 genre 转成注入评分/写作 prompt 的一段中文说明；auto 或缺省返回空串。 */
+export function genreLabel(genre?: XhsGenre): string {
+  switch (genre) {
+    case 'story':
+      return '干货/经验体（有观点+故事+方法）';
+    case 'lyric':
+      return '抒情/随笔体（情感、关系、自我表达，不给方法、不劝互动）';
+    case 'punchline':
+      return '金句/文案体（一个母题多段变奏、可直接抄的短文案）';
+    default:
+      return '';
+  }
 }
 
 // ==================== 权重（用真实数据回归校准的唯一位置）====================
@@ -86,6 +112,21 @@ export function setWeight(dimension: XhsDimensionKey, weight: number): void {
 export const SCORING_PROMPT = `你是一个操盘过上百个爆款笔记的资深小红书运营。你评判一篇笔记「能不能爆」的眼光极毒，从不说客套话。你的任务是找出这篇笔记为什么"火不了"，而不是夸它。
 
 默认假设：每篇笔记都是平庸的，除非它证明自己能抓住人。
+
+## 先认文体，再按维度评分（否则会误伤真人写的好文）
+
+下面 6 个维度是按"干货/经验体"设计的。小红书还有两类爆款文体，用这套维度硬评会误伤——先判文体，再按下面的校正评分：
+
+- **抒情/随笔体 lyric**（写情感、关系、自我，本就不给方法、不劝互动）：
+  - 「价值密度 value」不再要求"可执行干货/清单"，改看**情感/领悟的密度与真诚**——写透一段关系、给出一个锋利态度，就是高 value。没干货 ≠ 低分。
+  - 「互动引导 interaction」不因"没有结尾提问"扣到 0-3；抒情文靠共鸣自然带评论，留白平收是正常的。有强共鸣即可给中上。
+  - 重点看：私人细节是否独家、态度/价值观是否锋利（不落安全区）、有没有留白与克制。
+- **金句/文案体 punchline**（一个母题 N 段变奏、可直接抄的短文案）：
+  - 「价值密度 value」看**金句/双关的密度与可用性**（读者想不想抄走），不是干货量。
+  - 「opening/interaction」按文案清单的逻辑放宽，不套"故事开头/结尾提问"。
+  - 重点看：母题是否统一、每段机锋是否意外不落俗套。
+- **干货/经验体 story**：按下面 6 维原样严格评。
+- 若未指明文体：先自行判定；判为 lyric/punchline 时套用上面的校正，并在 overall 里点明"按 X 体评估"。
 
 ## 评分维度（每项 0-10，附四档锚点）
 
@@ -150,7 +191,8 @@ export const SCORING_PROMPT = `你是一个操盘过上百个爆款笔记的资�
   "overall": "<2-3句整体诊断，说清这篇现在的水平和最大短板>"
 }`;
 
-const DIM_KEYS: XhsDimensionKey[] = [
+// 六个评分维度的规范 key 列表（评分、加权、校准、权重校验都从这里取，避免多处硬编码漂移）
+export const DIM_KEYS: XhsDimensionKey[] = [
   'titleHook',
   'opening',
   'resonance',
@@ -179,19 +221,33 @@ function calcTotalScore(dims: Record<XhsDimensionKey, XhsDimensionScore>): numbe
 
 export async function scoreNote(note: XhsNoteInput, userId: string): Promise<XhsScoringResult> {
   const nicheLine = note.niche ? `\n## 赛道/目标人群\n${note.niche}\n` : '';
+  const gl = genreLabel(note.genre);
+  const genreLine = gl
+    ? `\n## 本篇文体（按此文体的校正评分，见"先认文体"一节）\n${gl}\n`
+    : '';
 
   // 评分 prompt 现在由后台可编辑的 skill 提供（slot: xhs-score）；无绑定则退回内置常量。
   const scoringPrompt = getSkillForSlot('xhs-score') || SCORING_PROMPT;
 
+  // 传了核心判断，就多要一段"跑题检测"——找出没为核心判断服务的段落。
+  const rootBlock = note.root
+    ? `\n## 这篇文章的核心判断（根）\n${note.root}\n\n额外任务：检查正文每一段有没有在为这个核心判断服务。把"跑题、稀释核心、可删也不影响主意思"的句子挑出来（逐字摘原句），放进 offTopic。没有跑题就返回空数组。`
+    : '';
+
+  const offTopicField = note.root
+    ? `,\n  "offTopic": [{"excerpt": "<偏离核心判断的原句，逐字摘录>", "why": "<为什么它偏了/稀释了核心>"}]`
+    : '';
+
   const contextPrompt = `${scoringPrompt}
-${nicheLine}
+${genreLine}${nicheLine}${rootBlock}
 ## 待评估笔记
 标题：${note.title || '(未填写标题)'}
 
 正文：
 ${note.body || '(未填写正文)'}
 
-现在按上面的维度和纪律给这篇笔记打分。`;
+现在按上面的维度和纪律给这篇笔记打分。${note.root ? '并完成上面的跑题检测。' : ''}
+${offTopicField ? `\n输出 JSON 时在原结构基础上追加字段：${offTopicField}` : ''}`;
 
   const { response } = await aiGateway(
     {
@@ -204,15 +260,17 @@ ${note.body || '(未填写正文)'}
 
   const content = response.choices[0]?.message?.content || '';
   const jsonMatch = content.match(/\{[\s\S]*\}/);
+  // 解析失败必须抛错（由路由返回 502），不能兜底成假的"50 分一切正常"——
+  // 否则用户会被误导以为文章没问题。这跟模块内其他 AI 路由的契约保持一致。
   if (!jsonMatch) {
-    return getDefaultResult();
+    throw new ScoringParseError(content);
   }
 
   let parsed: any;
   try {
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    return getDefaultResult();
+    throw new ScoringParseError(content);
   }
 
   const dims = {} as Record<XhsDimensionKey, XhsDimensionScore>;
@@ -233,12 +291,19 @@ ${note.body || '(未填写正文)'}
     dims.resonance.score = Math.min(dims.resonance.score, 5);
   }
 
+  const offTopic = Array.isArray(parsed.offTopic)
+    ? parsed.offTopic
+        .filter((o: any) => o && o.excerpt)
+        .map((o: any) => ({ excerpt: String(o.excerpt), why: String(o.why || '') }))
+    : [];
+
   return {
     totalScore: calcTotalScore(dims),
     aiSmell,
     dimensions: dims,
     topSuggestion: String(parsed.topSuggestion || ''),
     overall: String(parsed.overall || ''),
+    offTopic,
   };
 }
 
@@ -248,15 +313,12 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
-function getDefaultResult(): XhsScoringResult {
-  const emptyDim: XhsDimensionScore = { score: 5, reason: '评分暂不可用', suggestion: '' };
-  const dims = {} as Record<XhsDimensionKey, XhsDimensionScore>;
-  for (const key of DIM_KEYS) dims[key] = { ...emptyDim };
-  return {
-    totalScore: 50,
-    aiSmell: false,
-    dimensions: dims,
-    topSuggestion: '',
-    overall: 'AI 评分暂时不可用，请稍后重试。',
-  };
+/** AI 返回无法解析成评分 JSON 时抛出——路由据此返回 502，不再兜底成假分数。 */
+export class ScoringParseError extends Error {
+  raw: string;
+  constructor(raw: string) {
+    super('AI 返回格式异常，无法解析评分');
+    this.name = 'ScoringParseError';
+    this.raw = raw;
+  }
 }

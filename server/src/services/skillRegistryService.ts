@@ -61,6 +61,7 @@ function rowToSkill(r: SkillRow): Skill {
 // 已知的 slot 清单（后台下拉展示用）。新增前台功能点时在这里登记。
 export const KNOWN_SLOTS: Array<{ slot: string; label: string }> = [
   { slot: 'xhs-ask', label: '小红书 · AI 陪写（问 AI）' },
+  { slot: 'xhs-structure', label: '小红书 · 结构化写作（定主题/搭结构/校验）' },
   { slot: 'xhs-score', label: '小红书 · 爆款评分诊断' },
   { slot: 'seo-score', label: '文章 · SEO 评分' },
   { slot: 'ai-detection', label: '文章 · AI 味检测' },

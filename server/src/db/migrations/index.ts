@@ -34,6 +34,12 @@ import { migration_032 } from './032_seed_more_skills.js';
 import { migration_033 } from './033_user_writing_skills.js';
 import { migration_034 } from './034_sdk_keys.js';
 import { migration_035 } from './035_tender_feishu.js';
+import { migration_036 } from './036_refresh_writing_style.js';
+import { migration_037 } from './037_refresh_ai_detection.js';
+import { migration_038 } from './038_refresh_skills_genre.js';
+import { migration_039 } from './039_xhs_writer.js';
+import { migration_040 } from './040_seed_xhs_structure_skill.js';
+import { migration_041 } from './041_ai_providers.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -71,4 +77,10 @@ export const allMigrations: Migration[] = [
   migration_033,
   migration_034,
   migration_035,
+  migration_036,
+  migration_037,
+  migration_038,
+  migration_039,
+  migration_040,
+  migration_041,
 ];

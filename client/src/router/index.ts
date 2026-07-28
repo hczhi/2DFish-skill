@@ -55,10 +55,9 @@ const router = createRouter({
     },
     {
       path: '/synap',
-      name: 'synap',
       component: () => import('../views/synap/SynapApp.vue'),
       children: [
-        { path: '', redirect: '/synap/chat' },
+        { path: '', name: 'synap', redirect: '/synap/chat' },
         { path: 'chat', name: 'synap-chat', component: () => import('../views/synap/ChatView.vue') },
         { path: 'files', name: 'synap-files', component: () => import('../views/synap/FileView.vue') },
         { path: 'consultant', name: 'synap-consultant', component: () => import('../views/synap/ConsultantView.vue') },
@@ -141,6 +140,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/xhs/writer',
+      name: 'xhs-writer',
+      component: () => import('../views/xhs/XhsWriter.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/xhs/skills',
       name: 'xhs-skills',
       component: () => import('../views/xhs/XhsSkills.vue'),
@@ -151,6 +156,11 @@ const router = createRouter({
       name: 'xhs-calibration',
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
+    },
+    // xhs 是登录后写作台工具，无对外英文站点；/en/xhs* 统一重定向到中文路径
+    {
+      path: '/en/xhs/:pathMatch(.*)*',
+      redirect: (to) => '/xhs' + (to.params.pathMatch ? '/' + (to.params.pathMatch as string[]).join('/') : ''),
     },
     {
       path: '/tender',

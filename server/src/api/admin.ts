@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { requireAdmin } from '../auth/guards.js';
 import { getDatabase } from '../db/index.js';
 import { generateApiToken, hashApiToken } from '../auth/middleware.js';
+import { listProviders, upsertProvider, deleteProvider, maskProvider } from '../services/aiProviderService.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
@@ -187,7 +188,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 // --- System Config ---
 
-const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
+const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
 
 adminRouter.get('/config', (_req: Request, res: Response) => {
   const db = getDatabase();
@@ -224,6 +225,46 @@ adminRouter.post('/config', (req: Request, res: Response) => {
 adminRouter.delete('/config/:key', (req: Request, res: Response) => {
   const db = getDatabase();
   db.prepare('DELETE FROM system_config WHERE key = ?').run(req.params.key);
+  res.json({ success: true });
+});
+
+// --- AI Model Providers ---
+// 按任务档位配多个文本模型（tier: default/strong/fast）+ 未来的生图（kind: image）。
+// api_key 一律脱敏返回；POST 时 api_key 传空串表示「不改动」（沿用脱敏回显值不覆盖真值）。
+
+adminRouter.get('/providers', (_req: Request, res: Response) => {
+  res.json({ providers: listProviders().map(maskProvider) });
+});
+
+adminRouter.post('/providers', (req: Request, res: Response) => {
+  const b = req.body || {};
+  if (b.kind && !['llm', 'image'].includes(b.kind)) {
+    res.status(400).json({ error: 'kind 只能是 llm 或 image' });
+    return;
+  }
+  if (b.tier && !['default', 'strong', 'fast'].includes(b.tier)) {
+    res.status(400).json({ error: 'tier 只能是 default/strong/fast' });
+    return;
+  }
+  if (b.extra_json !== undefined) {
+    try { JSON.parse(b.extra_json || '{}'); } catch { res.status(400).json({ error: 'extra_json 不是合法 JSON' }); return; }
+  }
+  const saved = upsertProvider({
+    id: b.id || undefined,
+    kind: b.kind,
+    tier: b.tier,
+    label: b.label,
+    base_url: b.base_url,
+    api_key: b.api_key,
+    model: b.model,
+    extra_json: b.extra_json,
+    enabled: b.enabled,
+  });
+  res.json({ provider: maskProvider(saved) });
+});
+
+adminRouter.delete('/providers/:id', (req: Request, res: Response) => {
+  deleteProvider(req.params.id);
   res.json({ success: true });
 });
 

@@ -29,9 +29,10 @@
 
       <!-- 权重调整（任何时候都能调）+ 相关性参考（有数据时显示） -->
       <div class="section hc-shadow-sm section-card">
-        <h2>维度权重调整</h2>
+        <h2>维度权重{{ canEditWeights ? '调整' : '（只读）' }}</h2>
         <p class="section-sub">
-          改完点「保存权重」即生效，下次诊断就用新权重（无需重启）。
+          <span v-if="canEditWeights">改完点「保存权重」即生效，下次诊断就用新权重（无需重启）。</span>
+          <span v-else>⚠ 权重是全平台共享的评分参数，只有管理员能改；下面是当前生效值，供你参考。</span>
           <span v-if="hasStats">右侧「相关性」是你真实数据算出的参考：越高说明该维度越该给高权重。</span>
           <span v-else>回填 ≥{{ data ? data.minSamplesForStats : 3 }} 篇真实数据后，这里会出现相关性参考帮你决定怎么调。</span>
         </p>
@@ -47,12 +48,12 @@
             <span v-else class="corr-placeholder">相关性：暂无数据</span>
             <label class="corr-weight-edit">
               权重
-              <input v-model.number="weights[d.key]" class="w-input hc-input" type="number" step="0.1" min="0" />
+              <input v-model.number="weights[d.key]" class="w-input hc-input" type="number" step="0.1" min="0" max="10" :disabled="!canEditWeights" />
             </label>
           </div>
         </div>
         <p class="advice" v-if="advice">{{ advice }}</p>
-        <div class="weight-actions">
+        <div class="weight-actions" v-if="canEditWeights">
           <button class="btn-save-w" @click="saveWeights" :disabled="savingW">
             {{ savingW ? '保存中…' : '保存权重' }}
           </button>
@@ -92,6 +93,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { apiGet, apiPatch, apiPut } from '../../lib/api'
+import { fetchMe, isAdmin } from '../../lib/auth'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 
@@ -114,6 +116,7 @@ const allNotes = ref<any[]>([])
 const edit = reactive<Record<string, { likes: number | null; collects: number | null; views: number | null }>>({})
 const weights = reactive<Record<string, number>>({})
 const savingW = ref(false)
+const canEditWeights = ref(false)   // 权重是全平台共享参数，仅管理员可改
 
 const hasStats = computed(() => !!data.value && data.value.sampleCount >= data.value.minSamplesForStats)
 
@@ -183,9 +186,20 @@ async function saveWeights() {
 
 async function saveReal(id: string) {
   const e = edit[id]
+  // 非负数字才提交（空 = 未填，转 null）；相关性统计全靠这些数，别写进垃圾
+  const clean = (v: number | null) => {
+    if (v === null || v === undefined || (v as any) === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : NaN
+  }
+  const likes = clean(e.likes), collects = clean(e.collects), views = clean(e.views)
+  if ([likes, collects, views].some(Number.isNaN)) {
+    alert('点赞/收藏/浏览必须是非负数字')
+    return
+  }
   try {
     await apiPatch(`/api/xhs/notes/${id}/real-data`, {
-      real_likes: e.likes, real_collects: e.collects, real_views: e.views,
+      real_likes: likes, real_collects: collects, real_views: views,
     })
     await load() // 重新算相关性
   } catch (err: any) {
@@ -193,7 +207,11 @@ async function saveReal(id: string) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  const me = await fetchMe()
+  canEditWeights.value = isAdmin(me)
+  await load()
+})
 </script>
 
 <style scoped>
