@@ -47,6 +47,7 @@ const TIER_LABEL: Record<string, string> = {
 const PLATFORM_LABEL: Record<string, string> = {
   gdgpo: '广东省政府采购网',
   meicloud: '美的询源云',
+  szecp: '华润守正',
 };
 
 // 「全部标讯」表的单选项。爬虫写入是 draft，AI 抽取后 extracted，评分后 scored。

@@ -679,7 +679,9 @@ function copyText(text: string) {
         <input v-model="search" placeholder="搜索标题/采购人..." @keyup.enter="page = 1; loadTenders()" />
         <select v-model="platform" @change="page = 1; loadTenders()">
           <option value="">全部平台</option>
-          <option value="gdgpo">广东省政府采购</option>
+          <!-- 平台列表来自 /admin/platforms（后端 crawlerRegistry），不要写死：
+               之前这里硬编码只有 gdgpo，新增数据源后在列表里筛不出来。 -->
+          <option v-for="p in platforms" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select>
         <select v-model="keywordFilter" @change="page = 1; loadTenders()">
           <option value="">全部关键词</option>

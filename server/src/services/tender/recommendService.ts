@@ -104,7 +104,8 @@ function getTier(score: number, feedbackCount: number = 0): string {
 // 有些平台（如美的询源云）根本不发布预算金额，此时"预算未知"不该被当成缺点扣分，
 // 直接给满分让这一轴的权重全占满。而 gdgpo 的 0 通常是正文有预算但没抽出来，
 // 给满分等于奖励抽取失败，所以仍走 50 的中性兜底。
-const PLATFORMS_WITHOUT_BUDGET = new Set(['meicloud']);
+// 华润守正同理：详情页是自然语言段落，实测 10 条抽样 0 条公开预算。
+const PLATFORMS_WITHOUT_BUDGET = new Set(['meicloud', 'szecp']);
 
 function scoreBudget(budgetAmount: number, config: UserConfig, purchaserName: string, platform: string = ''): number {
   if (!budgetAmount || budgetAmount === 0) {
