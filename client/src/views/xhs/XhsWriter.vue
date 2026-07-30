@@ -105,6 +105,25 @@ const chatContext = ref('')
 const chatRunner = ref<(message: string) => Promise<ChatResult>>(async () => ({ reply: '', preview: '', apply: () => {} }))
 const chatAutoSend = ref<string | undefined>(undefined)  // 有值时 SelectionChat 打开即自动发（禁用词一键重写）
 
+// ---------- ① 头脑风暴 / 用户洞察（AI 抛初稿，作者挑改）----------
+const bsOpen = ref(false)          // 面板折叠
+const bsLoading = ref(false)
+const bsIdeas = ref<Array<{ point: string; why: string }>>([])
+const rsOpen = ref(false)
+const rsLoading = ref(false)
+const research = ref<{
+  personas: string[]
+  painPoints: Array<{ desc: string; hook: string }>
+  blindSpots: Array<{ claim: string; explain: string }>
+  desires: string[]
+  problems: Array<{ question: string; solution: string }>
+} | null>(null)
+
+// ---------- ③ 通读诊断（只读）----------
+const dxOpen = ref(false)
+const dxLoading = ref(false)
+const diagnostics = ref<Array<{ dimension: string; finding: string; suggestion: string }>>([])
+
 const briefHasEnough = computed(() =>
   !!(brief.topic.trim() || brief.judgment.trim() || brief.materials.trim())
 )
@@ -187,6 +206,86 @@ async function buildStructure() {
     structuring.value = false
   }
 }
+
+// ===== ① 头脑风暴 =====
+async function runBrainstorm() {
+  bsOpen.value = true
+  bsLoading.value = true
+  try {
+    const r = await apiPost<{ ideas: Array<{ point: string; why: string }> }>('/api/xhs/brainstorm', { ...brief })
+    bsIdeas.value = r.ideas || []
+  } catch (e: any) {
+    alert(e?.message || '头脑风暴失败')
+  } finally {
+    bsLoading.value = false
+  }
+}
+// 采纳后的短暂提示 + 逐条标记（结果面板在下方，采纳的目标栏在页面顶部，不给反馈用户会以为没点上）
+const adoptToast = ref('')
+let adoptToastTimer: ReturnType<typeof setTimeout> | null = null
+function flashAdopt(msg: string) {
+  adoptToast.value = msg
+  if (adoptToastTimer) clearTimeout(adoptToastTimer)
+  adoptToastTimer = setTimeout(() => { adoptToast.value = '' }, 1800)
+}
+const adoptedIdeas = ref<Set<string>>(new Set())
+const adoptedResearch = ref<Set<string>>(new Set())
+
+// 把一个观点采纳进核心观点栏（追加，不覆盖已填的）
+function adoptIdea(point: string) {
+  brief.judgment = brief.judgment ? `${brief.judgment.trim()}\n${point}` : point
+  adoptedIdeas.value.add(point)
+  flashAdopt('✓ 已追加到「核心观点」')
+}
+
+// ===== ① AI 调研用户 =====
+async function runResearch() {
+  rsOpen.value = true
+  rsLoading.value = true
+  try {
+    research.value = await apiPost('/api/xhs/research', { ...brief })
+  } catch (e: any) {
+    alert(e?.message || '调研失败')
+  } finally {
+    rsLoading.value = false
+  }
+}
+// 采纳一句到指定 brief 栏（追加），文案里带上「（待核实）」提醒这是 AI 假设
+function adoptToBrief(field: 'audience' | 'materials', text: string) {
+  const line = `${text}（AI假设·待核实）`
+  brief[field] = brief[field] ? `${brief[field].trim()}\n${line}` : line
+  adoptedResearch.value.add(text)
+  flashAdopt(field === 'audience' ? '✓ 已追加到「写给谁看」' : '✓ 已追加到「素材」')
+}
+
+// ===== ③ 通读诊断 =====
+async function runDiagnose() {
+  const plain = editor.value?.getText().trim()
+  if (!plain) { alert('先有正文再诊断'); return }
+  dxOpen.value = true
+  dxLoading.value = true
+  // 不在这里清空 diagnostics：诊断中仍显示上一次结果，成功拿到新结果才替换，失败则保留旧的。
+  try {
+    const r = await apiPost<{ diagnostics: Array<{ dimension: string; finding: string; suggestion: string }> }>(
+      '/api/xhs/diagnose', { body: plain }
+    )
+    diagnostics.value = r.diagnostics || []
+    dxSourceLen.value = plain.length  // 记下这次诊断针对的正文长度，正文变了给用户提示「已过期」
+  } catch (e: any) {
+    alert(e?.message || '诊断失败')
+  } finally {
+    dxLoading.value = false
+  }
+}
+// 重开抽屉看上次诊断结果，不重新调用 AI（关闭只是收起，数据一直在）。
+function reopenDiagnose() {
+  dxOpen.value = true
+}
+// 上次诊断针对的正文长度；当前正文长度与之不同时提示结果可能过期。
+const dxSourceLen = ref(0)
+const dxStale = computed(() =>
+  diagnostics.value.length > 0 && (editor.value?.getText().trim().length || 0) !== dxSourceLen.value
+)
 
 function addRootTheme() {
   if (nodes.value.some(n => n.type === 'theme')) return
@@ -437,6 +536,9 @@ const hitTerms = computed(() => {
 
 <template>
   <div class="xw-page hc-grid-bg">
+    <transition name="xw-toast">
+      <div v-if="adoptToast" class="xw-toast">{{ adoptToast }}</div>
+    </transition>
     
     <!-- 左侧常驻极简边栏：草稿列表 -->
     <aside class="xw-sidebar">
@@ -472,6 +574,12 @@ const hitTerms = computed(() => {
           </div>
         </div>
         <div class="xw-header-actions">
+          <button v-if="stage === 'draft' && body" class="xw-btn-secondary" :disabled="dxLoading" @click="runDiagnose">
+            {{ dxLoading ? '诊断中…' : '🩺 通读诊断' }}
+          </button>
+          <button v-if="stage === 'draft' && diagnostics.length && !dxOpen" class="xw-btn-secondary" @click="reopenDiagnose">
+            📋 查看上次诊断
+          </button>
           <button class="xw-btn-secondary" @click="blOpen = true">🚫 禁用库（{{ blocklist.length }}）</button>
           <button class="xw-btn-secondary" @click="saveDraft">💾 存草稿</button>
         </div>
@@ -509,7 +617,81 @@ const hitTerms = computed(() => {
             <textarea v-model="brief.judgment" rows="2" placeholder="你要表达的那个有立场、可能有人反对的判断" /></label>
           <label class="xw-field mt-4"><span>手上的真实素材、细节、数字</span>
             <textarea v-model="brief.materials" rows="4" placeholder="具体的人、对话、时间、数字、翻车瞬间——越具体越好，这是真人味的来源" /></label>
-          
+
+          <!-- AI 辅助想法：默认收起，按需展开 -->
+          <div class="xw-assist mt-4">
+            <div class="xw-assist-tabs">
+              <button class="xw-assist-btn" :disabled="bsLoading" @click="runBrainstorm">
+                {{ bsLoading ? '发散中…' : '🧠 帮我发散观点' }}
+              </button>
+              <button class="xw-assist-btn" :disabled="rsLoading" @click="runResearch">
+                {{ rsLoading ? '调研中…' : '🔍 调研目标用户' }}
+              </button>
+            </div>
+
+            <!-- 头脑风暴结果 -->
+            <div v-if="bsOpen" class="xw-assist-panel">
+              <div class="xw-assist-head">
+                <span>🧠 观点发散（AI 抛的角度，挑一个改成你的）</span>
+                <button class="xw-assist-x" @click="bsOpen = false">收起</button>
+              </div>
+              <p v-if="!bsLoading && !bsIdeas.length" class="xw-assist-empty">还没有结果，点上面「帮我发散观点」。</p>
+              <div v-for="(idea, i) in bsIdeas" :key="i" class="xw-idea">
+                <div class="xw-idea-body">
+                  <div class="xw-idea-point">{{ idea.point }}</div>
+                  <div class="xw-idea-why">↳ {{ idea.why }}</div>
+                </div>
+                <button class="xw-adopt-mini" :class="{ done: adoptedIdeas.has(idea.point) }" @click="adoptIdea(idea.point)">{{ adoptedIdeas.has(idea.point) ? '✓ 已用' : '用这个 →' }}</button>
+              </div>
+            </div>
+
+            <!-- 用户洞察结果（全部标 待核实）-->
+            <div v-if="rsOpen" class="xw-assist-panel">
+              <div class="xw-assist-head">
+                <span>🔍 用户洞察 <em class="xw-assumption">· AI 假设，需你核实成真实的</em></span>
+                <button class="xw-assist-x" @click="rsOpen = false">收起</button>
+              </div>
+              <p v-if="rsLoading" class="xw-assist-empty">AI 调研中…</p>
+              <template v-else-if="research">
+                <div class="xw-rs-group">
+                  <h5>受众角色</h5>
+                  <div v-for="(p, i) in research.personas" :key="'p'+i" class="xw-rs-item">
+                    <span>{{ p }}</span>
+                    <button class="xw-adopt-mini" :class="{ done: adoptedResearch.has(p) }" @click="adoptToBrief('audience', p)">{{ adoptedResearch.has(p) ? '✓ 已采纳' : '采纳→受众' }}</button>
+                  </div>
+                </div>
+                <div class="xw-rs-group">
+                  <h5>痛点</h5>
+                  <div v-for="(p, i) in research.painPoints" :key="'pp'+i" class="xw-rs-item">
+                    <span><b>「{{ p.hook }}」</b> {{ p.desc }}</span>
+                    <button class="xw-adopt-mini" :class="{ done: adoptedResearch.has(p.desc) }" @click="adoptToBrief('materials', p.desc)">{{ adoptedResearch.has(p.desc) ? '✓ 已采纳' : '采纳→素材' }}</button>
+                  </div>
+                </div>
+                <div class="xw-rs-group">
+                  <h5>认知盲区</h5>
+                  <div v-for="(p, i) in research.blindSpots" :key="'bs'+i" class="xw-rs-item">
+                    <span><b>{{ p.claim }}</b> — {{ p.explain }}</span>
+                    <button class="xw-adopt-mini" :class="{ done: adoptedResearch.has(p.claim + '——' + p.explain) }" @click="adoptToBrief('materials', p.claim + '——' + p.explain)">{{ adoptedResearch.has(p.claim + '——' + p.explain) ? '✓ 已采纳' : '采纳→素材' }}</button>
+                  </div>
+                </div>
+                <div class="xw-rs-group">
+                  <h5>渴望</h5>
+                  <div v-for="(p, i) in research.desires" :key="'d'+i" class="xw-rs-item">
+                    <span>{{ p }}</span>
+                    <button class="xw-adopt-mini" :class="{ done: adoptedResearch.has(p) }" @click="adoptToBrief('materials', p)">{{ adoptedResearch.has(p) ? '✓ 已采纳' : '采纳→素材' }}</button>
+                  </div>
+                </div>
+                <div class="xw-rs-group">
+                  <h5>问题 + 方案</h5>
+                  <div v-for="(p, i) in research.problems" :key="'q'+i" class="xw-rs-item">
+                    <span><b>Q:</b> {{ p.question }}　<b>A:</b> {{ p.solution }}</span>
+                    <button class="xw-adopt-mini" :class="{ done: adoptedResearch.has(p.question + ' → ' + p.solution) }" @click="adoptToBrief('materials', p.question + ' → ' + p.solution)">{{ adoptedResearch.has(p.question + ' → ' + p.solution) ? '✓ 已采纳' : '采纳→素材' }}</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- AI 选项式反问 -->
           <div v-if="pendingQuestions.length" class="xw-questions">
             <p class="xw-q-head">AI 想先跟你确认几件事（选一个，或自己填）：</p>
@@ -652,6 +834,27 @@ const hitTerms = computed(() => {
             </div>
             <p v-if="!blocklist.length" class="xw-bl-empty">暂无禁用词。</p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 通读诊断抽屉（只读建议，不改稿）-->
+    <div class="xw-drawer-mask" :class="{ 'is-open': dxOpen }" @click.self="dxOpen = false">
+      <div class="xw-drawer xw-drawer-wide" :class="{ 'is-open': dxOpen }">
+        <div class="xw-drawer-head">
+          <h3>🩺 AI 通读诊断</h3>
+          <button class="xw-btn-icon" @click="dxOpen = false">✕</button>
+        </div>
+        <div class="xw-drawer-body">
+          <p class="xw-bl-note">AI 只给建议、不替你改。看完自己用划选工具改，判断权在你。</p>
+          <p v-if="dxStale && !dxLoading" class="xw-dx-stale">⚠ 正文已改动，这是上一次诊断的结果，可能已过期。点「🩺 通读诊断」重新体检。</p>
+          <p v-if="dxLoading" class="xw-assist-empty">AI 通读中…</p>
+          <div v-for="(d, i) in diagnostics" :key="i" class="xw-dx-card">
+            <div class="xw-dx-dim">{{ d.dimension }}</div>
+            <div class="xw-dx-finding">{{ d.finding }}</div>
+            <div class="xw-dx-sugg">💡 {{ d.suggestion }}</div>
+          </div>
+          <p v-if="!dxLoading && !diagnostics.length" class="xw-bl-empty">还没有诊断结果。</p>
         </div>
       </div>
     </div>
@@ -859,6 +1062,8 @@ button { font-family: inherit; }
   transform: translateX(100%); transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); display: flex; flex-direction: column;
 }
 .xw-drawer.is-open { transform: translateX(0); }
+/* 诊断抽屉专用：6 条卡片密集，400px 太窄挤不下，加宽并让长文本正常换行 */
+.xw-drawer-wide { width: min(560px, 94vw); }
 .xw-drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 24px; border-bottom: 1px solid #E5E7EB; }
 .xw-drawer-head h3 { margin: 0; font-size: 18px; font-weight: 600; }
 .xw-drawer-body { padding: 24px; overflow-y: auto; flex: 1; }
@@ -874,6 +1079,54 @@ button { font-family: inherit; }
 .xw-bl-kind.word { background: #FFE4E6; color: #991B1B; }
 .xw-bl-kind.phrase { background: #F3E8FF; color: #6B21A8; }
 .xw-bl-term { flex: 1; font-size: 14px; color: #111827; }
+
+/* ① AI 辅助想法 */
+.xw-assist { border: 1px dashed #E5E7EB; border-radius: 10px; padding: 12px; background: #FCFCFD; }
+.xw-assist-tabs { display: flex; gap: 8px; }
+.xw-assist-btn {
+  border: 1px solid #E5E7EB; background: #fff; border-radius: 8px;
+  padding: 6px 12px; font-size: 13px; cursor: pointer; color: #374151;
+}
+.xw-assist-btn:hover:not(:disabled) { border-color: var(--hc-primary); color: var(--hc-primary); }
+.xw-assist-btn:disabled { opacity: .6; cursor: not-allowed; }
+.xw-assist-panel { margin-top: 12px; border-top: 1px solid #F0F0F0; padding-top: 12px; }
+.xw-assist-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; }
+.xw-assist-x { border: none; background: none; color: #9CA3AF; cursor: pointer; font-size: 12px; }
+.xw-assist-empty { font-size: 13px; color: #9CA3AF; font-style: italic; }
+.xw-assumption { font-style: normal; font-weight: 500; font-size: 12px; color: #B45309; }
+.xw-idea { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+.xw-idea:hover { background: #F9FAFB; }
+.xw-idea-body { flex: 1; }
+.xw-idea-point { font-size: 14px; color: #111827; line-height: 1.5; }
+.xw-idea-why { font-size: 12px; color: #6B7280; margin-top: 2px; }
+.xw-adopt-mini {
+  flex: none; border: 1px solid #FFE0C2; background: #FFF8F0; color: #C2410C;
+  border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.xw-adopt-mini:hover { background: #FFEFDD; }
+.xw-adopt-mini.done { background: #ECFDF5; border-color: #A7F3D0; color: #059669; }
+
+/* 采纳提示 toast */
+.xw-toast {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 2000; background: #059669; color: #fff;
+  padding: 8px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  box-shadow: 0 8px 24px rgba(5, 150, 105, .32);
+}
+.xw-toast-enter-active, .xw-toast-leave-active { transition: opacity .2s, transform .2s; }
+.xw-toast-enter-from, .xw-toast-leave-to { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+.xw-rs-group { margin-top: 10px; }
+.xw-rs-group h5 { margin: 0 0 4px; font-size: 12px; color: #6B7280; font-weight: 600; }
+.xw-rs-item { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: #374151; line-height: 1.5; }
+.xw-rs-item:hover { background: #F9FAFB; }
+.xw-rs-item > span { flex: 1; }
+
+/* ③ 通读诊断卡片 */
+.xw-dx-card { border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.xw-dx-dim { font-size: 13px; font-weight: 600; color: var(--hc-primary); margin-bottom: 6px; }
+.xw-dx-finding { font-size: 14px; color: #374151; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.xw-dx-sugg { font-size: 13px; color: #059669; line-height: 1.6; margin-top: 6px; background: #ECFDF5; border-radius: 6px; padding: 6px 10px; white-space: pre-wrap; word-break: break-word; }
+.xw-dx-stale { font-size: 13px; color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 12px; line-height: 1.5; margin-bottom: 12px; }
 
 /* 骨架屏动画 / Loading */
 .xw-loader-dots::after { content: ''; animation: dots 1.5s infinite steps(4, end); }

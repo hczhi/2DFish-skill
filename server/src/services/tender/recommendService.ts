@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
 import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
 import { pushTenderRecommendations, type FeishuTenderItem } from './feishuNotify.js';
+import { syncUserRecommendations, syncAllTenders, getBitableUrl } from './feishuBitable.js';
 
 interface UserConfig {
   userId: string;
@@ -17,11 +18,13 @@ interface UserConfig {
     qualifications: string[];
     caseTags: string[];
     excludedTypes: string[];
+    platforms: string[];
   };
 }
 
 interface TenderRow {
   id: string;
+  platform: string;
   title: string;
   purchaser_name: string;
   budget_amount: number;
@@ -98,8 +101,15 @@ function getTier(score: number, feedbackCount: number = 0): string {
   return 'filter';
 }
 
-function scoreBudget(budgetAmount: number, config: UserConfig, purchaserName: string): number {
-  if (!budgetAmount || budgetAmount === 0) return 50;
+// 有些平台（如美的询源云）根本不发布预算金额，此时"预算未知"不该被当成缺点扣分，
+// 直接给满分让这一轴的权重全占满。而 gdgpo 的 0 通常是正文有预算但没抽出来，
+// 给满分等于奖励抽取失败，所以仍走 50 的中性兜底。
+const PLATFORMS_WITHOUT_BUDGET = new Set(['meicloud']);
+
+function scoreBudget(budgetAmount: number, config: UserConfig, purchaserName: string, platform: string = ''): number {
+  if (!budgetAmount || budgetAmount === 0) {
+    return PLATFORMS_WITHOUT_BUDGET.has(platform) ? 100 : 50;
+  }
   const { budgetMin, budgetMax, allowBelowMinForVip } = config.preferences;
   if (budgetMin === 0 && budgetMax === 0) return 60;
 
@@ -322,17 +332,18 @@ function loadUserConfig(userId: string): UserConfig {
       qualifications: JSON.parse(pref.qualifications || '[]'),
       caseTags: JSON.parse(pref.case_tags || '[]'),
       excludedTypes: JSON.parse(pref.excluded_types || '[]'),
+      platforms: JSON.parse(pref.platforms || '[]'),
     } : {
       budgetMin: 0, budgetMax: 0, allowBelowMinForVip: false,
       preferredRegions: [], acceptableRegions: [], excludedRegions: [],
-      qualifications: [], caseTags: [], excludedTypes: [],
+      qualifications: [], caseTags: [], excludedTypes: [], platforms: [],
     },
   };
 }
 
 export async function scoreTenderForUser(tender: TenderRow, config: UserConfig, adminUserId: string, feedbackCount: number = 0): Promise<ScoreResult> {
   const keywordScore = scoreKeywordMatch(tender, config);
-  const budgetScore = scoreBudget(tender.budget_amount, config, tender.purchaser_name);
+  const budgetScore = scoreBudget(tender.budget_amount, config, tender.purchaser_name, tender.platform);
   const relationshipScore = scoreRelationship(tender.purchaser_name, config);
   const regionScore = scoreRegion(tender.region_name, config);
   const timelinessScore = scoreTimeliness(tender.publish_date);
@@ -372,7 +383,7 @@ export async function scoreTenderForUser(tender: TenderRow, config: UserConfig, 
 
 function preFilterScore(tender: TenderRow, config: UserConfig): number {
   const W = getWeights();
-  const budgetScore = scoreBudget(tender.budget_amount, config, tender.purchaser_name);
+  const budgetScore = scoreBudget(tender.budget_amount, config, tender.purchaser_name, tender.platform);
   const relationshipScore = scoreRelationship(tender.purchaser_name, config);
   const regionScore = scoreRegion(tender.region_name, config);
   const timelinessScore = scoreTimeliness(tender.publish_date);
@@ -410,9 +421,9 @@ export async function runRecommendationsForAllUsers(
   let tenders: TenderRow[];
   if (tenderIds && tenderIds.length > 0) {
     const placeholders = tenderIds.map(() => '?').join(',');
-    tenders = db.prepare(`SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders WHERE id IN (${placeholders})`).all(...tenderIds) as TenderRow[];
+    tenders = db.prepare(`SELECT id, platform, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders WHERE id IN (${placeholders})`).all(...tenderIds) as TenderRow[];
   } else {
-    tenders = db.prepare('SELECT id, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders ORDER BY publish_date DESC LIMIT 50').all() as TenderRow[];
+    tenders = db.prepare('SELECT id, platform, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders ORDER BY publish_date DESC LIMIT 50').all() as TenderRow[];
   }
 
   if (tenders.length === 0) return { processed: 0, users: 0 };
@@ -435,6 +446,10 @@ export async function runRecommendationsForAllUsers(
 
     let userProcessed = 0;
     let userSkipped = 0;
+    let userSkippedByPlatform = 0;
+
+    // 用户勾选的关注平台。空数组 = 不限平台（老用户与未配置过的用户保持全量）。
+    const wantedPlatforms = new Set(config.preferences.platforms);
 
     // 飞书推送：本轮该用户新产生的、达到阈值的推荐（评完统一推送一条）
     const feishuPref = db.prepare(
@@ -445,6 +460,14 @@ export async function runRecommendationsForAllUsers(
     const feishuItems: FeishuTenderItem[] = [];
 
     for (const tender of tenders) {
+      // 未勾选的平台完全不参与：不评分、不入推荐表、不推送。
+      // 放在最前面，连 filter 档记录都不写，否则用户之后勾上该平台时
+      // 上面的 existing 判断会把它当"已评过"而永远跳过。
+      if (wantedPlatforms.size > 0 && !wantedPlatforms.has(tender.platform)) {
+        userSkippedByPlatform++;
+        continue;
+      }
+
       const existing = db.prepare('SELECT id FROM tender_recommendations WHERE user_id = ? AND tender_id = ?').get(user.id, tender.id) as any;
       if (existing) continue;
 
@@ -455,7 +478,7 @@ export async function runRecommendationsForAllUsers(
         insertStmt.run(
           uuidv4(), user.id, tender.id,
           preScore, 'filter',
-          0, scoreBudget(tender.budget_amount, config, tender.purchaser_name), 0,
+          0, scoreBudget(tender.budget_amount, config, tender.purchaser_name, tender.platform), 0,
           scoreRelationship(tender.purchaser_name, config),
           scoreRegion(tender.region_name, config),
           scoreTimeliness(tender.publish_date),
@@ -505,7 +528,35 @@ export async function runRecommendationsForAllUsers(
       }
     }
 
-    onLog?.(`用户 ${user.id.slice(0, 8)} 完成：LLM评分 ${userProcessed} 条`);
+    onLog?.(`用户 ${user.id.slice(0, 8)} 完成：LLM评分 ${userProcessed} 条${userSkippedByPlatform > 0 ? `，跳过 ${userSkippedByPlatform} 条未关注平台` : ''}`);
+
+    // 多维表格同步（失败不影响评分主流程）。
+    // 必须排在卡片推送之前：卡片按钮会跳到这张表，先把数据写进去，用户点开才不是空的。
+    // 与 webhook 无关，是独立通道 —— 没配 webhook 也照样同步。
+    let bitableUrl = '';
+    try {
+      bitableUrl = getBitableUrl(user.id);
+      if (bitableUrl) {
+        const r = await syncUserRecommendations(user.id, Date.now());
+        if (r.synced > 0) {
+          onLog?.(`  📊 多维表格已同步 ${r.synced} 条推荐给用户 ${user.id.slice(0, 8)}`);
+        }
+        // 「全部标讯」表独立同步：它不看分数，只要库里有新标讯就补进去。
+        // 单独 try 是因为这张表失败不该让推荐表的同步结果一起被吞掉。
+        try {
+          const ra = await syncAllTenders(user.id, Date.now());
+          if (ra.synced > 0) {
+            onLog?.(`  📋 全部标讯表已同步 ${ra.synced} 条给用户 ${user.id.slice(0, 8)}`);
+          }
+        } catch (e: any) {
+          console.error(`[tender] All-tenders sync failed for user=${user.id}:`, e.message);
+          onLog?.(`  ⚠️ 全部标讯表同步失败：${e.message}`);
+        }
+      }
+    } catch (e: any) {
+      console.error(`[tender] Bitable sync failed for user=${user.id}:`, e.message);
+      onLog?.(`  ⚠️ 多维表格同步失败：${e.message}`);
+    }
 
     // 飞书推送（失败不影响评分主流程）
     if (feishuOn && feishuItems.length > 0) {
@@ -514,7 +565,8 @@ export async function runRecommendationsForAllUsers(
           feishuPref.feishu_webhook,
           feishuPref.feishu_secret || undefined,
           feishuItems,
-          Date.now()
+          Date.now(),
+          bitableUrl || undefined
         );
         if (result.ok) {
           onLog?.(`  📮 飞书已推送 ${feishuItems.length} 条给用户 ${user.id.slice(0, 8)}`);

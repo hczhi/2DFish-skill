@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../../lib/api'
+import { apiGet, apiPost, apiPatch } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { openLoginModal } from '../../lib/loginModal'
 import SiteHeader from '../../components/common/SiteHeader.vue'
@@ -11,12 +11,9 @@ import SiteFooter from '../../components/common/SiteFooter.vue'
 const route = useRoute()
 const router = useRouter()
 const locale = computed(() => route.path.startsWith('/en/') ? 'en' : 'zh')
+const prefix = computed(() => locale.value === 'en' ? '/en/tender' : '/tender')
 
-function goSdkDocs() {
-  router.push(locale.value === 'en' ? '/en/tender/sdk-docs' : '/tender/sdk-docs')
-}
-
-const activeTab = ref<'recommend' | 'browse' | 'settings'>('recommend')
+const activeTab = ref<'recommend' | 'browse'>('recommend')
 const tierFilter = ref('all')
 
 // Recommendations
@@ -33,34 +30,6 @@ const browseSearch = ref('')
 const browseKeyword = ref('')
 const browseLoading = ref(false)
 const usedKeywords = ref<string[]>([])
-
-// Settings - Keywords
-const keywords = ref<any[]>([])
-const keywordPool = ref<any[]>([])
-const selectedPoolKeyword = ref('')
-const newWeight = ref(1.0)
-
-// Settings - Clients
-const clients = ref<any[]>([])
-const newClient = ref({ name: '', score: 5, credit: 'normal', notes: '' })
-
-// Settings - Preferences
-const preferences = ref({
-  budgetMin: 0,
-  budgetMax: 0,
-  allowBelowMinForVip: false,
-  preferredRegions: [] as string[],
-  acceptableRegions: [] as string[],
-  excludedRegions: [] as string[],
-  qualifications: [] as string[],
-  caseTags: [] as string[],
-  excludedTypes: [] as string[],
-})
-const newPreferredRegion = ref('')
-const newAcceptableRegion = ref('')
-const newQualification = ref('')
-const newCaseTag = ref('')
-const newExcludedType = ref('')
 
 // Detail modal
 const showDetail = ref(false)
@@ -81,9 +50,28 @@ const tierLabels: Record<string, { zh: string; en: string; icon: string }> = {
   filter: { zh: '过滤', en: 'Filtered', icon: '❌' },
 }
 
+// 用户自己的多维表格地址。未配置时返回空串，对应入口不渲染。
+const bitableUrl = ref('')
+
+async function loadBitableUrl() {
+  try {
+    const r = await apiGet('/api/tender/bitable/url')
+    bitableUrl.value = r?.url || ''
+  } catch {
+    // 没配置 / 取不到都只是少一个入口，不打扰用户
+  }
+}
+
 onMounted(() => {
   if (!getToken()) {
     openLoginModal(window.location.pathname, '标讯推荐需要登录')
+    return
+  }
+  loadBitableUrl()
+  if (route.query.tab === 'browse') {
+    activeTab.value = 'browse'
+    loadTenders()
+    loadUsedKeywords()
     return
   }
   loadRecommendations()
@@ -123,24 +111,14 @@ async function loadTenders() {
   }
 }
 
-async function loadSettings() {
-  const [kws, cls, pref, pool] = await Promise.all([
-    apiGet('/api/tender/keywords'),
-    apiGet('/api/tender/clients'),
-    apiGet('/api/tender/preferences'),
-    apiGet('/api/tender/keyword-pool'),
-  ])
-  keywords.value = kws
-  clients.value = cls
-  preferences.value = pref
-  keywordPool.value = pool
-}
-
-function switchTab(tab: 'recommend' | 'browse' | 'settings') {
+function switchTab(tab: 'recommend' | 'browse') {
   activeTab.value = tab
   if (tab === 'recommend') loadRecommendations()
-  else if (tab === 'browse') { loadTenders(); loadUsedKeywords() }
-  else if (tab === 'settings') loadSettings()
+  else { loadTenders(); loadUsedKeywords() }
+}
+
+function goSettings() {
+  router.push(`${prefix.value}/settings`)
 }
 
 async function viewDetail(id: string) {
@@ -156,60 +134,6 @@ async function markRead(id: string) {
   await apiPatch(`/api/tender/recommendations/${id}/read`, {})
   const item = recommendations.value.find(r => r.id === id)
   if (item) item.is_read = 1
-}
-
-// Keywords
-async function addKeyword() {
-  if (!selectedPoolKeyword.value) return
-  const alreadyAdded = keywords.value.some(k => k.keyword === selectedPoolKeyword.value)
-  if (alreadyAdded) { alert(locale.value === 'en' ? 'Already added' : '已添加该关键词'); return }
-  await apiPost('/api/tender/keywords', { keyword: selectedPoolKeyword.value, weight: newWeight.value })
-  selectedPoolKeyword.value = ''
-  newWeight.value = 1.0
-  keywords.value = await apiGet('/api/tender/keywords')
-}
-
-async function deleteKeyword(id: string) {
-  await apiDelete(`/api/tender/keywords/${id}`)
-  keywords.value = keywords.value.filter(k => k.id !== id)
-}
-
-async function toggleKeyword(id: string, enabled: boolean) {
-  await apiPatch(`/api/tender/keywords/${id}`, { enabled })
-}
-
-// Clients
-async function addClient() {
-  if (!newClient.value.name.trim()) return
-  await apiPost('/api/tender/clients', {
-    clientName: newClient.value.name.trim(),
-    relationshipScore: newClient.value.score,
-    paymentCredit: newClient.value.credit,
-    notes: newClient.value.notes,
-  })
-  newClient.value = { name: '', score: 5, credit: 'normal', notes: '' }
-  clients.value = await apiGet('/api/tender/clients')
-}
-
-async function deleteClient(id: string) {
-  await apiDelete(`/api/tender/clients/${id}`)
-  clients.value = clients.value.filter(c => c.id !== id)
-}
-
-// Preferences
-async function savePreferences() {
-  await apiPut('/api/tender/preferences', preferences.value)
-  alert(locale.value === 'en' ? 'Saved' : '已保存')
-}
-
-function addPreferredRegion() { if (newPreferredRegion.value.trim()) { preferences.value.preferredRegions.push(newPreferredRegion.value.trim()); newPreferredRegion.value = '' } }
-function addAcceptableRegion() { if (newAcceptableRegion.value.trim()) { preferences.value.acceptableRegions.push(newAcceptableRegion.value.trim()); newAcceptableRegion.value = '' } }
-function addCaseTag() { if (newCaseTag.value.trim()) { preferences.value.caseTags.push(newCaseTag.value.trim()); newCaseTag.value = '' } }
-function addQualification() { if (newQualification.value.trim()) { preferences.value.qualifications.push(newQualification.value.trim()); newQualification.value = '' } }
-function addExcludedType() { if (newExcludedType.value.trim()) { preferences.value.excludedTypes.push(newExcludedType.value.trim()); newExcludedType.value = '' } }
-
-function removeFromArray(arr: string[], index: number) {
-  arr.splice(index, 1)
 }
 
 function formatBudget(amount: number): string {
@@ -255,26 +179,27 @@ async function submitFeedback() {
     <SiteHeader />
     <main class="tender-page">
       <div class="tender-container">
-        
+
         <!-- Compact Header & Controls -->
         <div class="dashboard-header">
           <div class="header-titles">
+            <router-link :to="prefix" class="module-back">← {{ locale === 'en' ? 'Bid Recommendations' : '标讯智能推荐' }}</router-link>
             <h1 class="hero-title">
-              {{ locale === 'en' ? 'Bid Recommendations' : '标讯智能推荐' }}
+              {{ locale === 'en' ? 'Tenders' : '查看标讯' }}
             </h1>
-            <p class="tender-subtitle">{{ locale === 'en' ? 'AI-powered bid matching engine.' : 'AI 驱动的标讯匹配引擎。' }}</p>
+            <p class="tender-subtitle">{{ locale === 'en' ? 'Your AI-scored recommendations and the full tender pool.' : 'AI 打分后的推荐结果，以及全部标讯池。' }}</p>
           </div>
-          
+
           <div class="header-controls">
             <!-- Filter embedded in header when on recommend tab -->
             <div v-if="activeTab === 'recommend'" class="tier-filter">
               <span class="filter-label">{{ locale === 'en' ? 'Filter:' : '筛选：' }}</span>
-              <button :class="{ active: tierFilter === 'all' }" @click="tierFilter = 'all'; loadRecommendations()">{{ locale === 'en' ? 'All' : '全部' }}</button>
-              <button :class="{ active: tierFilter === 'priority' }" @click="tierFilter = 'priority'; loadRecommendations()">🔥 {{ locale === 'en' ? 'Priority' : '优先跟' }}</button>
-              <button :class="{ active: tierFilter === 'consider' }" @click="tierFilter = 'consider'; loadRecommendations()">🟡 {{ locale === 'en' ? 'Consider' : '可考虑' }}</button>
-              <button :class="{ active: tierFilter === 'watch' }" @click="tierFilter = 'watch'; loadRecommendations()">⚠️ {{ locale === 'en' ? 'Watch' : '观望' }}</button>
+              <button :class="{ active: tierFilter === 'all' }" @click="tierFilter = 'all'; recPage = 1; loadRecommendations()">{{ locale === 'en' ? 'All' : '全部' }}</button>
+              <button :class="{ active: tierFilter === 'priority' }" @click="tierFilter = 'priority'; recPage = 1; loadRecommendations()">🔥 {{ locale === 'en' ? 'Priority' : '优先跟' }}</button>
+              <button :class="{ active: tierFilter === 'consider' }" @click="tierFilter = 'consider'; recPage = 1; loadRecommendations()">🟡 {{ locale === 'en' ? 'Consider' : '可考虑' }}</button>
+              <button :class="{ active: tierFilter === 'watch' }" @click="tierFilter = 'watch'; recPage = 1; loadRecommendations()">⚠️ {{ locale === 'en' ? 'Watch' : '观望' }}</button>
             </div>
-            
+
             <!-- Search embedded in header when on browse tab -->
             <div v-if="activeTab === 'browse'" class="browse-search">
               <select v-model="browseKeyword" class="keyword-filter-select" @change="browsePage = 1; loadTenders()">
@@ -294,13 +219,16 @@ async function submitFeedback() {
               <button :class="{ active: activeTab === 'browse' }" @click="switchTab('browse')">
                 {{ locale === 'en' ? 'All Tenders' : '全部标讯' }}
               </button>
-              <button :class="{ active: activeTab === 'settings' }" @click="switchTab('settings')">
-                {{ locale === 'en' ? 'My Preferences' : '个人配置' }}
-              </button>
-              <button @click="goSdkDocs">
-                {{ locale === 'en' ? 'Get SDK' : '获取 SDK' }}
-              </button>
             </div>
+
+            <!-- 常驻入口：没有推送卡片时也能进多维表格。未配置则整个按钮不出现 -->
+            <a v-if="bitableUrl" :href="bitableUrl" target="_blank" rel="noopener" class="link-btn bitable-link">
+              {{ locale === 'en' ? '📊 Feishu Base →' : '📊 飞书多维表格 →' }}
+            </a>
+
+            <button class="link-btn" @click="goSettings">
+              {{ locale === 'en' ? 'Configuration →' : '配置设定 →' }}
+            </button>
           </div>
         </div>
 
@@ -309,18 +237,19 @@ async function submitFeedback() {
           <div v-if="recLoading" class="loading-state">{{ locale === 'en' ? 'Loading...' : '加载中...' }}</div>
           <div v-else-if="recommendations.length === 0" class="empty-state">
             <p>{{ locale === 'en' ? 'No recommendations yet. Configure your preferences first.' : '暂无推荐，请先配置个人偏好。' }}</p>
+            <button class="empty-cta" @click="goSettings">{{ locale === 'en' ? 'Go to Configuration' : '去配置设定' }}</button>
           </div>
           <div v-else class="rec-list-v2">
             <div v-for="rec in recommendations" :key="rec.id" :class="['rec-card-v2', rec.tier]" @click="viewDetail(rec.tender_id)">
               <div class="tier-accent"></div>
-              
+
               <div class="rec-main-content">
                 <div class="rec-header">
                   <div class="rec-score-block">
                     <span class="score-value">{{ rec.total_score }}</span>
                     <span class="score-label">{{ locale === 'en' ? 'Score' : '匹配度' }}</span>
                   </div>
-                  
+
                   <div class="rec-title-group">
                     <div class="rec-title-row">
                       <h3 class="rec-title">{{ rec.title }}</h3>
@@ -426,124 +355,6 @@ async function submitFeedback() {
             <button :disabled="browsePage * 20 >= browseTotal" @click="browsePage++; loadTenders()">{{ locale === 'en' ? 'Next' : '下一页' }}</button>
           </div>
         </div>
-
-        <!-- Settings Tab -->
-        <div v-if="activeTab === 'settings'" class="tab-content settings-content">
-          <!-- Keywords Section -->
-          <section class="settings-section">
-            <h2>{{ locale === 'en' ? 'Keywords' : '关注关键词' }}</h2>
-            <p class="section-desc">{{ locale === 'en' ? 'Select keywords from the predefined list to match against bids' : '从预设关键词中选择，用于匹配标讯标题和内容' }}</p>
-            <div class="add-row">
-              <select v-model="selectedPoolKeyword" class="keyword-select">
-                <option value="" disabled>{{ locale === 'en' ? '-- Select keyword --' : '-- 选择关键词 --' }}</option>
-                <option v-for="pk in keywordPool" :key="pk.id" :value="pk.keyword" :disabled="keywords.some(k => k.keyword === pk.keyword)">
-                  {{ pk.keyword }}{{ pk.category ? ` (${pk.category})` : '' }}{{ keywords.some(k => k.keyword === pk.keyword) ? (locale === 'en' ? ' ✓' : ' 已添加') : '' }}
-                </option>
-              </select>
-              <select v-model="newWeight">
-                <option :value="1.0">{{ locale === 'en' ? 'Normal' : '正常权重' }}</option>
-                <option :value="1.5">{{ locale === 'en' ? 'High' : '高权重' }}</option>
-                <option :value="-1.0">{{ locale === 'en' ? 'Exclude' : '排除' }}</option>
-              </select>
-              <button @click="addKeyword">+</button>
-            </div>
-            <div class="items-list">
-              <div v-for="kw in keywords" :key="kw.id" class="item-row">
-                <span :class="['kw-tag', { negative: kw.weight < 0, disabled: !kw.enabled }]">{{ kw.keyword }}</span>
-                <span class="kw-weight">{{ kw.weight > 0 ? `+${kw.weight}` : kw.weight }}</span>
-                <button class="btn-sm" @click="toggleKeyword(kw.id, !kw.enabled)">{{ kw.enabled ? '✓' : '○' }}</button>
-                <button class="btn-sm btn-danger" @click="deleteKeyword(kw.id)">×</button>
-              </div>
-            </div>
-          </section>
-
-          <!-- Clients Section -->
-          <section class="settings-section">
-            <h2>{{ locale === 'en' ? 'Client Relationships' : '客户关系表' }}</h2>
-            <p class="section-desc">{{ locale === 'en' ? 'Known purchasers and your relationship with them' : '已知采购人及关系评分' }}</p>
-            <div class="add-row client-add">
-              <input v-model="newClient.name" :placeholder="locale === 'en' ? 'Purchaser name' : '采购人名称'" />
-              <select v-model="newClient.score">
-                <option v-for="n in 10" :key="n" :value="n">{{ n }}{{ locale === 'en' ? 'pts' : '分' }}</option>
-              </select>
-              <select v-model="newClient.credit">
-                <option value="normal">{{ locale === 'en' ? 'Normal' : '正常' }}</option>
-                <option value="slow">{{ locale === 'en' ? 'Slow pay' : '拖款' }}</option>
-                <option value="bad">{{ locale === 'en' ? 'Avoid' : '慎入' }}</option>
-              </select>
-              <button @click="addClient">+</button>
-            </div>
-            <div class="items-list">
-              <div v-for="cl in clients" :key="cl.id" class="item-row client-row">
-                <span class="client-name">{{ cl.client_name }}</span>
-                <span class="client-score">{{ cl.relationship_score }}{{ locale === 'en' ? 'pts' : '分' }}</span>
-                <span :class="['client-credit', cl.payment_credit]">{{ cl.payment_credit === 'normal' ? '正常' : cl.payment_credit === 'slow' ? '拖款' : '慎入' }}</span>
-                <button class="btn-sm btn-danger" @click="deleteClient(cl.id)">×</button>
-              </div>
-            </div>
-          </section>
-
-          <!-- Preferences Section -->
-          <section class="settings-section">
-            <h2>{{ locale === 'en' ? 'Preferences' : '偏好设置' }}</h2>
-
-            <div class="pref-group">
-              <h3>{{ locale === 'en' ? 'Budget Range (CNY)' : '预算区间（万元）' }}</h3>
-              <div class="budget-inputs">
-                <input v-model.number="preferences.budgetMin" type="number" :placeholder="locale === 'en' ? 'Min' : '下限'" />
-                <span>—</span>
-                <input v-model.number="preferences.budgetMax" type="number" :placeholder="locale === 'en' ? 'Max' : '上限'" />
-                <label><input type="checkbox" v-model="preferences.allowBelowMinForVip" /> {{ locale === 'en' ? 'Allow below for VIP clients' : '熟客可破下限' }}</label>
-              </div>
-            </div>
-
-            <div class="pref-group">
-              <h3>{{ locale === 'en' ? 'Preferred Regions' : '优先地区' }}</h3>
-              <div class="tag-input">
-                <input v-model="newPreferredRegion" :placeholder="locale === 'en' ? 'e.g. Guangzhou' : '例：广州'" @keyup.enter="addPreferredRegion()" />
-                <button @click="addPreferredRegion()">+</button>
-              </div>
-              <div class="tags">
-                <span v-for="(r, i) in preferences.preferredRegions" :key="i" class="tag">{{ r }} <button @click="removeFromArray(preferences.preferredRegions, i)">×</button></span>
-              </div>
-            </div>
-
-            <div class="pref-group">
-              <h3>{{ locale === 'en' ? 'Case Tags' : '案例标签' }}</h3>
-              <div class="tag-input">
-                <input v-model="newCaseTag" :placeholder="locale === 'en' ? 'e.g. Brand Campaign' : '例：品牌全案'" @keyup.enter="addCaseTag()" />
-                <button @click="addCaseTag()">+</button>
-              </div>
-              <div class="tags">
-                <span v-for="(t, i) in preferences.caseTags" :key="i" class="tag">{{ t }} <button @click="removeFromArray(preferences.caseTags, i)">×</button></span>
-              </div>
-            </div>
-
-            <div class="pref-group">
-              <h3>{{ locale === 'en' ? 'Qualifications' : '公司资质' }}</h3>
-              <div class="tag-input">
-                <input v-model="newQualification" :placeholder="locale === 'en' ? 'e.g. ISO9001' : '例：ISO9001'" @keyup.enter="addQualification()" />
-                <button @click="addQualification()">+</button>
-              </div>
-              <div class="tags">
-                <span v-for="(q, i) in preferences.qualifications" :key="i" class="tag">{{ q }} <button @click="removeFromArray(preferences.qualifications, i)">×</button></span>
-              </div>
-            </div>
-
-            <div class="pref-group">
-              <h3>{{ locale === 'en' ? 'Excluded Types' : '不接类型' }}</h3>
-              <div class="tag-input">
-                <input v-model="newExcludedType" :placeholder="locale === 'en' ? 'e.g. Billboard' : '例：标识标牌'" @keyup.enter="addExcludedType()" />
-                <button @click="addExcludedType()">+</button>
-              </div>
-              <div class="tags">
-                <span v-for="(t, i) in preferences.excludedTypes" :key="i" class="tag tag-negative">{{ t }} <button @click="removeFromArray(preferences.excludedTypes, i)">×</button></span>
-              </div>
-            </div>
-
-            <button class="save-btn" @click="savePreferences">{{ locale === 'en' ? 'Save Preferences' : '保存偏好设置' }}</button>
-          </section>
-        </div>
       </div>
 
       <!-- Detail Modal -->
@@ -556,7 +367,7 @@ async function submitFeedback() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
               </button>
             </div>
-            
+
             <div class="modal-body">
               <div class="detail-meta-box">
                 <div class="meta-item" v-if="detailData.purchaser_name">
@@ -586,25 +397,25 @@ async function submitFeedback() {
               </div>
 
               <div class="content-wrapper">
-            <div class="content-header">
-                <h3 class="section-title">{{ locale === 'en' ? 'Content' : '正文' }}</h3>
-                <a v-if="detailData.url" :href="detailData.url" target="_blank" class="original-link-btn">
-                  {{ locale === 'en' ? 'View Original Document' : '查看原文' }}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-                </a>
-              </div>
+                <div class="content-header">
+                  <h3 class="section-title">{{ locale === 'en' ? 'Content' : '正文' }}</h3>
+                  <a v-if="detailData.url" :href="detailData.url" target="_blank" class="original-link-btn">
+                    {{ locale === 'en' ? 'View Original Document' : '查看原文' }}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                  </a>
+                </div>
 
-              <div v-if="sanitizedHtml" class="detail-content">
-                <div class="tender-html-content" v-html="sanitizedHtml"></div>
-              </div>
-              <div v-else-if="detailData.content_text" class="detail-content">
-                <p class="tender-text-content">{{ detailData.content_text.slice(0, 2000) }}</p>
+                <div v-if="sanitizedHtml" class="detail-content">
+                  <div class="tender-html-content" v-html="sanitizedHtml"></div>
+                </div>
+                <div v-else-if="detailData.content_text" class="detail-content">
+                  <p class="tender-text-content">{{ detailData.content_text.slice(0, 2000) }}</p>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </Teleport>
+      </Teleport>
 
       <!-- Feedback Dialog -->
       <Teleport to="body">
@@ -649,12 +460,12 @@ async function submitFeedback() {
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   --primary-color: #0f172a; /* Slate / Deep Blue */
-  
+
   display: flex;
   flex-direction: column;
   min-height: 100vh;
   background-color: #f8fafc;
-  background-image: 
+  background-image:
     radial-gradient(at 50% 0%, #ffffff 0%, transparent 70%),
     radial-gradient(#cbd5e1 1px, transparent 1px);
   background-size: 100% 100%, 24px 24px;
@@ -696,6 +507,17 @@ async function submitFeedback() {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.module-back {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-decoration: none;
+}
+
+.module-back:hover {
+  color: var(--color-text);
 }
 
 .hero-title {
@@ -756,6 +578,32 @@ async function submitFeedback() {
   color: var(--color-text) !important;
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-sm);
+}
+
+.link-btn {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.link-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+
+/* .link-btn 原本给 button 用，套在 <a> 上要自己撑高度并去掉下划线 */
+.bitable-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .tier-filter {
@@ -1168,26 +1016,11 @@ async function submitFeedback() {
   flex: 1;
 }
 
-.rec-feedback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
-  justify-content: flex-end; /* Align buttons to right */
-  min-height: 48px;
-  position: relative;
-}
-
-.rec-feedback .feedback-reason-hint {
-  /* Using the same tooltip style as above */
-}
-
 .tender-card:hover .feedback-reason-hint {
   opacity: 1;
   transform: translateY(0);
 }
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1195,34 +1028,6 @@ async function submitFeedback() {
 
 .meta-divider {
   color: var(--color-border-strong);
-}
-
-/* Settings */
-.settings-content {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
-  gap: 24px;
-}
-
-.settings-section {
-  padding: 24px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-sm);
-}
-
-.settings-section h2 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.section-desc {
-  margin: 0 0 20px;
-  font-size: 13px;
-  color: var(--color-muted);
 }
 
 input, select, textarea {
@@ -1250,207 +1055,6 @@ button:active {
   transform: translateY(1px);
 }
 
-.save-btn,
-.add-row button,
-.tag-input button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 6px;
-  border: none;
-  background: var(--primary-color);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.save-btn:hover,
-.add-row button:hover,
-.tag-input button:hover {
-  background: #1e293b;
-}
-
-.add-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(120px, 0.8fr) auto;
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-.client-add {
-  grid-template-columns: minmax(0, 1.8fr) minmax(100px, 0.7fr) minmax(100px, 0.85fr) auto;
-}
-
-.items-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.item-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-fill);
-}
-
-.kw-tag, .client-name {
-  color: var(--color-text);
-  font-weight: 500;
-  font-size: 13px;
-  flex: 1;
-}
-
-.kw-tag.negative {
-  color: #ef4444;
-}
-
-.kw-tag.disabled {
-  color: var(--color-soft);
-  text-decoration: line-through;
-}
-
-.kw-weight, .client-score {
-  color: var(--color-muted);
-  font-size: 13px;
-}
-
-.btn-sm {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  min-height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.btn-sm:hover {
-  background: var(--color-fill);
-  border-color: var(--color-border-strong);
-}
-
-.btn-sm.btn-danger {
-  color: #ef4444;
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-.btn-sm.btn-danger:hover {
-  background: #fee2e2;
-  border-color: #fca5a5;
-}
-
-.client-credit {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 4px;
-}
-
-.client-credit.normal {
-  background: var(--color-fill-strong);
-  color: var(--color-text);
-}
-
-.client-credit.slow {
-  background: #fffbeb;
-  color: #b45309;
-}
-
-.client-credit.bad {
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.pref-group {
-  margin-bottom: 24px;
-  padding: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-fill);
-}
-
-.pref-group h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.budget-inputs, .tag-input {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.budget-inputs label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--color-muted);
-  cursor: pointer;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-size: 12px;
-}
-
-.tag button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-soft);
-  cursor: pointer;
-}
-
-.tag button:hover {
-  color: #ef4444;
-}
-
-.tag-negative {
-  background: #fef2f2;
-  color: #b91c1c;
-  border-color: #fecaca;
-}
-.tag-negative button:hover { color: #991b1b; }
-
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -1476,7 +1080,7 @@ button:active {
   width: 860px;
   height: 85vh;
   max-width: 90vw;
-  background: #ffffff; /* Revert to white */
+  background: #ffffff;
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
@@ -1655,6 +1259,7 @@ button:active {
   align-items: center;
   justify-content: center;
   flex-direction: column;
+  gap: 16px;
   min-height: 300px;
   padding: 40px 20px;
   border: 1px dashed var(--color-border-strong);
@@ -1663,6 +1268,26 @@ button:active {
   text-align: center;
   color: var(--color-muted);
   font-size: 14px;
+}
+
+.empty-state p {
+  margin: 0;
+}
+
+.empty-cta {
+  height: 36px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.empty-cta:hover {
+  background: #1e293b;
 }
 
 .pagination {
@@ -1704,41 +1329,28 @@ button:active {
   .tender-page {
     padding: 80px 20px 48px;
   }
-  
+
   .dashboard-header {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .header-controls {
     justify-content: flex-start;
   }
-  
+
   .search-input-wrapper input,
   .search-input-wrapper input:focus {
     width: 100%;
   }
-  
+
   .tender-tabs {
     width: 100%;
     overflow-x: auto;
   }
-  
-  .settings-content {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Feedback */
-.rec-feedback {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border);
-}
-
 .feedback-btn {
   display: inline-flex;
   align-items: center;
@@ -1769,16 +1381,6 @@ button:active {
   background: #fef2f2;
   border-color: #fecaca;
   color: #dc2626;
-}
-
-.feedback-reason-hint {
-  font-size: 12px;
-  color: var(--color-soft);
-  margin-left: 8px;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Feedback Dialog */
@@ -1825,6 +1427,7 @@ button:active {
 
 .feedback-dialog-body textarea {
   width: 100%;
+  height: auto;
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1879,5 +1482,3 @@ button:active {
   background: #1e293b;
 }
 </style>
-
-

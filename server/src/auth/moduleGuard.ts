@@ -20,7 +20,15 @@ export function moduleGuard(req: Request, res: Response, next: NextFunction): vo
   const allowedPaths: string[] = JSON.parse(moduleConfig.allowed_paths || '[]');
   const requestPath = req.path;
 
-  const isAllowed = allowedPaths.some(pattern => {
+  const isAllowed = allowedPaths.some(entry => {
+    // 可选的 method 前缀："GET /api/x" 只放行 GET；不写 method 则沿用原来的任意 method 行为。
+    let pattern = entry;
+    const sep = entry.indexOf(' ');
+    if (sep > 0) {
+      const method = entry.slice(0, sep).toUpperCase();
+      if (method !== req.method.toUpperCase()) return false;
+      pattern = entry.slice(sep + 1).trim();
+    }
     if (pattern.endsWith('*')) {
       return requestPath.startsWith(pattern.slice(0, -1));
     }

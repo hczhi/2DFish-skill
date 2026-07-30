@@ -83,6 +83,20 @@ function generateContentHash(platform: string, title: string): string {
   return createHash('md5').update(`${platform}:${title}`).digest('hex');
 }
 
+// 合同公告、中标（成交）结果公告属于事后公示，已经无法投标，不入库。
+// 命中任一模式即整条丢弃，且在列表阶段就丢弃，不再请求详情页。
+const EXCLUDED_NOTICE_TYPE_PATTERNS = [/合同/, /结果公告/, /中标/, /成交/];
+
+// 与 parseDetail / parseListOnly 里的 noticeType 取值保持一致。
+function resolveNoticeType(item: ListItem): string {
+  return item.datasetName || item.noticeNature || '';
+}
+
+function isExcludedNoticeType(noticeType: string): boolean {
+  if (!noticeType) return false;
+  return EXCLUDED_NOTICE_TYPE_PATTERNS.some(pat => pat.test(noticeType));
+}
+
 function parsePublishDate(dateStr: string): Date | null {
   if (!dateStr) return null;
   // Format: "20260709143218" (yyyyMMddHHmmss)
@@ -118,11 +132,15 @@ function stripHtml(html: string): string {
 }
 
 function extractBudget(text: string): { budget: string; budgetAmount: number } {
+  // 「万」必须在捕获组里判断，不能对全文 text.includes('万')：
+  // 正文别处几乎总会出现「万」（投标保证金贰万元整、地名、"数万元级"），
+  // 于是以「元」为单位的预算会被整体乘 10000。历史数据里
+  // 「预算金额：2,108,260.50元」就被存成了 21082605000（约 210 亿）。
   const patterns = [
-    /预算[金额：:]*\s*([\d,.]+)\s*万?元/,
-    /控制价[：:]*\s*([\d,.]+)\s*万?元/,
-    /合同估算价[：:]*\s*([\d,.]+)\s*万?元/,
-    /([\d,.]+)\s*万元/,
+    /预算[金额：:]*\s*([\d,.]+)\s*(万?)元/,
+    /控制价[：:]*\s*([\d,.]+)\s*(万?)元/,
+    /合同估算价[：:]*\s*([\d,.]+)\s*(万?)元/,
+    /([\d,.]+)\s*(万)元/,
   ];
   for (const pat of patterns) {
     const match = text.match(pat);
@@ -130,8 +148,7 @@ function extractBudget(text: string): { budget: string; budgetAmount: number } {
       const numStr = match[1].replace(/,/g, '');
       const num = parseFloat(numStr);
       if (!isNaN(num) && num > 0) {
-        const isWan = text.includes('万');
-        const amount = isWan ? num * 10000 : num;
+        const amount = match[2] === '万' ? num * 10000 : num;
         return { budget: match[0], budgetAmount: amount };
       }
     }
@@ -355,6 +372,7 @@ export async function crawlGdgpo(
   let newAdded = 0;
   let duplicates = 0;
   let errors = 0;
+  let skippedByType = 0;
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysLimit);
@@ -391,16 +409,24 @@ export async function crawlGdgpo(
         onProgress?.({ step: 'fetching', message: `"${keyword}" ${listItems.length} 条中 ${recentItems.length} 条在时间范围内`, current: ki + 1, total: keywords.length });
       }
 
+      // 合同/结果类公告在列表阶段就丢掉，省掉后面的详情页请求
+      const wantedItems = recentItems.filter(item => !isExcludedNoticeType(resolveNoticeType(item)));
+      const skippedNow = recentItems.length - wantedItems.length;
+      if (skippedNow > 0) {
+        skippedByType += skippedNow;
+        onProgress?.({ step: 'fetching', message: `"${keyword}" 忽略 ${skippedNow} 条合同/结果类公告`, current: ki + 1, total: keywords.length });
+      }
+
       // Early dedup: skip items already in DB or already seen this run
-      const newItems = recentItems.filter(item => {
+      const newItems = wantedItems.filter(item => {
         const hash = generateContentHash('gdgpo', item.noticeTitle);
         if (existingHashes.has(hash) || seenHashes.has(hash)) return false;
         seenHashes.add(hash);
         return true;
       });
 
-      if (recentItems.length > 0 && newItems.length < recentItems.length) {
-        onProgress?.({ step: 'fetching', message: `"${keyword}" 去重后 ${newItems.length} 条新数据（跳过 ${recentItems.length - newItems.length} 条已有）`, current: ki + 1, total: keywords.length });
+      if (wantedItems.length > 0 && newItems.length < wantedItems.length) {
+        onProgress?.({ step: 'fetching', message: `"${keyword}" 去重后 ${newItems.length} 条新数据（跳过 ${wantedItems.length - newItems.length} 条已有）`, current: ki + 1, total: keywords.length });
       }
 
       totalFound += newItems.length;
@@ -443,6 +469,11 @@ export async function crawlGdgpo(
     `);
 
     for (const item of allItems) {
+      // 兜底：详情页若把类型改成了合同/结果类，这里仍然不入库
+      if (isExcludedNoticeType(item.noticeType)) {
+        skippedByType++;
+        continue;
+      }
       const contentHash = generateContentHash('gdgpo', item.title);
       const result = insertStmt.run(
         uuidv4(),
@@ -478,7 +509,7 @@ export async function crawlGdgpo(
     db.prepare(`UPDATE tender_crawl_logs SET status = 'completed', total_found = ?, new_added = ?, duplicates = ?, errors = ?, completed_at = ? WHERE id = ?`)
       .run(totalFound, newAdded, duplicates, errors, new Date().toISOString(), logId);
 
-    onProgress?.({ step: 'done', message: `Done: ${newAdded} new, ${duplicates} duplicates`, current: allItems.length, total: allItems.length });
+    onProgress?.({ step: 'done', message: `Done: ${newAdded} new, ${duplicates} duplicates, ${skippedByType} skipped (合同/结果类公告)`, current: allItems.length, total: allItems.length });
 
   } catch (e: any) {
     console.error('[tender] Crawl failed:', e);

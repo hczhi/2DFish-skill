@@ -5,6 +5,11 @@ import { getCrawler, getAllPlatforms } from '../services/tender/crawlerRegistry.
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
 import { pushTenderRecommendations } from '../services/tender/feishuNotify.js';
+import {
+  createBitable, createAllTendersTable, grantPermission,
+  syncUserRecommendations, syncAllTenders,
+  invalidateTokenCache, getBitableUrl,
+} from '../services/tender/feishuBitable.js';
 import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
 
 export const tenderRouter = Router();
@@ -163,6 +168,14 @@ tenderRouter.post('/keywords', (req, res) => {
   if (!keyword) return res.status(400).json({ error: 'keyword is required' });
 
   const db = getDatabase();
+
+  // 只允许选后台关键词池里的词：池外的词没有任何爬虫会去搜，
+  // 存进来会变成一个永远不可能有数据的关注词（静默失效）。
+  const inPool = db.prepare('SELECT 1 FROM tender_keyword_pool WHERE keyword = ? AND enabled = 1').get(keyword);
+  if (!inPool) {
+    return res.status(400).json({ error: '该关键词不在平台关键词池中，请联系管理员添加' });
+  }
+
   const id = uuidv4();
   db.prepare('INSERT INTO tender_user_keywords (id, user_id, keyword, weight, created_at) VALUES (?, ?, ?, ?, ?)').run(id, userId, keyword, weight ?? 1.0, new Date().toISOString());
   res.json({ id, keyword, weight: weight ?? 1.0 });
@@ -244,7 +257,7 @@ tenderRouter.get('/preferences', (req, res) => {
     return res.json({
       budgetMin: 0, budgetMax: 0, allowBelowMinForVip: false,
       preferredRegions: [], acceptableRegions: [], excludedRegions: [],
-      qualifications: [], caseTags: [], excludedTypes: [],
+      qualifications: [], caseTags: [], excludedTypes: [], platforms: [],
     });
   }
   res.json({
@@ -257,25 +270,48 @@ tenderRouter.get('/preferences', (req, res) => {
     qualifications: JSON.parse((pref as any).qualifications || '[]'),
     caseTags: JSON.parse((pref as any).case_tags || '[]'),
     excludedTypes: JSON.parse((pref as any).excluded_types || '[]'),
+    platforms: JSON.parse((pref as any).platforms || '[]'),
   });
 });
 
 tenderRouter.put('/preferences', (req, res) => {
   const userId = req.user!.id;
-  const { budgetMin, budgetMax, allowBelowMinForVip, preferredRegions, acceptableRegions, excludedRegions, qualifications, caseTags, excludedTypes } = req.body;
+  const { budgetMin, budgetMax, allowBelowMinForVip, preferredRegions, acceptableRegions, excludedRegions, qualifications, caseTags, excludedTypes, platforms } = req.body;
   const db = getDatabase();
   const now = new Date().toISOString();
 
+  // 只接受注册过的平台 id，挡掉脏值导致用户静默收不到任何推荐
+  const validPlatformIds = new Set(getAllPlatforms().map(p => p.id));
+  const cleanPlatforms = Array.isArray(platforms)
+    ? platforms.filter((p: unknown): p is string => typeof p === 'string' && validPlatformIds.has(p))
+    : [];
+
   const existing = db.prepare('SELECT id FROM tender_user_preferences WHERE user_id = ?').get(userId);
   if (existing) {
-    db.prepare(`UPDATE tender_user_preferences SET budget_min = ?, budget_max = ?, allow_below_min_for_vip = ?, preferred_regions = ?, acceptable_regions = ?, excluded_regions = ?, qualifications = ?, case_tags = ?, excluded_types = ?, updated_at = ? WHERE user_id = ?`)
-      .run(budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), now, userId);
+    db.prepare(`UPDATE tender_user_preferences SET budget_min = ?, budget_max = ?, allow_below_min_for_vip = ?, preferred_regions = ?, acceptable_regions = ?, excluded_regions = ?, qualifications = ?, case_tags = ?, excluded_types = ?, platforms = ?, updated_at = ? WHERE user_id = ?`)
+      .run(budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), now, userId);
   } else {
-    db.prepare(`INSERT INTO tender_user_preferences (id, user_id, budget_min, budget_max, allow_below_min_for_vip, preferred_regions, acceptable_regions, excluded_regions, qualifications, case_tags, excluded_types, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(uuidv4(), userId, budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), now, now);
+    db.prepare(`INSERT INTO tender_user_preferences (id, user_id, budget_min, budget_max, allow_below_min_for_vip, preferred_regions, acceptable_regions, excluded_regions, qualifications, case_tags, excluded_types, platforms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), userId, budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), now, now);
   }
 
   res.json({ success: true });
+});
+
+// ==================== Platforms (shared) ====================
+
+// 用户侧只读平台列表，用于个人配置里勾选"关注平台"。
+// 与 /admin/platforms 同源，区别只是不要求 admin 身份。
+tenderRouter.get('/platforms', (req, res) => {
+  res.json(getAllPlatforms());
+});
+
+// ==================== 多维表格（用户侧只读） ====================
+
+// 用户自己的表格地址。给前端在推荐页放一个常驻入口用 —— 没有推送卡片时也能进表格。
+tenderRouter.get('/bitable/url', (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  res.json({ url: getBitableUrl(req.user.id) });
 });
 
 // ==================== Keyword Pool (shared) ====================
@@ -444,8 +480,9 @@ tenderRouter.post('/admin/crawl', async (req, res) => {
     if (abortSignal.aborted) throw new Error('任务已终止');
 
     const db = getDatabase();
-    // Only set status='draft' for tenders that don't already have a status (newly inserted)
-    const result = db.prepare("UPDATE tenders SET status = 'draft' WHERE status IS NULL OR status = ''").run();
+    // Only set status='draft' for tenders that don't already have a status (newly inserted).
+    // 必须按 platform 收窄：否则多平台并存时 changes 会把别的平台的遗留行算进本次新增数。
+    const result = db.prepare("UPDATE tenders SET status = 'draft' WHERE platform = ? AND (status IS NULL OR status = '')").run(platformId);
     const newCount = result.changes;
 
     crawlLog(`数据库新增: ${newCount} 条（去重后）`);
@@ -687,41 +724,209 @@ tenderRouter.get('/admin/feishu/:userId', (req, res) => {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const row = db.prepare(
-    'SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score FROM tender_user_preferences WHERE user_id = ?'
+    `SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
+            feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
+            bitable_all_table_id, bitable_url, bitable_enabled
+     FROM tender_user_preferences WHERE user_id = ?`
   ).get(req.params.userId) as any;
   res.json({
     feishu_webhook: row?.feishu_webhook || '',
     feishu_secret: row?.feishu_secret || '',
     feishu_enabled: !!row?.feishu_enabled,
     feishu_min_score: row?.feishu_min_score ?? 55,
+    feishu_app_id: row?.feishu_app_id || '',
+    feishu_app_secret: row?.feishu_app_secret || '',
+    bitable_app_token: row?.bitable_app_token || '',
+    bitable_table_id: row?.bitable_table_id || '',
+    bitable_all_table_id: row?.bitable_all_table_id || '',
+    bitable_url: row?.bitable_url || '',
+    bitable_enabled: !!row?.bitable_enabled,
   });
 });
 
 tenderRouter.put('/admin/feishu/:userId', (req, res) => {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  const { feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score } = req.body;
+  const {
+    feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
+    feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
+    bitable_url, bitable_enabled,
+  } = req.body;
   const db = getDatabase();
   const userId = req.params.userId;
 
-  // 确保该用户的 preferences 行存在（评分依赖它；用户可能还没配过偏好）
+  // 确保该用户的 preferences 行存在（评分依赖它；用户可能还没配过偏好）。
+  // id / created_at / updated_at 都是 NOT NULL 且无默认值，必须显式给，否则整个保存 500。
   const existing = db.prepare('SELECT user_id FROM tender_user_preferences WHERE user_id = ?').get(userId);
   if (!existing) {
-    db.prepare('INSERT INTO tender_user_preferences (user_id) VALUES (?)').run(userId);
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO tender_user_preferences (id, user_id, created_at, updated_at) VALUES (?, ?, ?, ?)')
+      .run(uuidv4(), userId, now, now);
   }
+
+  const prevAppId = (db.prepare('SELECT feishu_app_id FROM tender_user_preferences WHERE user_id = ?')
+    .get(userId) as any)?.feishu_app_id || '';
 
   db.prepare(`
     UPDATE tender_user_preferences
-    SET feishu_webhook = ?, feishu_secret = ?, feishu_enabled = ?, feishu_min_score = ?
+    SET feishu_webhook = ?, feishu_secret = ?, feishu_enabled = ?, feishu_min_score = ?,
+        feishu_app_id = ?, feishu_app_secret = ?, bitable_app_token = ?,
+        bitable_table_id = ?, bitable_url = ?, bitable_enabled = ?,
+        updated_at = ?
     WHERE user_id = ?
   `).run(
     feishu_webhook || '',
     feishu_secret || '',
     feishu_enabled ? 1 : 0,
     Number.isFinite(Number(feishu_min_score)) ? Number(feishu_min_score) : 55,
+    feishu_app_id || '',
+    feishu_app_secret || '',
+    bitable_app_token || '',
+    bitable_table_id || '',
+    bitable_url || '',
+    bitable_enabled ? 1 : 0,
+    new Date().toISOString(),
     userId
   );
 
+  // 凭据可能被改了，清掉进程内缓存的 tenant_access_token，否则还在用旧 secret 换来的 token
+  invalidateTokenCache(prevAppId || undefined);
+  if (feishu_app_id) invalidateTokenCache(feishu_app_id);
+
   res.json({ success: true });
+});
+
+// ==================== Admin: 多维表格 ====================
+
+// 服务端建表：一次把列建对，并把 app_token / table_id / url 存库，用户不用手填任何 id。
+tenderRouter.post('/admin/bitable/:userId/init', async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const db = getDatabase();
+  const userId = req.params.userId;
+  const row = db.prepare(
+    'SELECT feishu_app_id, feishu_app_secret, bitable_app_token FROM tender_user_preferences WHERE user_id = ?'
+  ).get(userId) as any;
+
+  if (!row?.feishu_app_id || !row?.feishu_app_secret) {
+    return res.status(400).json({ error: '请先填写并保存 App ID / App Secret' });
+  }
+  // 重复初始化会留下一堆孤儿表格，且旧表里的数据和跟进标记就此失联，必须显式确认覆盖。
+  if (row.bitable_app_token && !req.body?.force) {
+    return res.status(400).json({ error: '该用户已有多维表格，如需重建请传 force: true' });
+  }
+
+  const user = db.prepare('SELECT username FROM user WHERE id = ?').get(userId) as any;
+  const name = `标讯推荐 - ${user?.username || userId.slice(0, 8)}`;
+
+  try {
+    const created = await createBitable(
+      { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
+      name,
+      Date.now()
+    );
+
+    db.prepare(`
+      UPDATE tender_user_preferences
+      SET bitable_app_token = ?, bitable_table_id = ?, bitable_all_table_id = ?,
+          bitable_url = ?, bitable_enabled = 1
+      WHERE user_id = ?
+    `).run(created.appToken, created.tableId, created.allTableId, created.url, userId);
+
+    // 重建时旧的同步记录要清掉，否则新表永远收不到历史推荐。
+    if (req.body?.force) {
+      db.prepare('UPDATE tender_recommendations SET bitable_synced_at = NULL WHERE user_id = ?').run(userId);
+      db.prepare('DELETE FROM tender_bitable_sync WHERE user_id = ?').run(userId);
+    }
+
+    res.json({ success: true, ...created });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || '创建多维表格失败' });
+  }
+});
+
+// 把表格授权给用户或群，否则应用创建的文件不在用户云空间里，用户打不开。
+tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const { member_type, member_id, perm } = req.body || {};
+  const allowedTypes = ['openid', 'openchat', 'email', 'userid'];
+  const allowedPerms = ['view', 'edit', 'full_access'];
+  if (!allowedTypes.includes(member_type)) return res.status(400).json({ error: 'member_type 不合法' });
+  if (!member_id) return res.status(400).json({ error: '缺少 member_id' });
+  const usePerm = allowedPerms.includes(perm) ? perm : 'edit';
+
+  const db = getDatabase();
+  const row = db.prepare(
+    'SELECT feishu_app_id, feishu_app_secret, bitable_app_token FROM tender_user_preferences WHERE user_id = ?'
+  ).get(req.params.userId) as any;
+  if (!row?.bitable_app_token) return res.status(400).json({ error: '该用户尚未初始化多维表格' });
+
+  try {
+    await grantPermission(
+      { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
+      row.bitable_app_token,
+      member_type,
+      member_id,
+      usePerm,
+      Date.now()
+    );
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || '授权失败' });
+  }
+});
+
+// 给已经在用的表格补建「全部标讯」表。
+// 不能让老用户走 init force=true —— 那会换掉 app_token，旧表里的跟进标记全部失联。
+tenderRouter.post('/admin/bitable/:userId/init-all-table', async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const db = getDatabase();
+  const userId = req.params.userId;
+  const row = db.prepare(
+    `SELECT feishu_app_id, feishu_app_secret, bitable_app_token, bitable_all_table_id
+     FROM tender_user_preferences WHERE user_id = ?`
+  ).get(userId) as any;
+
+  if (!row?.bitable_app_token) return res.status(400).json({ error: '该用户尚未初始化多维表格' });
+  if (row.bitable_all_table_id) {
+    return res.status(400).json({ error: '「全部标讯」表已存在' });
+  }
+
+  try {
+    const allTableId = await createAllTendersTable(
+      { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
+      row.bitable_app_token,
+      Date.now()
+    );
+    db.prepare('UPDATE tender_user_preferences SET bitable_all_table_id = ? WHERE user_id = ?')
+      .run(allTableId, userId);
+    res.json({ success: true, allTableId });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || '创建「全部标讯」表失败' });
+  }
+});
+
+// 手动全量同步：把所有未推送过的推荐补进表格（也用于验证配置是否可写）。
+// scope=all 只同步「全部标讯」表，scope=rec 只同步推荐表，默认两张都同步。
+tenderRouter.post('/admin/bitable/:userId/sync', async (req, res) => {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  const scope = req.body?.scope || 'both';
+  try {
+    const out: any = { success: true };
+    if (scope === 'both' || scope === 'rec') {
+      const r = await syncUserRecommendations(req.params.userId, Date.now());
+      if (r.skipped) return res.status(400).json({ error: r.skipped });
+      out.synced = r.synced;
+    }
+    if (scope === 'both' || scope === 'all') {
+      const ra = await syncAllTenders(req.params.userId, Date.now());
+      // scope=all 时 skipped 要报出来（比如还没建表），否则用户点了没反应也不知道为什么。
+      if (ra.skipped && scope === 'all') return res.status(400).json({ error: ra.skipped });
+      out.syncedAll = ra.synced;
+      if (ra.skipped) out.allSkipped = ra.skipped;
+    }
+    res.json(out);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || '同步失败' });
+  }
 });
 
 // 发送一条测试消息，验证 webhook 配置是否正确
@@ -739,7 +944,8 @@ tenderRouter.post('/admin/feishu/:userId/test', async (req, res) => {
       row.feishu_webhook,
       row.feishu_secret || undefined,
       [{ title: '【测试】标讯推送配置成功', purchaserName: '示例采购人', totalScore: 88, tier: 'priority', budgetAmount: 1000000, regionName: '广东', url: null }],
-      Date.now()
+      Date.now(),
+      getBitableUrl(req.params.userId) || undefined
     );
     if (result.ok) return res.json({ success: true });
     return res.status(400).json({ error: `飞书返回 code=${result.code ?? '?'} ${result.msg ?? ''}` });

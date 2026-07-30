@@ -119,7 +119,7 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
 
     const duration = Date.now() - startTime;
     if (totalInput || totalOutput) {
-      onComplete(totalInput, totalOutput, duration);
+      onComplete(totalInput, totalOutput, duration, content);
     }
 
     sendEvent('done', {});

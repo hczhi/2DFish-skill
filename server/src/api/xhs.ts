@@ -100,7 +100,7 @@ function handleXhsError(res: Response, e: any, op: string, streamed = false): vo
 async function streamToSSE(
   res: Response,
   stream: AsyncIterable<any>,
-  onComplete: (promptTokens: number, completionTokens: number, durationMs: number) => void
+  onComplete: (promptTokens: number, completionTokens: number, durationMs: number, outputText?: string) => void
 ): Promise<string> {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -126,7 +126,7 @@ async function streamToSSE(
       res.write('data: [DONE]\n\n');
       res.end();
     }
-    onComplete(0, Math.ceil(output.length / 4), Date.now() - start);
+    onComplete(0, Math.ceil(output.length / 4), Date.now() - start, output);
     return output;
   }
   // 一个 delta 都没收到：上游多半空返回（如 DashScope 对某参数不兼容）。也要告诉前端，别干等。
@@ -137,7 +137,7 @@ async function streamToSSE(
   res.write('data: [DONE]\n\n');
   res.end();
   // prompt tokens 无法从流里精确拿到，用输出长度粗估补偿（gateway 已扣一次调用额度）
-  onComplete(0, Math.ceil(output.length / 4), Date.now() - start);
+  onComplete(0, Math.ceil(output.length / 4), Date.now() - start, output);
   return output;
 }
 
@@ -540,6 +540,82 @@ xhsRouter.post('/structure/validate', async (req, res) => {
     res.json({ ok: !!parsed.ok, issues: Array.isArray(parsed.issues) ? parsed.issues : [] });
   } catch (e: any) {
     handleXhsError(res, e, 'structure-validate');
+  }
+});
+
+// POST /api/xhs/brainstorm  ① 头脑风暴：选题 → 一批角度各异的观点初稿
+xhsRouter.post('/brainstorm', async (req, res) => {
+  const b = req.body || {};
+  const brief: struct.WriterBrief = {
+    topic: b.topic ? String(b.topic) : undefined,
+    judgment: b.judgment ? String(b.judgment) : undefined,
+    materials: b.materials ? String(b.materials) : undefined,
+    audience: b.audience ? String(b.audience) : undefined,
+    goal: b.goal ? String(b.goal) : undefined,
+  };
+  if (!brief.topic && !brief.judgment) {
+    return res.status(400).json({ error: '先填一下主题方向或核心观点' });
+  }
+  try {
+    const baseSkill = getSkillForSlot('xhs-structure');
+    const { parsed, raw } = await jsonGatewayWithRetry(
+      // 要发散但仍需合法 JSON：中高温、不带 penalty（DashScope 流式/JSON 下 penalty 不稳）
+      () => ({ messages: [{ role: 'user', content: struct.buildBrainstormPrompt(brief, baseSkill) }], temperature: 0.95, response_format: { type: 'json_object' }, max_tokens: 2000 }),
+      { userId: req.user!.id, source: 'xhs', operation: 'brainstorm', tier: 'strong' }
+    );
+    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
+    res.json({ ideas: Array.isArray(parsed.ideas) ? parsed.ideas : [] });
+  } catch (e: any) {
+    handleXhsError(res, e, 'brainstorm');
+  }
+});
+
+// POST /api/xhs/research  ① 用户洞察：选题 → 受众/痛点/盲区/渴望/问题（均为 AI 假设，需作者核实）
+xhsRouter.post('/research', async (req, res) => {
+  const b = req.body || {};
+  const brief: struct.WriterBrief = {
+    topic: b.topic ? String(b.topic) : undefined,
+    judgment: b.judgment ? String(b.judgment) : undefined,
+    materials: b.materials ? String(b.materials) : undefined,
+    audience: b.audience ? String(b.audience) : undefined,
+    goal: b.goal ? String(b.goal) : undefined,
+  };
+  if (!brief.topic && !brief.audience && !brief.judgment) {
+    return res.status(400).json({ error: '先填一下主题方向、受众或核心观点' });
+  }
+  try {
+    const baseSkill = getSkillForSlot('xhs-structure');
+    const { parsed, raw } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildResearchPrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 3000 }),
+      { userId: req.user!.id, source: 'xhs', operation: 'research', tier: 'strong' }
+    );
+    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
+    res.json({
+      personas: Array.isArray(parsed.personas) ? parsed.personas : [],
+      painPoints: Array.isArray(parsed.painPoints) ? parsed.painPoints : [],
+      blindSpots: Array.isArray(parsed.blindSpots) ? parsed.blindSpots : [],
+      desires: Array.isArray(parsed.desires) ? parsed.desires : [],
+      problems: Array.isArray(parsed.problems) ? parsed.problems : [],
+    });
+  } catch (e: any) {
+    handleXhsError(res, e, 'research');
+  }
+});
+
+// POST /api/xhs/diagnose  ③ 通读诊断：成稿 → 六维度只读建议（不改稿）
+xhsRouter.post('/diagnose', async (req, res) => {
+  const text = String(req.body?.body || '').trim();
+  if (!text) return res.status(400).json({ error: 'body is required' });
+  try {
+    const baseSkill = getSkillForSlot('xhs-structure');
+    const { parsed, raw } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildDiagnosePrompt(text, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 2500 }),
+      { userId: req.user!.id, source: 'xhs', operation: 'diagnose', tier: 'strong' }
+    );
+    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
+    res.json({ diagnostics: Array.isArray(parsed.diagnostics) ? parsed.diagnostics : [] });
+  } catch (e: any) {
+    handleXhsError(res, e, 'diagnose');
   }
 });
 

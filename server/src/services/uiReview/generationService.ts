@@ -371,7 +371,7 @@ ${preserveElements.length ? `## DO NOT touch: ${preserveElements.join(', ')}` : 
       cleanCss = cleanCss.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '');
     }
 
-    onComplete(inputTokens, outputTokens, Date.now() - startTime);
+    onComplete(inputTokens, outputTokens, Date.now() - startTime, cssOutput);
     send({ cssComplete: cleanCss, done: true });
     res.end();
 

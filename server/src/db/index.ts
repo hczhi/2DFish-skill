@@ -35,6 +35,8 @@ export function initDatabase(): Database.Database {
       total_tokens INTEGER DEFAULT 0,
       duration_ms INTEGER,
       request_summary TEXT,
+      request_body TEXT,
+      response_body TEXT,
       created_at TEXT NOT NULL
     );
 

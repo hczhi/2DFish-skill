@@ -131,7 +131,12 @@ export async function aiGateway(
   const inputTokens = response.usage?.prompt_tokens || 0;
   const outputTokens = response.usage?.completion_tokens || 0;
 
-  logAIUsage(options.source, options.operation, model, inputTokens, outputTokens, duration, options.requestSummary, options.userId);
+  logAIUsage(
+    options.source, options.operation, model, inputTokens, outputTokens, duration,
+    options.requestSummary, options.userId,
+    safeStringify(params.messages),
+    response.choices?.[0]?.message?.content || ''
+  );
 
   return {
     response,
@@ -143,7 +148,8 @@ export async function aiGateway(
 export interface StreamGatewayResult {
   stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
   model: string;
-  onComplete: (inputTokens: number, outputTokens: number, durationMs: number) => void;
+  /** 流式收尾：传入 token 数、耗时，以及累计拼接后的完整输出正文（供后台日志记全文）。 */
+  onComplete: (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => void;
 }
 
 export async function aiGatewayStream(
@@ -156,9 +162,25 @@ export async function aiGatewayStream(
 
   const stream = await client.chat.completions.create({ ...params, model, stream: true });
 
-  const onComplete = (inputTokens: number, outputTokens: number, durationMs: number) => {
-    logAIUsage(options.source, options.operation, model, inputTokens, outputTokens, durationMs, options.requestSummary, options.userId);
+  const onComplete = (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => {
+    logAIUsage(
+      options.source, options.operation, model, inputTokens, outputTokens, durationMs,
+      options.requestSummary, options.userId,
+      safeStringify(params.messages),
+      outputText || ''
+    );
   };
 
   return { stream, model, onComplete };
+}
+
+/** 序列化 messages 存日志；超大体量截断，避免个别超长 prompt 撑爆单行。 */
+function safeStringify(v: unknown): string {
+  try {
+    const s = JSON.stringify(v);
+    const MAX = 200_000; // ~200KB/条，够存完整上下文，又不至于失控
+    return s.length > MAX ? s.slice(0, MAX) + '…[truncated]' : s;
+  } catch {
+    return '';
+  }
 }

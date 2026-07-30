@@ -429,9 +429,17 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
 
 // ==================== 飞书推送配置 ====================
 const feishuUserId = ref('')
-const feishuCfg = ref({ feishu_webhook: '', feishu_secret: '', feishu_enabled: false, feishu_min_score: 55 })
+const feishuCfg = ref({
+  feishu_webhook: '', feishu_secret: '', feishu_enabled: false, feishu_min_score: 55,
+  feishu_app_id: '', feishu_app_secret: '',
+  bitable_app_token: '', bitable_table_id: '', bitable_all_table_id: '',
+  bitable_url: '', bitable_enabled: false,
+})
 const feishuSaved = ref(false)
 const feishuTesting = ref(false)
+const bitableBusy = ref('')
+const grantType = ref<'email' | 'openid' | 'openchat'>('email')
+const grantId = ref('')
 
 async function loadFeishuCfg() {
   if (!feishuUserId.value) return
@@ -463,6 +471,71 @@ async function testFeishu() {
     alert(e.message || '测试失败')
   } finally {
     feishuTesting.value = false
+  }
+}
+
+// ==================== 多维表格 ====================
+
+async function initBitable() {
+  if (!feishuUserId.value) { alert('请先选择用户'); return }
+  const rebuild = !!feishuCfg.value.bitable_app_token
+  if (rebuild && !confirm('该用户已有多维表格。重建会生成一张新表，旧表里的数据和跟进标记不会迁移，确定继续？')) return
+  bitableBusy.value = 'init'
+  try {
+    await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/init`, rebuild ? { force: true } : {})
+    await loadFeishuCfg()
+    alert('多维表格已创建（含「标讯推荐」「全部标讯」两张表）。接下来请「授权给用户」，否则用户打不开这张表。')
+  } catch (e: any) {
+    alert(e.message || '创建失败')
+  } finally {
+    bitableBusy.value = ''
+  }
+}
+
+async function grantBitable() {
+  if (!grantId.value.trim()) { alert('请填写要授权的对象') ; return }
+  bitableBusy.value = 'grant'
+  try {
+    await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/grant`, {
+      member_type: grantType.value, member_id: grantId.value.trim(), perm: 'edit',
+    })
+    alert('授权成功')
+    grantId.value = ''
+  } catch (e: any) {
+    alert(e.message || '授权失败')
+  } finally {
+    bitableBusy.value = ''
+  }
+}
+
+async function syncBitable() {
+  bitableBusy.value = 'sync'
+  try {
+    const r = await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/sync`, {})
+    const parts: string[] = []
+    if (r.synced > 0) parts.push(`推荐 ${r.synced} 条`)
+    if (r.syncedAll > 0) parts.push(`全部标讯 ${r.syncedAll} 条`)
+    if (r.allSkipped) parts.push(`（全部标讯表：${r.allSkipped}）`)
+    alert(parts.length ? `已同步 ${parts.join('、')}` : '没有待同步的数据（都已推送过）')
+    await loadFeishuCfg()
+  } catch (e: any) {
+    alert(e.message || '同步失败')
+  } finally {
+    bitableBusy.value = ''
+  }
+}
+
+// 给已有表格补建「全部标讯」表。老用户不能走重建（会换 app_token，跟进标记全丢）。
+async function initAllTable() {
+  bitableBusy.value = 'allTable'
+  try {
+    await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/init-all-table`, {})
+    await loadFeishuCfg()
+    alert('「全部标讯」表已创建，点「同步全部未推送」把数据写进去。')
+  } catch (e: any) {
+    alert(e.message || '创建失败')
+  } finally {
+    bitableBusy.value = ''
   }
 }
 
@@ -1052,6 +1125,75 @@ function copyText(text: string) {
             </button>
             <span v-if="feishuSaved" class="save-success" style="margin-left:10px">已保存</span>
           </div>
+
+          <hr class="bitable-sep" />
+
+          <h4 class="bitable-title">多维表格同步</h4>
+          <p class="bitable-hint">
+            数据会写进一张飞书多维表格里的两张表：<b>标讯推荐</b>（达到阈值的、带评分和等级）
+            和 <b>全部标讯</b>（库里全量，按用户勾选的平台过滤，可自己按预算/截止日期筛）。
+            表格由服务端创建并建好列，用户不用填任何 ID。
+          </p>
+          <ol class="bitable-steps">
+            <li>在飞书开发者后台创建<b>企业自建应用</b>，把 App ID / App Secret 填在下面并保存。</li>
+            <li>权限管理开通 <code>bitable:app</code> 和 <code>im:message:send_as_bot</code>（都选<b>应用身份</b>），创建版本并发布。</li>
+            <li>点「创建多维表格」，再点「授权给用户」把表给到人（应用创建的文件默认不在用户云空间里）。</li>
+            <li>可选：机器人自定义菜单加一项，类型选<b>跳转链接</b>，URL 填下面生成的表格地址 —— 用户在机器人窗口就有常驻入口。</li>
+          </ol>
+
+          <div class="edit-form-group">
+            <label class="force-checkbox">
+              <input type="checkbox" v-model="feishuCfg.bitable_enabled" />
+              启用多维表格同步
+            </label>
+          </div>
+          <div class="edit-form-group">
+            <label>App ID</label>
+            <input v-model="feishuCfg.feishu_app_id" class="edit-input" placeholder="cli_xxxxxxxxxxxx" />
+          </div>
+          <div class="edit-form-group">
+            <label>App Secret</label>
+            <input v-model="feishuCfg.feishu_app_secret" class="edit-input" placeholder="应用凭证里的 App Secret" />
+          </div>
+          <div class="edit-form-group">
+            <label>表格地址（创建后自动填入）</label>
+            <input :value="feishuCfg.bitable_url" class="edit-input" readonly placeholder="尚未创建" />
+          </div>
+
+          <div class="scoring-actions">
+            <button class="btn-primary" @click="initBitable" :disabled="!!bitableBusy">
+              {{ bitableBusy === 'init' ? '创建中…' : (feishuCfg.bitable_app_token ? '重建多维表格' : '创建多维表格') }}
+            </button>
+            <button class="btn-secondary" @click="syncBitable" :disabled="!!bitableBusy || !feishuCfg.bitable_app_token" style="margin-left:8px">
+              {{ bitableBusy === 'sync' ? '同步中…' : '同步全部未推送' }}
+            </button>
+            <!-- 只对「表已建好但没有全部标讯表」的老用户出现。重建会换 app_token，不能让他们走重建 -->
+            <button
+              v-if="feishuCfg.bitable_app_token && !feishuCfg.bitable_all_table_id"
+              class="btn-secondary" @click="initAllTable" :disabled="!!bitableBusy" style="margin-left:8px"
+            >
+              {{ bitableBusy === 'allTable' ? '创建中…' : '补建「全部标讯」表' }}
+            </button>
+            <a v-if="feishuCfg.bitable_url" :href="feishuCfg.bitable_url" target="_blank" class="bitable-open">打开表格 ↗</a>
+          </div>
+
+          <template v-if="feishuCfg.bitable_app_token">
+            <div class="edit-form-group bitable-grant">
+              <label>授权给用户 / 群</label>
+              <div class="bitable-grant-row">
+                <select v-model="grantType" class="edit-input bitable-grant-type">
+                  <option value="email">飞书邮箱</option>
+                  <option value="openid">用户 Open ID</option>
+                  <option value="openchat">群 Chat ID</option>
+                </select>
+                <input v-model="grantId" class="edit-input" placeholder="填邮箱 / open_id / chat_id" />
+                <button class="btn-secondary" @click="grantBitable" :disabled="!!bitableBusy">
+                  {{ bitableBusy === 'grant' ? '授权中…' : '授权（可编辑）' }}
+                </button>
+              </div>
+              <span class="bitable-note">授权给群需要先把应用作为机器人拉进该群，否则会因「互相不可见」失败。</span>
+            </div>
+          </template>
         </template>
       </div>
     </div>
@@ -1165,6 +1307,18 @@ function copyText(text: string) {
 .link-btn.danger { color:#dc2626; }
 .warn-text { color:#dc2626; }
 .empty-hint { color:#94a3b8; padding:20px 0; }
+
+.bitable-sep { border:none; border-top:1px solid #e2e8f0; margin:22px 0 16px; }
+.bitable-title { margin:0 0 6px; font-size:15px; }
+.bitable-hint { margin:0 0 10px; font-size:13px; color:#64748b; }
+.bitable-steps { margin:0 0 16px; padding-left:20px; font-size:13px; color:#475569; }
+.bitable-steps li { margin:5px 0; }
+.bitable-steps code { background:#f1f5f9; padding:1px 5px; border-radius:3px; font-size:12px; }
+.bitable-open { margin-left:12px; font-size:13px; color:#2563eb; text-decoration:none; }
+.bitable-grant { margin-top:16px; }
+.bitable-grant-row { display:flex; gap:8px; align-items:center; }
+.bitable-grant-type { max-width:150px; }
+.bitable-note { display:block; margin-top:6px; font-size:12px; color:#94a3b8; }
 
 .tender-admin {
   padding: 24px;

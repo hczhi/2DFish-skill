@@ -40,6 +40,12 @@ import { migration_038 } from './038_refresh_skills_genre.js';
 import { migration_039 } from './039_xhs_writer.js';
 import { migration_040 } from './040_seed_xhs_structure_skill.js';
 import { migration_041 } from './041_ai_providers.js';
+import { migration_042 } from './042_ai_logs_full_bodies.js';
+import { migration_043 } from './043_tender_user_platforms.js';
+import { migration_044 } from './044_tender_module_config.js';
+import { migration_045 } from './045_tender_bitable.js';
+import { migration_046 } from './046_tender_bitable_all.js';
+import { migration_047 } from './047_tender_bitable_sync_fix.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -83,4 +89,10 @@ export const allMigrations: Migration[] = [
   migration_039,
   migration_040,
   migration_041,
+  migration_042,
+  migration_043,
+  migration_044,
+  migration_045,
+  migration_046,
+  migration_047,
 ];

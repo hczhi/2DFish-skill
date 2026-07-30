@@ -35,7 +35,7 @@ function fmtBudget(amount?: number | null): string {
   return `预算 ${(amount / 10000).toFixed(1)} 万`;
 }
 
-function buildCard(items: FeishuTenderItem[], totalCount: number) {
+function buildCard(items: FeishuTenderItem[], totalCount: number, bitableUrl?: string) {
   const shown = items.slice(0, MAX_ITEMS);
 
   const elements: any[] = [];
@@ -67,6 +67,23 @@ function buildCard(items: FeishuTenderItem[], totalCount: number) {
     });
   }
 
+  // 多维表格入口。用带 url 的纯跳转按钮（不是回调型 action）——
+  // 自定义机器人 webhook 没有事件回调通道，回调型按钮点了不会有任何反应。
+  // 飞书客户端里点它是内嵌打开云文档，不跳浏览器。
+  if (bitableUrl) {
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '📊 在多维表格中查看全部' },
+          type: 'primary',
+          url: bitableUrl,
+        },
+      ],
+    });
+  }
+
   return {
     msg_type: 'interactive',
     card: {
@@ -93,11 +110,12 @@ export async function pushTenderRecommendations(
   webhook: string,
   secret: string | undefined,
   items: FeishuTenderItem[],
-  nowMs: number
+  nowMs: number,
+  bitableUrl?: string
 ): Promise<{ ok: boolean; code?: number; msg?: string }> {
   if (!webhook || items.length === 0) return { ok: false, msg: 'no webhook or empty items' };
 
-  const payload: any = buildCard(items, items.length);
+  const payload: any = buildCard(items, items.length, bitableUrl);
 
   if (secret) {
     const ts = Math.floor(nowMs / 1000);

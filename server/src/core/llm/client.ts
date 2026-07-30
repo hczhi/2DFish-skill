@@ -53,18 +53,21 @@ export function logAIUsage(
   outputTokens: number,
   durationMs?: number,
   requestSummary?: string,
-  userId?: string
+  userId?: string,
+  requestBody?: string,   // 完整请求 messages（JSON 字符串），供后台日志查全文
+  responseBody?: string   // 模型完整返回正文（流式为累计拼接后的全文）
 ): void {
   try {
     const db = getDatabase();
     db.prepare(
-      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       uuidv4(), source, operation, model,
       inputTokens, outputTokens, inputTokens + outputTokens,
       durationMs || null, requestSummary || null,
       userId || null,
+      requestBody || null, responseBody || null,
       new Date().toISOString()
     );
   } catch { /* non-critical */ }

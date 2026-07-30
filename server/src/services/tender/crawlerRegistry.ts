@@ -1,4 +1,5 @@
 import { crawlGdgpo, type CrawlProgress, type ProgressCallback } from './crawlerService.js';
+import { crawlMeicloud } from './meicloudCrawlerService.js';
 
 export interface CrawlerDef {
   id: string;
@@ -14,6 +15,13 @@ registry.set('gdgpo', {
   name: '广东省政府采购网',
   description: '广东省政府采购网 (ygp.gdzwfw.gov.cn)',
   crawl: crawlGdgpo,
+});
+
+registry.set('meicloud', {
+  id: 'meicloud',
+  name: '美的询源云',
+  description: '美云智数寻源云 (sourcing.meicloud.com)',
+  crawl: crawlMeicloud,
 });
 
 export function getCrawler(platformId: string): CrawlerDef | undefined {

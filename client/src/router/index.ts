@@ -92,6 +92,7 @@ const router = createRouter({
         { path: 'users', name: 'admin-users', component: () => import('../views/admin/UserManagement.vue') },
         { path: 'quotas', name: 'admin-quotas', component: () => import('../views/admin/QuotaManagement.vue') },
         { path: 'usage', name: 'admin-usage', component: () => import('../views/admin/AIDashboard.vue') },
+        { path: 'ai-logs', name: 'admin-ai-logs', component: () => import('../views/admin/AILogs.vue') },
         { path: 'config', name: 'admin-config', component: () => import('../views/admin/SystemConfig.vue') },
         { path: 'home', name: 'admin-home', component: () => import('../views/admin/HomeContent.vue') },
         { path: 'home/module/:id?', name: 'admin-home-module', component: () => import('../views/admin/HomeModuleEditor.vue') },
@@ -165,12 +166,36 @@ const router = createRouter({
     {
       path: '/tender',
       name: 'tender',
-      component: () => import('../views/tender/TenderPage.vue'),
+      component: () => import('../views/tender/TenderHome.vue'),
     },
     {
       path: '/en/tender',
       name: 'tender-en',
-      component: () => import('../views/tender/TenderPage.vue'),
+      component: () => import('../views/tender/TenderHome.vue'),
+    },
+    {
+      path: '/tender/browse',
+      name: 'tender-browse',
+      component: () => import('../views/tender/TenderBrowse.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/en/tender/browse',
+      name: 'tender-browse-en',
+      component: () => import('../views/tender/TenderBrowse.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/tender/settings',
+      name: 'tender-settings',
+      component: () => import('../views/tender/TenderSettings.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/en/tender/settings',
+      name: 'tender-settings-en',
+      component: () => import('../views/tender/TenderSettings.vue'),
+      meta: { requiresAuth: true },
     },
     {
       path: '/tender/sdk-docs',

@@ -10,6 +10,7 @@
         <router-link to="/admin/users" class="nav-item" active-class="active" @click="sidebarOpen = false">用户管理</router-link>
         <router-link to="/admin/quotas" class="nav-item" active-class="active" @click="sidebarOpen = false">额度管理</router-link>
         <router-link to="/admin/usage" class="nav-item" active-class="active" @click="sidebarOpen = false">AI 用量</router-link>
+        <router-link to="/admin/ai-logs" class="nav-item" active-class="active" @click="sidebarOpen = false">AI 日志</router-link>
         <router-link to="/admin/config" class="nav-item" active-class="active" @click="sidebarOpen = false">系统配置</router-link>
         <router-link to="/admin/home" class="nav-item" active-class="active" @click="sidebarOpen = false">首页内容</router-link>
         <router-link to="/admin/discover" class="nav-item" active-class="active" @click="sidebarOpen = false">文章管理</router-link>
