@@ -1,4 +1,4 @@
-import { getToken } from './auth'
+import { api } from './api'
 
 export interface SSEOptions {
   url: string
@@ -19,13 +19,11 @@ export async function streamSSE(options: SSEOptions): Promise<void> {
 
   while (attempt <= maxRetries) {
     try {
-      const token = getToken()
-      const res = await fetch(url, {
+      // 走 api() 而不是裸 fetch：原来这里自己拼 Authorization 头，
+      // 于是 AI 对话流在 401/429 时都只走 onError 打一行红字，
+      // 既不清过期 token 也不弹额度提示。
+      const res = await api(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
         body: JSON.stringify(body),
         signal,
       })
@@ -47,17 +45,22 @@ export async function streamSSE(options: SSEOptions): Promise<void> {
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+        // 按空行分帧：一帧内部才按行拆 event:/data:。
+        // 原来直接按 \n 拆整个 buffer，data 的 JSON 里带换行就会被劈成两半，
+        // 而当时 JSON.parse 没有 try——一次解析失败会把整条流连同重试一起打断。
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() || ''
 
-        let currentEvent = ''
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7)
-          } else if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6))
-            handleEvent(currentEvent, data, options)
-            currentEvent = ''
+        for (const frame of frames) {
+          let currentEvent = ''
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7)
+            } else if (line.startsWith('data: ')) {
+              try {
+                handleEvent(currentEvent, JSON.parse(line.slice(6)), options)
+              } catch { /* 半截帧，丢掉这一条 */ }
+            }
           }
         }
       }

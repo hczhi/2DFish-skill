@@ -45,7 +45,8 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   { path: '/api/tender/sdk/token', method: 'POST', level: 'public' },
   { path: '/api/tender/sdk/token', method: 'OPTIONS', level: 'public' },
 
-  // OPTIONAL — anonymous users use admin quota for AI features
+  // OPTIONAL — 匿名可访问。匿名主体由 auth/requester.ts 按 IP+UA 指纹派生独立 id
+  // 并单独限额（不再借用 admin 身份和额度）。
   { path: '/api/ai/board/chat', method: 'POST', level: 'optional' },
   { path: /^\/api\/ui-review\/(?!admin)/, level: 'optional' },
 ];

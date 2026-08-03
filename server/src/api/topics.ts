@@ -2,8 +2,15 @@ import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 import { generateTopicPage, deleteTopicStaticPages } from '../services/ssgService.js';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow } from '../core/http.js';
 
 export const topicsRouter = Router();
+
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+topicsRouter.use('/admin', requireAdmin);
 
 interface TopicRow {
   id: string;
@@ -82,10 +89,7 @@ topicsRouter.get('/:slug', (req: Request, res: Response) => {
 // ===== ADMIN: Manage topics =====
 
 topicsRouter.get('/admin/list', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM discover_topics').get() as { total: number };
@@ -117,7 +121,6 @@ topicsRouter.get('/admin/list', (req: Request, res: Response) => {
 
 // Lightweight list for select dropdowns (no pagination, minimal fields)
 topicsRouter.get('/admin/options', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
 
   const topics = db.prepare('SELECT id, slug FROM discover_topics ORDER BY sort_order ASC, created_at DESC').all() as Array<{ id: string; slug: string }>;
@@ -146,7 +149,6 @@ topicsRouter.get('/admin/options', (req: Request, res: Response) => {
 });
 
 topicsRouter.get('/admin/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
 
   const topic = db.prepare('SELECT * FROM discover_topics WHERE id = ?').get(req.params.id) as TopicRow | undefined;
@@ -167,7 +169,6 @@ topicsRouter.get('/admin/:id', (req: Request, res: Response) => {
 });
 
 topicsRouter.post('/admin', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { slug, cover_image, icon, bg_color, template, sort_order, visible_locales, status, contents } = req.body;
   if (!slug) { res.status(400).json({ error: 'slug is required' }); return; }
@@ -212,7 +213,6 @@ topicsRouter.post('/admin', (req: Request, res: Response) => {
 });
 
 topicsRouter.patch('/admin/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM discover_topics WHERE id = ?').get(req.params.id) as TopicRow | undefined;
@@ -223,28 +223,11 @@ topicsRouter.patch('/admin/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowed = ['slug', 'cover_image', 'icon', 'bg_color', 'template', 'sort_order', 'status'];
-
-  for (const field of allowed) {
-    if (req.body[field] !== undefined) {
-      fields.push(`${field} = ?`);
-      values.push(req.body[field]);
-    }
-  }
-
-  if (req.body.visible_locales !== undefined) {
-    fields.push('visible_locales = ?');
-    values.push(JSON.stringify(req.body.visible_locales));
-  }
-
-  if (fields.length > 0) {
-    fields.push('updated_at = ?');
-    values.push(new Date().toISOString());
-    values.push(req.params.id);
-    db.prepare(`UPDATE discover_topics SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-  }
+  // 同 discover：只改 contents 译文而不改主表字段是合法请求，所以不报 400。
+  patchRow(db, 'discover_topics', {
+    columns: ['slug', 'cover_image', 'icon', 'bg_color', 'template', 'sort_order', 'status', 'visible_locales'],
+    json: ['visible_locales'],
+  }, req.body, { id: req.params.id });
 
   if (Array.isArray(req.body.contents)) {
     for (const c of req.body.contents) {
@@ -274,7 +257,6 @@ topicsRouter.patch('/admin/:id', (req: Request, res: Response) => {
 });
 
 topicsRouter.delete('/admin/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
 
   db.prepare('UPDATE discover_articles SET topic_id = NULL WHERE topic_id = ?').run(req.params.id);
@@ -285,7 +267,6 @@ topicsRouter.delete('/admin/:id', (req: Request, res: Response) => {
 });
 
 topicsRouter.post('/admin/:id/offline', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const topic = db.prepare('SELECT * FROM discover_topics WHERE id = ?').get(req.params.id) as TopicRow | undefined;
@@ -301,7 +282,6 @@ topicsRouter.post('/admin/:id/offline', (req: Request, res: Response) => {
 });
 
 topicsRouter.post('/admin/:id/generate', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const topic = db.prepare('SELECT * FROM discover_topics WHERE id = ?').get(req.params.id) as TopicRow | undefined;

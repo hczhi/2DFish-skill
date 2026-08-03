@@ -6,8 +6,16 @@ import { aiGateway } from '../core/llm/gateway.js';
 import { getSkillForSlot } from '../services/skillRegistryService.js';
 import fs from 'fs';
 import path from 'path';
+import { parseFirstJson } from '../core/llm/parseJson.js';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow, initSSE } from '../core/http.js';
 
 export const discoverRouter = Router();
+
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+discoverRouter.use('/admin', requireAdmin);
 
 interface ArticleRow {
   id: string;
@@ -117,10 +125,7 @@ discoverRouter.get('/articles/:slug', (req: Request, res: Response) => {
 // ===== ADMIN: Manage discover articles =====
 
 discoverRouter.get('/admin/articles', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM discover_articles').get() as { total: number };
@@ -154,7 +159,6 @@ discoverRouter.get('/admin/articles', (req: Request, res: Response) => {
 
 // Lightweight list for select dropdowns (no pagination, minimal fields)
 discoverRouter.get('/admin/articles-options', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
 
   const articles = db.prepare(
@@ -186,7 +190,6 @@ discoverRouter.get('/admin/articles-options', (req: Request, res: Response) => {
 });
 
 discoverRouter.get('/admin/articles/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
 
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -209,7 +212,6 @@ discoverRouter.get('/admin/articles/:id', (req: Request, res: Response) => {
 });
 
 discoverRouter.post('/admin/articles', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { slug, cover_image, author, icon, bg_color, avatar_color, sort_order, visible_locales, status, topic_id, contents, recommendations } = req.body;
   if (!slug) { res.status(400).json({ error: 'slug is required' }); return; }
@@ -268,7 +270,6 @@ discoverRouter.post('/admin/articles', (req: Request, res: Response) => {
 });
 
 discoverRouter.patch('/admin/articles/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -279,28 +280,12 @@ discoverRouter.patch('/admin/articles/:id', (req: Request, res: Response) => {
     return;
   }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowed = ['slug', 'cover_image', 'author', 'icon', 'bg_color', 'avatar_color', 'sort_order', 'status', 'topic_id'];
-
-  for (const field of allowed) {
-    if (req.body[field] !== undefined) {
-      fields.push(`${field} = ?`);
-      values.push(req.body[field]);
-    }
-  }
-
-  if (req.body.visible_locales !== undefined) {
-    fields.push('visible_locales = ?');
-    values.push(JSON.stringify(req.body.visible_locales));
-  }
-
-  if (fields.length > 0) {
-    fields.push('updated_at = ?');
-    values.push(new Date().toISOString());
-    values.push(req.params.id);
-    db.prepare(`UPDATE discover_articles SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-  }
+  // 注意：这里没有字段可更新时不报错——本路由还会继续处理 contents 多语言内容，
+  // 只改译文、不改主表字段是合法请求。
+  patchRow(db, 'discover_articles', {
+    columns: ['slug', 'cover_image', 'author', 'icon', 'bg_color', 'avatar_color', 'sort_order', 'status', 'topic_id', 'visible_locales'],
+    json: ['visible_locales'],
+  }, req.body, { id: req.params.id });
 
   if (Array.isArray(req.body.contents)) {
     for (const c of req.body.contents) {
@@ -345,7 +330,6 @@ discoverRouter.patch('/admin/articles/:id', (req: Request, res: Response) => {
 });
 
 discoverRouter.delete('/admin/articles/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   db.prepare('DELETE FROM discover_article_contents WHERE article_id = ?').run(req.params.id);
   const result = db.prepare('DELETE FROM discover_articles WHERE id = ?').run(req.params.id);
@@ -355,7 +339,6 @@ discoverRouter.delete('/admin/articles/:id', (req: Request, res: Response) => {
 
 // Batch sort order
 discoverRouter.put('/admin/articles/sort', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const { items } = req.body as { items: Array<{ id: string; sort_order: number }> };
   if (!Array.isArray(items)) { res.status(400).json({ error: 'items array required' }); return; }
 
@@ -373,7 +356,6 @@ discoverRouter.put('/admin/articles/sort', (req: Request, res: Response) => {
 
 // Take article offline and delete static pages
 discoverRouter.post('/admin/articles/:id/offline', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -390,7 +372,6 @@ discoverRouter.post('/admin/articles/:id/offline', (req: Request, res: Response)
 
 // Generate static page for a single article
 discoverRouter.post('/admin/articles/:id/generate', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -417,7 +398,6 @@ discoverRouter.post('/admin/articles/:id/generate', (req: Request, res: Response
 });
 
 discoverRouter.post('/admin/articles/batch-generate', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const publishedArticles = db.prepare(
@@ -430,9 +410,7 @@ discoverRouter.post('/admin/articles/batch-generate', (req: Request, res: Respon
     return;
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  initSSE(res);
 
   let success = 0;
   let failed = 0;
@@ -480,7 +458,6 @@ function skillPrompt(slot: string, fallbackFile: string): string {
 
 // SEO Score - analyze article SEO quality
 discoverRouter.post('/admin/articles/:id/seo-score', async (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -516,8 +493,7 @@ ${articleContent.content}`;
     const text = result.response.choices[0]?.message?.content || '';
     let report: any;
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+      report = parseFirstJson<any>(text) ?? { raw: text };
     } catch {
       report = { raw: text };
     }
@@ -531,7 +507,6 @@ ${articleContent.content}`;
 
 // AI Detection - check article for AI-generated patterns
 discoverRouter.post('/admin/articles/:id/ai-detection', async (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -562,8 +537,7 @@ ${articleContent.content}`;
     const text = result.response.choices[0]?.message?.content || '';
     let report: any;
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+      report = parseFirstJson<any>(text) ?? { raw: text };
     } catch {
       report = { raw: text };
     }
@@ -577,7 +551,6 @@ ${articleContent.content}`;
 
 // Combined analysis - run both SEO score and AI detection
 discoverRouter.post('/admin/articles/:id/full-analysis', async (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const article = db.prepare('SELECT * FROM discover_articles WHERE id = ?').get(req.params.id) as ArticleRow | undefined;
@@ -623,8 +596,7 @@ ${articleContent.content}`;
     const text = result.response.choices[0]?.message?.content || '';
     let report: any;
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      report = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
+      report = parseFirstJson<any>(text) ?? { raw: text };
     } catch {
       report = { raw: text };
     }

@@ -1,8 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow } from '../core/http.js';
 
 export const adSlotsRouter = Router();
+
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+adSlotsRouter.use('/admin', requireAdmin);
 
 // PUBLIC: Get ad slots for a page
 adSlotsRouter.get('/', (req: Request, res: Response) => {
@@ -32,10 +39,7 @@ adSlotsRouter.get('/', (req: Request, res: Response) => {
 
 // ADMIN: List all ad slots
 adSlotsRouter.get('/admin/list', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM ad_slots').get() as { total: number };
@@ -45,7 +49,6 @@ adSlotsRouter.get('/admin/list', (req: Request, res: Response) => {
 
 // ADMIN: Create ad slot
 adSlotsRouter.post('/admin', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { page_pattern, position, slot_code, enabled, label, sort_order, height } = req.body;
   if (!page_pattern || !position) {
@@ -68,37 +71,24 @@ adSlotsRouter.post('/admin', (req: Request, res: Response) => {
 
 // ADMIN: Update ad slot
 adSlotsRouter.patch('/admin/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT id FROM ad_slots WHERE id = ?').get(req.params.id);
   if (!existing) { res.status(404).json({ error: 'not found' }); return; }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowed = ['page_pattern', 'position', 'slot_code', 'enabled', 'label', 'sort_order', 'height'];
+  const changed = patchRow(db, 'ad_slots', {
+    columns: ['page_pattern', 'position', 'slot_code', 'enabled', 'label', 'sort_order', 'height'],
+    booleans: ['enabled'],
+  }, req.body, { id: req.params.id });
 
-  for (const field of allowed) {
-    if (req.body[field] !== undefined) {
-      fields.push(`${field} = ?`);
-      values.push(req.body[field]);
-    }
-  }
+  if (changed === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
 
-  if (fields.length === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
-
-  fields.push('updated_at = ?');
-  values.push(new Date().toISOString());
-  values.push(req.params.id);
-
-  db.prepare(`UPDATE ad_slots SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   const slot = db.prepare('SELECT * FROM ad_slots WHERE id = ?').get(req.params.id);
   res.json(slot);
 });
 
 // ADMIN: Delete ad slot
 adSlotsRouter.delete('/admin/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   const result = db.prepare('DELETE FROM ad_slots WHERE id = ?').run(req.params.id);
   if (result.changes === 0) { res.status(404).json({ error: 'not found' }); return; }

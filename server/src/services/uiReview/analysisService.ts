@@ -1,5 +1,6 @@
 import { aiGateway } from '../../core/llm/gateway.js';
 import type { CrawlResult } from './crawlerService.js';
+import { parseFirstJson } from '../../core/llm/parseJson.js';
 
 export interface DimensionScore {
   score: number;
@@ -154,9 +155,8 @@ Now analyze the screenshot and score this page.`;
       { userId, source: 'ui-review', operation: 'llm-scoring' }
     );
     const content = response.choices[0]?.message?.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const result = JSON.parse(jsonMatch[0]) as LLMScoringResult;
+    const result = parseFirstJson<LLMScoringResult>(content);
+    if (result) {
       // Normalize boolean flags
       result.aiGenerated = !!result.aiGenerated;
       result.templateDetected = !!result.templateDetected;

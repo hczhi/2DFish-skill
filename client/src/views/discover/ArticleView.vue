@@ -115,6 +115,7 @@ import DOMPurify from 'dompurify'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 import AdSlot from '../../components/common/AdSlot.vue'
+import { apiGet } from '../../lib/api'
 
 const route = useRoute()
 
@@ -158,33 +159,26 @@ async function loadArticle() {
   locale.value = route.path.startsWith('/en/') ? 'en' : 'zh'
 
   try {
-    const res = await fetch(`/api/discover/articles/${slug}?locale=${locale.value}`)
-    if (res.ok) {
-      article.value = await res.json()
-      if (article.value) {
-        const a = article.value
-        document.title = a.seo_title || a.title
-        setMeta('description', a.seo_description || a.summary || '')
-        setMeta('keywords', a.seo_keywords || '')
-        setMetaProperty('og:title', a.seo_title || a.title)
-        setMetaProperty('og:description', a.seo_description || a.summary || '')
-        setMetaProperty('twitter:title', a.seo_title || a.title)
-        setMetaProperty('twitter:description', a.seo_description || a.summary || '')
-      }
-      // Derive prev/next from recommendations
-      const recs = article.value?.recommendations
-      if (recs && recs.length >= 2) {
-        prevArticle.value = recs[0]
-        nextArticle.value = recs[1]
-      } else if (recs && recs.length === 1) {
-        prevArticle.value = null
-        nextArticle.value = recs[0]
-      } else {
-        prevArticle.value = null
-        nextArticle.value = null
-      }
+    article.value = await apiGet(`/api/discover/articles/${slug}`, { locale: locale.value })
+    if (article.value) {
+      const a = article.value
+      document.title = a.seo_title || a.title
+      setMeta('description', a.seo_description || a.summary || '')
+      setMeta('keywords', a.seo_keywords || '')
+      setMetaProperty('og:title', a.seo_title || a.title)
+      setMetaProperty('og:description', a.seo_description || a.summary || '')
+      setMetaProperty('twitter:title', a.seo_title || a.title)
+      setMetaProperty('twitter:description', a.seo_description || a.summary || '')
+    }
+    // Derive prev/next from recommendations
+    const recs = article.value?.recommendations
+    if (recs && recs.length >= 2) {
+      prevArticle.value = recs[0]
+      nextArticle.value = recs[1]
+    } else if (recs && recs.length === 1) {
+      prevArticle.value = null
+      nextArticle.value = recs[0]
     } else {
-      article.value = null
       prevArticle.value = null
       nextArticle.value = null
     }

@@ -10,6 +10,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { apiGet } from '../../lib/api'
 
 const props = defineProps<{
   position: string
@@ -34,10 +35,7 @@ const slotData = computed(() => {
 onMounted(async () => {
   const page = props.page || window.location.pathname
   try {
-    const res = await fetch(`/api/ad-slots?page=${encodeURIComponent(page)}`)
-    if (res.ok) {
-      slots.value = await res.json()
-    }
+    slots.value = await apiGet<AdSlotItem[]>('/api/ad-slots', { page })
   } catch { /* silent */ }
 })
 </script>

@@ -5,6 +5,8 @@ import { requireAdmin } from '../auth/guards.js';
 import { getDatabase } from '../db/index.js';
 import { generateApiToken, hashApiToken } from '../auth/middleware.js';
 import { listProviders, upsertProvider, deleteProvider, maskProvider } from '../services/aiProviderService.js';
+import { parsePagination, patchRow } from '../core/http.js';
+import { encryptSecret, maskSecret } from '../core/secrets.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
@@ -12,9 +14,7 @@ adminRouter.use(requireAdmin);
 // --- User Management ---
 
 adminRouter.get('/users', (req: Request, res: Response) => {
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
@@ -103,9 +103,7 @@ adminRouter.post('/users/:id/reset-password', (req: Request, res: Response) => {
 // --- Quota Management ---
 
 adminRouter.get('/quotas', (req: Request, res: Response) => {
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
 
@@ -190,14 +188,25 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
 
+/**
+ * 需要加密存储 + 脱敏回显的 key，显式列出。
+ *
+ * 原来是按 key.includes('key') 判断的，于是 cos_secret_id 因为名字里没有 'key'
+ * 被整串明文返回给了前端 —— 判断依据是命名巧合而不是语义，加一个
+ * 叫 xxx_token 的配置项就会重演一次。
+ */
+const SECRET_CONFIG_KEYS = new Set(['platform_api_key', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key']);
+
 adminRouter.get('/config', (_req: Request, res: Response) => {
   const db = getDatabase();
   const configs = db.prepare('SELECT key, value, updated_at FROM system_config').all() as { key: string; value: string; updated_at: string }[];
 
   const result: Record<string, { value: string; updated_at: string }> = {};
   for (const c of configs) {
-    const masked = c.key.includes('key') ? c.value.slice(0, 7) + '...' + c.value.slice(-4) : c.value;
-    result[c.key] = { value: masked, updated_at: c.updated_at };
+    result[c.key] = {
+      value: SECRET_CONFIG_KEYS.has(c.key) ? maskSecret(c.value) : c.value,
+      updated_at: c.updated_at,
+    };
   }
 
   res.json({ config: result, allowed_keys: ALLOWED_CONFIG_KEYS });
@@ -217,12 +226,18 @@ adminRouter.post('/config', (req: Request, res: Response) => {
   const db = getDatabase();
   const now = new Date().toISOString();
   db.prepare('INSERT OR REPLACE INTO system_config (key, value, updated_at) VALUES (?, ?, ?)')
-    .run(key, value, now);
+    .run(key, SECRET_CONFIG_KEYS.has(key) ? encryptSecret(String(value)) : value, now);
 
   res.json({ success: true });
 });
 
 adminRouter.delete('/config/:key', (req: Request, res: Response) => {
+  // 白名单同样要卡在 DELETE 上：不然可以删掉白名单外的任意配置行
+  // （比如某个模块自己写进去的运行时状态），POST 拦得住而 DELETE 拦不住。
+  if (!ALLOWED_CONFIG_KEYS.includes(req.params.key)) {
+    res.status(400).json({ error: 'Invalid config key' });
+    return;
+  }
   const db = getDatabase();
   db.prepare('DELETE FROM system_config WHERE key = ?').run(req.params.key);
   res.json({ success: true });
@@ -271,9 +286,7 @@ adminRouter.delete('/providers/:id', (req: Request, res: Response) => {
 // --- Module Configs ---
 
 adminRouter.get('/modules', (req: Request, res: Response) => {
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM module_configs').get() as { total: number };
@@ -286,25 +299,15 @@ adminRouter.patch('/modules/:id', (req: Request, res: Response) => {
   const existing = db.prepare('SELECT id FROM module_configs WHERE id = ?').get(req.params.id);
   if (!existing) { res.status(404).json({ error: 'Module not found' }); return; }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowed = ['name', 'description', 'enabled'];
+  // module_configs 没有 updated_at 列，关掉自动写入。
+  const changed = patchRow(db, 'module_configs', {
+    columns: ['name', 'description', 'enabled', 'allowed_paths'],
+    booleans: ['enabled'],
+    json: ['allowed_paths'],
+    touchUpdatedAt: false,
+  }, req.body, { id: req.params.id });
 
-  for (const field of allowed) {
-    if (req.body[field] !== undefined) {
-      fields.push(`${field} = ?`);
-      values.push(req.body[field]);
-    }
-  }
-
-  if (req.body.allowed_paths !== undefined) {
-    fields.push('allowed_paths = ?');
-    values.push(JSON.stringify(req.body.allowed_paths));
-  }
-
-  if (fields.length === 0) { res.status(400).json({ error: 'no fields' }); return; }
-  values.push(req.params.id);
-  db.prepare(`UPDATE module_configs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  if (changed === 0) { res.status(400).json({ error: 'no fields' }); return; }
 
   const updated = db.prepare('SELECT * FROM module_configs WHERE id = ?').get(req.params.id);
   res.json(updated);
@@ -406,9 +409,7 @@ adminRouter.delete('/tokens/:id', (req: Request, res: Response) => {
 
 adminRouter.get('/users/:id/token-logs', (req: Request, res: Response) => {
   const { module_id, days = '7' } = req.query;
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const safeDays = Math.min(Math.max(Number(days) || 7, 1), 365);
   const db = getDatabase();
 

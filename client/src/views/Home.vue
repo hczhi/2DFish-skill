@@ -198,6 +198,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { fetchMe, type AuthUser } from '../lib/auth'
+import { apiGet } from '../lib/api'
 import { fetchQuota } from '../lib/quota'
 import SiteHeader from '../components/common/SiteHeader.vue'
 import AdSlot from '../components/common/AdSlot.vue'
@@ -406,13 +407,15 @@ onUnmounted(() => {
 })
 
 async function loadHomeData() {
+  // 首页的四个接口都是公开的，单个失败不该拖垮整页：各自 catch 掉，
+  // 拿不到就渲染空列表（原来的行为一致）。
   try {
-    const [modulesRes, feedsRes] = await Promise.all([
-      fetch('/api/home/modules'),
-      fetch('/api/home/feeds'),
+    const [modules, feeds] = await Promise.all([
+      apiGet('/api/home/modules'),
+      apiGet('/api/home/feeds'),
     ])
-    if (modulesRes.ok) navItems.value = await modulesRes.json()
-    if (feedsRes.ok) feedItems.value = await feedsRes.json()
+    navItems.value = modules
+    feedItems.value = feeds
   } catch { /* silent */ }
   const ssgCss = document.getElementById('ssg-critical-css')
   if (ssgCss) ssgCss.remove()
@@ -422,18 +425,14 @@ async function loadHomeData() {
 
 async function loadTopics() {
   try {
-    const res = await fetch(`/api/discover/topics?locale=${locale.value}`)
-    if (res.ok) topics.value = await res.json()
+    topics.value = await apiGet('/api/discover/topics', { locale: locale.value })
   } catch { /* silent */ }
 }
 
 async function loadDiscoverArticles() {
   try {
-    const res = await fetch(`/api/discover/articles?locale=${locale.value}&limit=50`)
-    if (res.ok) {
-      const data = await res.json()
-      discoverArticles.value = data.items || data
-    }
+    const data = await apiGet<any>('/api/discover/articles', { locale: locale.value, limit: 50 })
+    discoverArticles.value = data.items || data
   } catch { /* silent */ }
 }
 

@@ -1,30 +1,31 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
-import { executeReview, getProgressEvents } from '../services/uiReview/orchestrator.js';
+import { executeReview, getLatestProgress } from '../services/uiReview/orchestrator.js';
 import { crawlPage } from '../services/uiReview/crawlerService.js';
 import { runSingleRule, type RuleConfig } from '../services/uiReview/ruleEngine.js';
 import { streamPreviewHtml, generateSkillMarkdown, type ReviewData, type UserPreferences } from '../services/uiReview/generationService.js';
+import { assertSafeUrl, UnsafeUrlError } from '../core/safeUrl.js';
+import { resolveRequesterId, ensureAnonymousQuota } from '../auth/requester.js';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, initSSE } from '../core/http.js';
 
 export const uiReviewRouter = Router();
 
-function getAdminUserId(): string {
-  const db = getDatabase();
-  const admin = db.prepare("SELECT id FROM user WHERE role = 'admin' LIMIT 1").get() as any;
-  return admin?.id || 'anonymous';
-}
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+uiReviewRouter.use('/admin', requireAdmin);
 
 // ==================== Admin: Rules CRUD ====================
 
 uiReviewRouter.get('/admin/rules', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const rules = db.prepare('SELECT * FROM ui_review_rules ORDER BY sort_order ASC, created_at DESC').all();
   res.json(rules);
 });
 
 uiReviewRouter.post('/admin/rules', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { name, dimension, description, detection_type, detection_config, weight, severity, industry_weights, sort_order } = req.body;
   if (!name || !dimension) return res.status(400).json({ error: 'name and dimension are required' });
 
@@ -51,7 +52,6 @@ uiReviewRouter.post('/admin/rules', (req, res) => {
 });
 
 uiReviewRouter.put('/admin/rules/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
   const { name, dimension, description, detection_type, detection_config, weight, severity, industry_weights, sort_order } = req.body;
 
@@ -82,14 +82,12 @@ uiReviewRouter.put('/admin/rules/:id', (req, res) => {
 });
 
 uiReviewRouter.delete('/admin/rules/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   db.prepare('DELETE FROM ui_review_rules WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 uiReviewRouter.patch('/admin/rules/:id/toggle', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const rule = db.prepare('SELECT enabled FROM ui_review_rules WHERE id = ?').get(req.params.id) as any;
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
@@ -102,7 +100,6 @@ uiReviewRouter.patch('/admin/rules/:id/toggle', (req, res) => {
 
 // Admin: Rule Debug
 uiReviewRouter.post('/admin/rules/:id/debug', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -127,14 +124,12 @@ uiReviewRouter.post('/admin/rules/:id/debug', async (req, res) => {
 // ==================== Admin: Style Skills CRUD ====================
 
 uiReviewRouter.get('/admin/skills', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const skills = db.prepare('SELECT * FROM ui_style_skills ORDER BY created_at DESC').all();
   res.json(skills);
 });
 
 uiReviewRouter.post('/admin/skills', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { name, description, design_features, thumbnail_url, industry_type, skill_template } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -159,7 +154,6 @@ uiReviewRouter.post('/admin/skills', (req, res) => {
 });
 
 uiReviewRouter.put('/admin/skills/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { id } = req.params;
   const { name, description, design_features, thumbnail_url, industry_type, skill_template } = req.body;
 
@@ -187,7 +181,6 @@ uiReviewRouter.put('/admin/skills/:id', (req, res) => {
 });
 
 uiReviewRouter.delete('/admin/skills/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   db.prepare('DELETE FROM ui_style_skills WHERE id = ?').run(req.params.id);
   res.json({ success: true });
@@ -195,7 +188,6 @@ uiReviewRouter.delete('/admin/skills/:id', (req, res) => {
 
 // Admin: Skill Debug
 uiReviewRouter.post('/admin/skills/:id/debug', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
@@ -239,11 +231,8 @@ uiReviewRouter.post('/admin/skills/:id/debug', async (req, res) => {
 // ==================== Admin: Review Records ====================
 
 uiReviewRouter.get('/admin/reviews', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
 
   const total = (db.prepare('SELECT COUNT(*) as count FROM ui_reviews').get() as any).count;
   const items = db.prepare(
@@ -254,7 +243,6 @@ uiReviewRouter.get('/admin/reviews', (req, res) => {
 });
 
 uiReviewRouter.get('/admin/reviews/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ?').get(req.params.id);
   if (!review) return res.status(404).json({ error: 'Review not found' });
@@ -262,7 +250,6 @@ uiReviewRouter.get('/admin/reviews/:id', (req, res) => {
 });
 
 uiReviewRouter.delete('/admin/reviews/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   db.prepare('DELETE FROM ui_reviews WHERE id = ?').run(req.params.id);
   res.json({ success: true });
@@ -281,7 +268,18 @@ uiReviewRouter.post('/start', async (req, res) => {
     return res.status(401).json({ error: 'PRO mode requires login' });
   }
 
-  const userId = req.user?.id || getAdminUserId();
+  // SSRF：在落库、开浏览器之前先校验，让非法 URL 拿到同步的 400 而不是
+  // 变成一条 failed 记录（这个端点匿名可调，是最需要设防的入口）。
+  let safeUrl: string;
+  try {
+    safeUrl = (await assertSafeUrl(url)).url;
+  } catch (e: any) {
+    if (e instanceof UnsafeUrlError) return res.status(400).json({ error: e.message });
+    throw e;
+  }
+
+  const userId = resolveRequesterId(req);
+  ensureAnonymousQuota(userId);
 
   const db = getDatabase();
   const now = new Date().toISOString();
@@ -290,7 +288,7 @@ uiReviewRouter.post('/start', async (req, res) => {
   db.prepare(`
     INSERT INTO ui_reviews (id, user_id, url, reference_image_url, mode, status, created_at)
     VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, userId, url, referenceImageUrl || '', reviewMode, now);
+  `).run(id, userId, safeUrl, referenceImageUrl || '', reviewMode, now);
 
   res.json({ id, status: 'pending', mode: reviewMode });
 
@@ -302,30 +300,25 @@ uiReviewRouter.post('/start', async (req, res) => {
 
 // SSE progress stream
 uiReviewRouter.get('/:id/stream', (req, res) => {
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
   const { id } = req.params;
 
   const db = getDatabase();
   const review = db.prepare('SELECT user_id, status FROM ui_reviews WHERE id = ?').get(id) as any;
   if (!review || review.user_id !== userId) return res.status(404).json({ error: 'Not found' });
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  const send = initSSE(res);
 
   const interval = setInterval(() => {
     const current = db.prepare('SELECT status FROM ui_reviews WHERE id = ?').get(id) as any;
     if (!current) { clearInterval(interval); res.end(); return; }
 
-    const events = getProgressEvents(id);
-    if (events.length) {
-      const latest = events[events.length - 1];
-      res.write(`event: progress\ndata: ${latest}\n\n`);
-    }
-    res.write(`event: status\ndata: ${JSON.stringify({ status: current.status })}\n\n`);
+    const progress = getLatestProgress(id);
+    if (progress) send('progress', progress);
+    send('status', { status: current.status });
 
     if (current.status === 'completed' || current.status === 'failed') {
-      res.write(`event: done\ndata: {}\n\n`);
+      send('done', {});
       clearInterval(interval);
       res.end();
     }
@@ -340,7 +333,8 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
   (req as any).headers['x-no-compression'] = 'true';
   (res as any).flush = (res as any).flush || (() => {});
 
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
+  ensureAnonymousQuota(userId);
   const { id } = req.params;
   const { preferences } = req.body || {};
 
@@ -383,7 +377,8 @@ uiReviewRouter.post('/:id/preview', async (req, res) => {
 
 // Regenerate skill markdown with user preferences
 uiReviewRouter.post('/:id/regenerate-skill', async (req, res) => {
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
+  ensureAnonymousQuota(userId);
   const { id } = req.params;
   const { preferences } = req.body || {};
 
@@ -428,11 +423,9 @@ uiReviewRouter.post('/:id/regenerate-skill', async (req, res) => {
 });
 
 uiReviewRouter.get('/history', (req, res) => {
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
 
   const total = (db.prepare('SELECT COUNT(*) as count FROM ui_reviews WHERE user_id = ?').get(userId) as any).count;
   const items = db.prepare(
@@ -443,7 +436,7 @@ uiReviewRouter.get('/history', (req, res) => {
 });
 
 uiReviewRouter.get('/:id/skill', (req, res) => {
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
   const db = getDatabase();
   const review = db.prepare('SELECT skill_markdown FROM ui_reviews WHERE id = ? AND user_id = ?').get(req.params.id, userId) as any;
   if (!review) return res.status(404).json({ error: 'Review not found' });
@@ -452,7 +445,7 @@ uiReviewRouter.get('/:id/skill', (req, res) => {
 });
 
 uiReviewRouter.get('/:id', (req, res) => {
-  const userId = req.user?.id || getAdminUserId();
+  const userId = resolveRequesterId(req);
   const db = getDatabase();
   const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ? AND user_id = ?').get(req.params.id, userId);
   if (!review) return res.status(404).json({ error: 'Review not found' });

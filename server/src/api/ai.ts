@@ -1,15 +1,9 @@
 import { Router } from 'express';
 import { aiGateway, QuotaExceededError } from '../core/llm/gateway.js';
-import { getDatabase } from '../db/index.js';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-
-function getAdminUserId(): string {
-  const db = getDatabase();
-  const admin = db.prepare("SELECT id FROM user WHERE role = 'admin' LIMIT 1").get() as any;
-  return admin?.id || 'anonymous';
-}
+import { resolveRequesterId, ensureAnonymousQuota } from '../auth/requester.js';
 
 export const aiRouter = Router();
 
@@ -236,7 +230,9 @@ const DARK_PROMPT = `你是一个翻页看板显示助手，同时也是一面�
 
 aiRouter.post('/board/chat', async (req, res) => {
   const { message, mode = 'wisdom' } = req.body;
-  const userId = req.user?.id || getAdminUserId();
+  // 匿名访客按指纹派生独立 id + 独立(更低)配额，不再共用 admin 主体。
+  const userId = resolveRequesterId(req);
+  ensureAnonymousQuota(userId);
 
   if (!message) {
     res.status(400).json({ error: 'Missing message' });

@@ -34,12 +34,21 @@ import { xhsRouter } from './api/xhs.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
+import { reapZombieJobs } from './core/jobs.js';
+import { verifyEncryptionKey } from './core/secrets.js';
+import { failInterruptedReviews } from './services/uiReview/orchestrator.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// 反代/CDN 后取真实客户端 IP。不设这项时 req.ip 恒为反代的内网地址，
+// 会让 rateLimit 的 `user:${req.ip}` 退化成"所有匿名用户共用一个桶"
+// （既误伤正常用户，也让攻击者能干扰他人登录），匿名主体指纹同样会失真。
+// 值为 1 = 只信任最近一跳反代写入的 X-Forwarded-For；多层反代需相应调大。
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
 // Gzip compression (skip SSE streams)
 app.use(compression({
@@ -287,28 +296,49 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
+// 测试模式下只组装 app（供 supertest 直接调用），不占端口、不起定时任务、
+// 不做工作区/种子数据初始化——否则每个测试文件都会互相抢端口和 cron。
+const IS_TEST = process.env.NODE_ENV === 'test';
+
 initDatabase();
-initWorkspace();
-ensureAdminUser();
-seedUiReviewDefaults();
-startLogCleanupScheduler();
-cleanupOldLogs();
 
-const server = app.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`[mmPla] Server running on http://localhost:${PORT}`);
-});
+if (!IS_TEST) {
+  initWorkspace();
+  ensureAdminUser();
+  seedUiReviewDefaults();
 
-// Graceful shutdown
-function shutdown() {
-  console.log('[mmPla] Shutting down gracefully...');
-  server.close(() => {
-    try { getDatabase().close(); } catch { /* already closed */ }
-    process.exit(0);
+  // 上一次运行遗留的 running 任务在本进程里已经不存在了（长任务全靠内存中的
+  // async 函数驱动，进程一没就必然死了）。不收尸的话它们会永远占着
+  // 「已有任务在运行中」的互斥判断，把爬取/评分入口永久锁在 409。
+  reapZombieJobs();
+  failInterruptedReviews();
+
+  // 加密密钥换了的话，库里的第三方密钥全都解不开。放在启动时说清楚，
+  // 否则线上只会表现成 AI/上传/飞书同步三处互不相干的失败。
+  verifyEncryptionKey(getDatabase());
+
+  startLogCleanupScheduler();
+  cleanupOldLogs();
+
+  const server = app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`[mmPla] Server running on http://localhost:${PORT}`);
   });
-  setTimeout(() => process.exit(1), 5000);
+
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log('[mmPla] Shutting down gracefully...');
+    server.close(() => {
+      try { getDatabase().close(); } catch { /* already closed */ }
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+
+// supertest 用：import { app } from '../app.js'
+export { app };
 
 function ensureAdminUser(): void {
   const db = getDatabase();

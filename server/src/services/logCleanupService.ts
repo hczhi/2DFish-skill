@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { getDatabase } from '../db/index.js';
+import { cleanupAnonymousQuota } from '../auth/requester.js';
 
 const RETENTION_DAYS = 14;
 
@@ -14,9 +15,13 @@ export function cleanupOldLogs(): void {
   const pvResult = db.prepare('DELETE FROM page_views WHERE created_at < ?').run(cutoffStr);
   const pvDailyResult = db.prepare("DELETE FROM page_views_daily WHERE date < date('now', '-' || ? || ' days')").run(RETENTION_DAYS);
 
-  const total = aiResult.changes + tokenResult.changes + pvResult.changes + pvDailyResult.changes;
+  // 匿名访客的配额行会随访客数无限增长，一并清掉过期的（只删非今天的，
+  // 否则删完立刻重建等于绕过当日限额）。
+  const anonCleaned = cleanupAnonymousQuota();
+
+  const total = aiResult.changes + tokenResult.changes + pvResult.changes + pvDailyResult.changes + anonCleaned;
   if (total > 0) {
-    console.log(`[cleanup] Deleted ${aiResult.changes} ai_logs, ${tokenResult.changes} token_access_logs, ${pvResult.changes} page_views, ${pvDailyResult.changes} page_views_daily (older than ${RETENTION_DAYS} days)`);
+    console.log(`[cleanup] Deleted ${aiResult.changes} ai_logs, ${tokenResult.changes} token_access_logs, ${pvResult.changes} page_views, ${pvDailyResult.changes} page_views_daily, ${anonCleaned} anon quota rows (older than ${RETENTION_DAYS} days)`);
   }
 }
 

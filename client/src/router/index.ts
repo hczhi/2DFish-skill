@@ -11,6 +11,8 @@ function getSessionId(): string {
   return sid;
 }
 
+// 埋点保持裸 fetch：接口是 public 的，不需要带 token；
+// 而且它是 fire-and-forget，绝不该因为一次上报失败弹登录框打断用户。
 function trackPageView(path: string) {
   if (path.startsWith('/admin')) return;
   fetch('/api/analytics/pageview', {

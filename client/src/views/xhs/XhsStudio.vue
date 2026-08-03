@@ -396,8 +396,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api'
-import { getToken } from '../../lib/auth'
+import { apiGet, apiPost, apiPut, apiDelete, apiStream, streamSSEData } from '../../lib/api'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 
@@ -655,6 +654,21 @@ function moveSection(index: number, dir: -1 | 1) {
   ;[arr[index], arr[to]] = [arr[to], arr[index]]
 }
 
+// 流式生成的落笔规则：累积文本的第一行当标题、其余当正文。
+// generateFromOutline 和 generateWithSkill 两条链路完全一样，抽出来避免改一处漏一处。
+// 返回新的累积串（调用方持有 acc）。
+function applyGeneratedDelta(acc: string, delta: string): string {
+  const next = acc + delta
+  const nl = next.indexOf('\n')
+  if (nl === -1) {
+    title.value = next
+  } else {
+    title.value = next.slice(0, nl).replace(/^#+\s*/, '').trim()
+    body.value = next.slice(nl + 1).trim()
+  }
+  return next
+}
+
 // 大纲定稿 → 一键生成全文（流式），落进标题/正文编辑器
 async function generateFromOutline() {
   const outline = coOutline.value.filter(s => (s.heading || '').trim() || (s.goal || '').trim())
@@ -664,48 +678,20 @@ async function generateFromOutline() {
   body.value = ''
   let acc = ''
   try {
-    const res = await fetch('/api/xhs/cowrite-generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({
-        topic: genTopic.value,
-        outline,
-        materials: [materialsText.value, enrichmentText.value ? `【外部佐证（需核实）】\n${enrichmentText.value}` : '']
-          .filter(Boolean).join('\n\n') || undefined,
-        root: chosenRoot.value || undefined,
-        persona: persona.value || undefined,
-        enrichment: enrichmentText.value || undefined,
-        niche: niche.value || undefined,
-        genre: genreParam(),
-      }),
-    })
-    if (!res.ok || !res.body) throw new Error('生成失败')
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const m = line.match(/^data: (.+)$/m)
-        if (!m || m[1] === '[DONE]') continue
-        try {
-          const { delta } = JSON.parse(m[1])
-          if (delta) {
-            acc += delta
-            const nl = acc.indexOf('\n')
-            if (nl === -1) {
-              title.value = acc
-            } else {
-              title.value = acc.slice(0, nl).replace(/^#+\s*/, '').trim()
-              body.value = acc.slice(nl + 1).trim()
-            }
-          }
-        } catch { /* ignore */ }
-      }
+    const res = await apiStream('/api/xhs/cowrite-generate', {
+      topic: genTopic.value,
+      outline,
+      materials: [materialsText.value, enrichmentText.value ? `【外部佐证（需核实）】\n${enrichmentText.value}` : '']
+        .filter(Boolean).join('\n\n') || undefined,
+      root: chosenRoot.value || undefined,
+      persona: persona.value || undefined,
+      enrichment: enrichmentText.value || undefined,
+      niche: niche.value || undefined,
+      genre: genreParam(),
+    }, { failMessage: '生成失败' })
+
+    for await (const { delta } of streamSSEData(res)) {
+      if (delta) acc = applyGeneratedDelta(acc, delta)
     }
     coActive.value = false   // 成文后退出大纲面板，回到编辑器改全文
     if (body.value.trim()) scoreNow()   // 首次成文直接诊断一次（之后编辑才走防抖自动重评）
@@ -724,47 +710,19 @@ async function generateWithSkill() {
   body.value = ''
   let acc = ''
   try {
-    const res = await fetch(`/api/xhs/skills/${genSkillId.value}/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({
-        topic: genTopic.value,
-        // 采纳的联网补充点作为"外部佐证"并进素材（来源可见，用户已勾选把关）
-        materials: [materialsText.value, enrichmentText.value ? `【外部佐证（需核实）】\n${enrichmentText.value}` : '']
-          .filter(Boolean).join('\n\n') || undefined,
-        root: chosenRoot.value || undefined,
-        persona: persona.value || undefined,
-        niche: niche.value || undefined,
-        genre: genreParam(),
-      }),
-    })
-    if (!res.ok || !res.body) throw new Error('生成失败')
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const m = line.match(/^data: (.+)$/m)
-        if (!m || m[1] === '[DONE]') continue
-        try {
-          const { delta } = JSON.parse(m[1])
-          if (delta) {
-            acc += delta
-            const nl = acc.indexOf('\n')
-            if (nl === -1) {
-              title.value = acc
-            } else {
-              title.value = acc.slice(0, nl).replace(/^#+\s*/, '').trim()
-              body.value = acc.slice(nl + 1).trim()
-            }
-          }
-        } catch { /* ignore */ }
-      }
+    const res = await apiStream(`/api/xhs/skills/${genSkillId.value}/generate`, {
+      topic: genTopic.value,
+      // 采纳的联网补充点作为"外部佐证"并进素材（来源可见，用户已勾选把关）
+      materials: [materialsText.value, enrichmentText.value ? `【外部佐证（需核实）】\n${enrichmentText.value}` : '']
+        .filter(Boolean).join('\n\n') || undefined,
+      root: chosenRoot.value || undefined,
+      persona: persona.value || undefined,
+      niche: niche.value || undefined,
+      genre: genreParam(),
+    }, { failMessage: '生成失败' })
+
+    for await (const { delta } of streamSSEData(res)) {
+      if (delta) acc = applyGeneratedDelta(acc, delta)
     }
     if (body.value.trim()) scoreNow()   // 首次成文直接诊断一次（之后编辑才走防抖自动重评）
   } catch (e: any) {
@@ -837,36 +795,16 @@ async function askAI(mode: 'ask' | 'rewrite' | 'continue' | 'deflavor' | 'demons
   asking.value = true
   answer.value = ''
   try {
-    const res = await fetch('/api/xhs/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({
-        mode,
-        question: question.value,
-        selection: selection.value,
-        title: title.value, body: body.value, niche: niche.value,
-        persona: persona.value || undefined,   // 保持同一个真人的口吻改写/续写
-      }),
-    })
-    if (!res.ok || !res.body) { throw new Error('请求失败') }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const m = line.match(/^data: (.+)$/m)
-        if (!m) continue
-        if (m[1] === '[DONE]') continue
-        try {
-          const { delta } = JSON.parse(m[1])
-          if (delta) answer.value += delta
-        } catch { /* ignore */ }
-      }
+    const res = await apiStream('/api/xhs/ask', {
+      mode,
+      question: question.value,
+      selection: selection.value,
+      title: title.value, body: body.value, niche: niche.value,
+      persona: persona.value || undefined,   // 保持同一个真人的口吻改写/续写
+    }, { failMessage: '请求失败' })
+
+    for await (const { delta } of streamSSEData(res)) {
+      if (delta) answer.value += delta
     }
   } catch (e: any) {
     answer.value = '（' + (e.message || 'AI 回答失败') + '）'

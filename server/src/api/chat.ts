@@ -15,6 +15,7 @@ import {
   getLatestSummary,
 } from '../services/chatService.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { initSSE } from '../core/http.js';
 
 export const chatRouter = Router();
 
@@ -58,13 +59,7 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     return;
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  const sendEvent = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
+  const sendEvent = initSSE(res);
 
   const userId = req.user!.id;
   setCurrentUser(userId);

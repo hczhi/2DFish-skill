@@ -2,8 +2,7 @@
 // 新版 AI 辅助写作台。主旨：人负责洞察/提问/判断，AI 负责结构化/验证/润色。
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api'
-import { getToken } from '../../lib/auth'
+import { apiGet, apiPost, apiPut, apiDelete, apiStream, streamSSEData } from '../../lib/api'
 import MindTree, { type MindNode } from '../../components/xhs/MindTree.vue'
 import SelectionChat, { type ChatResult } from '../../components/xhs/SelectionChat.vue'
 
@@ -365,50 +364,31 @@ async function write() {
   let acc = ''
   
   try {
-    const res = await fetch('/api/xhs/write', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({
-        brief,
-        nodes: nodes.value,
-        skillId: skillId.value || undefined,
-        persona: persona.value || undefined,
-        niche: niche.value || undefined,
-      }),
-      signal: abortController.signal
-    })
-    if (!res.ok || !res.body) throw new Error('生成失败')
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-      for (const line of parts) {
-        const m = line.match(/^data: (.+)$/m)
-        if (!m || m[1] === '[DONE]') continue
-        let parsed: any
-        try { parsed = JSON.parse(m[1]) } catch { continue }  // 解析失败才跳过
-        // 后端在流里推的错误事件（上游报错/空返回）：抛出去让外层 catch 弹提示、停转圈。
-        if (parsed.error) throw new Error(parsed.error)
-        const delta = parsed.delta
-        if (delta) {
-          acc += delta
-          const nl = acc.indexOf('\n')
-          if (nl === -1) { title.value = acc }
-          else {
-            title.value = acc.slice(0, nl).trim()
-            const content = acc.slice(nl + 1).trim()
-            const html = content.split('\n').map(p => p ? `<p>${p}</p>` : '<p><br></p>').join('')
-            body.value = html
-            if (editor.value) {
-              editor.value.commands.setContent(html)
-              // 自动滚动到底部
-              editor.value.commands.focus('end')
-            }
+    const res = await apiStream('/api/xhs/write', {
+      brief,
+      nodes: nodes.value,
+      skillId: skillId.value || undefined,
+      persona: persona.value || undefined,
+      niche: niche.value || undefined,
+    }, { signal: abortController.signal, failMessage: '生成失败' })
+
+    for await (const parsed of streamSSEData(res)) {
+      // 后端在流里推的错误事件（上游报错/空返回）：抛出去让外层 catch 弹提示、停转圈。
+      if (parsed.error) throw new Error(parsed.error)
+      const delta = parsed.delta
+      if (delta) {
+        acc += delta
+        const nl = acc.indexOf('\n')
+        if (nl === -1) { title.value = acc }
+        else {
+          title.value = acc.slice(0, nl).trim()
+          const content = acc.slice(nl + 1).trim()
+          const html = content.split('\n').map(p => p ? `<p>${p}</p>` : '<p><br></p>').join('')
+          body.value = html
+          if (editor.value) {
+            editor.value.commands.setContent(html)
+            // 自动滚动到底部
+            editor.value.commands.focus('end')
           }
         }
       }

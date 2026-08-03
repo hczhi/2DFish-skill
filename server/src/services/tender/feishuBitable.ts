@@ -1,4 +1,5 @@
 import { getDatabase } from '../../db/index.js';
+import { decryptSecret } from '../../core/secrets.js';
 
 // 飞书多维表格同步。
 //
@@ -131,10 +132,16 @@ async function getTenantToken(appId: string, appSecret: string, nowMs: number): 
   const cached = tokenCache.get(appId);
   if (cached && cached.expireAtMs > nowMs) return cached.token;
 
+  // app_secret 在库里是加密的（migrations/050）。解密收在这一个点上：
+  // 它是 secret 唯一真正被使用的地方，各处 SELECT 出来的密文可以照原样传递，
+  // 于是 tender.ts 那几个只是把 row 转手传进来的调用点一行都不用改。
+  // decryptSecret 对旧明文原样返回，解不开则抛出可读原因。
+  const plainSecret = decryptSecret(appSecret);
+
   const res = await fetch(`${OPEN_BASE}/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    body: JSON.stringify({ app_id: appId, app_secret: plainSecret }),
     signal: AbortSignal.timeout(15000),
   });
 

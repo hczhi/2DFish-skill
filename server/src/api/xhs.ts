@@ -1,82 +1,15 @@
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
 import { scoreNote, getWeights, setWeight, DIM_KEYS, ScoringParseError, type XhsNoteInput, type XhsGenre } from '../services/xhs/scoringService.js';
 import { aiGateway, aiGatewayStream, SAMPLING } from '../core/llm/gateway.js';
+import { parseFirstJson, jsonGateway as jsonGatewayWithRetry } from '../core/llm/parseJson.js';
 import { getSkillForSlot } from '../services/skillRegistryService.js';
 import * as uws from '../services/userWritingSkillService.js';
 import * as struct from '../services/xhsStructureService.js';
 import { webSearch, isSearchEnabled } from '../services/webSearchService.js';
-
-/**
- * 解析 AI 返回里的第一个完整 JSON 对象，失败返回 null（多处复用）。
- * 不能用贪婪的 /\{[\s\S]*\}/：那会从第一个 { 吞到最后一个 }，
- * 一旦模型多吐了示例/说明/markdown 就必然 parse 失败。
- * 做法：先剥 ``` 代码块围栏，再做括号配平（跳过字符串内的花括号），
- * 找到第一个花括号配平闭合的片段。
- */
-function parseFirstJson(text: string): any | null {
-  if (!text) return null;
-  // 去掉 ```json ... ``` / ``` ... ``` 围栏，只留内容
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const src = fenced ? fenced[1] : text;
-
-  const start = src.indexOf('{');
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < src.length; i++) {
-    const ch = src[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(src.slice(start, i + 1));
-        } catch {
-          return null;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * 调一次 aiGateway 拿 JSON，失败自动重试一次（默认强模型也可能偶发崩：空返回 / 长 JSON 里
- * 未转义引号导致格式坏）。重试几乎零成本，能把「用户直接看到报错」的概率再压一个量级。
- * 返回 { parsed, raw, finish }：parsed 为 null 表示两次都没拿到合法 JSON。
- */
-async function jsonGatewayWithRetry(
-  buildBody: () => any,
-  ctx: { userId: string; source: string; operation: string; tier?: 'default' | 'strong' | 'fast' },
-  attempts = 2
-): Promise<{ parsed: any | null; raw: string; finish?: string }> {
-  let lastRaw = '';
-  let lastFinish: string | undefined;
-  for (let i = 0; i < attempts; i++) {
-    const { response } = await aiGateway(buildBody(), ctx);
-    lastRaw = response.choices[0]?.message?.content || '';
-    lastFinish = response.choices[0]?.finish_reason;
-    if (lastRaw.trim()) {
-      const parsed = parseFirstJson(lastRaw);
-      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish };
-      console.error(`[xhs] ${ctx.operation} parse fail (try ${i + 1}/${attempts}). raw=`, lastRaw.slice(0, 300));
-    } else {
-      console.error(`[xhs] ${ctx.operation} empty content (try ${i + 1}/${attempts}). finish=${lastFinish} usage=`, response.usage);
-    }
-  }
-  return { parsed: null, raw: lastRaw, finish: lastFinish };
-}
+import { requireAdmin } from '../auth/guards.js';
+import { initSSE } from '../core/http.js';
 
 /**
  * 统一错误处理：把 QuotaExceededError 映射成 429，其余记日志后 500。
@@ -102,9 +35,7 @@ async function streamToSSE(
   stream: AsyncIterable<any>,
   onComplete: (promptTokens: number, completionTokens: number, durationMs: number, outputText?: string) => void
 ): Promise<string> {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  initSSE(res);
   let output = '';
   let chunks = 0;
   const start = Date.now();
@@ -139,15 +70,6 @@ async function streamToSSE(
   // prompt tokens 无法从流里精确拿到，用输出长度粗估补偿（gateway 已扣一次调用额度）
   onComplete(0, Math.ceil(output.length / 4), Date.now() - start, output);
   return output;
-}
-
-/** 管理员门：权重是全平台共享的调优参数，只有管理员能改。 */
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (req.user?.role !== 'admin') {
-    res.status(403).json({ error: 'admin required' });
-    return;
-  }
-  next();
 }
 
 export const xhsRouter = Router();

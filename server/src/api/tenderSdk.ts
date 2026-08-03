@@ -189,9 +189,11 @@ export function registerSdkRoutes(router: Router): void {
 
 // ==================== Admin: SDK key 管理 ====================
 
+// 这些路由全部挂在 /admin/* 下，由 tender.ts 里的 `tenderRouter.use('/admin', requireAdmin)`
+// 统一鉴权，因此 handler 内不再重复手写 role 检查。
+// 前提：调用方必须在挂上那道闸门之后才调用本函数（见 tender.ts 的顺序注释）。
 export function registerSdkAdminRoutes(router: Router): void {
   router.get('/admin/sdk-keys', (req, res) => {
-    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
     const db = getDatabase();
     const rows = db.prepare(`
       SELECT k.pk, k.user_id, k.name, k.allowed_origins, k.enabled, k.rate_limit,
@@ -207,7 +209,6 @@ export function registerSdkAdminRoutes(router: Router): void {
   });
 
   router.post('/admin/sdk-keys', (req, res) => {
-    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
     const { userId, name, allowedOrigins, rateLimit } = req.body;
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
@@ -226,7 +227,6 @@ export function registerSdkAdminRoutes(router: Router): void {
   });
 
   router.patch('/admin/sdk-keys/:pk', (req, res) => {
-    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
     const db = getDatabase();
     const existing = db.prepare('SELECT pk FROM sdk_keys WHERE pk = ?').get(req.params.pk);
     if (!existing) return res.status(404).json({ error: 'Not found' });
@@ -244,7 +244,6 @@ export function registerSdkAdminRoutes(router: Router): void {
   });
 
   router.delete('/admin/sdk-keys/:pk', (req, res) => {
-    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
     const db = getDatabase();
     db.prepare('DELETE FROM sdk_keys WHERE pk = ?').run(req.params.pk);
     res.json({ success: true });

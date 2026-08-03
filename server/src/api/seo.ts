@@ -2,8 +2,15 @@ import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 import { generateStaticPages } from '../services/ssgService.js';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow } from '../core/http.js';
 
 export const seoRouter = Router();
+
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+seoRouter.use('/admin', requireAdmin);
 
 // ===== PUBLIC: 前端获取 SEO 数据 =====
 
@@ -159,10 +166,7 @@ ${urls.join('\n')}
 // ===== ADMIN: 管理 SEO =====
 
 seoRouter.get('/admin/pages', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM seo_pages').get() as { total: number };
@@ -171,7 +175,6 @@ seoRouter.get('/admin/pages', (req: Request, res: Response) => {
 });
 
 seoRouter.post('/admin/pages', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { path, locale, title, description, keywords, og_title, og_description, og_image, canonical, no_index, json_ld, priority, changefreq } = req.body;
   if (!path || !title) { res.status(400).json({ error: 'path and title required' }); return; }
@@ -194,37 +197,23 @@ seoRouter.post('/admin/pages', (req: Request, res: Response) => {
 });
 
 seoRouter.patch('/admin/pages/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(req.params.id);
   if (!existing) { res.status(404).json({ error: 'not found' }); return; }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowed = ['path', 'locale', 'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image', 'canonical', 'no_index', 'json_ld', 'priority', 'changefreq'];
+  const changed = patchRow(db, 'seo_pages', {
+    columns: ['path', 'locale', 'title', 'description', 'keywords', 'og_title', 'og_description', 'og_image', 'canonical', 'no_index', 'json_ld', 'priority', 'changefreq'],
+    booleans: ['no_index'],
+  }, req.body, { id: req.params.id });
 
-  for (const field of allowed) {
-    if (req.body[field] !== undefined) {
-      const val = field === 'no_index' ? (req.body[field] ? 1 : 0) : req.body[field];
-      fields.push(`${field} = ?`);
-      values.push(val);
-    }
-  }
+  if (changed === 0) { res.status(400).json({ error: 'no fields' }); return; }
 
-  if (fields.length === 0) { res.status(400).json({ error: 'no fields' }); return; }
-
-  fields.push('updated_at = ?');
-  values.push(new Date().toISOString());
-  values.push(req.params.id);
-
-  db.prepare(`UPDATE seo_pages SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   const updated = db.prepare('SELECT * FROM seo_pages WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
 seoRouter.delete('/admin/pages/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   const result = db.prepare('DELETE FROM seo_pages WHERE id = ?').run(req.params.id);
   if (result.changes === 0) { res.status(404).json({ error: 'not found' }); return; }
@@ -233,13 +222,11 @@ seoRouter.delete('/admin/pages/:id', (req: Request, res: Response) => {
 
 // Global settings
 seoRouter.get('/admin/globals', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   res.json(getGlobals(db));
 });
 
 seoRouter.patch('/admin/globals', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const now = new Date().toISOString();
@@ -257,7 +244,6 @@ seoRouter.patch('/admin/globals', (req: Request, res: Response) => {
 
 // SSG: Generate static pages
 seoRouter.post('/admin/generate', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const result = generateStaticPages();
   res.json(result);

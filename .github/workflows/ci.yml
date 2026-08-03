@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支上新 push 取消旧的运行，省 CI 时间
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (typecheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 版本必须锁在 .nvmrc：better-sqlite3 是原生模块，
+      # 换大版本就是 NODE_MODULE_VERSION 不匹配、直接崩。
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install
+        working-directory: server
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: server
+        run: npm run typecheck
+
+      # 测试用 DB_PATH 指向临时文件（src/test/setup.ts 里设），不碰任何真实数据。
+      # 不需要 Playwright 浏览器：涉及爬取的流水线在测试里已被 mock。
+      - name: Test
+        working-directory: server
+        run: npm test
+
+  client:
+    name: Client (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install
+        working-directory: client
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: client
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: client
+        run: npm run build

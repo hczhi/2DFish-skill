@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { getDatabase } from '../../db/index.js';
 import { logAIUsage } from './client.js';
 import { resolveLLMProvider, type LLMTier } from '../../services/aiProviderService.js';
+import { decryptSecret } from '../secrets.js';
 
 export interface GatewayOptions {
   userId: string;
@@ -69,7 +70,8 @@ export function resolveLLMConfig(tier: LLMTier = 'default'): { client: OpenAI; m
   }
 
   const client = new OpenAI({
-    apiKey: sysKey.value,
+    // 库里是密文（migrations/050）；decryptSecret 对没有前缀的旧明文原样返回
+    apiKey: decryptSecret(sysKey.value),
     baseURL: sysBase?.value || 'https://api.openai.com/v1',
   });
   return { client, model: sysModel?.value || 'gpt-4o' };

@@ -1,8 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow } from '../core/http.js';
 
 export const homeRouter = Router();
+
+// /admin/* 统一鉴权闸门：必须挂在任何 /admin 路由注册之前。
+// 以前每个 handler 首行手写 `if (req.user?.role !== 'admin')`，漏写一行就是越权
+// 漏洞、且没有任何测试会发现；收成一道中间件后新增路由自动受保护。
+homeRouter.use('/admin', requireAdmin);
 
 // ===== PUBLIC: 前端获取首页数据 =====
 
@@ -27,10 +34,7 @@ homeRouter.get('/feeds', (_req: Request, res: Response) => {
 // --- Modules CRUD ---
 
 homeRouter.get('/admin/modules', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM home_modules').get() as { total: number };
@@ -39,7 +43,6 @@ homeRouter.get('/admin/modules', (req: Request, res: Response) => {
 });
 
 homeRouter.post('/admin/modules', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { title, description, icon, path, category, featured, require_auth, image_url, bg_color, sort_order, visible, grid_span } = req.body;
   if (!title) { res.status(400).json({ error: 'title is required' }); return; }
@@ -74,39 +77,23 @@ homeRouter.post('/admin/modules', (req: Request, res: Response) => {
 });
 
 homeRouter.patch('/admin/modules/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM home_modules WHERE id = ?').get(req.params.id);
   if (!existing) { res.status(404).json({ error: 'not found' }); return; }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowedFields = ['title', 'description', 'icon', 'path', 'category', 'featured', 'require_auth', 'image_url', 'bg_color', 'sort_order', 'visible', 'grid_span'];
+  const changed = patchRow(db, 'home_modules', {
+    columns: ['title', 'description', 'icon', 'path', 'category', 'featured', 'require_auth', 'image_url', 'bg_color', 'sort_order', 'visible', 'grid_span'],
+    booleans: ['featured', 'require_auth', 'visible'],
+  }, req.body, { id: req.params.id });
 
-  for (const field of allowedFields) {
-    if (req.body[field] !== undefined) {
-      const val = ['featured', 'require_auth', 'visible'].includes(field)
-        ? (req.body[field] ? 1 : 0)
-        : req.body[field];
-      fields.push(`${field} = ?`);
-      values.push(val);
-    }
-  }
+  if (changed === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
 
-  if (fields.length === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
-
-  fields.push('updated_at = ?');
-  values.push(new Date().toISOString());
-  values.push(req.params.id);
-
-  db.prepare(`UPDATE home_modules SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   const updated = db.prepare('SELECT * FROM home_modules WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
 homeRouter.delete('/admin/modules/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   const result = db.prepare('DELETE FROM home_modules WHERE id = ?').run(req.params.id);
   if (result.changes === 0) { res.status(404).json({ error: 'not found' }); return; }
@@ -115,7 +102,6 @@ homeRouter.delete('/admin/modules/:id', (req: Request, res: Response) => {
 
 // Batch sort order update
 homeRouter.put('/admin/modules/sort', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const { items } = req.body as { items: Array<{ id: string; sort_order: number }> };
   if (!Array.isArray(items)) { res.status(400).json({ error: 'items array required' }); return; }
 
@@ -134,10 +120,7 @@ homeRouter.put('/admin/modules/sort', (req: Request, res: Response) => {
 // --- Feeds CRUD ---
 
 homeRouter.get('/admin/feeds', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
-  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const pageSize = Math.min(Math.max(parseInt(req.query.page_size as string) || 20, 1), 100);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
   const { total } = db.prepare('SELECT COUNT(*) as total FROM home_feeds').get() as { total: number };
@@ -146,7 +129,6 @@ homeRouter.get('/admin/feeds', (req: Request, res: Response) => {
 });
 
 homeRouter.post('/admin/feeds', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const { title, author, icon, bg_color, avatar_color, link, likes, image_height, sort_order, visible } = req.body;
   if (!title) { res.status(400).json({ error: 'title is required' }); return; }
@@ -179,37 +161,23 @@ homeRouter.post('/admin/feeds', (req: Request, res: Response) => {
 });
 
 homeRouter.patch('/admin/feeds/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
 
   const db = getDatabase();
   const existing = db.prepare('SELECT * FROM home_feeds WHERE id = ?').get(req.params.id);
   if (!existing) { res.status(404).json({ error: 'not found' }); return; }
 
-  const fields: string[] = [];
-  const values: any[] = [];
-  const allowedFields = ['title', 'author', 'icon', 'bg_color', 'avatar_color', 'link', 'likes', 'image_height', 'sort_order', 'visible'];
+  const changed = patchRow(db, 'home_feeds', {
+    columns: ['title', 'author', 'icon', 'bg_color', 'avatar_color', 'link', 'likes', 'image_height', 'sort_order', 'visible'],
+    booleans: ['visible'],
+  }, req.body, { id: req.params.id });
 
-  for (const field of allowedFields) {
-    if (req.body[field] !== undefined) {
-      const val = field === 'visible' ? (req.body[field] ? 1 : 0) : req.body[field];
-      fields.push(`${field} = ?`);
-      values.push(val);
-    }
-  }
+  if (changed === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
 
-  if (fields.length === 0) { res.status(400).json({ error: 'no fields to update' }); return; }
-
-  fields.push('updated_at = ?');
-  values.push(new Date().toISOString());
-  values.push(req.params.id);
-
-  db.prepare(`UPDATE home_feeds SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   const updated = db.prepare('SELECT * FROM home_feeds WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
 
 homeRouter.delete('/admin/feeds/:id', (req: Request, res: Response) => {
-  if (req.user?.role !== 'admin') { res.status(403).json({ error: 'admin required' }); return; }
   const db = getDatabase();
   const result = db.prepare('DELETE FROM home_feeds WHERE id = ?').run(req.params.id);
   if (result.changes === 0) { res.status(404).json({ error: 'not found' }); return; }

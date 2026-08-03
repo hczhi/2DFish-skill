@@ -1,6 +1,11 @@
 // AI provider 表的读写 + 解析。gateway 和 admin API 共用这里，避免读表逻辑漂移。
+//
+// api_key 在库里是加密的（见 migrations/050 与 core/secrets.ts）。
+// 加解密全部收在本模块内：出口一律明文、入口一律加密，
+// 这样 gateway 和 admin API 都不用知道存储层加了密。
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
+import { encryptSecret, tryDecryptSecret, maskSecret } from '../core/secrets.js';
 
 export type ProviderKind = 'llm' | 'image';
 export type LLMTier = 'default' | 'strong' | 'fast';
@@ -19,14 +24,27 @@ export interface AIProvider {
   updated_at: string;
 }
 
+/**
+ * 解密取出的 api_key。
+ *
+ * 解不开时置空而不是抛错：换了 CONFIG_ENCRYPTION_KEY 的场景下，
+ * 一条坏行不该让整个后台列表页 500。空 key 会被 resolveLLMProvider
+ * 当作不可用而跳过，管理员在列表里看到的是 '(无法解密)'。
+ */
+function decryptRow<T extends { api_key: string }>(row: T): T {
+  return { ...row, api_key: tryDecryptSecret(row.api_key) ?? '' };
+}
+
 export function listProviders(): AIProvider[] {
   const db = getDatabase();
-  return db.prepare('SELECT * FROM ai_providers ORDER BY kind, tier, created_at').all() as AIProvider[];
+  const rows = db.prepare('SELECT * FROM ai_providers ORDER BY kind, tier, created_at').all() as AIProvider[];
+  return rows.map(decryptRow);
 }
 
 export function getProvider(id: string): AIProvider | undefined {
   const db = getDatabase();
-  return db.prepare('SELECT * FROM ai_providers WHERE id = ?').get(id) as AIProvider | undefined;
+  const row = db.prepare('SELECT * FROM ai_providers WHERE id = ?').get(id) as AIProvider | undefined;
+  return row && decryptRow(row);
 }
 
 /**
@@ -35,21 +53,26 @@ export function getProvider(id: string): AIProvider | undefined {
  */
 export function resolveLLMProvider(tier: LLMTier = 'default'): AIProvider | null {
   const db = getDatabase();
-  const pick = (t: string) =>
-    db
+  const pick = (t: string) => {
+    const row = db
       .prepare("SELECT * FROM ai_providers WHERE kind = 'llm' AND tier = ? AND enabled = 1 AND api_key <> '' ORDER BY updated_at DESC LIMIT 1")
       .get(t) as AIProvider | undefined;
+    // SQL 里的 api_key <> '' 只能筛掉「没填」；解密失败的行要在这里再筛一次，
+    // 否则会拿着空 key 去调 OpenAI，报出来的是 401 而不是真正的原因。
+    const d = row && decryptRow(row);
+    return d && d.api_key ? d : undefined;
+  };
   return pick(tier) || (tier !== 'default' ? pick('default') : undefined) || null;
 }
 
 /** 解析生图 provider（当前只按启用状态取第一条，未来可加 tier/优先级）。 */
 export function resolveImageProvider(): AIProvider | null {
   const db = getDatabase();
-  return (
-    (db
-      .prepare("SELECT * FROM ai_providers WHERE kind = 'image' AND enabled = 1 AND api_key <> '' ORDER BY updated_at DESC LIMIT 1")
-      .get() as AIProvider | undefined) || null
-  );
+  const row = db
+    .prepare("SELECT * FROM ai_providers WHERE kind = 'image' AND enabled = 1 AND api_key <> '' ORDER BY updated_at DESC LIMIT 1")
+    .get() as AIProvider | undefined;
+  const d = row && decryptRow(row);
+  return d && d.api_key ? d : null;
 }
 
 export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIProvider {
@@ -74,7 +97,9 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
   db.prepare(
     `INSERT OR REPLACE INTO ai_providers (id, kind, tier, label, base_url, api_key, model, extra_json, enabled, created_at, updated_at)
      VALUES (@id, @kind, @tier, @label, @base_url, @api_key, @model, @extra_json, @enabled, @created_at, @updated_at)`
-  ).run(merged);
+    // merged.api_key 此刻是明文（existing 来自已解密的 getProvider），落库前加密
+  ).run({ ...merged, api_key: encryptSecret(merged.api_key) });
+  // 返回明文那份：调用方（admin API）拿去 maskProvider 脱敏回显
   return merged;
 }
 
@@ -85,7 +110,5 @@ export function deleteProvider(id: string): void {
 
 /** 脱敏：api_key 只留头尾，给后台回显用。 */
 export function maskProvider(p: AIProvider): Omit<AIProvider, 'api_key'> & { api_key: string } {
-  const k = p.api_key;
-  const masked = k ? (k.length > 11 ? `${k.slice(0, 7)}...${k.slice(-4)}` : '****') : '';
-  return { ...p, api_key: masked };
+  return { ...p, api_key: maskSecret(p.api_key) };
 }

@@ -147,8 +147,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api'
-import { getToken } from '../../lib/auth'
+import { apiGet, apiPost, apiPut, apiDelete, apiStream, streamSSEData } from '../../lib/api'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 
@@ -314,29 +313,11 @@ async function generate() {
   refineResult.value = null
   feedback.value = ''
   try {
-    const res = await fetch(`/api/xhs/skills/${current.value.id}/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ topic: topic.value }),
-    })
-    if (!res.ok || !res.body) {
-      const t = await res.text().catch(() => '')
-      throw new Error(t || '生成失败')
-    }
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        const m = line.match(/^data: (.+)$/m)
-        if (!m || m[1] === '[DONE]') continue
-        try { const { delta } = JSON.parse(m[1]); if (delta) output.value += delta } catch { /* ignore */ }
-      }
+    const res = await apiStream(`/api/xhs/skills/${current.value.id}/generate`,
+      { topic: topic.value }, { failMessage: '生成失败' })
+
+    for await (const { delta } of streamSSEData(res)) {
+      if (delta) output.value += delta
     }
   } catch (e: any) {
     error.value = e?.message || '生成失败'

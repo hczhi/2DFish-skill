@@ -7,6 +7,7 @@ import { setCurrentUser, ensureWorkspaceExists } from '../services/fileService.j
 import { getDatabase } from '../db/index.js';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { initSSE } from '../core/http.js';
 
 export const consultantRouter = Router();
 
@@ -68,13 +69,7 @@ consultantRouter.post('/stream', async (req: Request, res: Response) => {
   const { message } = req.body as { message: string };
   if (!message) { res.status(400).json({ error: 'message is required' }); return; }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  const sendEvent = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
+  const sendEvent = initSSE(res);
 
   const userId = req.user!.id;
   setCurrentUser(userId);

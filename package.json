@@ -7,7 +7,9 @@
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
     "build:sdk": "cd sdk && npm install && npm run build",
-    "build": "npm run build:sdk && cd client && npm run build && cd ../server && npm run ssg"
+    "build": "npm run build:sdk && cd client && npm run build && cd ../server && npm run ssg",
+    "test": "cd server && npm test",
+    "typecheck": "cd server && npm run typecheck && cd ../client && npm run typecheck"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

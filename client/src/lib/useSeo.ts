@@ -1,5 +1,6 @@
 import { onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { apiGet } from './api'
 
 interface SeoPage {
   title: string
@@ -42,8 +43,7 @@ export function useSeo() {
 
     if (!cache[cacheKey]) {
       try {
-        const res = await fetch(`/api/seo/page?path=${encodeURIComponent(normalizedPath)}&locale=${locale}`)
-        if (res.ok) cache[cacheKey] = await res.json()
+        cache[cacheKey] = await apiGet('/api/seo/page', { path: normalizedPath, locale })
       } catch { return }
     }
 

@@ -103,6 +103,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
+import { apiGet } from '../../lib/api'
 
 const route = useRoute()
 
@@ -148,23 +149,19 @@ function handleLocaleChange() {
 async function loadArticles() {
   loading.value = true
   try {
-    const q = searchQuery.value.trim()
-    let url = `/api/discover/articles?locale=${locale.value}&limit=${pageSize}&page=${currentPage.value}`
-    if (q) url += `&q=${encodeURIComponent(q)}`
-    const res = await fetch(url)
-    if (res.ok) {
-      const data = await res.json()
-      articles.value = data.items || data
-      totalArticles.value = data.total || 0
-    }
+    // apiGet 会跳过空串参数，所以 q 为空时不会拼出 &q= 这种空条件
+    const data = await apiGet<any>('/api/discover/articles', {
+      locale: locale.value, limit: pageSize, page: currentPage.value, q: searchQuery.value.trim(),
+    })
+    articles.value = data.items || data
+    totalArticles.value = data.total || 0
   } catch { /* silent */ }
   loading.value = false
 }
 
 async function loadTopics() {
   try {
-    const res = await fetch(`/api/discover/topics?locale=${locale.value}`)
-    if (res.ok) topics.value = await res.json()
+    topics.value = await apiGet('/api/discover/topics', { locale: locale.value })
   } catch { /* silent */ }
 }
 

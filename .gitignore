@@ -30,5 +30,14 @@ server/data/
 *.log
 npm-debug.log*
 
+# 临时/备份文件。之前 XhsStudio.vue.bak-20260727 被提交进仓库，
+# 结果是搜索代码时会同时命中备份里的旧实现（包括已经修掉的裸 fetch），
+# 分不清哪份才是在跑的。备份交给 git，不要留在工作区。
+*.bak
+*.bak-*
+*.orig
+*.rej
+tmp_*.ts
+
 # Claude Code session data
 .claude/

@@ -3,6 +3,7 @@ import { getDatabase } from '../../db/index.js';
 import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
 import { pushTenderRecommendations, type FeishuTenderItem } from './feishuNotify.js';
 import { syncUserRecommendations, syncAllTenders, getBitableUrl } from './feishuBitable.js';
+import { parseFirstJson } from '../../core/llm/parseJson.js';
 
 interface UserConfig {
   userId: string;
@@ -19,6 +20,8 @@ interface UserConfig {
     caseTags: string[];
     excludedTypes: string[];
     platforms: string[];
+    companyProfile: string;
+    profileUpdatedAt: string | null;
   };
 }
 
@@ -49,6 +52,7 @@ interface ScoreResult {
   riskNotes: string;
   aiAnalysis: string;
   aiStrategy: string;
+  scoredProfileAt: string | null;
   _prompt: string;
   _response: string;
 }
@@ -202,6 +206,7 @@ async function scoreBusinessWithLLM(tender: TenderRow, config: UserConfig, userI
   const caseTags = config.preferences.caseTags;
   const qualifications = config.preferences.qualifications;
   const excludedTypes = config.preferences.excludedTypes;
+  const companyProfile = config.preferences.companyProfile.trim();
 
   const db = getDatabase();
   const tenderFull = db.prepare('SELECT project_type, project_summary, qualification_requirements, ai_extracted FROM tenders WHERE id = ?').get(tender.id) as any;
@@ -227,11 +232,24 @@ async function scoreBusinessWithLLM(tender: TenderRow, config: UserConfig, userI
       feedbacks.map((f: any) => `- ${f.title}（${f.purchaser_name || '未知'}, ${f.project_type || '未分类'}）→ ${f.feedback === 'suitable' ? '适合' : '不适合'}${f.reason ? '，原因：' + f.reason : ''}`).join('\n');
   }
 
+  // 公司简介段。空简介时给一句明确的"未提供"，而不是留白 ——
+  // 留白会让模型自行想象一家公司，产出的 reason 看起来有理有据但全是编的。
+  const profileSection = companyProfile
+    ? `\n## 我司简介（用户自述，判断匹配度的首要依据）\n${companyProfile.slice(0, 1200)}`
+    : '';
+
+  // 人设从简介推导，不再写死"广告营销公司"：那句写死等于把整个模块钉在广告行业，
+  // 对非广告公司的用户，评分的第一句话就已经错了。
+  const persona = companyProfile
+    ? '你是一名资深投标顾问。请先从"我司简介"判断这是一家什么公司、擅长什么，再据此评估以下招标项目。'
+    : '你是一个资深的广告营销公司投标顾问。请对以下招标项目进行全面评估。';
+
   const customPrompt = getScoringPrompt();
   let prompt: string;
 
   if (customPrompt) {
     prompt = customPrompt
+      .replace(/\{\{companyProfile\}\}/g, companyProfile || '未提供')
       .replace(/\{\{title\}\}/g, tender.title)
       .replace(/\{\{purchaser\}\}/g, tender.purchaser_name)
       .replace(/\{\{budget\}\}/g, budgetText)
@@ -244,8 +262,16 @@ async function scoreBusinessWithLLM(tender: TenderRow, config: UserConfig, userI
       .replace(/\{\{qualifications\}\}/g, qualifications.join('、') || '未配置')
       .replace(/\{\{excludedTypes\}\}/g, excludedTypes.join('、') || '无')
       .replace(/\{\{feedbackHistory\}\}/g, feedbackSection || '暂无');
+
+    // 后台存的自定义 prompt 是简介功能上线前写的，里面没有 {{companyProfile}} 占位符。
+    // 不补这一段，凡是配过自定义 prompt 的部署都会静默丢掉简介 —— 用户填了却不起作用，
+    // 比功能不存在更难排查。所以占位符缺失时把简介顶到最前面。
+    if (profileSection && !/\{\{companyProfile\}\}/.test(customPrompt)) {
+      prompt = `${profileSection.trim()}\n\n${prompt}`;
+    }
   } else {
-    prompt = `你是一个资深的广告营销公司投标顾问。请对以下招标项目进行全面评估。
+    prompt = `${persona}
+${profileSection}
 
 ## 招标信息
 - 标题：${tender.title}
@@ -280,7 +306,10 @@ ${feedbackSection}
 - 如果用户历史反馈中有类似项目标记为"不适合"，应降低评分
 - 如果用户历史反馈中有类似项目标记为"适合"，应适当提升评分
 - analysis 要有洞察，不要复述标题
-- strategy 要具体可执行，不要空泛建议`;
+- strategy 要具体可执行，不要空泛建议${companyProfile ? `
+- 简介与标签冲突时以简介为准：标签是简介的摘要，简介信息更全
+- 简介里的业务边界（只做某环节、不接某类甲方、产能上限等）等同于硬性约束，命中就压低 businessScore
+- 简介已说明能力时，不要再以"未配置案例/资质"为理由扣分或搪塞` : ''}`;
   }
 
   try {
@@ -289,9 +318,8 @@ ${feedbackSection}
       { userId, source: 'tender', operation: 'score-business' }
     );
     const content = response.choices[0]?.message?.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = parseFirstJson<any>(content);
+    if (parsed) {
       return {
         score: parsed.businessScore ?? 50,
         qualificationScore: parsed.qualificationScore ?? 50,
@@ -334,10 +362,13 @@ function loadUserConfig(userId: string): UserConfig {
       caseTags: JSON.parse(pref.case_tags || '[]'),
       excludedTypes: JSON.parse(pref.excluded_types || '[]'),
       platforms: JSON.parse(pref.platforms || '[]'),
+      companyProfile: pref.company_profile || '',
+      profileUpdatedAt: pref.profile_updated_at || null,
     } : {
       budgetMin: 0, budgetMax: 0, allowBelowMinForVip: false,
       preferredRegions: [], acceptableRegions: [], excludedRegions: [],
       qualifications: [], caseTags: [], excludedTypes: [], platforms: [],
+      companyProfile: '', profileUpdatedAt: null,
     },
   };
 }
@@ -377,6 +408,7 @@ export async function scoreTenderForUser(tender: TenderRow, config: UserConfig, 
     riskNotes: llmResult.risk,
     aiAnalysis: llmResult.analysis,
     aiStrategy: llmResult.strategy,
+    scoredProfileAt: config.preferences.profileUpdatedAt,
     _prompt: llmResult._prompt,
     _response: llmResult._response,
   };
@@ -433,13 +465,19 @@ export async function runRecommendationsForAllUsers(
   let skippedByFilter = 0;
 
   const insertStmt = db.prepare(`
-    INSERT OR REPLACE INTO tender_recommendations (id, user_id, tender_id, total_score, tier, score_business, score_budget, score_qualification, score_relationship, score_region, score_timeliness, ai_reason, risk_notes, ai_analysis, ai_strategy, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO tender_recommendations (id, user_id, tender_id, total_score, tier, score_business, score_budget, score_qualification, score_relationship, score_region, score_timeliness, ai_reason, risk_notes, ai_analysis, ai_strategy, scored_profile_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const user of users) {
     const config = loadUserConfig(user.id);
-    if (config.keywords.length === 0 && config.preferences.caseTags.length === 0) continue;
+    // 简介算"已配置"：只填了简介没填标签的用户也该评分，否则新的引导路径（先写简介）
+    // 走到最后一步会静默什么都不产出。
+    if (
+      config.keywords.length === 0 &&
+      config.preferences.caseTags.length === 0 &&
+      !config.preferences.companyProfile.trim()
+    ) continue;
 
     // Count user's feedback to determine strictness
     const feedbackCount = (db.prepare('SELECT COUNT(*) as count FROM tender_user_feedback WHERE user_id = ?').get(user.id) as any).count;
@@ -484,6 +522,9 @@ export async function runRecommendationsForAllUsers(
           scoreRegion(tender.region_name, config),
           scoreTimeliness(tender.publish_date),
           '规则初筛：相关度较低', '', '', '',
+          // 初筛没走 LLM，简介压根没参与，所以不盖版本戳：
+          // 盖了就等于宣称"这条已按当前简介评过"，改简介后前台不会提示重评。
+          null,
           new Date().toISOString()
         );
         skippedByFilter++;
@@ -501,6 +542,7 @@ export async function runRecommendationsForAllUsers(
           score.scoreRelationship, score.scoreRegion, score.scoreTimeliness,
           score.aiReason, score.riskNotes,
           score.aiAnalysis, score.aiStrategy,
+          score.scoredProfileAt,
           new Date().toISOString()
         );
         userProcessed++;

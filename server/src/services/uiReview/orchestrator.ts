@@ -5,18 +5,34 @@ import { runLLMScoring, analyzeReferenceImage } from './analysisService.js';
 import { generateSkillMarkdown, type ReviewData } from './generationService.js';
 import { runProDimensionAnalysis, generateExecutionPlan } from './proAnalysisService.js';
 import { getCosConfig } from '../../api/upload.js';
+import { startJob, type JobKind } from '../../core/jobs.js';
 
-// Simple in-memory event store for SSE progress
-const progressEvents = new Map<string, string[]>();
+// 进度以前放在模块级 Map 里（还带一个 5 分钟后 delete 的 setTimeout），
+// 进程一重启就全没：SSE 流拿不到任何 progress，而 ui_reviews 那一行还停在
+// crawling/analyzing，前端永远等不到 done。现在落到 jobs 表（见 core/jobs.ts）。
+const REVIEW_JOB: JobKind = 'ui-review';
 
-export function getProgressEvents(reviewId: string): string[] {
-  return progressEvents.get(reviewId) || [];
+/** SSE 只取最新一条进度，所以读 job 行上的 step/message 就够，不必回放全部日志。 */
+export function getLatestProgress(reviewId: string): { step: string; message: string } | null {
+  const row = getDatabase().prepare(
+    `SELECT step, message FROM jobs WHERE kind = ? AND ref_id = ?
+     ORDER BY started_at DESC, rowid DESC LIMIT 1`
+  ).get(REVIEW_JOB, reviewId) as { step: string; message: string } | undefined;
+  return row && row.step ? row : null;
 }
 
-function emitProgress(reviewId: string, step: string, message: string) {
-  const events = progressEvents.get(reviewId) || [];
-  events.push(JSON.stringify({ step, message, timestamp: Date.now() }));
-  progressEvents.set(reviewId, events);
+/**
+ * 重启后把中断的 review 收尾。reapZombieJobs() 只管 jobs 表，
+ * ui_reviews 自己的 status 列还停在 crawling/analyzing/generating —— 不清的话
+ * 前端 SSE 会一直轮询一个永远不会推进的状态（既不 completed 也不 failed）。
+ */
+export function failInterruptedReviews(): number {
+  const r = getDatabase().prepare(
+    `UPDATE ui_reviews SET status = 'failed', error_message = '服务重启，任务中断'
+     WHERE status IN ('pending', 'crawling', 'analyzing', 'generating')`
+  ).run();
+  if (r.changes > 0) console.log(`[ui-review] 已将 ${r.changes} 条重启前中断的评审标为 failed`);
+  return r.changes;
 }
 
 function updateStatus(reviewId: string, status: string) {
@@ -28,6 +44,12 @@ export async function executeReview(reviewId: string, userId: string): Promise<v
   const db = getDatabase();
   const review = db.prepare('SELECT * FROM ui_reviews WHERE id = ?').get(reviewId) as any;
   if (!review) return;
+
+  const job = startJob(REVIEW_JOB, { refId: reviewId, createdBy: userId, message: 'Queued...' });
+  const emitProgress = (_id: string, step: string, message: string) => {
+    job.progress({ step, message });
+    job.log(message);
+  };
 
   let screenshotUrl = '';
   let crawlData: CrawlResult | null = null;
@@ -187,16 +209,19 @@ export async function executeReview(reviewId: string, userId: string): Promise<v
     // Done
     updateStatus(reviewId, 'completed');
     db.prepare('UPDATE ui_reviews SET completed_at = ? WHERE id = ?').run(new Date().toISOString(), reviewId);
-    emitProgress(reviewId, 'completed', 'Review complete!');
+    job.progress({ step: 'completed', message: 'Review complete!' });
+    job.done({ totalScore: scoringResult.totalScore }, 'Review complete!');
+    job.log('Review complete!');
 
   } catch (error: any) {
     console.error(`[ui-review] Review ${reviewId} failed:`, error);
     db.prepare('UPDATE ui_reviews SET status = ?, error_message = ? WHERE id = ?').run(
       'failed', error.message || 'Unknown error', reviewId
     );
-    emitProgress(reviewId, 'failed', error.message || 'Unknown error');
-  } finally {
-    // Clean up progress events after 5 minutes
-    setTimeout(() => progressEvents.delete(reviewId), 5 * 60 * 1000);
+    // step 也要写成 failed：SSE 读的是 job 行上的 step/message，
+    // 不改的话前端最后收到的进度还停在 'analyzing'。
+    job.progress({ step: 'failed', message: error.message || 'Unknown error' });
+    job.fail(error);
+    job.log(`失败: ${error.message || 'Unknown error'}`);
   }
 }

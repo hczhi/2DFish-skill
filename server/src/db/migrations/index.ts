@@ -46,6 +46,10 @@ import { migration_044 } from './044_tender_module_config.js';
 import { migration_045 } from './045_tender_bitable.js';
 import { migration_046 } from './046_tender_bitable_all.js';
 import { migration_047 } from './047_tender_bitable_sync_fix.js';
+import { migration_048 } from './048_tender_company_profile.js';
+import { migration_049 } from './049_jobs.js';
+import { migration_050 } from './050_encrypt_secrets.js';
+import { migration_051 } from './051_drop_dead_tables.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -95,4 +99,8 @@ export const allMigrations: Migration[] = [
   migration_045,
   migration_046,
   migration_047,
+  migration_048,
+  migration_049,
+  migration_050,
+  migration_051,
 ];

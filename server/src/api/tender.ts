@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
 import { getCrawler, getAllPlatforms } from '../services/tender/crawlerRegistry.js';
+import { aiGateway, SAMPLING, QuotaExceededError } from '../core/llm/gateway.js';
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
 import { pushTenderRecommendations } from '../services/tender/feishuNotify.js';
@@ -11,6 +12,13 @@ import {
   invalidateTokenCache, getBitableUrl,
 } from '../services/tender/feishuBitable.js';
 import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
+import { requireAdmin } from '../auth/guards.js';
+import { parsePagination, patchRow } from '../core/http.js';
+import { maskSecret, resolveSubmittedSecret } from '../core/secrets.js';
+import {
+  startJob, findRunningJob, getLatestJob, getJobLogs, JobHandle,
+  type JobKind, type JobRow,
+} from '../core/jobs.js';
 
 export const tenderRouter = Router();
 
@@ -18,6 +26,13 @@ export const tenderRouter = Router();
 // 只读端点闸门 + CORS。guard 必须最先挂，才能在越权请求到达业务处理器前拦截。
 tenderRouter.use(tenderSdkGuard);
 registerSdkRoutes(tenderRouter);
+
+// /admin/* 统一闸门：必须挂在任何 /admin 路由注册之前，Express 才会先过它。
+// 以前是每个 handler 首行手写 `if (req.user?.role !== 'admin')`（本文件 48 处 +
+// tenderSdk 4 处），漏写一行就是越权漏洞且没有测试会发现——
+// 收成一道中间件后，新增 /admin 路由自动受保护。
+// 注意顺序：SDK 的 admin 路由也必须注册在这道闸门之后。
+tenderRouter.use('/admin', requireAdmin);
 registerSdkAdminRoutes(tenderRouter);
 
 // ==================== User: Recommendations ====================
@@ -26,9 +41,7 @@ tenderRouter.get('/recommendations', (req, res) => {
   const userId = req.user!.id;
   const db = getDatabase();
   const tier = req.query.tier as string;
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
 
   let where = "r.user_id = ? AND r.created_at >= datetime('now', '-20 days')";
   const params: any[] = [userId];
@@ -67,9 +80,7 @@ tenderRouter.patch('/recommendations/:id/read', (req, res) => {
 tenderRouter.get('/feedback', (req, res) => {
   const userId = req.user!.id;
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
 
   const total = (db.prepare('SELECT COUNT(*) as count FROM tender_user_feedback WHERE user_id = ?').get(userId) as any).count;
   const items = db.prepare(`
@@ -112,9 +123,7 @@ tenderRouter.delete('/feedback/:id', (req, res) => {
 
 tenderRouter.get('/list', (req, res) => {
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(50, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
   const search = (req.query.search as string) || '';
   const platform = (req.query.platform as string) || '';
   const keyword = (req.query.keyword as string) || '';
@@ -258,6 +267,7 @@ tenderRouter.get('/preferences', (req, res) => {
       budgetMin: 0, budgetMax: 0, allowBelowMinForVip: false,
       preferredRegions: [], acceptableRegions: [], excludedRegions: [],
       qualifications: [], caseTags: [], excludedTypes: [], platforms: [],
+      companyProfile: '', profileUpdatedAt: null,
     });
   }
   res.json({
@@ -271,14 +281,27 @@ tenderRouter.get('/preferences', (req, res) => {
     caseTags: JSON.parse((pref as any).case_tags || '[]'),
     excludedTypes: JSON.parse((pref as any).excluded_types || '[]'),
     platforms: JSON.parse((pref as any).platforms || '[]'),
+    companyProfile: (pref as any).company_profile || '',
+    profileUpdatedAt: (pref as any).profile_updated_at || null,
   });
 });
 
+// 公司简介上限。它会进**每一次**评分调用，放开了就是按条数线性烧 token。
+// 1200 字够写清业务边界 + 代表案例 + 团队产能，再长基本是复制官网套话。
+const MAX_PROFILE_CHARS = 1200;
+
 tenderRouter.put('/preferences', (req, res) => {
   const userId = req.user!.id;
-  const { budgetMin, budgetMax, allowBelowMinForVip, preferredRegions, acceptableRegions, excludedRegions, qualifications, caseTags, excludedTypes, platforms } = req.body;
+  const { budgetMin, budgetMax, allowBelowMinForVip, preferredRegions, acceptableRegions, excludedRegions, qualifications, caseTags, excludedTypes, platforms, companyProfile } = req.body;
   const db = getDatabase();
   const now = new Date().toISOString();
+
+  if (companyProfile !== undefined && typeof companyProfile !== 'string') {
+    return res.status(400).json({ error: 'companyProfile must be a string' });
+  }
+  if (typeof companyProfile === 'string' && companyProfile.length > MAX_PROFILE_CHARS) {
+    return res.status(400).json({ error: `公司简介最多 ${MAX_PROFILE_CHARS} 字` });
+  }
 
   // 只接受注册过的平台 id，挡掉脏值导致用户静默收不到任何推荐
   const validPlatformIds = new Set(getAllPlatforms().map(p => p.id));
@@ -286,16 +309,149 @@ tenderRouter.put('/preferences', (req, res) => {
     ? platforms.filter((p: unknown): p is string => typeof p === 'string' && validPlatformIds.has(p))
     : [];
 
-  const existing = db.prepare('SELECT id FROM tender_user_preferences WHERE user_id = ?').get(userId);
+  const existing = db.prepare('SELECT id, company_profile, profile_updated_at FROM tender_user_preferences WHERE user_id = ?').get(userId) as any;
   if (existing) {
-    db.prepare(`UPDATE tender_user_preferences SET budget_min = ?, budget_max = ?, allow_below_min_for_vip = ?, preferred_regions = ?, acceptable_regions = ?, excluded_regions = ?, qualifications = ?, case_tags = ?, excluded_types = ?, platforms = ?, updated_at = ? WHERE user_id = ?`)
-      .run(budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), now, userId);
+    // 简介字段缺省 = 保持原值。这一页有多个"保存"按钮（关注平台那一块也调本接口），
+    // 缺省当空串处理会让用户在别处点保存就把简介清空。
+    const nextProfile = companyProfile === undefined ? (existing.company_profile || '') : companyProfile;
+
+    // 版本戳只在简介**内容真的变了**时才推进。否则改个预算区间就会让全部历史评分
+    // 亮起"配置已更新"，提示变噪音，用户就不再看它了。
+    const profileChanged = nextProfile !== (existing.company_profile || '');
+    const nextProfileAt = profileChanged ? now : (existing.profile_updated_at || null);
+
+    db.prepare(`UPDATE tender_user_preferences SET budget_min = ?, budget_max = ?, allow_below_min_for_vip = ?, preferred_regions = ?, acceptable_regions = ?, excluded_regions = ?, qualifications = ?, case_tags = ?, excluded_types = ?, platforms = ?, company_profile = ?, profile_updated_at = ?, updated_at = ? WHERE user_id = ?`)
+      .run(budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), nextProfile, nextProfileAt, now, userId);
   } else {
-    db.prepare(`INSERT INTO tender_user_preferences (id, user_id, budget_min, budget_max, allow_below_min_for_vip, preferred_regions, acceptable_regions, excluded_regions, qualifications, case_tags, excluded_types, platforms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(uuidv4(), userId, budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), now, now);
+    const nextProfile = companyProfile || '';
+    db.prepare(`INSERT INTO tender_user_preferences (id, user_id, budget_min, budget_max, allow_below_min_for_vip, preferred_regions, acceptable_regions, excluded_regions, qualifications, case_tags, excluded_types, platforms, company_profile, profile_updated_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(uuidv4(), userId, budgetMin ?? 0, budgetMax ?? 0, allowBelowMinForVip ? 1 : 0, JSON.stringify(preferredRegions || []), JSON.stringify(acceptableRegions || []), JSON.stringify(excludedRegions || []), JSON.stringify(qualifications || []), JSON.stringify(caseTags || []), JSON.stringify(excludedTypes || []), JSON.stringify(cleanPlatforms), nextProfile, nextProfile ? now : null, now, now);
   }
 
   res.json({ success: true });
+});
+
+// ==================== User: 公司简介提炼 ====================
+
+// 让用户粘贴官网介绍 / 资质证书文字 / 过往标书片段，AI 提炼成结构化简介草稿，
+// 顺手回填 caseTags 和 qualifications。
+//
+// 为什么必须有这个：现有三个标签字段在库里是全空的 —— "让用户手填结构化信息"
+// 这条路在本项目上已经失败过一次。换成一个更大的空白框，很可能失败第二次。
+// 这里只返回草稿，不落库，由用户在前端删改后自己点保存。
+tenderRouter.post('/profile/distill', async (req, res) => {
+  const userId = req.user!.id;
+  const { rawText } = req.body;
+
+  if (typeof rawText !== 'string' || !rawText.trim()) {
+    return res.status(400).json({ error: 'rawText is required' });
+  }
+
+  const prompt = `你是一名投标顾问。下面是一家公司的自我介绍原文（可能来自官网、资质证书、过往标书，含大量套话）。
+请提炼成一段**给 AI 判断"这家公司该不该投某个标"用**的简介。
+
+## 原文
+${rawText.slice(0, 6000)}
+
+请输出严格 JSON（无 markdown 围栏）：
+{
+  "profile": "<300-500字的简介。必须包含：主营业务与擅长环节、代表性客户或案例、团队规模与产能、明确的业务边界（不做什么、不接什么类型的甲方）。丢掉所有'致力于''行业领先'这类无信息量的套话。原文没提到的不要编。>",
+  "caseTags": ["<从原文能确认的业务/案例标签，3-8个，每个不超过6字>"],
+  "qualifications": ["<从原文能确认的资质证书名称，没有就空数组>"],
+  "excludedTypes": ["<原文明确说不做的类型，没有就空数组>"]
+}
+
+注意：
+- profile 要写成陈述事实的口吻，不是宣传文案
+- 宁缺毋滥：原文没有的信息一律不要补齐，编造的能力会让后续评分全错
+- caseTags/qualifications 必须能在原文里找到依据`;
+
+  try {
+    const { response } = await aiGateway(
+      { messages: [{ role: 'user', content: prompt }], ...SAMPLING.analytic, max_tokens: 1500 },
+      { userId, source: 'tender', operation: 'profile-distill', tier: 'strong' }
+    );
+    const content = response.choices[0]?.message?.content || '';
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    const asStringArray = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(s => s.trim()) : [];
+
+    res.json({
+      profile: String(parsed.profile || '').slice(0, MAX_PROFILE_CHARS),
+      caseTags: asStringArray(parsed.caseTags),
+      qualifications: asStringArray(parsed.qualifications),
+      excludedTypes: asStringArray(parsed.excludedTypes),
+    });
+  } catch (e: any) {
+    if (e instanceof QuotaExceededError) {
+      return res.status(429).json({ error: e.message });
+    }
+    console.error('[tender] profile distill failed:', e.message);
+    res.status(500).json({ error: `提炼失败：${e.message}` });
+  }
+});
+
+// ==================== User: 重新评分 ====================
+
+// 改了简介之后的出口。评分主流程对已评过的 (user, tender) 会直接 skip，
+// 没有这个入口，用户改完简介看列表毫无动静，只会得出"这功能没用"的结论。
+//
+// 作用范围刻意收窄：只重评「当前列表里看得见的、评分已过时的」那些，
+// 即近 20 天、非 filter 档、且 scored_profile_at 与当前简介版本不一致的。
+// 不做全量重评 —— 那是按库存条数烧 AI 额度，且 filter 档重评的收益最低。
+//
+// 每次调用最多重评这么多条：一条 = 一次 LLM 调用，而免费额度是 10 次/天。
+// 一次性打光额度不如分批 —— 返回 remaining 让前端提示"可再次点击"。
+const MAX_RESCORE_PER_CALL = 8;
+
+tenderRouter.post('/recommendations/rescore', async (req, res) => {
+  const userId = req.user!.id;
+  const db = getDatabase();
+
+  if (runningTenderJob()) {
+    return res.status(409).json({ error: '平台正在跑爬取/评分任务，请稍后再试' });
+  }
+
+  const pref = db.prepare('SELECT profile_updated_at FROM tender_user_preferences WHERE user_id = ?').get(userId) as any;
+  const profileAt = pref?.profile_updated_at || null;
+
+  // IS NOT 而不是 !=：SQLite 里 NULL != 'x' 求值为 NULL（假），
+  // 用 != 会把"简介上线前的历史评分"（scored_profile_at IS NULL）漏掉。
+  const stale = db.prepare(`
+    SELECT r.tender_id FROM tender_recommendations r
+    WHERE r.user_id = ?
+      AND r.created_at >= datetime('now', '-20 days')
+      AND r.tier != 'filter'
+      AND r.scored_profile_at IS NOT ?
+    ORDER BY r.created_at DESC
+  `).all(userId, profileAt) as any[];
+
+  if (stale.length === 0) {
+    return res.json({ rescored: 0, remaining: 0 });
+  }
+
+  const tenderIds = stale.slice(0, MAX_RESCORE_PER_CALL).map(r => r.tender_id);
+  const remainingBefore = stale.length - tenderIds.length;
+
+  // 先删旧记录，否则 runRecommendationsForAllUsers 里的 existing 判断会全部跳过。
+  const placeholders = tenderIds.map(() => '?').join(',');
+  db.prepare(`DELETE FROM tender_recommendations WHERE user_id = ? AND tender_id IN (${placeholders})`).run(userId, ...tenderIds);
+
+  try {
+    const result = await runRecommendationsForAllUsers(tenderIds, undefined, userId);
+    // processed 可能小于请求数：额度中途用完时评分会提前返回，剩下的仍算待重评。
+    res.json({
+      rescored: result.processed,
+      remaining: remainingBefore + (tenderIds.length - result.processed),
+    });
+  } catch (e: any) {
+    console.error(`[tender] rescore failed for user=${userId}:`, e.message);
+    res.status(500).json({ error: `重评失败：${e.message}` });
+  }
 });
 
 // ==================== Platforms (shared) ====================
@@ -325,14 +481,12 @@ tenderRouter.get('/keyword-pool', (req, res) => {
 // ==================== Admin: Keyword Pool Management ====================
 
 tenderRouter.get('/admin/keyword-pool', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const keywords = db.prepare('SELECT * FROM tender_keyword_pool ORDER BY sort_order, created_at').all();
   res.json(keywords);
 });
 
 tenderRouter.post('/admin/keyword-pool', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { keyword, category } = req.body;
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
@@ -348,7 +502,6 @@ tenderRouter.post('/admin/keyword-pool', (req, res) => {
 });
 
 tenderRouter.patch('/admin/keyword-pool/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { keyword, category, enabled, sort_order } = req.body;
   const db = getDatabase();
 
@@ -364,7 +517,6 @@ tenderRouter.patch('/admin/keyword-pool/:id', (req, res) => {
 });
 
 tenderRouter.delete('/admin/keyword-pool/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   db.prepare('DELETE FROM tender_keyword_pool WHERE id = ?').run(req.params.id);
   res.json({ success: true });
@@ -373,67 +525,83 @@ tenderRouter.delete('/admin/keyword-pool/:id', (req, res) => {
 // ==================== Admin: Platforms ====================
 
 tenderRouter.get('/admin/platforms', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   res.json(getAllPlatforms());
 });
 
 // ==================== Admin: Crawl Management ====================
 
-// In-memory crawl task status
-interface LogEntry {
-  time: string;
-  message: string;
-  detail?: string; // collapsible detail (prompt/response)
-}
+// 爬取/提取/评分三个长任务的状态。以前是模块级变量 crawlTaskStatus，
+// 进程一重启就归零（详见 migrations/049_jobs.ts），现在落在 jobs 表里。
+const TENDER_JOB_KINDS: JobKind[] = ['tender-crawl', 'tender-extract', 'tender-recommend'];
 
-interface CrawlTaskStatus {
-  status: 'idle' | 'crawling' | 'extracting' | 'recommending' | 'completed' | 'failed';
-  step: string;
-  message: string;
-  current: number;
-  total: number;
-  startedAt: string;
-  completedAt?: string;
-  error?: string;
-  newAdded?: number;
-  logs: LogEntry[];
-}
-
-let crawlTaskStatus: CrawlTaskStatus = {
-  status: 'idle', step: '', message: '', current: 0, total: 0, startedAt: '', logs: [],
+// 落库前是三个平行的 status 值('crawling'/'extracting'/'recommending')，
+// 现在改成 kind + status 两个维度。这里把它拼回前端已有的旧字段名——
+// 后台页面（TenderManagement.vue）有 30 多处引用，不值得为内部重构改一遍。
+const RUNNING_LABEL: Record<string, string> = {
+  'tender-crawl': 'crawling',
+  'tender-extract': 'extracting',
+  'tender-recommend': 'recommending',
 };
 
-function crawlLog(msg: string, detail?: string) {
-  const ts = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  crawlTaskStatus.logs.push({ time: ts, message: msg, detail });
-  if (crawlTaskStatus.logs.length > 300) crawlTaskStatus.logs.shift();
-  console.log(`[tender] ${msg}`);
+const IDLE_STATUS = { status: 'idle', step: '', message: '', current: 0, total: 0, startedAt: '', logs: [] };
+
+// 终态任务在横幅上保留多久。落库前状态在内存里，重启即归零；现在会一直留着，
+// 不设这个窗口的话管理员每次打开后台都会看到一条几天前的"已完成"横幅
+// （还带着当时的日志），看着像有任务刚跑完。
+const TERMINAL_STATUS_TTL_MS = 30 * 60 * 1000;
+
+function toLegacyStatus(job: JobRow | undefined) {
+  if (!job) return IDLE_STATUS;
+
+  if (job.status !== 'running') {
+    const endedAt = Date.parse(job.completed_at || job.updated_at);
+    if (Number.isFinite(endedAt) && Date.now() - endedAt > TERMINAL_STATUS_TTL_MS) {
+      return IDLE_STATUS;   // 历史仍在 jobs 表里可查，只是不再顶在横幅上
+    }
+  }
+
+  const result = job.result ? JSON.parse(job.result) : {};
+  return {
+    jobId: job.id,
+    status: job.status === 'running' ? (RUNNING_LABEL[job.kind] || 'crawling') : job.status,
+    step: job.step,
+    message: job.message,
+    current: job.current,
+    total: job.total,
+    startedAt: job.started_at,
+    completedAt: job.completed_at || undefined,
+    error: job.error || undefined,
+    ...result,
+    logs: getJobLogs(job.id),
+  };
 }
 
-let crawlAbortController: AbortController | null = null;
+/** 有任一租标类长任务在跑就返回它；三个入口的 409 互斥都走这里。 */
+function runningTenderJob() {
+  return findRunningJob(TENDER_JOB_KINDS);
+}
+
+// 终止只能作用于本进程（AbortController 是内存对象，跨进程传不了信号）。
+// job 状态本身在库里，所以哪个实例重启都不会留下僵尸 running 行。
+const abortControllers = new Map<string, AbortController>();
 
 tenderRouter.get('/admin/crawl-status', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  res.json(crawlTaskStatus);
+  res.json(toLegacyStatus(getLatestJob(TENDER_JOB_KINDS)));
 });
 
 tenderRouter.post('/admin/crawl-abort', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
-  if (crawlTaskStatus.status === 'idle' || crawlTaskStatus.status === 'completed' || crawlTaskStatus.status === 'failed') {
+  const job = runningTenderJob();
+  if (!job) {
     return res.status(400).json({ error: '没有正在运行的任务' });
   }
-  if (crawlAbortController) {
-    crawlAbortController.abort();
-  }
-  crawlTaskStatus.status = 'failed';
-  crawlTaskStatus.error = '手动终止';
-  crawlTaskStatus.completedAt = new Date().toISOString();
-  crawlLog('任务已被手动终止');
+  abortControllers.get(job.id)?.abort();
+  const handle = new JobHandle(job.id, job.kind);
+  handle.fail('手动终止');
+  handle.log('任务已被手动终止');
   res.json({ success: true });
 });
 
 tenderRouter.post('/admin/crawl', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { keywords, daysLimit, platform } = req.body;
   if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
     return res.status(400).json({ error: 'keywords array is required' });
@@ -445,38 +613,33 @@ tenderRouter.post('/admin/crawl', async (req, res) => {
     return res.status(400).json({ error: `Unknown platform: ${platformId}` });
   }
 
-  if (crawlTaskStatus.status === 'crawling' || crawlTaskStatus.status === 'extracting' || crawlTaskStatus.status === 'recommending') {
+  if (runningTenderJob()) {
     return res.status(409).json({ error: '已有爬取任务在运行中' });
   }
 
-  crawlAbortController = new AbortController();
-  crawlTaskStatus = {
-    status: 'crawling',
+  const job = startJob('tender-crawl', {
+    total: keywords.length,
     step: 'starting',
     message: `正在启动爬取 (${crawler.name})...`,
-    current: 0,
-    total: keywords.length,
-    startedAt: new Date().toISOString(),
-    logs: [],
-  };
+    createdBy: req.user!.id,
+  });
+  const abortController = new AbortController();
+  abortControllers.set(job.id, abortController);
 
-  crawlLog(`开始爬取，平台: ${crawler.name}，关键词: ${keywords.join(', ')}，时间范围: ${daysLimit || 14}天`);
+  job.log(`开始爬取，平台: ${crawler.name}，关键词: ${keywords.join(', ')}，时间范围: ${daysLimit || 14}天`);
 
-  res.json({ status: 'started', message: 'Crawl started in background' });
+  res.json({ status: 'started', jobId: job.id, message: 'Crawl started in background' });
 
-  const abortSignal = crawlAbortController.signal;
+  const abortSignal = abortController.signal;
 
   try {
     if (abortSignal.aborted) throw new Error('任务已终止');
     const { logId, items } = await crawler.crawl(keywords, daysLimit || 14, (progress) => {
-      crawlTaskStatus.step = progress.step;
-      crawlTaskStatus.message = progress.message;
-      crawlTaskStatus.current = progress.current;
-      crawlTaskStatus.total = progress.total;
-      crawlLog(progress.message);
+      job.progress(progress);
+      job.log(progress.message);
     });
 
-    crawlLog(`爬取完成: 共获取 ${items.length} 条数据`);
+    job.log(`爬取完成: 共获取 ${items.length} 条数据`);
     if (abortSignal.aborted) throw new Error('任务已终止');
 
     const db = getDatabase();
@@ -485,35 +648,26 @@ tenderRouter.post('/admin/crawl', async (req, res) => {
     const result = db.prepare("UPDATE tenders SET status = 'draft' WHERE platform = ? AND (status IS NULL OR status = '')").run(platformId);
     const newCount = result.changes;
 
-    crawlLog(`数据库新增: ${newCount} 条（去重后）`);
-    crawlTaskStatus.newAdded = newCount;
-
-    crawlTaskStatus.status = 'completed';
-    crawlTaskStatus.message = `完成：新增 ${crawlTaskStatus.newAdded || 0} 条标讯（草稿状态，请手动执行提取和评分）`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
-    crawlLog(`爬取完成：新增 ${crawlTaskStatus.newAdded || 0} 条标讯，已存入草稿库`);
+    job.log(`数据库新增: ${newCount} 条（去重后）`);
+    job.done({ newAdded: newCount }, `完成：新增 ${newCount} 条标讯（草稿状态，请手动执行提取和评分）`);
+    job.log(`爬取完成：新增 ${newCount} 条标讯，已存入草稿库`);
   } catch (e: any) {
-    crawlLog(`错误: ${e.message}`);
-    crawlTaskStatus.status = 'failed';
-    crawlTaskStatus.error = e.message;
-    crawlTaskStatus.message = `失败：${e.message}`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
+    job.log(`错误: ${e.message}`);
+    job.fail(e);
+  } finally {
+    abortControllers.delete(job.id);
   }
 });
 
 tenderRouter.get('/admin/crawl-logs', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const logs = db.prepare('SELECT * FROM tender_crawl_logs ORDER BY started_at DESC LIMIT 50').all();
   res.json(logs);
 });
 
 tenderRouter.get('/admin/tenders', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(100, parseInt(req.query.page_size as string) || 30);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req, { defaultSize: 30, maxSize: 100 });
   const platform = (req.query.platform as string) || '';
   const search = (req.query.search as string) || '';
   const keyword = (req.query.keyword as string) || '';
@@ -531,22 +685,21 @@ tenderRouter.get('/admin/tenders', (req, res) => {
 });
 
 tenderRouter.patch('/admin/tenders/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const existing = db.prepare('SELECT id FROM tenders WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
-  const allowed = ['title', 'purchaser_name', 'budget_amount', 'region_name', 'notice_type', 'publish_date', 'url', 'content_text', 'contact_name', 'contact_phone'];
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) {
-      db.prepare(`UPDATE tenders SET ${key} = ? WHERE id = ?`).run(req.body[key], req.params.id);
-    }
-  }
+  // 原来是逐字段一条 UPDATE（N 次写、非原子，中途抛错会留下半更新的行），
+  // 且列名直接插值进 SQL。收口到 patchRow：一条 SQL + 列名强制标识符校验。
+  patchRow(db, 'tenders', {
+    columns: ['title', 'purchaser_name', 'budget_amount', 'region_name', 'notice_type', 'publish_date', 'url', 'content_text', 'contact_name', 'contact_phone'],
+    touchUpdatedAt: false,
+  }, req.body, { id: req.params.id });
+
   res.json({ success: true });
 });
 
 tenderRouter.delete('/admin/tenders/:id', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   db.prepare('DELETE FROM tender_recommendations WHERE tender_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tenders WHERE id = ?').run(req.params.id);
@@ -556,14 +709,13 @@ tenderRouter.delete('/admin/tenders/:id', (req, res) => {
 // ==================== Admin: Separate Extract Endpoint ====================
 
 tenderRouter.post('/admin/extract', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { tenderIds, force } = req.body;
 
   if (!tenderIds || !Array.isArray(tenderIds) || tenderIds.length === 0) {
     return res.status(400).json({ error: 'tenderIds array is required' });
   }
 
-  if (crawlTaskStatus.status === 'crawling' || crawlTaskStatus.status === 'extracting' || crawlTaskStatus.status === 'recommending') {
+  if (runningTenderJob()) {
     return res.status(409).json({ error: '已有任务在运行中' });
   }
 
@@ -572,51 +724,42 @@ tenderRouter.post('/admin/extract', async (req, res) => {
   const adminUserId = req.user!.id;
   const db = getDatabase();
 
-  crawlTaskStatus = {
-    status: 'extracting',
+  const job = startJob('tender-extract', {
+    total: tenderIds.length,
     step: 'ai-extract',
     message: `AI 结构化提取中 (${tenderIds.length} 条)...`,
-    current: 0,
-    total: tenderIds.length,
-    startedAt: new Date().toISOString(),
-    logs: [],
-  };
+    createdBy: adminUserId,
+  });
 
   try {
     // If force, clear ai_extracted field so it gets re-processed
     if (force) {
       const placeholders = tenderIds.map(() => '?').join(',');
       db.prepare(`UPDATE tenders SET ai_extracted = NULL WHERE id IN (${placeholders})`).run(...tenderIds);
-      crawlLog(`强制模式：已清除 ${tenderIds.length} 条标讯的提取数据`);
+      job.log(`强制模式：已清除 ${tenderIds.length} 条标讯的提取数据`);
     }
 
-    const extracted = await runAIExtractForTenders(tenderIds, adminUserId, crawlLog);
-    crawlLog(`AI 提取完成: ${extracted} 条已处理`);
+    const extracted = await runAIExtractForTenders(tenderIds, adminUserId, (msg, detail) => job.log(msg, detail));
+    job.log(`AI 提取完成: ${extracted} 条已处理`);
 
     // Update status to 'extracted' for successfully extracted tenders
     const placeholders = tenderIds.map(() => '?').join(',');
     db.prepare(`UPDATE tenders SET status = 'extracted' WHERE id IN (${placeholders}) AND ai_extracted IS NOT NULL AND ai_extracted != ''`).run(...tenderIds);
 
-    crawlTaskStatus.status = 'completed';
-    crawlTaskStatus.message = `AI 提取完成：${extracted} 条已处理`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
-    crawlLog(`全部完成：${extracted} 条标讯已提取`);
+    job.done({ extracted }, `AI 提取完成：${extracted} 条已处理`);
+    job.log(`全部完成：${extracted} 条标讯已提取`);
   } catch (e: any) {
-    crawlLog(`错误: ${e.message}`);
-    crawlTaskStatus.status = 'failed';
-    crawlTaskStatus.error = e.message;
-    crawlTaskStatus.message = `失败：${e.message}`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
+    job.log(`错误: ${e.message}`);
+    job.fail(e);
   }
 });
 
 // ==================== Admin: Separate Recommend Endpoint ====================
 
 tenderRouter.post('/admin/recommend', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { tenderIds, userId, force } = req.body;
 
-  if (crawlTaskStatus.status === 'crawling' || crawlTaskStatus.status === 'extracting' || crawlTaskStatus.status === 'recommending') {
+  if (runningTenderJob()) {
     return res.status(409).json({ error: '已有任务在运行中' });
   }
 
@@ -624,15 +767,12 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
 
   const db = getDatabase();
 
-  crawlTaskStatus = {
-    status: 'recommending',
+  const job = startJob('tender-recommend', {
+    total: tenderIds?.length || 0,
     step: 'recommend',
     message: `为用户计算推荐评分中...`,
-    current: 0,
-    total: tenderIds?.length || 0,
-    startedAt: new Date().toISOString(),
-    logs: [],
-  };
+    createdBy: req.user!.id,
+  });
 
   try {
     // If force, delete existing recommendations for those tenders
@@ -640,20 +780,19 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
       const placeholders = tenderIds.map(() => '?').join(',');
       if (userId) {
         db.prepare(`DELETE FROM tender_recommendations WHERE tender_id IN (${placeholders}) AND user_id = ?`).run(...tenderIds, userId);
-        crawlLog(`强制模式：已删除 ${tenderIds.length} 条标讯对指定用户的推荐记录`);
+        job.log(`强制模式：已删除 ${tenderIds.length} 条标讯对指定用户的推荐记录`);
       } else {
         db.prepare(`DELETE FROM tender_recommendations WHERE tender_id IN (${placeholders})`).run(...tenderIds);
-        crawlLog(`强制模式：已删除 ${tenderIds.length} 条标讯的全部推荐记录`);
+        job.log(`强制模式：已删除 ${tenderIds.length} 条标讯的全部推荐记录`);
       }
     }
 
     let scored = 0;
     const result = await runRecommendationsForAllUsers(tenderIds, (msg, detail) => {
-      crawlLog(msg, detail);
-      if (msg.includes('→')) scored++;
-      crawlTaskStatus.current = scored;
+      job.log(msg, detail);
+      if (msg.includes('→')) { scored++; job.progress({ current: scored }); }
     }, userId);
-    crawlLog(`推荐计算完成: ${result.processed} 条评分，涉及 ${result.users} 个用户`);
+    job.log(`推荐计算完成: ${result.processed} 条评分，涉及 ${result.users} 个用户`);
 
     // Update status to 'scored' for processed tenders
     if (tenderIds && tenderIds.length > 0) {
@@ -661,27 +800,19 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
       db.prepare(`UPDATE tenders SET status = 'scored' WHERE id IN (${placeholders})`).run(...tenderIds);
     }
 
-    crawlTaskStatus.status = 'completed';
-    crawlTaskStatus.message = `推荐计算完成：${result.processed} 条评分`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
-    crawlLog(`全部完成：${result.processed} 条评分`);
+    job.done({ processed: result.processed, users: result.users }, `推荐计算完成：${result.processed} 条评分`);
+    job.log(`全部完成：${result.processed} 条评分`);
   } catch (e: any) {
-    crawlLog(`错误: ${e.message}`);
-    crawlTaskStatus.status = 'failed';
-    crawlTaskStatus.error = e.message;
-    crawlTaskStatus.message = `失败：${e.message}`;
-    crawlTaskStatus.completedAt = new Date().toISOString();
+    job.log(`错误: ${e.message}`);
+    job.fail(e);
   }
 });
 
 // ==================== Admin: Drafts List ====================
 
 tenderRouter.get('/admin/drafts', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const pageSize = Math.min(100, parseInt(req.query.page_size as string) || 20);
-  const offset = (page - 1) * pageSize;
+  const { page, pageSize, offset } = parsePagination(req);
   const status = (req.query.status as string) || '';
   const draftPlatform = (req.query.platform as string) || '';
   const draftKeyword = (req.query.keyword as string) || '';
@@ -712,7 +843,6 @@ tenderRouter.get('/admin/drafts', (req, res) => {
 // ==================== Admin: Users List (for scoring selector) ====================
 
 tenderRouter.get('/admin/users', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const users = db.prepare('SELECT id, username FROM user ORDER BY username').all();
   res.json(users);
@@ -721,7 +851,6 @@ tenderRouter.get('/admin/users', (req, res) => {
 // ==================== Admin: Feishu Notify Config (per user) ====================
 
 tenderRouter.get('/admin/feishu/:userId', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const row = db.prepare(
     `SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
@@ -735,7 +864,10 @@ tenderRouter.get('/admin/feishu/:userId', (req, res) => {
     feishu_enabled: !!row?.feishu_enabled,
     feishu_min_score: row?.feishu_min_score ?? 55,
     feishu_app_id: row?.feishu_app_id || '',
-    feishu_app_secret: row?.feishu_app_secret || '',
+    // 脱敏回显。原来是把 App Secret 明文吐给后台页面的——
+    // 管理员打开一次配置页，凭据就进了浏览器内存和 devtools 的网络记录。
+    // 保存时提交回这串脱敏文本会被 resolveSubmittedSecret 识别为「未修改」。
+    feishu_app_secret: maskSecret(row?.feishu_app_secret),
     bitable_app_token: row?.bitable_app_token || '',
     bitable_table_id: row?.bitable_table_id || '',
     bitable_all_table_id: row?.bitable_all_table_id || '',
@@ -745,7 +877,6 @@ tenderRouter.get('/admin/feishu/:userId', (req, res) => {
 });
 
 tenderRouter.put('/admin/feishu/:userId', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const {
     feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
     feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
@@ -763,8 +894,11 @@ tenderRouter.put('/admin/feishu/:userId', (req, res) => {
       .run(uuidv4(), userId, now, now);
   }
 
-  const prevAppId = (db.prepare('SELECT feishu_app_id FROM tender_user_preferences WHERE user_id = ?')
-    .get(userId) as any)?.feishu_app_id || '';
+  const prev = db.prepare('SELECT feishu_app_id, feishu_app_secret FROM tender_user_preferences WHERE user_id = ?')
+    .get(userId) as any;
+  const prevAppId = prev?.feishu_app_id || '';
+  // GET 返回的是脱敏串，表单原样提交回来时不能当新值覆盖掉真 secret
+  const nextAppSecret = resolveSubmittedSecret(feishu_app_secret, prev?.feishu_app_secret);
 
   db.prepare(`
     UPDATE tender_user_preferences
@@ -779,7 +913,7 @@ tenderRouter.put('/admin/feishu/:userId', (req, res) => {
     feishu_enabled ? 1 : 0,
     Number.isFinite(Number(feishu_min_score)) ? Number(feishu_min_score) : 55,
     feishu_app_id || '',
-    feishu_app_secret || '',
+    nextAppSecret,
     bitable_app_token || '',
     bitable_table_id || '',
     bitable_url || '',
@@ -799,7 +933,6 @@ tenderRouter.put('/admin/feishu/:userId', (req, res) => {
 
 // 服务端建表：一次把列建对，并把 app_token / table_id / url 存库，用户不用手填任何 id。
 tenderRouter.post('/admin/bitable/:userId/init', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const userId = req.params.userId;
   const row = db.prepare(
@@ -845,7 +978,6 @@ tenderRouter.post('/admin/bitable/:userId/init', async (req, res) => {
 
 // 把表格授权给用户或群，否则应用创建的文件不在用户云空间里，用户打不开。
 tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const { member_type, member_id, perm } = req.body || {};
   const allowedTypes = ['openid', 'openchat', 'email', 'userid'];
   const allowedPerms = ['view', 'edit', 'full_access'];
@@ -877,7 +1009,6 @@ tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
 // 给已经在用的表格补建「全部标讯」表。
 // 不能让老用户走 init force=true —— 那会换掉 app_token，旧表里的跟进标记全部失联。
 tenderRouter.post('/admin/bitable/:userId/init-all-table', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const userId = req.params.userId;
   const row = db.prepare(
@@ -907,7 +1038,6 @@ tenderRouter.post('/admin/bitable/:userId/init-all-table', async (req, res) => {
 // 手动全量同步：把所有未推送过的推荐补进表格（也用于验证配置是否可写）。
 // scope=all 只同步「全部标讯」表，scope=rec 只同步推荐表，默认两张都同步。
 tenderRouter.post('/admin/bitable/:userId/sync', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const scope = req.body?.scope || 'both';
   try {
     const out: any = { success: true };
@@ -931,7 +1061,6 @@ tenderRouter.post('/admin/bitable/:userId/sync', async (req, res) => {
 
 // 发送一条测试消息，验证 webhook 配置是否正确
 tenderRouter.post('/admin/feishu/:userId/test', async (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
   const row = db.prepare(
     'SELECT feishu_webhook, feishu_secret FROM tender_user_preferences WHERE user_id = ?'
@@ -961,7 +1090,6 @@ tenderRouter.get('/keywords-used', (req, res) => {
 });
 
 tenderRouter.get('/admin/stats', (req, res) => {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   const db = getDatabase();
 
   const totalTenders = (db.prepare('SELECT COUNT(*) as count FROM tenders').get() as any).count;

@@ -7,7 +7,10 @@
     "dev": "tsx watch src/app.ts",
     "build": "tsc",
     "start": "node dist/app.js",
-    "ssg": "tsx src/ssg.ts"
+    "ssg": "tsx src/ssg.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@types/multer": "^2.2.0",
@@ -35,8 +38,11 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.5.0",
     "@types/node-cron": "^3.0.11",
+    "@types/supertest": "^7.2.1",
     "@types/uuid": "^10.0.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.7"
   }
 }

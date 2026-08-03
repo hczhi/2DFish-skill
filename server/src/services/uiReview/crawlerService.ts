@@ -1,4 +1,5 @@
 import { chromium, type Browser, type Page } from 'playwright';
+import { assertSafeUrl, isSafeUrl } from '../../core/safeUrl.js';
 
 export interface CrawlResult {
   screenshot: Buffer;
@@ -37,6 +38,9 @@ async function getBrowser(): Promise<Browser> {
 }
 
 export async function crawlPage(url: string): Promise<CrawlResult> {
+  // SSRF 第一道：入口校验（协议/端口/DNS 解析后的 IP）。不安全直接抛，不开浏览器。
+  const { url: safeUrl } = await assertSafeUrl(url);
+
   const browser = await getBrowser();
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
@@ -45,8 +49,20 @@ export async function crawlPage(url: string): Promise<CrawlResult> {
 
   const page = await context.newPage();
 
+  // SSRF 第二道：逐个请求复核。入口校验只管首个 URL，挡不住
+  // 30x 重定向到内网、页面里 <img src="http://169.254.169.254/..."> 之类的
+  // 子资源，以及 DNS rebinding。这里对每个导航/子资源请求重新判一次。
+  await context.route('**/*', async (route) => {
+    const target = route.request().url();
+    // data:/blob: 不出网，放行；其余一律过 safeUrl。
+    if (/^(data|blob):/i.test(target)) return route.continue();
+    if (await isSafeUrl(target)) return route.continue();
+    console.warn(`[ui-review] 已拦截不安全的出站请求: ${target}`);
+    return route.abort('blockedbyclient');
+  });
+
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(safeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(2000);
 

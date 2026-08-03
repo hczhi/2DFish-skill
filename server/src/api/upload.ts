@@ -4,6 +4,7 @@ import COS from 'cos-nodejs-sdk-v5';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { getDatabase } from '../db/index.js';
+import { tryDecryptSecret } from '../core/secrets.js';
 
 export const uploadRouter = Router();
 
@@ -26,11 +27,16 @@ export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: s
   const db = getDatabase();
   const rows = db.prepare("SELECT key, value FROM system_config WHERE key IN ('cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region')").all() as Array<{ key: string; value: string }>;
 
+  // secret_id/secret_key 在库里是密文（migrations/050），bucket/region 不是敏感信息不加密。
+  // tryDecryptSecret 对没有 enc: 前缀的值原样返回，所以这里对两类值都安全。
+  const SECRET_FIELDS = new Set(['cos_secret_id', 'cos_secret_key']);
   const config: Record<string, string> = {};
   for (const row of rows) {
-    config[row.key] = row.value;
+    config[row.key] = SECRET_FIELDS.has(row.key) ? tryDecryptSecret(row.value) ?? '' : row.value;
   }
 
+  // 解密失败会落到空串，和「没配置」走同一个 null 分支：上传接口返回
+  // 「对象存储未配置」而不是拿着空凭据去调腾讯云换一个看不懂的签名错误。
   if (!config.cos_secret_id || !config.cos_secret_key || !config.cos_bucket || !config.cos_region) {
     return null;
   }

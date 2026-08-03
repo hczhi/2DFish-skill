@@ -1,5 +1,6 @@
 import { getDatabase } from '../../db/index.js';
 import { aiGateway } from '../../core/llm/gateway.js';
+import { parseFirstJsonArray } from '../../core/llm/parseJson.js';
 
 export interface ExtractedTenderData {
   projectName: string;
@@ -84,9 +85,8 @@ async function extractBatch(
       { userId, source: 'tender', operation: 'extract-batch' }
     );
     responseContent = response.choices[0]?.message?.content || '';
-    const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as any[];
+    const parsed = parseFirstJsonArray<any>(responseContent);
+    if (parsed) {
       for (const item of parsed) {
         if (!item.id) continue;
         results.set(item.id, {

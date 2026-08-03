@@ -1,4 +1,5 @@
 import { getDatabase } from '../db/index.js';
+import { tryDecryptSecret } from '../core/secrets.js';
 
 // 联网搜索服务（Tavily）——为"陪写联网补料"提供带来源的外部素材。
 // key 存在 system_config.web_search_api_key（管理员在系统配置里填），没填则视为未启用。
@@ -20,7 +21,9 @@ export function getSearchApiKey(): string | null {
     const row = db
       .prepare("SELECT value FROM system_config WHERE key = 'web_search_api_key'")
       .get() as { value: string } | undefined;
-    return row?.value?.trim() || null;
+    // 库里是密文（migrations/050）。解不开按「未配置」处理——
+    // 本函数的契约就是 null 表示不可用，调用方据此降级，不该在这里抛。
+    return tryDecryptSecret(row?.value)?.trim() || null;
   } catch {
     return null;
   }

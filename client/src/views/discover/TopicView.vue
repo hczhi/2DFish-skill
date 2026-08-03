@@ -45,6 +45,7 @@ import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
 import AdSlot from '../../components/common/AdSlot.vue'
 import DefaultTopic from './topics/DefaultTopic.vue'
+import { apiGet } from '../../lib/api'
 
 interface TopicArticle {
   slug: string
@@ -87,22 +88,17 @@ const templateComponent = shallowRef<any>(DefaultTopic)
 async function loadTopic() {
   loading.value = true
   try {
-    const res = await fetch(`/api/discover/topics/${slug.value}?locale=${locale.value}`)
-    if (res.ok) {
-      topic.value = await res.json()
-      resolveTemplate(topic.value!.template || 'default')
-      if (topic.value) {
-        const t = topic.value
-        document.title = t.seo_title || t.title
-        setMeta('description', t.seo_description || t.description || '')
-        setMeta('keywords', t.seo_keywords || '')
-        setMetaProperty('og:title', t.seo_title || t.title)
-        setMetaProperty('og:description', t.seo_description || t.description || '')
-        setMetaProperty('twitter:title', t.seo_title || t.title)
-        setMetaProperty('twitter:description', t.seo_description || t.description || '')
-      }
-    } else {
-      topic.value = null
+    topic.value = await apiGet(`/api/discover/topics/${slug.value}`, { locale: locale.value })
+    resolveTemplate(topic.value!.template || 'default')
+    if (topic.value) {
+      const t = topic.value
+      document.title = t.seo_title || t.title
+      setMeta('description', t.seo_description || t.description || '')
+      setMeta('keywords', t.seo_keywords || '')
+      setMetaProperty('og:title', t.seo_title || t.title)
+      setMetaProperty('og:description', t.seo_description || t.description || '')
+      setMetaProperty('twitter:title', t.seo_title || t.title)
+      setMetaProperty('twitter:description', t.seo_description || t.description || '')
     }
   } catch {
     topic.value = null

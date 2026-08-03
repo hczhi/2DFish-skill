@@ -1,13 +1,7 @@
 import type { Fish } from './types'
 import { EVENT_TEMPLATES } from './StoryEventTemplates'
 import type { StoryEventPayload } from './StoryEventTemplates'
-
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('mmPla_token')
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  return headers
-}
+import { api } from '../lib/api'
 
 export class StoryEventTrigger {
   private cooldown = 0
@@ -60,9 +54,10 @@ export class StoryEventTrigger {
     const templates = this.getEligibleTemplateIds(fishes)
 
     try {
-      const res = await fetch('/api/ai/fish/story-event', {
+      // 走 api()：原来这里自己读 localStorage['mmPla_token'] 拼头，
+      // 那个 key 是 lib/auth.ts 的内部实现，改一次这里就静默失效（且没有类型保护）。
+      const res = await api('/api/ai/fish/story-event', {
         method: 'POST',
-        headers: getAuthHeaders(),
         body: JSON.stringify({
           fishes: aliveFishes.map(f => ({
             id: f.id,

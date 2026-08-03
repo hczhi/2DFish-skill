@@ -6,8 +6,15 @@ import { allMigrations } from './migrations/index.js';
 
 let db: Database.Database | null = null;
 
+/** 数据库文件路径。DB_PATH 用于测试隔离，不设时仍是生产/开发的 data/app.db。 */
+export function getDatabasePath(): string {
+  return process.env.DB_PATH
+    ? path.resolve(process.env.DB_PATH)
+    : path.resolve(process.cwd(), 'data/app.db');
+}
+
 export function initDatabase(): Database.Database {
-  const dbPath = path.resolve(process.cwd(), 'data/app.db');
+  const dbPath = getDatabasePath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
@@ -84,111 +91,13 @@ export function initDatabase(): Database.Database {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS content_projects (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('image-text', 'video')),
-      status TEXT NOT NULL DEFAULT 'drafting' CHECK(status IN ('drafting', 'predicted', 'published', 'retro-ready', 'retrospected')),
-      cover_url TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_drafts (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      content TEXT NOT NULL,
-      version INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_predictions (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      scores JSON NOT NULL,
-      predicted_metrics JSON NOT NULL,
-      confidence TEXT,
-      reasoning TEXT,
-      locked_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_actuals (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      reads INTEGER,
-      likes INTEGER,
-      collects INTEGER,
-      comments INTEGER,
-      publish_url TEXT,
-      published_at TEXT,
-      recorded_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_retros (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      analysis TEXT NOT NULL,
-      accuracy_score REAL,
-      insights JSON,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS scoring_rules (
-      id TEXT PRIMARY KEY,
-      version INTEGER NOT NULL DEFAULT 1,
-      type TEXT NOT NULL CHECK(type IN ('image-text', 'video')),
-      dimensions JSON NOT NULL,
-      notes TEXT,
-      effective_from TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_messages (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_feedback (
-      id TEXT PRIMARY KEY,
-      message_id TEXT NOT NULL REFERENCES content_messages(id),
-      project_id TEXT NOT NULL REFERENCES content_projects(id),
-      signal TEXT NOT NULL CHECK(signal IN ('adopted', 'dismissed')),
-      context TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS content_inspirations (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      content TEXT,
-      source TEXT,
-      tags TEXT,
-      images TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
-      path, title, body, tags,
-      content='', tokenize='unicode61'
-    );
-
-    CREATE TABLE IF NOT EXISTS files (
-      id TEXT PRIMARY KEY,
-      path TEXT NOT NULL UNIQUE,
-      type TEXT NOT NULL,
-      last_modified TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS skills (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      manifest_path TEXT NOT NULL,
-      is_native INTEGER DEFAULT 0
-    );
+    -- 这里原本还建了 content_projects / content_drafts / content_predictions /
+    -- content_actuals / content_retros / content_messages / content_feedback /
+    -- content_inspirations / scoring_rules / skills / files / knowledge_fts。
+    -- 全部 0 行且除本文件外没有任何 SQL 引用，已由 migrations/051 删除：
+    -- content_* 那套被 xhs 模块的表重做了，skills 被 prompt_skills 取代，
+    -- files/knowledge_fts 的写入逻辑从未实现。
+    -- 建表语句必须一并删掉，否则下次启动会照原样重建，051 就白跑了。
   `);
 
   runMigrations(db, allMigrations);

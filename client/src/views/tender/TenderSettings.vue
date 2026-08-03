@@ -37,8 +37,18 @@ const preferences = ref({
   caseTags: [] as string[],
   excludedTypes: [] as string[],
   platforms: [] as string[],
+  companyProfile: '',
 })
 const platforms = ref<any[]>([])
+
+// 公司简介。与后端 MAX_PROFILE_CHARS 一致 —— 它会进每一次评分调用。
+const MAX_PROFILE_CHARS = 1200
+const distillInput = ref('')
+const distilling = ref(false)
+const showDistill = ref(false)
+const distillResult = ref<any>(null)
+// 上次从服务端读到 / 刚保存成功的简介，用来判断本次保存是否真的改了简介
+const savedProfile = ref('')
 const newPreferredRegion = ref('')
 const newAcceptableRegion = ref('')
 const newQualification = ref('')
@@ -68,8 +78,10 @@ async function loadSettings() {
     ])
     keywords.value = kws
     clients.value = cls
-    // 老用户的 preferences 里可能没有 platforms 字段，兜一层避免 v-model 绑到 undefined
-    preferences.value = { ...pref, platforms: pref.platforms || [] }
+    // 老用户的 preferences 里可能没有 platforms / companyProfile 字段，
+    // 兜一层避免 v-model 绑到 undefined
+    preferences.value = { ...pref, platforms: pref.platforms || [], companyProfile: pref.companyProfile || '' }
+    savedProfile.value = preferences.value.companyProfile
     keywordPool.value = pool
     platforms.value = plats
   } catch (e: any) {
@@ -137,8 +149,52 @@ async function deleteClient(id: string) {
 
 // Preferences
 async function savePreferences() {
-  await apiPut('/api/tender/preferences', preferences.value)
+  // 简介变了就提示去重评 —— 否则已评过的推荐会被评分主流程直接 skip，
+  // 用户改完看列表毫无动静，只会以为功能坏了。
+  const profileChanged = preferences.value.companyProfile !== savedProfile.value
+  try {
+    await apiPut('/api/tender/preferences', preferences.value)
+  } catch (e: any) {
+    alert(e?.message || (locale.value === 'en' ? 'Save failed' : '保存失败'))
+    return
+  }
+  savedProfile.value = preferences.value.companyProfile
+  if (profileChanged) {
+    alert(locale.value === 'en'
+      ? 'Saved. Your company profile changed — existing recommendations were scored with the old profile. Open "Tenders" and click "Re-score" to refresh them.'
+      : '已保存。公司简介有变动 —— 已有推荐还是按旧简介打的分，去「查看标讯」点「重新评分」即可刷新。')
+    return
+  }
   alert(locale.value === 'en' ? 'Saved' : '已保存')
+}
+
+async function runDistill() {
+  if (!distillInput.value.trim()) return
+  distilling.value = true
+  try {
+    distillResult.value = await apiPost('/api/tender/profile/distill', { rawText: distillInput.value })
+  } catch (e: any) {
+    alert(e?.message || (locale.value === 'en' ? 'Distill failed' : '提炼失败'))
+  } finally {
+    distilling.value = false
+  }
+}
+
+// 采纳草稿：只写进表单，不落库。用户还要能改，保存由他自己点。
+// 标签用并集而不是覆盖 —— 用户手填过的不该被 AI 结果冲掉。
+function applyDistill() {
+  const r = distillResult.value
+  if (!r) return
+  if (r.profile) preferences.value.companyProfile = r.profile.slice(0, MAX_PROFILE_CHARS)
+  const mergeInto = (target: string[], incoming: string[] = []) => {
+    for (const item of incoming) if (!target.includes(item)) target.push(item)
+  }
+  mergeInto(preferences.value.caseTags, r.caseTags)
+  mergeInto(preferences.value.qualifications, r.qualifications)
+  mergeInto(preferences.value.excludedTypes, r.excludedTypes)
+  distillResult.value = null
+  distillInput.value = ''
+  showDistill.value = false
 }
 
 function addPreferredRegion() { if (newPreferredRegion.value.trim()) { preferences.value.preferredRegions.push(newPreferredRegion.value.trim()); newPreferredRegion.value = '' } }
@@ -186,6 +242,77 @@ function removeFromArray(arr: string[], index: number) {
 
         <!-- Preferences Tab -->
         <div v-if="activeTab === 'preferences'" class="tab-content settings-content">
+          <!-- Company Profile Section -->
+          <section class="settings-section profile-section">
+            <h2>{{ locale === 'en' ? 'Company Profile' : '公司简介' }}</h2>
+            <p class="section-desc">
+              {{ locale === 'en'
+                ? 'The single biggest lever on scoring quality. AI reads this to judge whether a tender fits you — business boundaries matter more than credentials.'
+                : '对评分质量影响最大的一项。AI 靠它判断某个标是否适合你 —— 写清"不做什么"比罗列资质更有用。' }}
+            </p>
+
+            <div class="profile-editor">
+              <textarea
+                v-model="preferences.companyProfile"
+                class="profile-textarea"
+                :maxlength="MAX_PROFILE_CHARS"
+                :placeholder="locale === 'en'
+                  ? 'e.g. A 30-person integrated marketing agency in Guangzhou. Strong on brand launches and short-form video; we execute rather than pitch pure creative. Clients: two state-owned banks, one FMCG brand. We do not take pure media buying, and we cap at 3 large projects at once.'
+                  : '例：广州一家 30 人整合营销公司。擅长品牌发布会和短视频，做执行不做纯创意提案。服务过两家国有银行、一家快消品牌。不接纯媒介采买，同时最多并行 3 个大案。'"
+              ></textarea>
+              <div class="profile-meta">
+                <span class="char-count" :class="{ near: preferences.companyProfile.length > MAX_PROFILE_CHARS * 0.9 }">
+                  {{ preferences.companyProfile.length }} / {{ MAX_PROFILE_CHARS }}
+                </span>
+                <button class="btn-sm" @click="showDistill = !showDistill">
+                  {{ locale === 'en' ? '✨ Draft from existing text' : '✨ 用已有资料生成' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- AI 提炼：粘贴官网/资质/标书原文，出草稿 + 回填标签 -->
+            <div v-if="showDistill" class="distill-box">
+              <p class="section-hint distill-hint">
+                {{ locale === 'en'
+                  ? 'Paste your website blurb, credential list, or a past bid document. AI will draft a profile and suggest tags — you edit before saving.'
+                  : '把官网介绍、资质清单或过往标书片段粘进来，AI 提炼成简介草稿并顺手推荐标签，你改完再保存。' }}
+              </p>
+              <textarea
+                v-model="distillInput"
+                class="distill-textarea"
+                :placeholder="locale === 'en' ? 'Paste raw text here...' : '粘贴原始资料...'"
+              ></textarea>
+              <button class="save-btn" :disabled="distilling || !distillInput.trim()" @click="runDistill">
+                {{ distilling ? (locale === 'en' ? 'Distilling...' : '提炼中...') : (locale === 'en' ? 'Distill' : '开始提炼') }}
+              </button>
+
+              <div v-if="distillResult" class="distill-result">
+                <h4>{{ locale === 'en' ? 'Draft' : '草稿' }}</h4>
+                <p class="draft-text">{{ distillResult.profile }}</p>
+                <div v-if="distillResult.caseTags?.length || distillResult.qualifications?.length || distillResult.excludedTypes?.length" class="draft-tags">
+                  <span v-for="(t, i) in distillResult.caseTags" :key="`c${i}`" class="tag">{{ t }}</span>
+                  <span v-for="(q, i) in distillResult.qualifications" :key="`q${i}`" class="tag">{{ q }}</span>
+                  <span v-for="(x, i) in distillResult.excludedTypes" :key="`x${i}`" class="tag tag-negative">{{ x }}</span>
+                </div>
+                <div class="draft-actions">
+                  <button class="save-btn" @click="applyDistill">
+                    {{ locale === 'en' ? 'Use this draft' : '采纳草稿' }}
+                  </button>
+                  <button class="btn-sm" @click="distillResult = null">
+                    {{ locale === 'en' ? 'Discard' : '弃用' }}
+                  </button>
+                </div>
+                <p class="section-hint">
+                  {{ locale === 'en'
+                    ? 'Nothing is saved yet — the draft fills the form above, and tags are merged with what you already have.'
+                    : '采纳只会填进上面的表单，标签与你已有的合并，还没入库 —— 记得改完点保存。' }}
+                </p>
+              </div>
+            </div>
+
+            <button class="save-btn" @click="savePreferences">{{ locale === 'en' ? 'Save' : '保存' }}</button>
+          </section>
+
           <!-- Platforms Section -->
           <section class="settings-section">
             <h2>{{ locale === 'en' ? 'Sources' : '关注平台' }}</h2>
@@ -568,6 +695,113 @@ function removeFromArray(arr: string[], index: number) {
 .platform-desc {
   font-size: 12px;
   color: var(--color-muted);
+}
+
+/* 公司简介 —— 影响评分最大的一项，占满整行而不是挤在网格里 */
+.profile-section {
+  grid-column: 1 / -1;
+}
+
+.profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 下面两个 textarea 必须显式覆写高度：本文件的全局 input/select/textarea
+   规则把 height 钉成 36px，不覆写会被压成一条缝。 */
+.profile-textarea {
+  height: 160px;
+  min-height: 120px;
+  padding: 12px;
+  line-height: 1.7;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.distill-textarea {
+  height: 120px;
+  min-height: 80px;
+  width: 100%;
+  padding: 12px;
+  line-height: 1.6;
+  resize: vertical;
+  font-family: var(--font-sans);
+  margin-bottom: 12px;
+}
+
+.profile-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.char-count {
+  font-size: 12px;
+  color: var(--color-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.char-count.near {
+  color: #b45309;
+}
+
+.distill-box {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-fill);
+}
+
+.distill-hint {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.distill-result {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.distill-result h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.draft-text {
+  margin: 0 0 12px;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+.draft-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 input, select, textarea {
