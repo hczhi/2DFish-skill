@@ -50,6 +50,14 @@ import { migration_048 } from './048_tender_company_profile.js';
 import { migration_049 } from './049_jobs.js';
 import { migration_050 } from './050_encrypt_secrets.js';
 import { migration_051 } from './051_drop_dead_tables.js';
+import { migration_052 } from './052_dedicated_ai_channel.js';
+import { migration_053 } from './053_feishu_assistant.js';
+import { migration_054 } from './054_feishu_assistant_home_module.js';
+import { migration_055 } from './055_feishu_command_error_detail.js';
+import { migration_056 } from './056_seed_feishu_intent_skill.js';
+import { migration_057 } from './057_feishu_directory.js';
+import { migration_058 } from './058_feishu_chats.js';
+import { migration_059 } from './059_feishu_intent_supplement.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -103,4 +111,12 @@ export const allMigrations: Migration[] = [
   migration_049,
   migration_050,
   migration_051,
+  migration_052,
+  migration_053,
+  migration_054,
+  migration_055,
+  migration_056,
+  migration_057,
+  migration_058,
+  migration_059,
 ];

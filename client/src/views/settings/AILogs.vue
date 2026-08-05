@@ -24,12 +24,11 @@
       <div class="filters">
         <select v-model="filterSource" @change="loadLogs">
           <option value="">全部来源</option>
-          <option value="fish">摸鱼游戏</option>
-          <option value="board">智慧看板</option>
-          <option value="chat">对话</option>
-          <option value="consultant">顾问</option>
-          <option value="app">App</option>
-          <option value="content">内容</option>
+          <option v-for="s in sources" :key="s" :value="s">{{ sourceLabel(s) }}</option>
+        </select>
+        <select v-model="filterModel" @change="loadLogs">
+          <option value="">全部模型</option>
+          <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
         </select>
       </div>
 
@@ -75,12 +74,19 @@ interface LogEntry {
 const logs = ref<LogEntry[]>([])
 const stats = ref<any>(null)
 const filterSource = ref('')
+const filterModel = ref('')
+// 可选值从后端取，避免前端枚举漏掉新模块（原来写死的那份就漏了 xhs / tender）。
+const sources = ref<string[]>([])
+const models = ref<string[]>([])
 
-onMounted(() => { loadLogs(); loadStats() })
+onMounted(() => { loadLogs(); loadStats(); loadFilters() })
 
 async function loadLogs() {
-  const params = filterSource.value ? `?source=${filterSource.value}` : ''
-  const data = await apiGet<{ logs: LogEntry[] }>(`/api/ai/logs${params}`)
+  const q = new URLSearchParams()
+  if (filterSource.value) q.set('source', filterSource.value)
+  if (filterModel.value) q.set('model', filterModel.value)
+  const qs = q.toString()
+  const data = await apiGet<{ logs: LogEntry[] }>(`/api/ai/logs${qs ? `?${qs}` : ''}`)
   logs.value = data.logs
 }
 
@@ -88,8 +94,19 @@ async function loadStats() {
   stats.value = await apiGet('/api/ai/logs/stats')
 }
 
+async function loadFilters() {
+  try {
+    const r = await apiGet<{ sources: string[]; models: string[] }>('/api/ai/logs/filters')
+    sources.value = r.sources || []
+    models.value = r.models || []
+  } catch { /* 筛选项拉不到不该挡住日志列表 */ }
+}
+
 function sourceLabel(s: string): string {
-  const map: Record<string, string> = { fish: '摸鱼', board: '看板', chat: '对话', consultant: '顾问', app: 'App', content: '内容' }
+  const map: Record<string, string> = {
+    fish: '摸鱼', board: '看板', chat: '对话', consultant: '顾问', app: 'App', content: '内容',
+    xhs: '小红书', tender: '标讯', 'ui-review': 'UI 评测', ai: 'AI',
+  }
   return map[s] || s
 }
 
@@ -116,7 +133,7 @@ function formatTokens(n: number | undefined): string {
 .stat-value { display: block; font-size: 20px; font-weight: 700; color: var(--primary-light); }
 .stat-label { font-size: 12px; color: var(--text-muted); }
 
-.filters { margin-bottom: 16px; }
+.filters { margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
 .filters select { padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; }
 
 .logs-table { width: 100%; border-collapse: collapse; font-size: 13px; }

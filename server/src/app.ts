@@ -31,9 +31,16 @@ import { uploadRouter } from './api/upload.js';
 import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
 import { tenderRouter } from './api/tender.js';
 import { xhsRouter } from './api/xhs.js';
+import { feishuAssistantRouter } from './api/feishuAssistant.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
+import {
+  startAllConnections,
+  startConnectionWatchdog,
+  stopAllConnections,
+} from './services/feishuAssistant/connection.js';
+import { reapZombieCommands } from './services/feishuAssistant/commandLog.js';
 import { reapZombieJobs } from './core/jobs.js';
 import { verifyEncryptionKey } from './core/secrets.js';
 import { failInterruptedReviews } from './services/uiReview/orchestrator.js';
@@ -235,6 +242,11 @@ app.use('/api/tender', tenderRouter);
 app.use('/api/xhs', rateLimit(60, 60_000));
 app.use('/api/xhs', xhsRouter);
 
+// 飞书助理（在飞书里 @ 机器人下达自然语言指令）。
+// 只有管理接口，事件走长连接进来，没有对外的回调端点。
+app.use('/api/feishu-assistant', rateLimit(60, 60_000));
+app.use('/api/feishu-assistant', feishuAssistantRouter);
+
 // File upload (admin only)
 app.use('/api/upload', uploadRouter);
 
@@ -281,6 +293,15 @@ if (fs.existsSync(clientDistPath)) {
 // Global error handler
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[mmPla] Unhandled error:', err.message);
+
+  // 专属 AI 渠道配置不全（缺档/缺生图）。这条必须把原文透出去：
+  // 兜成 'Internal server error' 的话，管理员看到的只是"某功能报错"，
+  // 而真正的原因（某个 tier 没配）藏在服务端日志里——正是这类配置错误最难查的地方。
+  if (err.name === 'DedicatedChannelError') {
+    res.status(503).json({ error: err.message, code: 'dedicated_channel_incomplete' });
+    return;
+  }
+
   res.status(500).json({ error: 'Internal server error' });
 });
 
@@ -312,13 +333,31 @@ if (!IS_TEST) {
   // 「已有任务在运行中」的互斥判断，把爬取/评分入口永久锁在 409。
   reapZombieJobs();
   failInterruptedReviews();
+  // 飞书指令同理：它们靠内存里那个游离的 execute() promise 驱动，进程一没就死了。
+  // 不收尸的话日志里会永远留着一行 `running`，看起来像还在办 ——
+  // 而排障表里最难受的一格就是"状态一直 running"。
+  reapZombieCommands();
 
   // 加密密钥换了的话，库里的第三方密钥全都解不开。放在启动时说清楚，
   // 否则线上只会表现成 AI/上传/飞书同步三处互不相干的失败。
   verifyEncryptionKey(getDatabase());
 
+  // 飞书助理的两张表（去重表、指令日志）也由这个 cron 清，见 logCleanupService。
+  // 以前去重表只在启动时清一次，而这个服务正常能连着跑几个月 ——
+  // 「启动时清理」实际等于「永不清理」。
   startLogCleanupScheduler();
   cleanupOldLogs();
+
+  // 飞书助理的长连接。是我们主动连出去的，所以不占端口、不需要公网回调地址。
+  // 失败只记日志：某个应用凭证过期不该拖住整个服务启动。
+  startAllConnections().catch((e) => {
+    console.error('[feishu] 建立长连接时出错:', e instanceof Error ? e.message : e);
+  });
+
+  // 定期巡检长连接。SDK 的自动重连是**有次数上限**的，网断久一点就彻底躺平，
+  // 而进程还活着 —— 现象是所有人 @ 机器人都没反应且指令日志里空空如也，
+  // 只能靠有人想到去后台点「重连」或重启服务。见 connection.ts 的 sweepConnections。
+  startConnectionWatchdog();
 
   const server = app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`[mmPla] Server running on http://localhost:${PORT}`);
@@ -327,6 +366,9 @@ if (!IS_TEST) {
   // Graceful shutdown
   const shutdown = () => {
     console.log('[mmPla] Shutting down gracefully...');
+    // 先断飞书长连接：不断的话飞书那边要等超时才认定我们下线，
+    // 这段时间内推来的事件会丢（长连接是竞争消费，没有别的实例接手）。
+    void stopAllConnections();
     server.close(() => {
       try { getDatabase().close(); } catch { /* already closed */ }
       process.exit(0);

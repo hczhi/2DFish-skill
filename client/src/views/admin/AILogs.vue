@@ -7,11 +7,27 @@
           <option value="">全部模块</option>
           <option v-for="s in sources" :key="s" :value="s">{{ s }}</option>
         </select>
+        <select v-model="providerOwner" class="select" @change="reload">
+          <option value="">全部渠道</option>
+          <option value="platform">平台渠道</option>
+          <option value="dedicated">用户专属</option>
+        </select>
+        <select v-model="model" class="select" @change="reload">
+          <option value="">全部模型</option>
+          <option v-for="m in models" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <select v-model="userId" class="select" @change="reload">
+          <option value="">全部用户</option>
+          <option v-for="u in users" :key="u.id" :value="u.id">{{ u.username }}</option>
+        </select>
         <button class="select" @click="reload">刷新</button>
       </div>
     </div>
 
-    <p class="hint">每一行是一次与 LLM 的完整往返。点「查看」看完整输入（含系统拼装的 skill / 禁用库等上下文）、完整输出与 token。</p>
+    <p class="hint">
+      每一行是一次与 LLM 的完整往返。点「查看」看完整输入（含系统拼装的 skill / 禁用库等上下文）、完整输出与 token。
+      「渠道」列区分这次调用烧的是平台的 key 还是该用户专属渠道的 key。
+    </p>
 
     <div class="hc-table-container">
       <table class="hc-table">
@@ -21,6 +37,7 @@
             <th>模块</th>
             <th>操作</th>
             <th>模型</th>
+            <th>渠道</th>
             <th>输入 tok</th>
             <th>输出 tok</th>
             <th>耗时</th>
@@ -33,13 +50,18 @@
             <td><span class="hc-badge hc-badge-blue">{{ log.source }}</span></td>
             <td>{{ log.operation }}</td>
             <td class="mono dim">{{ log.model }}</td>
+            <td>
+              <span :class="['hc-badge', log.provider_owner === 'dedicated' ? 'hc-badge-green' : 'hc-badge-gray']">
+                {{ log.provider_owner === 'dedicated' ? '专属' : '平台' }}
+              </span>
+            </td>
             <td class="num">{{ log.input_tokens }}</td>
             <td class="num">{{ log.output_tokens }}</td>
             <td class="num dim">{{ log.duration_ms != null ? log.duration_ms + 'ms' : '—' }}</td>
             <td><button class="view-btn" @click="openDetail(log.id)">查看</button></td>
           </tr>
           <tr v-if="!logs.length">
-            <td colspan="8" class="empty">暂无记录</td>
+            <td colspan="9" class="empty">暂无记录</td>
           </tr>
         </tbody>
       </table>
@@ -68,6 +90,8 @@
             <span>输入 <b>{{ detail.input_tokens }}</b> tok</span>
             <span>输出 <b>{{ detail.output_tokens }}</b> tok</span>
             <span>耗时 <b>{{ detail.duration_ms != null ? detail.duration_ms + 'ms' : '—' }}</b></span>
+            <span>渠道 <b>{{ detail.provider_owner === 'dedicated' ? '用户专属' : '平台' }}</b></span>
+            <span v-if="detail.provider_id">provider <b class="mono">{{ detail.provider_id }}</b></span>
             <span>{{ fmtTime(detail.created_at) }}</span>
           </div>
 
@@ -110,6 +134,8 @@ interface LogRow {
   duration_ms: number | null
   request_summary: string | null
   user_id: string | null
+  provider_id?: string | null
+  provider_owner?: 'platform' | 'dedicated' | null
   created_at: string
   request_body?: string | null
   response_body?: string | null
@@ -120,8 +146,14 @@ const total = ref(0)
 const offset = ref(0)
 const pageSize = 50
 const source = ref('')
-// 常见来源，方便筛选；后端还是按实际值过滤，不在这里的来源选「全部」也能看到。
-const sources = ['xhs', 'chat', 'consultant', 'ui-review', 'ai']
+const providerOwner = ref('')
+const model = ref('')
+const userId = ref('')
+
+// 筛选项从后端实际日志里取，不在前端写死枚举——写死会漏掉新模块。
+const sources = ref<string[]>([])
+const models = ref<string[]>([])
+const users = ref<{ id: string; username: string }[]>([])
 
 const detailOpen = ref(false)
 const detail = ref<LogRow | null>(null)
@@ -133,9 +165,23 @@ async function reload() {
 async function load() {
   const q = new URLSearchParams({ limit: String(pageSize), offset: String(offset.value) })
   if (source.value) q.set('source', source.value)
+  if (providerOwner.value) q.set('provider_owner', providerOwner.value)
+  if (model.value) q.set('model', model.value)
+  if (userId.value) q.set('user_id', userId.value)
   const r = await apiGet<{ logs: LogRow[]; total: number }>(`/api/ai/logs?${q.toString()}`)
   logs.value = r.logs || []
   total.value = r.total || 0
+}
+
+async function loadFilters() {
+  try {
+    const r = await apiGet<{ sources: string[]; models: string[]; users: { id: string; username: string }[] }>(
+      '/api/ai/logs/filters'
+    )
+    sources.value = r.sources || []
+    models.value = r.models || []
+    users.value = r.users || []
+  } catch { /* 筛选项拉不到不该挡住日志列表 */ }
 }
 function nextPage() { offset.value += pageSize; load() }
 function prevPage() { offset.value = Math.max(0, offset.value - pageSize); load() }
@@ -163,12 +209,12 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text)
 }
 
-onMounted(load)
+onMounted(() => { load(); loadFilters() })
 </script>
 
 <style scoped>
 .page { max-width: 1200px; }
-.filters { display: flex; gap: 8px; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; }
 .hint { color: #6B7280; font-size: 13px; margin: 0 0 16px; }
 .select {
   font-family: var(--font-sans, sans-serif); font-size: 14px; font-weight: 600;

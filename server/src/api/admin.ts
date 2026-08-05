@@ -4,7 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { requireAdmin } from '../auth/guards.js';
 import { getDatabase } from '../db/index.js';
 import { generateApiToken, hashApiToken } from '../auth/middleware.js';
-import { listProviders, upsertProvider, deleteProvider, maskProvider } from '../services/aiProviderService.js';
+import OpenAI from 'openai';
+import {
+  listProviders, upsertProvider, deleteProvider, maskProvider, getProvider,
+  dedicatedChannelStatus, REQUIRED_LLM_TIERS,
+} from '../services/aiProviderService.js';
 import { parsePagination, patchRow } from '../core/http.js';
 import { encryptSecret, maskSecret } from '../core/secrets.js';
 
@@ -20,6 +24,7 @@ adminRouter.get('/users', (req: Request, res: Response) => {
   const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
+      COALESCE(u.use_dedicated_ai, 0) as use_dedicated_ai,
       (SELECT COUNT(*) FROM ai_logs WHERE user_id = u.id) as total_ai_calls,
       q.daily_limit, q.used_today, q.last_reset_date
     FROM user u
@@ -247,8 +252,10 @@ adminRouter.delete('/config/:key', (req: Request, res: Response) => {
 // 按任务档位配多个文本模型（tier: default/strong/fast）+ 未来的生图（kind: image）。
 // api_key 一律脱敏返回；POST 时 api_key 传空串表示「不改动」（沿用脱敏回显值不覆盖真值）。
 
-adminRouter.get('/providers', (_req: Request, res: Response) => {
-  res.json({ providers: listProviders().map(maskProvider) });
+// 不传 owner_user_id 时只返回平台级，避免系统配置页混进用户私有配置。
+adminRouter.get('/providers', (req: Request, res: Response) => {
+  const owner = req.query.owner_user_id ? String(req.query.owner_user_id) : undefined;
+  res.json({ providers: listProviders(owner).map(maskProvider) });
 });
 
 adminRouter.post('/providers', (req: Request, res: Response) => {
@@ -264,6 +271,12 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
   if (b.extra_json !== undefined) {
     try { JSON.parse(b.extra_json || '{}'); } catch { res.status(400).json({ error: 'extra_json 不是合法 JSON' }); return; }
   }
+  // owner_user_id 必须指向真实用户：拼错了会造出一条永远不会被任何人用到的
+  // "孤儿" provider，而表现只是"专属渠道没生效"，极难排查。
+  if (b.owner_user_id) {
+    const exists = getDatabase().prepare('SELECT id FROM user WHERE id = ?').get(String(b.owner_user_id));
+    if (!exists) { res.status(400).json({ error: 'owner_user_id 对应的用户不存在' }); return; }
+  }
   const saved = upsertProvider({
     id: b.id || undefined,
     kind: b.kind,
@@ -274,6 +287,7 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
     model: b.model,
     extra_json: b.extra_json,
     enabled: b.enabled,
+    owner_user_id: b.owner_user_id || null,
   });
   res.json({ provider: maskProvider(saved) });
 });
@@ -281,6 +295,109 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
 adminRouter.delete('/providers/:id', (req: Request, res: Response) => {
   deleteProvider(req.params.id);
   res.json({ success: true });
+});
+
+// --- 用户专属 AI 渠道 ---
+// 管理员为单个用户配一整套独立模型接入点。开关打开后该用户所有 AI 调用只走自己的 key，
+// 不回落平台（缺档直接报错）、也不受平台每日额度限制。详见 migrations/052。
+
+adminRouter.get('/users/:id/dedicated-ai', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const user = db.prepare('SELECT id, username FROM user WHERE id = ?').get(req.params.id) as
+    | { id: string; username: string }
+    | undefined;
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  res.json({
+    user,
+    providers: listProviders(req.params.id).map(maskProvider),
+    status: dedicatedChannelStatus(req.params.id),
+    required_tiers: REQUIRED_LLM_TIERS,
+  });
+});
+
+adminRouter.patch('/users/:id/dedicated-ai', (req: Request, res: Response) => {
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'enabled 必须是布尔值' });
+    return;
+  }
+
+  const db = getDatabase();
+  const user = db.prepare('SELECT id FROM user WHERE id = ?').get(req.params.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  // 开启前卡完备性：三档缺任意一档就开着的话，用户点到那个功能时才会报错，
+  // 而报错点离配置动作很远。在这里拦住，让问题在配置时暴露。
+  if (enabled) {
+    const status = dedicatedChannelStatus(req.params.id);
+    if (!status.ready) {
+      res.status(400).json({
+        error: `专属渠道尚未配齐，缺少档位：${status.missingTiers.join(' / ')}。请先补齐再启用。`,
+        missing_tiers: status.missingTiers,
+      });
+      return;
+    }
+  }
+
+  db.prepare('UPDATE user SET use_dedicated_ai = ?, updated_at = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, new Date().toISOString(), req.params.id);
+
+  res.json({ success: true, enabled });
+});
+
+/**
+ * 连通性测试。对某条 provider 发一次真实的最小请求。
+ *
+ * strong 档额外带 response_format: json_object —— xhs 搭结构/校验/诊断等 6 处
+ * 硬依赖它，而多数失败在业务层被兜底成空结果（表现是"点了没反应"而不是报错）。
+ * 在这里探一次，把不兼容的模型挡在配置阶段。
+ */
+adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
+  const provider = getProvider(req.params.id);
+  if (!provider) { res.status(404).json({ error: 'Provider not found' }); return; }
+  if (!provider.api_key) { res.status(400).json({ error: 'API Key 未设置或无法解密' }); return; }
+  if (provider.kind !== 'llm') {
+    res.status(400).json({ error: '生图 provider 的适配器尚未实现，暂不支持连通性测试' });
+    return;
+  }
+
+  const client = new OpenAI({
+    apiKey: provider.api_key,
+    baseURL: provider.base_url || 'https://api.openai.com/v1',
+    timeout: 30_000,
+  });
+  const wantsJson = provider.tier === 'strong';
+
+  try {
+    const started = Date.now();
+    const r = await client.chat.completions.create({
+      model: provider.model || 'gpt-4o',
+      messages: [{ role: 'user', content: wantsJson ? '返回 JSON：{"ok":true}' : 'ping' }],
+      max_tokens: 16,
+      temperature: 0,
+      ...(wantsJson ? { response_format: { type: 'json_object' as const } } : {}),
+    });
+    res.json({
+      success: true,
+      duration_ms: Date.now() - started,
+      model: r.model || provider.model,
+      json_object_supported: wantsJson ? true : undefined,
+      reply: r.choices?.[0]?.message?.content?.slice(0, 200) || '',
+    });
+  } catch (e: any) {
+    // 上游把 json_object 不支持报成 400，和「key 错了」区分开，否则管理员会去反复检查 key。
+    const msg = String(e?.message || e);
+    const jsonUnsupported = wantsJson && /response_format|json_object/i.test(msg);
+    res.status(400).json({
+      success: false,
+      error: msg.slice(0, 500),
+      json_object_supported: jsonUnsupported ? false : undefined,
+      hint: jsonUnsupported
+        ? '该模型不支持 response_format=json_object，strong 档的结构化任务（小红书搭结构/校验/诊断）会失败，请换一个模型。'
+        : undefined,
+    });
+  }
 });
 
 // --- Module Configs ---

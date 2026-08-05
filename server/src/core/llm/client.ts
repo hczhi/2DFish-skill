@@ -55,19 +55,22 @@ export function logAIUsage(
   requestSummary?: string,
   userId?: string,
   requestBody?: string,   // 完整请求 messages（JSON 字符串），供后台日志查全文
-  responseBody?: string   // 模型完整返回正文（流式为累计拼接后的全文）
+  responseBody?: string,  // 模型完整返回正文（流式为累计拼接后的全文）
+  providerId?: string | null,              // 用了哪条 ai_providers 记录（旧 system_config 回落时为 null）
+  providerOwner?: 'platform' | 'dedicated' // 成本归属：平台 key 还是用户专属 key
 ): void {
   try {
     const db = getDatabase();
     db.prepare(
-      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, provider_id, provider_owner, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       uuidv4(), source, operation, model,
       inputTokens, outputTokens, inputTokens + outputTokens,
       durationMs || null, requestSummary || null,
       userId || null,
       requestBody || null, responseBody || null,
+      providerId || null, providerOwner || null,
       new Date().toISOString()
     );
   } catch { /* non-critical */ }

@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { getDatabase } from '../../db/index.js';
 import { logAIUsage } from './client.js';
-import { resolveLLMProvider, type LLMTier } from '../../services/aiProviderService.js';
+import { resolveLLMProvider, usesDedicatedChannel, type LLMTier } from '../../services/aiProviderService.js';
 import { decryptSecret } from '../secrets.js';
 
 export interface GatewayOptions {
@@ -11,7 +11,30 @@ export interface GatewayOptions {
   requestSummary?: string;
   /** 任务档位：'strong' 用于吐 JSON/结构化的硬任务，'fast' 用于走量成文，缺省走 default。 */
   tier?: LLMTier;
+  /**
+   * 单次请求的超时（毫秒）。缺省 {@link DEFAULT_TIMEOUT_MS}。
+   *
+   * 调用方有理由缩短它的场景是「等待本身有外部时限」：飞书助理必须在有限时间内
+   * 回一句话，而不是让指令日志永远停在 `running`；相反，长文生成这类任务
+   * 应该留够时间，短超时会把一次本来会成功的生成变成失败。
+   */
+  timeoutMs?: number;
 }
+
+/**
+ * 默认超时与重试次数。
+ *
+ * OpenAI SDK 自己的默认值是 **10 分钟且超时会重试**，也就是最坏情况一次
+ * `create()` 能挂将近半小时。这对任何「有人在等」的调用路径都不成立：
+ * 上游服务偶发挂死时，await 它的那个 promise 就永远不结束 ——
+ * 飞书助理的表现是指令日志停在 `running`、群里一句回帖都没有
+ * （`execute` 是个游离 promise，没有任何东西会来叫醒它）。
+ *
+ * 这里把两个值都收紧并写在一处：重试次数必须一起管，
+ * 只设 timeout 的话最坏耗时仍然是它的 (maxRetries + 1) 倍。
+ */
+export const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_RETRIES = 1;
 
 /**
  * 采样预设：把"温度/惩罚重复"按任务性质集中成几档，避免各路由各写一套、参数漂移。
@@ -43,20 +66,37 @@ export class QuotaExceededError extends Error {
   }
 }
 
+/** 解析结果。providerId/providerOwner 用于 ai_logs 的成本归属（见 migrations/052）。 */
+export interface ResolvedLLM {
+  client: OpenAI;
+  model: string;
+  providerId: string | null;
+  providerOwner: 'platform' | 'dedicated';
+}
+
 /**
- * 解析文本模型连接信息。按任务档位取 provider：
- *   1. ai_providers 表里该 tier 的启用 provider（取不到回落到 default tier）；
- *   2. 都没有再回落到旧 system_config 的 platform_* 裸 key（保证老配置照常跑）。
- * 无参调用 = default 档，行为与升级前完全一致（chat/consultant 直接用 client 的调用点不受影响）。
+ * 解析文本模型连接信息。
+ *
+ * 传了 userId 且该用户开了专属渠道时，resolveLLMProvider 只会给出他自己的 provider，
+ * 缺档则抛 DedicatedChannelError——不会走到下面的平台回落分支。
+ *
+ * 平台路径（默认）不变：
+ *   1. ai_providers 里该 tier 的启用 provider（取不到回落 default 档）；
+ *   2. 都没有再回落旧 system_config 的 platform_* 裸 key（保证老配置照常跑）。
  */
-export function resolveLLMConfig(tier: LLMTier = 'default'): { client: OpenAI; model: string } {
-  const provider = resolveLLMProvider(tier);
+export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string): ResolvedLLM {
+  const provider = resolveLLMProvider(tier, userId);
   if (provider) {
     const client = new OpenAI({
       apiKey: provider.api_key,
       baseURL: provider.base_url || 'https://api.openai.com/v1',
     });
-    return { client, model: provider.model || 'gpt-4o' };
+    return {
+      client,
+      model: provider.model || 'gpt-4o',
+      providerId: provider.id,
+      providerOwner: provider.owner_user_id ? 'dedicated' : 'platform',
+    };
   }
 
   // 回落：旧 system_config（迁移前的裸 key，或表里一条都没启用时）
@@ -74,7 +114,7 @@ export function resolveLLMConfig(tier: LLMTier = 'default'): { client: OpenAI; m
     apiKey: decryptSecret(sysKey.value),
     baseURL: sysBase?.value || 'https://api.openai.com/v1',
   });
-  return { client, model: sysModel?.value || 'gpt-4o' };
+  return { client, model: sysModel?.value || 'gpt-4o', providerId: null, providerOwner: 'platform' };
 }
 
 export function checkAndDeductQuota(userId: string): void {
@@ -122,12 +162,17 @@ export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
 ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
-  const { client, model } = resolveLLMConfig(options.tier);
+  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId);
 
-  checkAndDeductQuota(options.userId);
+  // 专属渠道烧的是用户自己的 key，平台没有理由限流。
+  if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
-  const response = await client.chat.completions.create({ ...params, model });
+  const response = await client.chat.completions.create(
+    { ...params, model },
+    // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
+    { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+  );
   const duration = Date.now() - startTime;
 
   const inputTokens = response.usage?.prompt_tokens || 0;
@@ -137,7 +182,8 @@ export async function aiGateway(
     options.source, options.operation, model, inputTokens, outputTokens, duration,
     options.requestSummary, options.userId,
     safeStringify(params.messages),
-    response.choices?.[0]?.message?.content || ''
+    response.choices?.[0]?.message?.content || '',
+    providerId, providerOwner
   );
 
   return {
@@ -158,18 +204,26 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  const { client, model } = resolveLLMConfig(options.tier);
+  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId);
 
-  checkAndDeductQuota(options.userId);
+  // 专属渠道烧的是用户自己的 key，平台没有理由限流。
+  if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
-  const stream = await client.chat.completions.create({ ...params, model, stream: true });
+  // 流式这里的超时只约束**首字节**：SDK 的计时器在 fetch 的 promise
+  // （也就是响应头到达）时就清掉了，之后读 body 不受它限制。这正是想要的 ——
+  // 长文生成本身可以很久，卡死的形态是"连响应头都不来"。
+  const stream = await client.chat.completions.create(
+    { ...params, model, stream: true },
+    { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+  );
 
   const onComplete = (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => {
     logAIUsage(
       options.source, options.operation, model, inputTokens, outputTokens, durationMs,
       options.requestSummary, options.userId,
       safeStringify(params.messages),
-      outputText || ''
+      outputText || '',
+      providerId, providerOwner
     );
   };
 

@@ -10,7 +10,9 @@
       每条 provider 是一个模型接入点。<br />
       · <b>kind=llm</b>：文本模型，按 <b>tier</b> 分 default/strong/fast，代码里的任务已归好档（如小红书搭结构/校验走 strong，成文走 fast）。<br />
       · <b>kind=image</b>：生图模型（地基已就位，extra_json 里填 <code>{"protocol":"dashscope"}</code> 之类，具体适配器接入后即可用）。<br />
-      同一 tier 有多条时取最近更新的启用项；某档没配则回落到 default 档；一条都没配则回落到下方旧配置。
+      同一 tier 有多条时取最近更新的启用项；某档没配则回落到 default 档；一条都没配则回落到下方旧配置。<br />
+      · 这里只列<b>平台级</b>接入点。要给某个用户配独立接口，去「用户管理 → 专属 AI」——
+      那里配的接入点只属于该用户，不会出现在本列表。
     </p>
 
     <div class="config-card">
@@ -29,7 +31,13 @@
             <td>{{ p.enabled ? '✓' : '✕' }}</td>
             <td class="row-actions">
               <button class="link-btn" @click="editProvider(p)">编辑</button>
+              <button class="link-btn" @click="testProvider(p)" :disabled="testingId === p.id">
+                {{ testingId === p.id ? '测试中…' : '测试' }}
+              </button>
               <button class="link-btn danger" @click="removeProvider(p.id)">删除</button>
+              <p v-if="testResults[p.id]" class="test-result" :class="testResults[p.id].ok ? 'ok' : 'err'">
+                {{ testResults[p.id].msg }}
+              </p>
             </td>
           </tr>
         </tbody>
@@ -182,6 +190,20 @@ interface Provider {
   base_url: string; api_key: string; model: string; extra_json: string; enabled: number;
 }
 const providers = ref<Provider[]>([])
+const testingId = ref('')
+const testResults = ref<Record<string, { ok: boolean; msg: string }>>({})
+
+async function testProvider(p: Provider) {
+  testingId.value = p.id
+  delete testResults.value[p.id]
+  try {
+    const r = await apiPost<{ duration_ms: number; model: string }>(`/api/admin/providers/${p.id}/test`, {})
+    testResults.value[p.id] = { ok: true, msg: `连通 ✓ ${r.model} · ${r.duration_ms}ms` }
+  } catch (e: any) {
+    testResults.value[p.id] = { ok: false, msg: e.message || '测试失败' }
+  }
+  testingId.value = ''
+}
 
 function emptyEditor() {
   return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true }
@@ -311,9 +333,13 @@ onMounted(() => { loadConfig(); loadProviders() })
 .prov-table th { color: var(--c-text-sub); font-weight: 600; font-size: 12px; }
 .prov-table .mono { font-family: var(--font-mono); font-size: 12px; }
 .prov-table .ellip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-actions { display: flex; gap: 10px; white-space: nowrap; }
+.row-actions { display: flex; gap: 10px; white-space: nowrap; flex-wrap: wrap; }
 .link-btn { border: none; background: none; color: #3B5BDB; cursor: pointer; font-size: 13px; padding: 0; }
 .link-btn.danger { color: #dc2626; }
+.link-btn:disabled { opacity: .5; cursor: not-allowed; }
+.test-result { flex-basis: 100%; font-size: 11px; margin: 2px 0 0; white-space: normal; line-height: 1.4; }
+.test-result.ok { color: #16a34a; }
+.test-result.err { color: #dc2626; }
 
 .prov-editor { border-top: 1px dashed #e5e7eb; padding-top: 20px; }
 .prov-editor h3 { font-size: 15px; margin: 0 0 16px; }

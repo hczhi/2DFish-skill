@@ -115,6 +115,7 @@ const router = createRouter({
         { path: 'ui-style-skills/create', name: 'admin-ui-style-skill-create', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'ui-style-skills/:id/edit', name: 'admin-ui-style-skill-edit', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'tender', name: 'admin-tender', component: () => import('../views/admin/TenderManagement.vue') },
+        { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
         { path: 'skills/:id/edit', name: 'admin-skill-edit', component: () => import('../views/admin/SkillEditor.vue') },
@@ -164,6 +165,17 @@ const router = createRouter({
     {
       path: '/en/xhs/:pathMatch(.*)*',
       redirect: (to) => '/xhs' + (to.params.pathMatch ? '/' + (to.params.pathMatch as string[]).join('/') : ''),
+    },
+    {
+      // 飞书助理是登录后的配置台，没有对外展示页，所以不做 /en 版本。
+      path: '/feishu',
+      name: 'feishu-home',
+      component: () => import('../views/feishu/FeishuHome.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/en/feishu',
+      redirect: '/feishu',
     },
     {
       path: '/tender',

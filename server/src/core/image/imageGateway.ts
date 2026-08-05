@@ -16,6 +16,8 @@ export interface GenerateImageOptions {
   size?: string;          // 如 '1024x1024'，各家默认值不同
   n?: number;             // 生成张数
   extra?: Record<string, any>;
+  /** 调用者 user id。该用户开了专属渠道时用他自己的生图 provider（见 migrations/052）。 */
+  userId?: string;
 }
 
 export interface GeneratedImage {
@@ -29,7 +31,8 @@ export interface GeneratedImage {
  * 接入某家时：在下面 switch 里实现对应 protocol 的适配器函数即可。
  */
 export async function generateImage(prompt: string, opts: GenerateImageOptions = {}): Promise<GeneratedImage[]> {
-  const provider = resolveImageProvider();
+  // 专属渠道未配生图时 resolveImageProvider 会自己抛错说明原因，不会走到下面的 null 分支。
+  const provider = resolveImageProvider(opts.userId);
   if (!provider) {
     throw new Error('未配置生图 provider，请在后台「AI 模型 Provider」里新增一条 kind=image 的记录。');
   }

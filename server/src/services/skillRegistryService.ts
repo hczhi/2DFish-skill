@@ -65,6 +65,9 @@ export const KNOWN_SLOTS: Array<{ slot: string; label: string }> = [
   { slot: 'xhs-score', label: '小红书 · 爆款评分诊断' },
   { slot: 'seo-score', label: '文章 · SEO 评分' },
   { slot: 'ai-detection', label: '文章 · AI 味检测' },
+  // 只**追加**到自动生成的解析 prompt 上，不替换。动作清单、JSON 格式、
+  // open_id 约束都是载荷性的，改坏了会静默失效（见 feishuAssistant/intent.ts）。
+  { slot: 'feishu-intent', label: '飞书助理 · 指令理解补充规则（追加，不覆盖）' },
 ];
 
 // 主文件里引用引用文件的占位符：{{ref:filename}}（filename 可带或不带 .md）
