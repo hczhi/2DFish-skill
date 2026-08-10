@@ -1,11 +1,12 @@
 import type { Client } from '@larksuiteoapi/node-sdk';
-import { getAction } from './actions/index.js';
+import { capabilityHints, getAction } from './actions/index.js';
 import type { ActionContext } from './actions/index.js';
 import { parseIntent, MAX_STEPS } from './intent.js';
 import { describeCommandError } from './commandError.js';
 import { withIntentSlot } from './concurrency.js';
 import { countUsers } from './directory/store.js';
 import { recordRejected } from './chatStore.js';
+import { buildDiaryContext, type DiaryContext } from './diary/context.js';
 import {
   claimEvent,
   findPriorClarification,
@@ -13,7 +14,7 @@ import {
   setCommandIntent,
   startCommand,
 } from './commandLog.js';
-import type { FeishuApp } from './appStore.js';
+import { parseAllowedChats, type FeishuApp } from './appStore.js';
 
 // 事件调度。
 //
@@ -25,12 +26,36 @@ import type { FeishuApp } from './appStore.js';
 // 这也是为什么 execute 内部必须自己 catch 到底 —— 它是个游离的 promise，
 // 抛出去只会变成 unhandledRejection。
 
-/** 用户可见的兜底话术。解析不出来时也必须回一句，否则表现成「@ 了没反应」。 */
-const FALLBACK_REPLY =
-  '没太听懂这条指令。我目前会：建任务/改任务（标记完成、改截止、加协作人、写评论）、' +
-  '建日程/改日程/删日程、查大家的空闲时间、给同事发私聊消息。\n' +
-  '可以试试「明天下午三点开个评审会」「创建任务：周五前交报告」或「季度报告那个任务标记完成」。\n' +
-  '注意改和删只对**我帮你建过的**那些有效，你自己在飞书里建的我看不到。';
+/**
+ * 私聊里唯一的回复：请到群里说。
+ *
+ * 助理**只在群聊里工作**（见 handleMessage 里那道闸的注释）。这条话术要回答
+ * 用户当下的两个问题：为什么没办、接下来该怎么做。少了它，私聊就变成
+ * 「@ 了没反应」—— 而那和"助理坏了"完全同形。
+ */
+const P2P_ONLY_GROUP_REPLY =
+  '我只在**群聊**里工作，私聊不处理指令。\n' +
+  '请把我拉进项目群，在群里 @ 我说话 —— 项目日志和任务都是跟群绑定的。\n' +
+  '（这样每条指令都留在群里，同事能看到谁让我做了什么。）';
+
+/**
+ * 用户可见的兜底话术。解析不出来时也必须回一句，否则表现成「@ 了没反应」。
+ *
+ * 能力清单**从注册表生成**（capabilityHints）。以前这里是一段手写的散文，
+ * 于是删掉日程和私聊发消息之后它还在推销那些功能 —— 用户照着说一句，
+ * 换回来的还是这句「没太听懂」，而清单就印在同一条消息里。
+ * 剩下这几句限制是手写的，因为它们不属于任何单个动作。
+ */
+function fallbackReply(): string {
+  return [
+    '没太听懂这条指令。我目前会：',
+    ...capabilityHints().map((h) => `· ${h}`),
+    '',
+    '注意「项目」和「任务」是两件事：项目是一个群一张长期的日志表，任务是一条待办。',
+    '改任务只对**我帮你建过的**那些有效，你自己在飞书里建的我看不到；' +
+      '日志和任务都要先在本群建过项目才能记。',
+  ].join('\n');
+}
 
 export interface InboundMessage {
   messageId: string;
@@ -42,6 +67,12 @@ export interface InboundMessage {
   text: string;
   /** 已排除机器人自己的 @ 列表 */
   mentions: Array<{ openId: string; name: string }>;
+  /**
+   * 助理自己的 open_id。只有「总结群聊」用得上（要把助理自己的回帖和
+   * @ 助理的指令消息从群聊记录里滤掉），透传到 ActionContext.botOpenId。
+   * 可能为空 —— 见那边的注释，空的时候只是摘要里多几条复述指令的内容。
+   */
+  botOpenId?: string;
 }
 
 /** 回帖通道。由 connection.ts 注入 LarkChannel 的 send，测试里可注入假的。 */
@@ -77,13 +108,38 @@ export interface DispatchDeps {
 export function handleMessage(
   msg: InboundMessage,
   deps: DispatchDeps
-): 'accepted' | 'duplicate' | 'not_allowed' {
+): 'accepted' | 'duplicate' | 'not_allowed' | 'p2p_rejected' {
   const { app } = deps;
   const nowIso = new Date(deps.nowMs ?? Date.now()).toISOString();
 
+  // 助理**只在群聊里工作**。
+  //
+  // 这不只是产品口味，它同时补掉一个洞：上面那道白名单闸只管群聊，私聊从来
+  // 没有任何闸 —— 同一租户里的任何人私聊机器人就能烧掉绑定账号的 AI 额度，
+  // 而且私聊不在 feishu_chats 里，用户连"谁在用"都看不到。
+  //
+  // 也补掉一类"看起来坏了"的体验：私聊里建不了项目（项目的身份就是那个群）、
+  // 记日志/复盘必须手打项目名、`@` 不到人只能靠名册 —— 私聊能做的事本来就是
+  // 群聊的真子集，而失败方式却更多。
+  //
+  // **必须回一句**，不能静默丢（本模块的第一条原则）：私聊里没反应和
+  // 「助理坏了」完全同形，用户会去查连接和权限。
+  //
+  // 顺序上先 claimEvent 再回帖：飞书成功也重推（至多 5 次），少了这道去重
+  // 用户会连收五条一样的「我只在群聊里工作」。刻意不写 feishu_commands ——
+  // 同 not_allowed 那条路：这条消息没被受理，没花额度、没执行任何东西。
+  if (msg.chatType !== 'group') {
+    if (!claimEvent(msg.messageId, app.app_id, nowIso)) return 'duplicate';
+    void deps.reply(msg.chatId, P2P_ONLY_GROUP_REPLY, msg.messageId).catch((e) => {
+      console.error('[feishu] 私聊拒绝回帖失败:', e instanceof Error ? e.message : e);
+    });
+    return 'p2p_rejected';
+  }
+
   // 群白名单。自建应用被拉进任何群都会收到 @ ——
   // 没有这道闸，任何人把机器人拉进自己的群就能消耗这个账号的 AI 额度。
-  if (msg.chatType === 'group' && !isChatAllowed(app, msg.chatId)) {
+  // （不再需要判 chatType：私聊已经在上面被挡掉了，走到这里一定是群聊。）
+  if (!isChatAllowed(app, msg.chatId)) {
     // 拦是对的，但**不能连拦了都不留痕**：用户侧的现象是「在群里 @ 了没反应，
     // 指令日志里也什么都没有」，而这和「事件根本没进来」（连接断了、权限没发版）
     // 完全同形，处置却完全相反。所以在会话表上累加一个计数，
@@ -119,16 +175,51 @@ export function handleMessage(
   return 'accepted';
 }
 
-function isChatAllowed(app: FeishuApp, chatId: string): boolean {
-  let allowed: string[] = [];
+/**
+ * 本群项目的现状快照（项目名 + 在办任务 + 最近记录）。
+ *
+ * 出错吞掉，退化成「没绑项目」：这是拼 prompt 用的参考资料，为它让整条指令失败
+ * 不值得。退化之后模型少了指代信息（「那个 logo 的活」它认不出是哪条），
+ * 但动作层的反查是独立的一套（走库，不看 prompt），所以指令仍然办得成。
+ */
+function diaryContext(appId: string, msg: InboundMessage): DiaryContext {
   try {
-    const parsed = JSON.parse(app.allowed_chats || '[]');
-    if (Array.isArray(parsed)) allowed = parsed.filter((c): c is string => typeof c === 'string');
-  } catch {
-    allowed = [];
+    return buildDiaryContext(appId, msg.chatId);
+  } catch (e) {
+    console.error('[feishu] 查本群项目失败（按未绑定继续）:', e instanceof Error ? e.message : e);
+    return {
+      projectName: null,
+      records: [],
+      tasks: [],
+      recordTotal: 0,
+      openTaskTotal: 0,
+      closedTaskCount: 0,
+    };
+  }
+}
+
+/**
+ * 这个群放行吗。
+ *
+ * 解析统一在 appStore.parseAllowedChats（以前这段 try/catch 在三个地方各有一份）。
+ *
+ * **解析失败要拒，不能当成"不限群"。** 以前这里 `catch { allowed = [] }`，
+ * 而下一行「空 = 不限群」立刻把它读成放行全部 —— 也就是列一坏，本模块唯一
+ * 那道闸就静默失效，任何人把机器人拉进自己的群都能烧掉绑定账号的 AI 额度。
+ * 而且现象是「一切正常」，没人会去查。拒了的话用户看到的是自己那个群不响应
+ * （而 reject_count 在涨），去后台把白名单重存一次就好。
+ */
+function isChatAllowed(app: FeishuApp, chatId: string): boolean {
+  const { chats, malformed } = parseAllowedChats(app.allowed_chats);
+  if (malformed) {
+    console.error(
+      `[feishu] ${app.app_id} 的群白名单不是合法 JSON，本条按「不放行」处理。` +
+        `请到后台重新保存一次白名单。原值：${String(app.allowed_chats).slice(0, 120)}`
+    );
+    return false;
   }
   // 空白名单 = 不限制。首次接入时用户还不知道自己的 chat_id，强制填写会让他卡在第一步。
-  return allowed.length === 0 || allowed.includes(chatId);
+  return chats.length === 0 || chats.includes(chatId);
 }
 
 /**
@@ -146,13 +237,33 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
     }
   };
 
+  /**
+   * 落终态日志。**写不进去也不能影响回帖。**
+   *
+   * 这一层不是防御性冗余：`execute` 的每一条出口都是「先 finishCommand、再 safeReply」，
+   * 其中最后那条还在 catch 块里。库这一刻不可用（磁盘满、库被锁、迁移没跑到位）时，
+   * 没有这层保护的表现是 —— finishCommand 抛出去，**回帖那一行永远执行不到**，
+   * 而外层 catch 里再抛就直接成了 unhandledRejection。用户侧看到的是
+   * 「@ 了没反应」，也就是本模块最不该出现的那一种失败：出错了，但没人被告知。
+   * 而这类故障是**每条指令**都会撞上的，等于整个助理静默罢工。
+   *
+   * 日志行会停在 pending/running，下次重启由 reapZombieCommands 收尸。
+   */
+  const safeFinish = (...args: Parameters<typeof finishCommand>) => {
+    try {
+      finishCommand(...args);
+    } catch (e) {
+      console.error('[feishu] 写指令终态失败（回帖照发）:', e instanceof Error ? e.message : e);
+    }
+  };
+
   try {
     if (!msg.text.trim()) {
-      finishCommand(commandId, 'ignored', {
+      safeFinish(commandId, 'ignored', {
         result: '空指令',
         durationMs: Date.now() - startedAt,
       });
-      await safeReply(FALLBACK_REPLY);
+      await safeReply(fallbackReply());
       return;
     }
 
@@ -193,22 +304,28 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
         mentions: msg.mentions,
         nowMs: deps.nowMs ?? Date.now(),
         prior,
-        // 名册有没有同步过会改变 LLM 的策略：没名册时「给李四发消息」应该回一句
-        // 请他 @ 一下，有名册时才该直接选 send_message。每条指令查一次 COUNT，
-        // 有索引且是单表整数聚合，比缓存一份可能过期的数字更省心。
+        // 名册有没有同步过会改变 LLM 的策略：没名册时「派给李四」应该回一句
+        // 请他 @ 一下（否则 people.ts 只会抛一个「没找到李四」），有名册时才
+        // 直接派。每条指令查一次 COUNT，有索引且是单表整数聚合，
+        // 比缓存一份可能过期的数字更省心。
         peopleCount: countUsers(deps.app.app_id),
         // 本企业自己填的补充规则（059）。取的是 deps.app 这一行，所以天然按应用隔离；
         // 空串会让 intent.ts 回落到平台默认那份示例模板。
         supplement: deps.app.intent_supplement,
+        // 本会话绑没绑项目日记，同样会改变动作选择（「记一下」该走日志还是
+        // 该提示先建项目）；连带把在办任务和最近记录一起带上，这样
+        // 「那个 logo 的活推到周五」里的指代模型才认得出来（多轮的一半靠这个，
+        // 另一半是上面的 prior）。查不到就当没绑 —— 这是个增强，不能挡住指令。
+        diary: diaryContext(deps.app.app_id, msg),
       })
     );
 
     if (!intent) {
-      finishCommand(commandId, 'ignored', {
+      safeFinish(commandId, 'ignored', {
         error: '意图解析未返回可用结果',
         durationMs: Date.now() - startedAt,
       });
-      await safeReply(FALLBACK_REPLY);
+      await safeReply(fallbackReply());
       return;
     }
 
@@ -230,6 +347,7 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
       chatType: msg.chatType,
       messageId: msg.messageId,
       mentions: msg.mentions,
+      botOpenId: msg.botOpenId,
     };
 
     // 逐步执行。**前面的步骤已经生效了**，所以某一步失败不能整体抛错 ——
@@ -264,7 +382,7 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
     // 一步都没成功 = 和以前的单步失败完全等价。**不能把 e 重新抛给外层 catch**：
     // 那会让 describeFeishuErrorDetail 重跑一遍，而 detail 已经算好了。
     if (done.length === 0 && failure) {
-      finishCommand(commandId, 'failed', {
+      safeFinish(commandId, 'failed', {
         error: failure.detail.message,
         errorDetail: failure.detail,
         durationMs: Date.now() - startedAt,
@@ -277,7 +395,7 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
     if (intent.droppedSteps > 0) {
       // 截断必须说出来。静默截断和「一件事静默消失」是同一个失败模式，
       // 而多步支持本来就是为了消灭后者：用户以为四件事都办了，实际只办了前三件，
-      // 而这几件都是发消息、建日程这种撤不回来的写操作。
+      // 而这几件都是记日志、派任务这种在群里没人会再核对一遍的写操作。
       parts.push(
         `\n⚠️ 这句话里的事情超过了一次能办的上限（最多 ${MAX_STEPS} 件），` +
           `后面 ${intent.droppedSteps} 件**没有执行**。请把剩下的分开再说一遍。`
@@ -285,14 +403,14 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
     }
     if (failure) {
       // 做成了一半时必须说清「哪些已经生效、哪一步没做成」，否则用户重下指令
-      // 会把成功的那部分再做一遍（消息发两遍、日程建两个）。
+      // 会把成功的那部分再做一遍（日志里两条一样的、任务建两个）。
       parts.push(
         `\n⚠️ 但后面这一步没做成（前面的已经生效了，重下指令会重复执行，请只补这一步）：\n` +
           failure.detail.message
       );
     }
 
-    finishCommand(commandId, failure ? 'failed' : 'done', {
+    safeFinish(commandId, failure ? 'failed' : 'done', {
       result: JSON.stringify({
         // 顶层 summary 必须留着：前端日志详情读的是 `JSON.parse(result).summary`，
         // 没有它就退化成把整段 JSON 糊在页面上。这里只放**做成了的那几步**，
@@ -318,7 +436,7 @@ async function execute(commandId: string, msg: InboundMessage, deps: DispatchDep
     //     网页前的管理员看的，照抄到飞书群里会让人去点一个他打不开的后台页面。
     // 两种翻译都在 describeCommandError 里收口。
     const detail = describeCommandError(e, deps.app.app_id);
-    finishCommand(commandId, 'failed', {
+    safeFinish(commandId, 'failed', {
       error: detail.message,
       // 结构化存一份，后台日志据此渲染「一键补权限」按钮。
       errorDetail: detail,

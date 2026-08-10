@@ -4,6 +4,7 @@ import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
 import { pushTenderRecommendations, type FeishuTenderItem } from './feishuNotify.js';
 import { syncUserRecommendations, syncAllTenders, getBitableUrl } from './feishuBitable.js';
 import { parseFirstJson } from '../../core/llm/parseJson.js';
+import { visibleSql, TENDER_VISIBLE_DAYS } from './retention.js';
 
 interface UserConfig {
   userId: string;
@@ -435,11 +436,84 @@ function preFilterScore(tender: TenderRow, config: UserConfig): number {
   return Math.round(estimatedTotal);
 }
 
+const COLS =
+  'id, platform, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url';
+
+/**
+ * 单个用户单轮最多评多少条。
+ *
+ * 加这个上限的原因：改成「评该用户全部未评分的标讯」之后，候选数不再有天然边界 ——
+ * 实测一个用户当前就有 60 条未评分，且每天新增。一次点击打 60+ 次 LLM，
+ * 而 AI 额度默认 10 次/天，走到第 11 条就抛 QuotaExceededError，
+ * 后面的全部作废（下轮还得从头挑）。有上限 + 明确报出「剩余 N 条」，
+ * 管理员知道要再点一次，也知道点了会做多少事。
+ */
+export const MAX_SCORE_PER_USER_RUN = 200;
+
+/**
+ * 取该用户「还没评过分」的可见标讯。
+ *
+ * NOT EXISTS 反查推荐表是这个功能的核心 —— 原来的实现是全局
+ * `ORDER BY publish_date DESC LIMIT 50` 再在循环里逐条判断是否已评过，
+ * 于是**第 50 名之后的标讯永远评不到**：前 50 条一旦评完，后面的每轮都被
+ * LIMIT 挡在外面，既不评分也不推送，而且随着新标讯入库越积越多。
+ * 实测两个用户各有 60 / 59 条未评分标讯卡在这个边界外。
+ *
+ * 平台过滤也放进 SQL：如果先取 200 条再在内存里按平台丢掉，
+ * 只关注一个平台的用户可能 200 条里只剩几条，上限就被无关平台吃掉了。
+ */
+export function loadUnscoredForUser(userId: string, platforms: string[], limit: number): TenderRow[] {
+  const db = getDatabase();
+  const platformFilter = platforms.length > 0 ? ` AND t.platform IN (${platforms.map(() => '?').join(',')})` : '';
+  return db
+    .prepare(
+      `SELECT ${COLS.split(', ').map((c) => `t.${c}`).join(', ')}
+       FROM tenders t
+       WHERE t.status != 'draft'
+         AND ${visibleSql('t.publish_date')}${platformFilter}
+         AND NOT EXISTS (
+           SELECT 1 FROM tender_recommendations r
+           WHERE r.user_id = ? AND r.tender_id = t.id
+         )
+       ORDER BY t.publish_date DESC
+       LIMIT ?`
+    )
+    .all(...platforms, userId, limit) as TenderRow[];
+}
+
+/** 未评分总数（不受上限影响），用于报出「剩余 N 条」。 */
+export function countUnscoredForUser(userId: string, platforms: string[]): number {
+  const db = getDatabase();
+  const platformFilter = platforms.length > 0 ? ` AND t.platform IN (${platforms.map(() => '?').join(',')})` : '';
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM tenders t
+         WHERE t.status != 'draft'
+           AND ${visibleSql('t.publish_date')}${platformFilter}
+           AND NOT EXISTS (
+             SELECT 1 FROM tender_recommendations r
+             WHERE r.user_id = ? AND r.tender_id = t.id
+           )`
+      )
+      .get(...platforms, userId) as any
+  ).c as number;
+}
+
+/**
+ * 为用户计算推荐评分。
+ *
+ * 两种模式：
+ * - **指定 tenderIds**（重评路径 /rescore 在用）：只评这些，调用方自己负责先删旧记录。
+ * - **不指定**（后台「评分」按钮）：每个用户各自取「自己还没评过的」标讯，
+ *   见 loadUnscoredForUser。候选是 per-user 的 —— 甲评过乙没评过是常态，
+ *   共用一份候选列表就必然漏掉一边。
+ */
 export async function runRecommendationsForAllUsers(
   tenderIds?: string[],
   onLog?: (msg: string, detail?: string) => void,
   userId?: string
-): Promise<{ processed: number; users: number }> {
+): Promise<{ processed: number; users: number; scoredTenderIds: string[] }> {
   const db = getDatabase();
 
   let users: any[];
@@ -451,18 +525,34 @@ export async function runRecommendationsForAllUsers(
   const adminUser = db.prepare("SELECT id FROM user WHERE role = 'admin' LIMIT 1").get() as any;
   const adminUserId = adminUser?.id || users[0]?.id;
 
-  let tenders: TenderRow[];
-  if (tenderIds && tenderIds.length > 0) {
-    const placeholders = tenderIds.map(() => '?').join(',');
-    tenders = db.prepare(`SELECT id, platform, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders WHERE id IN (${placeholders})`).all(...tenderIds) as TenderRow[];
-  } else {
-    tenders = db.prepare('SELECT id, platform, title, purchaser_name, budget_amount, region_name, notice_type, content_text, publish_date, keyword, url FROM tenders ORDER BY publish_date DESC LIMIT 50').all() as TenderRow[];
-  }
+  const explicitIds = !!(tenderIds && tenderIds.length > 0);
 
-  if (tenders.length === 0) return { processed: 0, users: 0 };
+  // 21 天闸门同样管住评分：过期标讯不再花 token 打分，也就不会产生新的推荐行。
+  // 已有的推荐行不动 —— 那是花过 token 的，且推荐列表本身另有 20 天窗口。
+  let explicitTenders: TenderRow[] = [];
+  if (explicitIds) {
+    const placeholders = tenderIds!.map(() => '?').join(',');
+    explicitTenders = db
+      .prepare(`SELECT ${COLS} FROM tenders WHERE id IN (${placeholders}) AND ${visibleSql()}`)
+      .all(...tenderIds!) as TenderRow[];
+    // 这里是调用方手动指定的 id，被闸门挡掉必须报出来：
+    // 点了「评分」却只处理了一部分，静默的话读起来像评分功能坏了。
+    const skippedExpired = tenderIds!.length - explicitTenders.length;
+    if (skippedExpired > 0) {
+      onLog?.(`跳过 ${skippedExpired} 条超过 ${TENDER_VISIBLE_DAYS} 天的标讯（已过时效，不再评分；数据仍在库中）`);
+    }
+    if (explicitTenders.length === 0) return { processed: 0, users: 0, scoredTenderIds: [] };
+  }
 
   let processed = 0;
   let skippedByFilter = 0;
+  // 实际产出了推荐行的标讯（含初筛档）。调用方用它把 tenders.status 置为 scored ——
+  // 原来是把请求里的 tenderIds 全标成 scored，现在没有 tenderIds 了，
+  // 而且被闸门/平台过滤挡掉的本来就不该标。
+  const scoredTenderIds = new Set<string>();
+  // AI 额度是平台级的（都记在 adminUserId 头上），一个用户打满了后面的用户也打不通。
+  // 置位后不再进入下一个用户，但当前用户的同步/推送要走完。
+  let quotaExhausted = false;
 
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO tender_recommendations (id, user_id, tender_id, total_score, tier, score_business, score_budget, score_qualification, score_relationship, score_region, score_timeliness, ai_reason, risk_notes, ai_analysis, ai_strategy, scored_profile_at, created_at)
@@ -490,18 +580,50 @@ export async function runRecommendationsForAllUsers(
     // 用户勾选的关注平台。空数组 = 不限平台（老用户与未配置过的用户保持全量）。
     const wantedPlatforms = new Set(config.preferences.platforms);
 
-    // 飞书推送：本轮该用户新产生的、达到阈值的推荐（评完统一推送一条）
+    // 候选清单是 per-user 的：指定 id 时用那一批，否则取「这个用户还没评过的」。
+    let tenders: TenderRow[];
+    if (explicitIds) {
+      tenders = explicitTenders;
+    } else {
+      const platformList = [...wantedPlatforms];
+      const totalUnscored = countUnscoredForUser(user.id, platformList);
+      tenders = loadUnscoredForUser(user.id, platformList, MAX_SCORE_PER_USER_RUN);
+      if (totalUnscored === 0) {
+        onLog?.(`用户 ${user.id.slice(0, 8)}：没有未评分的标讯，跳过`);
+        continue;
+      }
+      onLog?.(
+        `用户 ${user.id.slice(0, 8)}：未评分 ${totalUnscored} 条，本轮处理 ${tenders.length} 条`
+      );
+      // 被上限截掉的必须说出来，否则「处理完了」和「处理了一部分」看起来一样。
+      if (totalUnscored > tenders.length) {
+        onLog?.(
+          `  ℹ️ 单轮上限 ${MAX_SCORE_PER_USER_RUN} 条，还剩 ${totalUnscored - tenders.length} 条未评分，再点一次「开始评分」继续`
+        );
+      }
+    }
+
+    // 飞书推送：本轮该用户新产生的、达到阈值的推荐（评完统一推送一条）。
+    // 开关判断看 app_id + chat_id，不再看 webhook（migration 061 起改成应用推送）。
     const feishuPref = db.prepare(
-      'SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score FROM tender_user_preferences WHERE user_id = ?'
+      `SELECT feishu_app_id, feishu_app_secret, feishu_chat_id, feishu_enabled, feishu_min_score
+       FROM tender_user_preferences WHERE user_id = ?`
     ).get(user.id) as any;
-    const feishuOn = !!feishuPref?.feishu_enabled && !!feishuPref?.feishu_webhook;
+    const feishuOn =
+      !!feishuPref?.feishu_enabled &&
+      !!feishuPref?.feishu_app_id &&
+      !!feishuPref?.feishu_app_secret &&
+      !!feishuPref?.feishu_chat_id;
     const feishuMinScore = feishuPref?.feishu_min_score ?? 55;
     const feishuItems: FeishuTenderItem[] = [];
 
     for (const tender of tenders) {
       // 未勾选的平台完全不参与：不评分、不入推荐表、不推送。
       // 放在最前面，连 filter 档记录都不写，否则用户之后勾上该平台时
-      // 上面的 existing 判断会把它当"已评过"而永远跳过。
+      // 下面的 existing 判断会把它当"已评过"而永远跳过。
+      //
+      // 走 loadUnscoredForUser 时平台过滤已经在 SQL 里做过了，这里是给
+      // explicitIds 路径兜底（那批 id 由调用方指定，可能含未关注平台）。
       if (wantedPlatforms.size > 0 && !wantedPlatforms.has(tender.platform)) {
         userSkippedByPlatform++;
         continue;
@@ -530,6 +652,7 @@ export async function runRecommendationsForAllUsers(
         skippedByFilter++;
         userSkipped++;
         processed++;
+        scoredTenderIds.add(tender.id);
         continue;
       }
 
@@ -547,6 +670,7 @@ export async function runRecommendationsForAllUsers(
         );
         userProcessed++;
         processed++;
+        scoredTenderIds.add(tender.id);
         // 达到飞书推送阈值（且非 filter 档）则收集，评完统一推送
         if (feishuOn && score.tier !== 'filter' && score.totalScore >= feishuMinScore) {
           feishuItems.push({
@@ -563,8 +687,13 @@ export async function runRecommendationsForAllUsers(
         onLog?.(`  [${userProcessed}] ${tender.title.slice(0, 25)} → ${score.tier} (${score.totalScore}分)`, llmDetail);
       } catch (e: any) {
         if (e instanceof QuotaExceededError) {
-          onLog?.(`⚠️ AI额度已用完，评分中止`);
-          return { processed, users: users.length };
+          // 原来这里是 `return`，于是**已经评出来的推荐既不同步表格也不推送** ——
+          // token 已经花了，结果却烂在库里，用户什么都收不到。
+          // 改成跳出本用户的循环、走完下面的同步/推送，再由 quotaExhausted 停掉后续用户
+          // （额度是平台级的，下一个用户照样打不通，接着跑只会刷一屏同样的错）。
+          onLog?.(`⚠️ AI额度已用完，评分中止（已评出的 ${userProcessed} 条仍会同步并推送）`);
+          quotaExhausted = true;
+          break;
         }
         console.error(`[tender] Score failed for user=${user.id} tender=${tender.id}:`, e.message);
         onLog?.(`  [错误] ${tender.title.slice(0, 25)}: ${e.message}`);
@@ -575,7 +704,7 @@ export async function runRecommendationsForAllUsers(
 
     // 多维表格同步（失败不影响评分主流程）。
     // 必须排在卡片推送之前：卡片按钮会跳到这张表，先把数据写进去，用户点开才不是空的。
-    // 与 webhook 无关，是独立通道 —— 没配 webhook 也照样同步。
+    // 与群推送是独立通道 —— 没配推送群也照样同步。
     let bitableUrl = '';
     try {
       bitableUrl = getBitableUrl(user.id);
@@ -601,28 +730,34 @@ export async function runRecommendationsForAllUsers(
       onLog?.(`  ⚠️ 多维表格同步失败：${e.message}`);
     }
 
-    // 飞书推送（失败不影响评分主流程）
+    // 飞书推送（失败不影响评分主流程，也不重试 —— 明确的产品决定）。
+    // 卡片只列前 5 条，但这里把**全部**达标条目传进去：条数和「还有 N 条」那句
+    // 都由 buildCard 按完整列表算，截断在卡片层做。
     if (feishuOn && feishuItems.length > 0) {
-      try {
-        const result = await pushTenderRecommendations(
-          feishuPref.feishu_webhook,
-          feishuPref.feishu_secret || undefined,
-          feishuItems,
-          Date.now(),
-          bitableUrl || undefined
-        );
-        if (result.ok) {
-          onLog?.(`  📮 飞书已推送 ${feishuItems.length} 条给用户 ${user.id.slice(0, 8)}`);
-        } else {
-          onLog?.(`  ⚠️ 飞书推送失败（code=${result.code ?? '?'} ${result.msg ?? ''}）`);
-        }
-      } catch (e: any) {
-        console.error(`[tender] Feishu push failed for user=${user.id}:`, e.message);
-        onLog?.(`  ⚠️ 飞书推送异常：${e.message}`);
+      const result = await pushTenderRecommendations(
+        { appId: feishuPref.feishu_app_id, appSecret: feishuPref.feishu_app_secret },
+        feishuPref.feishu_chat_id,
+        feishuItems,
+        Date.now(),
+        bitableUrl || undefined
+      );
+      if (result.ok) {
+        onLog?.(`  📮 飞书已推送 ${feishuItems.length} 条给用户 ${user.id.slice(0, 8)}`);
+      } else {
+        // 不重试，所以这行日志是用户唯一能知道「推送没成功」的地方。
+        console.error(`[tender] Feishu push failed for user=${user.id}:`, result.error);
+        onLog?.(`  ⚠️ 飞书推送失败（不重试）：${result.error}`);
       }
+    }
+
+    if (quotaExhausted) {
+      if (users.length > 1) {
+        onLog?.(`⚠️ AI额度已用完，剩余 ${users.length - users.indexOf(user) - 1} 个用户本轮未评分`);
+      }
+      break;
     }
   }
 
   onLog?.(`推荐评分全部完成：共处理 ${processed} 条`);
-  return { processed, users: users.length };
+  return { processed, users: users.length, scoredTenderIds: [...scoredTenderIds] };
 }

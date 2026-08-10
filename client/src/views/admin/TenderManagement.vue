@@ -94,7 +94,6 @@ async function loadUsedKeywords() {
 
 async function loadTenders() {
   loading.value = true
-  selectedTenderIds.value = []
   try {
     const params: any = { page: page.value, page_size: 30, search: search.value, platform: platform.value }
     if (keywordFilter.value) params.keyword = keywordFilter.value
@@ -284,23 +283,12 @@ async function batchExtract(ids?: string[]) {
   }
 }
 
-// Batch selection for list tab
-const selectedTenderIds = ref<string[]>([])
-const allTendersSelected = computed({
-  get: () => tenders.value.length > 0 && selectedTenderIds.value.length === tenders.value.length,
-  set: (val: boolean) => {
-    selectedTenderIds.value = val ? tenders.value.map(t => t.id) : []
-  }
-})
-
-// Score dialog
+// 评分对话框。选**用户**，不选标讯 —— 后端会自动取该用户全部未评分的标讯。
+// 原来是勾标讯再评分，这个交互本身就是那个数据丢失 bug 的来源：
+// 列表一页只有 30 条，勾了才评，第 2 页之后的没人会去勾，也就永远评不到。
 const showScoreDialog = ref(false)
-const scoreDialogIds = ref<string[]>([])
-const scoreForceReprocess = ref(false)
 
-function openScoreDialog(ids: string[]) {
-  scoreDialogIds.value = ids
-  scoreForceReprocess.value = false
+function openScoreDialog() {
   selectedUserId.value = ''
   showScoreDialog.value = true
   loadUsers()
@@ -309,13 +297,11 @@ function openScoreDialog(ids: string[]) {
 async function confirmScore() {
   try {
     await apiPost('/api/tender/admin/recommend', {
-      tenderIds: scoreDialogIds.value,
       userId: selectedUserId.value || undefined,
-      force: scoreForceReprocess.value
     })
     showScoreDialog.value = false
     startPolling()
-    alert('推荐评分任务已启动')
+    alert('推荐评分任务已启动，进度见「运行日志」')
   } catch (e: any) {
     alert('启动失败: ' + (e.message || '未知错误'))
   }
@@ -430,7 +416,7 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
 // ==================== 飞书推送配置 ====================
 const feishuUserId = ref('')
 const feishuCfg = ref({
-  feishu_webhook: '', feishu_secret: '', feishu_enabled: false, feishu_min_score: 55,
+  feishu_chat_id: '', feishu_enabled: false, feishu_min_score: 55,
   feishu_app_id: '', feishu_app_secret: '',
   bitable_app_token: '', bitable_table_id: '', bitable_all_table_id: '',
   bitable_url: '', bitable_enabled: false,
@@ -482,9 +468,14 @@ async function initBitable() {
   if (rebuild && !confirm('该用户已有多维表格。重建会生成一张新表，旧表里的数据和跟进标记不会迁移，确定继续？')) return
   bitableBusy.value = 'init'
   try {
-    await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/init`, rebuild ? { force: true } : {})
+    const r: any = await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/init`, rebuild ? { force: true } : {})
     await loadFeishuCfg()
-    alert('多维表格已创建（含「标讯推荐」「全部标讯」两张表）。接下来请「授权给用户」，否则用户打不开这张表。')
+    // 链接分享没关掉必须说出来。默认是「组织内获得链接的人可阅读」，
+    // 而卡片按钮是发到群里的 —— 等于全公司都能看这个账号的投标信息。
+    const warn = r?.linkShareClosed === false
+      ? '\n\n⚠️ 但「链接分享」没能关闭，这张表目前处于飞书租户的默认可见范围（通常是「组织内获得链接的人可阅读」）。请点「收紧权限」重试，或在飞书里手动改成「仅被邀请的人可访问」。'
+      : '\n\n链接分享已关闭：只有被授权的人能打开。'
+    alert('多维表格已创建（含「标讯推荐」「全部标讯」两张表）。接下来请「授权给用户」，否则用户打不开这张表。' + warn)
   } catch (e: any) {
     alert(e.message || '创建失败')
   } finally {
@@ -492,14 +483,42 @@ async function initBitable() {
   }
 }
 
+// 历史表格补做 createBitable 现在会自动做的两件事：链接补 ?table=、关掉链接分享。
+async function secureBitable() {
+  if (!confirm('将执行三件事：\n1. 修正表格链接，使其直接打开「标讯推荐」表；\n2. 关闭链接分享，只有被授权的人能打开；\n3. 删掉建应用时自带的那张空表（仅删「0 条记录且只有 1 个字段」的表，你自己建的表不会被动）。\n\n关闭链接分享后，群里没被授权的成员点推送卡片的按钮会看到「无权限访问」。要让整群能看，请把群 Chat ID 授权成只读。\n\n继续？')) return
+  bitableBusy.value = 'secure'
+  try {
+    const r: any = await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/secure`, {})
+    await loadFeishuCfg()
+    const removed: string[] = r.removedTables || []
+    const lines = [
+      r.urlChanged ? '✅ 表格链接已修正（补上了 ?table=，现在直接打开「标讯推荐」）' : '· 表格链接本来就是对的，未改动',
+      r.linkShareClosed ? '✅ 链接分享已关闭，只有被授权的人能打开' : '⚠️ 链接分享关闭失败，表仍处于租户默认可见范围，请在飞书里手动改成「仅被邀请的人可访问」',
+      removed.length > 0 ? `✅ 已删掉 ${removed.length} 张自带空表（${removed.join('、')}）` : '· 没有需要清理的自带空表',
+    ]
+    alert(lines.join('\n'))
+  } catch (e: any) {
+    alert(e.message || '操作失败')
+  } finally {
+    bitableBusy.value = ''
+  }
+}
+
+// 群授权一律只读：授权给群等于该群**全体成员**都能开这张表，
+// 而表里是这个账号的全部投标信息（预算、评分、AI 分析和策略）。
+// 给整群 edit 意味着任何一个成员都能改甚至删记录。
+// 个人授权保持 edit —— 表的主人要能自己维护「跟进状态」这类列。
+// 服务端也会强制这条规则，这里只是让按钮上的字和实际行为一致。
+const grantPerm = computed(() => (grantType.value === 'openchat' ? 'view' : 'edit'))
+
 async function grantBitable() {
   if (!grantId.value.trim()) { alert('请填写要授权的对象') ; return }
   bitableBusy.value = 'grant'
   try {
     await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/grant`, {
-      member_type: grantType.value, member_id: grantId.value.trim(), perm: 'edit',
+      member_type: grantType.value, member_id: grantId.value.trim(), perm: grantPerm.value,
     })
-    alert('授权成功')
+    alert(grantPerm.value === 'view' ? '授权成功（群成员只读）' : '授权成功（可编辑）')
     grantId.value = ''
   } catch (e: any) {
     alert(e.message || '授权失败')
@@ -622,6 +641,13 @@ function copyText(text: string) {
         <span>总标讯: {{ stats.totalTenders }}</span>
         <span>今日新增: {{ stats.todayTenders }}</span>
         <span>推荐记录: {{ stats.totalRecommendations }}</span>
+        <!-- 过期条数必须显示：这些标讯还算在「总标讯」里，但用户列表/评分/推送都
+             已经看不到它们了。不写出来的话，总数和用户实际看到的条数长期对不上。 -->
+        <span
+          v-if="stats.expiredTenders"
+          class="stat-expired"
+          :title="`超过 ${stats.visibleDays} 天的标讯不再进入用户列表、不再评分、不再推送，但数据仍保留在库中`"
+        >已过时效: {{ stats.expiredTenders }}（保留数据，不再推送）</span>
       </div>
     </div>
 
@@ -688,16 +714,14 @@ function copyText(text: string) {
           <option v-for="kw in usedKeywords" :key="kw" :value="kw">{{ kw }}</option>
         </select>
         <button @click="page = 1; loadTenders()">搜索</button>
-        <button class="btn-batch-score" :disabled="selectedTenderIds.length === 0" @click="openScoreDialog(selectedTenderIds)">
-          批量评分{{ selectedTenderIds.length ? ` (${selectedTenderIds.length})` : '' }}
-        </button>
+        <!-- 评分不再依赖这里的筛选/勾选：点开后选用户，后端评该用户全部未评分的标讯 -->
+        <button class="btn-batch-score" @click="openScoreDialog()">按用户评分</button>
       </div>
 
       <div v-if="loading" class="loading">加载中...</div>
       <table v-else class="tender-table">
         <thead>
           <tr>
-            <th class="th-check"><input type="checkbox" v-model="allTendersSelected" /></th>
             <th>标题</th>
             <th>类型</th>
             <th>采购人</th>
@@ -710,7 +734,6 @@ function copyText(text: string) {
         </thead>
         <tbody>
           <tr v-for="t in tenders" :key="t.id">
-            <td class="td-check"><input type="checkbox" :value="t.id" v-model="selectedTenderIds" /></td>
             <td class="td-title">
               <a v-if="t.url" :href="t.url" target="_blank">{{ t.title }}</a>
               <span v-else>{{ t.title }}</span>
@@ -722,7 +745,6 @@ function copyText(text: string) {
             <td>{{ t.publish_date?.slice(0, 10) }}</td>
             <td><span :class="['tender-status', t.status || 'extracted']">{{ getStatusLabel(t.status) }}</span></td>
             <td class="td-actions">
-              <button class="btn-sm" :disabled="crawling" @click="openScoreDialog([t.id])">评分</button>
               <button class="btn-sm btn-danger" @click="deleteTender(t.id)">删除</button>
             </td>
           </tr>
@@ -1084,11 +1106,13 @@ function copyText(text: string) {
     <!-- 飞书推送 Tab -->
     <div v-if="activeTab === 'feishu'" class="admin-content feishu-panel">
       <div class="sdk-intro">
-        <p>为指定用户配置<b>飞书群机器人 webhook</b>。每次评分完成后，该用户本轮新产生、且分数达到阈值的推荐，会汇总成一条卡片消息推送到对应飞书群。</p>
+        <p>为指定用户配置<b>飞书应用推送</b>。每次评分完成后，该用户本轮新产生、且分数达到阈值的推荐，会汇总成一条卡片消息由应用发到指定群。</p>
         <ul>
-          <li>在飞书群「设置 → 群机器人 → 添加自定义机器人」获取 webhook 地址。</li>
-          <li>若机器人开启了「签名校验」，把签名密钥填到「签名 secret」。</li>
-          <li>推送失败不影响评分本身，只在运行日志里记录。</li>
+          <li>推送和下面的多维表格<b>共用同一个自建应用</b>（同一份 App ID / App Secret），只需再填一个群 ID。</li>
+          <li>群 ID 在飞书里：进群 →「设置」→ 群信息里的 <code>oc_</code> 开头那串，直接复制。一个应用可以在多个群里，这里填哪个就推到哪个。</li>
+          <li>必须把该应用<b>作为机器人拉进这个群</b>，否则推送报 230013。填完先点「发送测试消息」验证。</li>
+          <li>卡片最多列 <b>5 条</b>（按分数从高到低），被截掉的条数会写在卡片里，底部按钮跳到多维表格看全部。</li>
+          <li>推送失败<b>不重试</b>，只在运行日志里记一行。</li>
         </ul>
       </div>
 
@@ -1102,6 +1126,25 @@ function copyText(text: string) {
         </div>
 
         <template v-if="feishuUserId">
+          <!-- 应用凭据放在最前面：群推送和多维表格都要用它，先填这个后面两块才有意义 -->
+          <h4 class="bitable-title">飞书自建应用</h4>
+          <ol class="bitable-steps">
+            <li>在飞书开发者后台创建<b>企业自建应用</b>，把 App ID / App Secret 填在下面并保存。</li>
+            <li>权限管理开通 <code>im:message:send_as_bot</code>（群推送）和 <code>bitable:app</code>（多维表格），都选<b>应用身份</b>，然后创建版本并发布。</li>
+            <li>「应用功能 → 机器人」打开开关，再把这个应用拉进要接收推送的群。</li>
+          </ol>
+          <div class="edit-form-group">
+            <label>App ID</label>
+            <input v-model="feishuCfg.feishu_app_id" class="edit-input" placeholder="cli_xxxxxxxxxxxx" />
+          </div>
+          <div class="edit-form-group">
+            <label>App Secret</label>
+            <input v-model="feishuCfg.feishu_app_secret" class="edit-input" placeholder="应用凭证里的 App Secret" />
+          </div>
+
+          <hr class="bitable-sep" />
+
+          <h4 class="bitable-title">群推送</h4>
           <div class="edit-form-group">
             <label class="force-checkbox">
               <input type="checkbox" v-model="feishuCfg.feishu_enabled" />
@@ -1109,16 +1152,14 @@ function copyText(text: string) {
             </label>
           </div>
           <div class="edit-form-group">
-            <label>Webhook 地址</label>
-            <input v-model="feishuCfg.feishu_webhook" class="edit-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx" />
-          </div>
-          <div class="edit-form-group">
-            <label>签名 secret（可选，机器人开启加签时填）</label>
-            <input v-model="feishuCfg.feishu_secret" class="edit-input" placeholder="留空表示未开启签名校验" />
+            <label>推送群 ID</label>
+            <input v-model="feishuCfg.feishu_chat_id" class="edit-input" placeholder="oc_xxxxxxxxxxxxxxxx" />
+            <span class="bitable-note">在飞书群「设置 → 群信息」里复制。应用必须已作为机器人在该群内。</span>
           </div>
           <div class="edit-form-group">
             <label>推送分数阈值（≥ 此分才推送）</label>
             <input v-model.number="feishuCfg.feishu_min_score" type="number" min="0" max="100" class="edit-input" style="max-width:120px" />
+            <span class="bitable-note">这个阈值同时决定哪些推荐会同步进「标讯推荐」表。</span>
           </div>
           <div class="scoring-actions">
             <button class="btn-primary" @click="saveFeishuCfg">保存配置</button>
@@ -1134,11 +1175,9 @@ function copyText(text: string) {
           <p class="bitable-hint">
             数据会写进一张飞书多维表格里的两张表：<b>标讯推荐</b>（达到阈值的、带评分和等级）
             和 <b>全部标讯</b>（库里全量，按用户勾选的平台过滤，可自己按预算/截止日期筛）。
-            表格由服务端创建并建好列，用户不用填任何 ID。
+            表格由服务端创建并建好列，用户不用填任何 ID。推送卡片底部的按钮就跳到这张表。
           </p>
           <ol class="bitable-steps">
-            <li>在飞书开发者后台创建<b>企业自建应用</b>，把 App ID / App Secret 填在下面并保存。</li>
-            <li>权限管理开通 <code>bitable:app</code> 和 <code>im:message:send_as_bot</code>（都选<b>应用身份</b>），创建版本并发布。</li>
             <li>点「创建多维表格」，再点「授权给用户」把表给到人（应用创建的文件默认不在用户云空间里）。</li>
             <li>可选：机器人自定义菜单加一项，类型选<b>跳转链接</b>，URL 填下面生成的表格地址 —— 用户在机器人窗口就有常驻入口。</li>
           </ol>
@@ -1148,14 +1187,6 @@ function copyText(text: string) {
               <input type="checkbox" v-model="feishuCfg.bitable_enabled" />
               启用多维表格同步
             </label>
-          </div>
-          <div class="edit-form-group">
-            <label>App ID</label>
-            <input v-model="feishuCfg.feishu_app_id" class="edit-input" placeholder="cli_xxxxxxxxxxxx" />
-          </div>
-          <div class="edit-form-group">
-            <label>App Secret</label>
-            <input v-model="feishuCfg.feishu_app_secret" class="edit-input" placeholder="应用凭证里的 App Secret" />
           </div>
           <div class="edit-form-group">
             <label>表格地址（创建后自动填入）</label>
@@ -1176,8 +1207,18 @@ function copyText(text: string) {
             >
               {{ bitableBusy === 'allTable' ? '创建中…' : '补建「全部标讯」表' }}
             </button>
+            <button
+              v-if="feishuCfg.bitable_app_token"
+              class="btn-secondary" @click="secureBitable" :disabled="!!bitableBusy" style="margin-left:8px"
+            >
+              {{ bitableBusy === 'secure' ? '处理中…' : '修正链接并收紧权限' }}
+            </button>
             <a v-if="feishuCfg.bitable_url" :href="feishuCfg.bitable_url" target="_blank" class="bitable-open">打开表格 ↗</a>
           </div>
+          <span v-if="feishuCfg.bitable_app_token" class="bitable-note">
+            新建的表格已自动带 <code>?table=</code> 并关闭链接分享。早先创建的表格请点一次「修正链接并收紧权限」——
+            不带 <code>?table=</code> 的链接点进去是 base 里的第一张（空）表，而链接分享默认是「组织内获得链接的人可阅读」。
+          </span>
 
           <template v-if="feishuCfg.bitable_app_token">
             <div class="edit-form-group bitable-grant">
@@ -1190,10 +1231,14 @@ function copyText(text: string) {
                 </select>
                 <input v-model="grantId" class="edit-input" placeholder="填邮箱 / open_id / chat_id" />
                 <button class="btn-secondary" @click="grantBitable" :disabled="!!bitableBusy">
-                  {{ bitableBusy === 'grant' ? '授权中…' : '授权（可编辑）' }}
+                  {{ bitableBusy === 'grant' ? '授权中…' : (grantPerm === 'view' ? '授权（只读）' : '授权（可编辑）') }}
                 </button>
               </div>
               <span class="bitable-note">授权给群需要先把应用作为机器人拉进该群，否则会因「互相不可见」失败。</span>
+              <span v-if="grantType === 'openchat'" class="bitable-note bitable-note-warn">
+                ⚠️ 授权给群 = 该群<strong>全体成员</strong>都能看到这张表里的全部投标信息（预算、评分、AI 分析与策略）。
+                权限固定为<strong>只读</strong>，成员不能改动记录。只给个人授权时才是可编辑。
+              </span>
             </div>
           </template>
         </template>
@@ -1217,13 +1262,14 @@ function copyText(text: string) {
               <option v-for="u in userList" :key="u.id" :value="u.id">{{ u.username }}</option>
             </select>
           </div>
-          <div class="edit-form-group">
-            <label class="force-checkbox">
-              <input type="checkbox" v-model="scoreForceReprocess" />
-              强制重新评分（覆盖已有结果）
-            </label>
-          </div>
-          <p class="scoring-hint">将对 {{ scoreDialogIds.length }} 条标讯进行推荐评分</p>
+          <p class="scoring-hint">
+            将对该用户<b>尚未评分</b>的标讯逐条评分（近 21 天、且属于他关注的平台）。
+            达到推送阈值的会自动同步到多维表格并推送到飞书群。
+          </p>
+          <p class="scoring-hint scoring-hint-warn">
+            单轮上限 200 条／用户。未评完的条数会写在运行日志里，再点一次继续。
+            AI 额度用完时评分会中止，已评出的部分照常推送。
+          </p>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" @click="showScoreDialog = false">取消</button>
@@ -1321,6 +1367,7 @@ function copyText(text: string) {
 .bitable-grant-row { display:flex; gap:8px; align-items:center; }
 .bitable-grant-type { max-width:150px; }
 .bitable-note { display:block; margin-top:6px; font-size:12px; color:#94a3b8; }
+.bitable-note-warn { color:#fbbf24; line-height:1.6; }
 
 .tender-admin {
   padding: 24px;
@@ -1343,6 +1390,11 @@ function copyText(text: string) {
   gap: 16px;
   font-size: 13px;
   color: #6b7280;
+}
+
+.stat-expired {
+  color: #b45309;
+  cursor: help;
 }
 
 .admin-tabs {
@@ -1418,11 +1470,6 @@ function copyText(text: string) {
 .btn-batch-score:disabled {
   background: #9ca3af !important;
   cursor: not-allowed;
-}
-
-.th-check, .td-check {
-  width: 36px;
-  text-align: center;
 }
 
 .btn-secondary {
@@ -1952,6 +1999,14 @@ function copyText(text: string) {
   background: rgba(0, 0, 0, 0.02);
   padding: 12px;
   border-radius: 8px;
+}
+
+/* 评分弹窗里两段说明相邻，第二段是「会被截掉/会中止」这类必须看到的代价，
+   给个色差免得和上一段读成一整块灰字被跳过。 */
+.scoring-hint-warn {
+  margin-top: 8px;
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.06);
 }
 
 .scoring-hint code {

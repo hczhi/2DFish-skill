@@ -32,6 +32,7 @@ import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
 import { tenderRouter } from './api/tender.js';
 import { xhsRouter } from './api/xhs.js';
 import { feishuAssistantRouter } from './api/feishuAssistant.js';
+import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
@@ -211,6 +212,7 @@ app.use('/api/quota', quotaRouter);
 // Admin routes
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/skill-registry', skillRegistryRouter);
+app.use('/api/admin/agent-skills', agentSkillsRouter);
 
 // Home content (public reads + admin writes)
 app.use('/api/home', homeRouter);

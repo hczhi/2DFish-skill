@@ -24,6 +24,47 @@ interface Conn {
 const conns = new Map<string, Conn>();
 
 /**
+ * 每个 app_id 上正在进行的建/断连操作。**同一个应用的连接操作必须串起来。**
+ *
+ * ── 为什么需要 ──
+ * `connectApp` 的第一步是 `disconnectApp`，然后 await 好几次（解密、建 channel、
+ * `channel.connect()` 走一整个 websocket 握手）。这中间有真实的并发窗口，
+ * 而触发它的路径有四条，其中三条不需要用户手速：
+ *   - 看门狗每 5 分钟一轮，撞上用户刚点的「重连」；
+ *   - 保存配置（`POST /apps`）会 connect，而用户改完名字连点两下保存是常事；
+ *   - `startAllConnections()` 和第一轮看门狗。
+ *
+ * 两个 connectApp 交叉跑的后果不是"多连一次"：后建的那个 channel 会覆盖
+ * `conns` 里的项，而**先建的那个仍然连着、仍然在收事件**，只是再也没人能
+ * disconnect 它（表里已经没有它了）。于是同一条 @ 消息被处理两遍 ——
+ * claimEvent 挡得住同一条消息，所以现象不是"任务建两个"，而是更难查的一类：
+ * 一半的指令回帖说「这条已经处理过了」/ 干脆没有回帖，因为另一个 channel
+ * 抢到了 claimEvent，而它的回帖走的是那条孤儿连接。停用应用之后也一样收指令。
+ *
+ * 用「串行链」而不是「正在忙就拒绝」：调用方全都是要求"连上"这个**结果**
+ * （看门狗、保存、启动），拒绝掉一次就等于把这个结果丢了，而没有人会重试。
+ */
+const connOps = new Map<string, Promise<void>>();
+
+/** 把 `op` 排在同一个 app_id 上一次操作之后。 */
+function serialize(appId: string, op: () => Promise<void>): Promise<void> {
+  // 前一次失败（建连失败会抛）不该拖垮排在后面的那次，所以 catch 掉再接。
+  const prev = connOps.get(appId) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(op);
+  // 登记的是吞掉异常的版本：这个 Map 只用来排序。失败照样从 return 的那个
+  // promise 传给调用方（保存接口要把「凭证不对」回给用户）——
+  // 登记原版的话，没人 await 的那些调用（看门狗、stopAll）会变成 unhandledRejection。
+  const tail = next.catch(() => {});
+  connOps.set(appId, tail);
+  // 链空了就把这一项摘掉，别让 Map 随应用数无限长。判一下还是不是自己那条 ——
+  // 期间可能又排进来一次，那条还没跑完。
+  void tail.then(() => {
+    if (connOps.get(appId) === tail) connOps.delete(appId);
+  });
+  return next;
+}
+
+/**
  * 「收到了，在办」那个表情的 emoji_type。
  *
  * 取值是飞书表情的**固定英文标识**（不是 unicode，也不是随便一个字符串），
@@ -37,9 +78,20 @@ const conns = new Map<string, Conn>();
  */
 const ACK_EMOJI = 'OnIt';
 
-/** 建一个应用的连接。已存在则先断开重建（凭证/开关改了要立刻生效）。 */
-export async function connectApp(app: FeishuApp): Promise<void> {
-  await disconnectApp(app.app_id);
+/**
+ * 建一个应用的连接。已存在则先断开重建（凭证/开关改了要立刻生效）。
+ *
+ * 同一个 app_id 的建/断连是**串行**的，见 serialize —— 交叉跑会留下一条
+ * 谁都断不掉的孤儿连接，而它照样在收指令。
+ */
+export function connectApp(app: FeishuApp): Promise<void> {
+  return serialize(app.app_id, () => doConnect(app));
+}
+
+async function doConnect(app: FeishuApp): Promise<void> {
+  // 注意这里调的是 doDisconnect：走 disconnectApp 会在同一条链上再排一次，
+  // 而我们已经在链里了 —— 那是个必死的自锁。
+  await doDisconnect(app.app_id);
 
   // 密文只在这一个点解开，和 feishuBitable.getTenantToken 同样的约定。
   const appSecret = decryptSecret(app.app_secret);
@@ -50,10 +102,20 @@ export async function connectApp(app: FeishuApp): Promise<void> {
     transport: 'websocket',
     loggerLevel: lark.LoggerLevel.warn,
     policy: {
-      // 群里必须 @ 才响应；私聊直接说话即可。
+      // 群里必须 @ 才响应。
       requireMention: true,
       // @所有人 不该触发助理——那通常是通知全员，不是给机器人下指令。
       respondToMentionAll: false,
+      // ⚠️ 助理只在群聊里工作，但这里**故意仍然是 'open'**。
+      //
+      // SDK 也有 `dmMode: 'disabled'`，它在 LarkChannel 内部就把私聊消息丢掉。
+      // 不用它，因为那是**静默丢弃** —— 用户私聊机器人后什么都收不到，
+      // 而"没反应"和"助理坏了"完全同形（本模块的第一条原则就是不许静默丢）。
+      // 所以消息照收，由 dispatcher 挡下来并回一句「我只在群聊里工作，请在群里 @ 我」，
+      // 见 dispatcher.ts 的 P2P_ONLY_GROUP_REPLY。
+      //
+      // 代价是私聊消息仍然会进到我们的进程里（占一次 claimEvent 写库），
+      // 但**不会花 AI 额度**：那道闸在意图解析之前。
       dmMode: 'open',
     },
     // 事件里带上原始 payload，排障时能看到 SDK 归一化时丢掉的字段。
@@ -102,6 +164,9 @@ export async function connectApp(app: FeishuApp): Promise<void> {
       mentions: (msg.mentions || [])
         .filter((m) => !m.isBot && m.openId && m.openId !== channel.botIdentity?.openId)
         .map((m) => ({ openId: m.openId!, name: m.name || '' })),
+      // 「总结群聊」要读整个群的历史消息，而其中助理自己的回帖必须滤掉 ——
+      // 不滤的话摘要会开始总结助理说过的话，那是我们自己制造的信息。
+      botOpenId: channel.botIdentity?.openId,
     };
 
     handleMessage(inbound, {
@@ -163,7 +228,7 @@ export async function connectApp(app: FeishuApp): Promise<void> {
     setConnState(app.app_id, 'connected', null);
     console.log(`[feishu] 应用 ${app.app_id}（${app.name}）长连接已建立`);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = explainConnectError(e);
     setConnState(app.app_id, 'failed', msg);
     // 抛出去让调用方（后台保存接口）能把失败原因回给用户 ——
     // 凭证填错是最常见的情况，静默失败会让用户以为绑好了。
@@ -171,7 +236,62 @@ export async function connectApp(app: FeishuApp): Promise<void> {
   }
 }
 
-export async function disconnectApp(appId: string): Promise<void> {
+/**
+ * 把建连失败翻译成「该去查什么」。
+ *
+ * ── 为什么不能直接用 e.message ──
+ * SDK 建连时第一件事是 `fetchBotIdentity()`（GET /open-apis/bot/v3/info），
+ * 它把**所有**失败都包成同一句话：
+ *   「could not resolve bot identity via /open-apis/bot/v3/info — required for
+ *     channel to function」
+ * 真实原因塞在 `cause` 里，分类结果塞在 `code` 里，两个都被 `e.message` 丢掉。
+ *
+ * 于是网络不通和 App Secret 填错在界面上**完全同形**，而那句话里唯一具体的信息
+ * 是个接口路径 —— 它把人径直指向「是不是权限没开」「是不是密钥错了」，
+ * 而实际可能只是本机开着 VPN／代理（Node 的 fetch 不认 HTTP_PROXY，
+ * curl 认，所以「浏览器能上飞书」不能作为网络正常的证据）。
+ * 这是本模块反复防的那类失败的变体：不是失败伪装成成功，而是**失败伪装成
+ * 另一种失败**，代价是整个排查方向错掉。
+ *
+ * 所以按 `code` 给出方向。措辞刻意说「查什么」而不是「是什么错」——
+ * 用户要的是下一步动作。原文附在后面，便于对着飞书文档搜。
+ */
+export function explainConnectError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  // LarkChannelError 的 code 是 SDK 公开的联合类型（LarkChannelErrorCode），
+  // 不用字符串匹配 message —— 那会随 SDK 改文案而静默失效。
+  const code = (e as { code?: lark.LarkChannelErrorCode })?.code;
+  // cause 才是真正的失败（undici 的 ETIMEDOUT / ENOTFOUND / 飞书的业务码）。
+  const cause = (e as { cause?: unknown })?.cause;
+  const causeMsg = cause instanceof Error ? cause.message : cause ? String(cause) : '';
+  const causeCode = (cause as { cause?: { code?: string }; code?: string })?.code
+    ?? (cause as { cause?: { code?: string } })?.cause?.code;
+
+  const detail = [causeCode, causeMsg].filter(Boolean).join(' ') || raw;
+
+  switch (code) {
+    case 'permission_denied':
+      return `飞书拒绝了凭证（${detail}）。请核对 App ID / App Secret 是否为同一个自建应用的，以及应用是否已发布。`;
+    case 'not_connected':
+      // 最常见、也最容易被前一版文案带偏的一类。
+      return (
+        `连不上飞书开放平台（${detail}）。` +
+        `依次查：本机 VPN／代理（Node 不走 HTTP_PROXY，curl 能通不代表这里能通）、DNS 能否解析 open.feishu.cn、防火墙。`
+      );
+    case 'rate_limited':
+      return `飞书限流（${detail}），过一会儿会自动重试。`;
+    case 'send_timeout':
+      return `连飞书超时（${detail}）。多为网络或代理问题，也可能是飞书侧抖动，稍后会自动重连。`;
+    default:
+      return code ? `${raw}（${code}${detail && detail !== raw ? `: ${detail}` : ''}）` : raw;
+  }
+}
+
+export function disconnectApp(appId: string): Promise<void> {
+  return serialize(appId, () => doDisconnect(appId));
+}
+
+async function doDisconnect(appId: string): Promise<void> {
   const conn = conns.get(appId);
   if (!conn) return;
   conns.delete(appId);

@@ -18,6 +18,7 @@
             <th>连接状态</th>
             <th>组织架构名册</th>
             <th>群白名单</th>
+            <th>项目日记</th>
             <th>助理规则</th>
             <th>最后状态变更</th>
             <th>操作</th>
@@ -63,6 +64,30 @@
                 有 {{ blockedCount(app) }} 个群被拦下过
               </div>
             </td>
+            <!-- 项目日记（066）。只看规模和「未同步」，不列内容 ——
+                 那是那家公司的项目进展，后台没有理由把它铺在页面上；
+                 用户自己在 /feishu >「项目日记」里看。
+                 「未同步」要露出来的理由：补推是跟着下一次记录发生的（没有定时任务），
+                 所以数字只升不降的项目 = 那个群已经不活跃了，而表格里永远缺那几条。 -->
+            <td>
+              <template v-if="diary[app.id]">
+                <span v-if="diary[app.id].projects" class="subtle">
+                  {{ diary[app.id].projects }} 个项目 · {{ diary[app.id].records }} 条记录<!--
+                    群聊摘要单独括出来：它们是 AI 归纳的，不是一手记录。
+                    混进总数的话，「这家公司记了 400 条」里可能有 300 条是自动生成的。
+                  --><template v-if="diary[app.id].digests">（含 {{ diary[app.id].digests }} 条 AI 摘要）</template>
+                  · {{ diary[app.id].tasks }} 个任务
+                </span>
+                <span v-else class="subtle">未使用</span>
+                <div v-if="diary[app.id].unsynced" class="warn-text">
+                  {{ diary[app.id].unsynced }} 条记录/任务未同步到多维表格
+                </div>
+                <div v-if="diary[app.id].projects && !diary[app.id].hasIndex" class="warn-text">
+                  项目总表缺失
+                </div>
+              </template>
+              <span v-else class="subtle">—</span>
+            </td>
             <!-- 「本企业的补充规则」（059）。只读：那段话描述的是那家公司怎么说话，
                  平台这边既不知道也不该代填。这一列存在的意义是排障 ——
                  「助理忽然听不懂话了 / 老是理解成别的事」第一件要确认的就是
@@ -96,9 +121,16 @@
           <option value="">全部状态</option>
           <option v-for="o in COMMAND_STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
-        <select v-model="cmdAppId" @change="applyFilter">
+        <select v-model="cmdAppId" @change="pickCmdApp">
           <option value="">全部应用</option>
           <option v-for="a in apps" :key="a.id" :value="a.app_id">{{ a.name }}</option>
+        </select>
+        <!-- 群名在不同租户之间会重名，所以只在选定应用后才给这个下拉（后端同理）。 -->
+        <select v-if="cmdAppId" v-model="cmdChatId" @change="applyFilter">
+          <option value="">全部项目群</option>
+          <option v-for="c in cmdChats" :key="c.chat_id" :value="c.chat_id">
+            {{ cmdChatOptionLabel(c) }}
+          </option>
         </select>
         <button class="hc-btn hc-btn-secondary" @click="loadCommands">刷新</button>
       </div>
@@ -113,6 +145,7 @@
         <thead>
           <tr>
             <th style="width: 80px">状态</th>
+            <th style="width: 140px">项目 / 群</th>
             <th style="width: 100px">发起人</th>
             <th>原文</th>
             <th style="width: 130px">动作</th>
@@ -124,6 +157,8 @@
           <template v-for="row in commands" :key="row.id">
             <tr class="clickable" @click="expanded[row.id] = !expanded[row.id]">
               <td><span :class="['status-pill', row.status]">{{ statusLabel(row.status) }}</span></td>
+              <!-- 折叠状态下就要看得见：一个群 = 一个项目，混排时这是唯一的项目维度。 -->
+              <td class="cmd-project" :title="row.chat_id">{{ cmdChatLabel(row) }}</td>
               <td>{{ row.sender_name || '未知' }}</td>
               <td class="cmd-text">{{ row.text }}</td>
               <td><span class="mono subtle">{{ row.action || '—' }}</span></td>
@@ -132,11 +167,11 @@
               <td><span class="subtle mono">{{ row.duration_ms != null ? `${row.duration_ms}ms` : '' }}</span></td>
             </tr>
             <tr v-if="expanded[row.id]" class="detail-row">
-              <td colspan="6">
+              <td colspan="7">
                 <div class="detail-grid">
                   <div class="detail-line">
                     <span class="detail-label">来源</span>
-                    <span class="mono">{{ row.chat_type === 'p2p' ? '私聊' : '群聊' }} · {{ row.chat_id }} · app {{ row.app_id }}</span>
+                    <span class="mono">{{ row.chat_type === 'p2p' ? '私聊' : '群聊' }} · {{ cmdChatLabel(row) }} · {{ row.chat_id }} · app {{ row.app_id }}</span>
                   </div>
                   <div v-if="row.params" class="detail-line">
                     <span class="detail-label">解析出的参数</span>
@@ -169,6 +204,8 @@ import AdminPagination from '../../components/common/AdminPagination.vue'
 import FeishuErrorDetail, { type FeishuErrorDetailData } from '../../components/feishu/FeishuErrorDetail.vue'
 import {
   COMMAND_STATUS_OPTIONS,
+  commandChatLabel as cmdChatLabel,
+  commandChatOptionLabel as cmdChatOptionLabel,
   commandStatusLabel as statusLabel,
   connStateClass as stateClass,
   connStateLabel as stateLabel,
@@ -177,6 +214,7 @@ import {
   fmtTime,
   prettyParams,
   resultSummary,
+  type FeishuChatLabelled,
   type FeishuChatRow,
 } from '../../lib/feishu'
 
@@ -213,6 +251,10 @@ interface CommandRow {
   app_id: string
   chat_id: string
   chat_type: string
+  /** 群名。飞书不给的时候是空串（`im:chat:readonly` 不是必需权限）。 */
+  chat_name: string
+  /** 这个群绑的项目名。空串 = 没建项目。一个群 = 一个项目，所以它就是项目维度。 */
+  project_name: string
   sender_name: string
   text: string
   action: string | null
@@ -234,6 +276,9 @@ const cmdTotal = ref(0)
 const cmdPage = ref(1)
 const cmdStatus = ref('')
 const cmdAppId = ref('')
+/** 按项目群筛。选项只在选定应用后才有 —— 群名跨租户会重名。 */
+const cmdChatId = ref('')
+const cmdChats = ref<FeishuChatLabelled[]>([])
 const expanded = ref<Record<string, boolean>>({})
 
 const totalPages = computed(() => Math.max(1, Math.ceil(cmdTotal.value / PAGE_SIZE)))
@@ -245,11 +290,32 @@ function blockedCount(app: AppRow): number {
   return blocked.value[app.id] || 0
 }
 
+/**
+ * 项目日记的规模概览。**只有计数，没有内容** —— 日志正文是那家公司的项目进展。
+ * 和 blocked 一样是辅助信息，拉不到就当没有。
+ */
+const diary = ref<
+  Record<
+    string,
+    {
+      projects: number
+      records: number
+      /** records 里有多少条是 AI 从群聊归纳的（不是谁的原话）。 */
+      digests: number
+      tasks: number
+      /** 记录 + 任务的未同步总数。两者是两条同步路径，但这一列只回答「表里缺东西吗」。 */
+      unsynced: number
+      hasIndex: boolean
+    }
+  >
+>({})
+
 async function loadApps() {
   try {
     const res = await apiGet<{ apps: AppRow[] }>('/api/feishu-assistant/apps')
     apps.value = res.apps
     const counts: Record<string, number> = {}
+    const diaryStats: typeof diary.value = {}
     await Promise.all(
       res.apps.map(async (app) => {
         try {
@@ -258,9 +324,34 @@ async function loadApps() {
         } catch (e) {
           console.error(e)
         }
+        try {
+          const d = await apiGet<{
+            index: { url: string } | null
+            projects: Array<{
+              record_count: number
+              digest_count: number
+              unsynced_count: number
+              task_count: number
+              unsynced_task_count: number
+            }>
+          }>(`/api/feishu-assistant/apps/${app.id}/diary/projects`)
+          const sum = (f: (p: (typeof d.projects)[number]) => number) =>
+            d.projects.reduce((n, p) => n + f(p), 0)
+          diaryStats[app.id] = {
+            projects: d.projects.length,
+            records: sum((p) => p.record_count),
+            digests: sum((p) => p.digest_count),
+            tasks: sum((p) => p.task_count),
+            unsynced: sum((p) => p.unsynced_count + p.unsynced_task_count),
+            hasIndex: !!d.index?.url,
+          }
+        } catch (e) {
+          console.error(e)
+        }
       })
     )
     blocked.value = counts
+    diary.value = diaryStats
   } catch (e: any) {
     console.error(e)
   }
@@ -268,14 +359,19 @@ async function loadApps() {
 
 async function loadCommands() {
   try {
-    const res = await apiGet<{ commands: CommandRow[]; total: number }>('/api/feishu-assistant/commands', {
-      status: cmdStatus.value || undefined,
-      app_id: cmdAppId.value || undefined,
-      page: cmdPage.value,
-      page_size: PAGE_SIZE,
-    })
+    const res = await apiGet<{ commands: CommandRow[]; total: number; chats: FeishuChatLabelled[] }>(
+      '/api/feishu-assistant/commands',
+      {
+        status: cmdStatus.value || undefined,
+        app_id: cmdAppId.value || undefined,
+        chat_id: cmdChatId.value || undefined,
+        page: cmdPage.value,
+        page_size: PAGE_SIZE,
+      }
+    )
     commands.value = res.commands
     cmdTotal.value = res.total
+    cmdChats.value = res.chats || []
   } catch (e: any) {
     console.error(e)
   }
@@ -284,6 +380,15 @@ async function loadCommands() {
 function applyFilter() {
   cmdPage.value = 1
   loadCommands()
+}
+
+/**
+ * 换应用时清掉群筛选。留着的话结果永远是空列表，
+ * 而那个 chat_id 已经不在下拉选项里了 —— 页面上看不出为什么空。
+ */
+function pickCmdApp() {
+  cmdChatId.value = ''
+  applyFilter()
 }
 
 async function reconnect(app: AppRow) {
@@ -444,6 +549,14 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cmd-project {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted, #6b7280);
 }
 
 .detail-row td { background: #f9fafb; }

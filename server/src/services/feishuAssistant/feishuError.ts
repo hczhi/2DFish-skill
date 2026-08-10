@@ -13,7 +13,11 @@ interface FeishuErrorBody {
   code?: number;
   msg?: string;
   log_id?: string;
-  permission_violations?: Array<{ type?: string; subject?: string; scopes?: string[] }>;
+  permission_violations?: Array<{
+    type?: string;
+    subject?: string;
+    scopes?: string[];
+  }>;
 }
 
 /** 缺权限点。飞书所有接口共用这一个 code，是本模块最高频的失败原因。 */
@@ -117,7 +121,7 @@ function missingScopes(body: FeishuErrorBody): string[] {
 /** 飞书在 msg 里带的一键申请链接。直接透传，不自己拼——域名分飞书/Lark 两套。 */
 function applyUrlFromMsg(body: FeishuErrorBody): string | undefined {
   return (body.msg ?? '').match(
-    /https:\/\/open\.(?:feishu\.cn|larksuite\.com)\/app\/\S+?(?=[\s，。]|$)/
+    /https:\/\/open\.(?:feishu\.cn|larksuite\.com)\/app\/\S+?(?=[\s，。]|$)/,
   )?.[0];
 }
 
@@ -192,7 +196,13 @@ export function describeFeishuErrorDetail(e: unknown, appId?: string): FeishuErr
   }
 
   const msg = body.msg?.trim();
-  if (!msg) return { kind: 'api_error', message: fallback, code: body.code, log_id: body.log_id };
+  if (!msg)
+    return {
+      kind: 'api_error',
+      message: fallback,
+      code: body.code,
+      log_id: body.log_id,
+    };
 
   // 其他错误带上 code 和 log_id：用户复制给管理员时，这两个能直接在飞书后台查到。
   const suffix = [body.code ? `code ${body.code}` : '', body.log_id ? `log_id ${body.log_id}` : '']
@@ -209,6 +219,37 @@ export function describeFeishuErrorDetail(e: unknown, appId?: string): FeishuErr
 /** 只要那句人话。回帖用这个。 */
 export function describeFeishuError(e: unknown, appId?: string): string {
   return describeFeishuErrorDetail(e, appId).message;
+}
+
+/**
+ * **每一个 client.xxx 调用之后都要过这一道。** 飞书的业务错误是
+ * `HTTP 200 + body.code != 0`，而 SDK 在这种情况下**不抛异常** ——
+ * 它只对 HTTP 层的失败（4xx/5xx）走 `throw e`，200 的响应原样返回。
+ *
+ * 于是 `try { await client.xxx() } catch` 完全挡不住这一类：调用点读
+ * `res.data?.record?.record_id` 拿到 `undefined`，走的是"成功但没拿到 id"
+ * 那条分支，最后回给用户的是一条完美的成功消息。
+ *
+ * 这不是假设，是真发生过：总表登记那一行的「关联群聊」列（type 23）传了裸字符串
+ * 而不是 `[{id}]`，飞书回 `1254001 WrongRequestBody` 整条 record 被拒 ——
+ * 群里收到的却是「✅ 项目已建好」外加一个能点开的总表链接，
+ * 而那张总表是空的。每次记录时的补登记用同一个坏 payload 重试，同样静默，
+ * 所以「未登记进总表」永远不会自己好。
+ *
+ * 抛出的错误刻意做成 AxiosError 的形状（`response.data` = 飞书原始 body），
+ * 这样 `describeFeishuError` / `isScopeDenied` 这些不用改就能认它 ——
+ * 缺权限（99991672）有时也是 200 回来的。
+ */
+export function assertOk<T>(res: T, what: string): T {
+  const code = (res as { code?: number } | null)?.code;
+  if (code === undefined || code === 0) return res;
+  const err = new Error(`${what}失败`) as Error & {
+    response: { data: unknown };
+  };
+  err.response = { data: res };
+  // message 里带上人话，直接 console.error 出去的调用点才有信息量。
+  err.message = `${what}失败：${describeFeishuError(err)}`;
+  throw err;
 }
 
 /**

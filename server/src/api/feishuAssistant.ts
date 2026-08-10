@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { getDatabase } from '../db/index.js';
 import { parsePagination } from '../core/http.js';
 import {
@@ -6,6 +6,7 @@ import {
   deleteApp,
   getApp,
   listApps,
+  parseAllowedChats,
   setIntentSupplement,
   toView,
   upsertApp,
@@ -18,7 +19,13 @@ import {
 } from '../services/feishuAssistant/connection.js';
 import { listCommands } from '../services/feishuAssistant/commandLog.js';
 import { listChats } from '../services/feishuAssistant/chatStore.js';
-import { ACTIONS, allRequiredScopes } from '../services/feishuAssistant/actions/index.js';
+import * as diaryStore from '../services/feishuAssistant/diary/store.js';
+import { reviewTableUrl } from '../services/feishuAssistant/diary/bitable.js';
+import {
+  ACTIONS,
+  allRequiredScopes,
+  optionalScopeGroups,
+} from '../services/feishuAssistant/actions/index.js';
 import { listDepartments, listUsers } from '../services/feishuAssistant/directory/store.js';
 import { DIRECTORY_SCOPES, syncDirectory } from '../services/feishuAssistant/directory/sync.js';
 import { getSkillForSlot } from '../services/skillRegistryService.js';
@@ -56,6 +63,11 @@ feishuAssistantRouter.get('/capabilities', (_req, res) => {
     // 单列一份：名册同步的权限和动作权限的性质不一样 ——
     // 不开也能用助理（只是必须 @ 到人），前端据此把它渲染成「可选，但强烈建议」。
     directory_scopes: DIRECTORY_SCOPES,
+    // 同理但更强：读群聊记录的权限（总结群聊用）在飞书后台是要额外说明用途的
+    // 一档，而这是一个可选功能。混进 scopes 里的后果是**所有人**的接入流程都
+    // 卡在这一项上（见 actions/index.ts 的 OPTIONAL_SCOPES）。
+    // 带上 feature 说明，否则用户看到一串权限点不知道开了能干什么、不开会缺什么。
+    optional_scopes: optionalScopeGroups(),
     events: ['im.message.receive_v1'],
     // 应用没填补充规则时实际生效的那份（migration 056 播的示例模板）。
     // 前端「填入示例模板」按钮用它，而不是在客户端再抄一份 —— 抄一份的话，
@@ -112,9 +124,16 @@ feishuAssistantRouter.post('/apps', async (req, res) => {
     return;
   }
 
+  // **没带 allowed_chats 就不动它**（传 undefined 下去，见 UpsertAppInput）。
+  //
+  // 以前这里是 `: []`，而 upsertApp 是整行替换 —— 于是任何只带部分字段的调用
+  // （前端的启停开关、一键放行某个群都是这样调的）都会把白名单清空。
+  // 清空不会报错，表现是「所有群都放行」（空 = 不限群），也就是一次点「停用」
+  // 再点「启用」就把本模块唯一那道闸静默拆了，而界面上白名单那一栏也跟着空了，
+  // 用户只会以为自己没配过。
   const chats = Array.isArray(allowed_chats)
     ? allowed_chats.map((c: unknown) => String(c).trim()).filter(Boolean)
-    : [];
+    : undefined;
 
   let saved;
   try {
@@ -309,22 +328,223 @@ feishuAssistantRouter.get('/apps/:id/chats', (req, res) => {
     return;
   }
 
-  let allowed: string[] = [];
-  try {
-    const parsed = JSON.parse(app.allowed_chats || '[]');
-    if (Array.isArray(parsed)) allowed = parsed.filter((c): c is string => typeof c === 'string');
-  } catch {
-    allowed = [];
-  }
+  // 解析统一在 appStore（dispatcher 判放行用的是同一个函数）——
+  // 两处各写一份的话，页面上的「已放行」迟早和机器人的实际行为不一致，
+  // 而不一致的方向恰恰是页面显示"拦住了"、实际放行。
+  const { chats: allowed, malformed } = parseAllowedChats(app.allowed_chats);
 
   res.json({
     chats: listChats(app.app_id).map((c) => ({
       ...c,
-      in_allowlist: allowed.length === 0 || allowed.includes(c.chat_id),
+      // 列坏了的时候 dispatcher 一律不放行，这里也得如实说 ——
+      // 否则页面显示「已放行」而群里 @ 了没反应。
+      in_allowlist: malformed ? false : allowed.length === 0 || allowed.includes(c.chat_id),
     })),
     // 空白名单 = 不限群。前端要据此把「已放行」标成"因为白名单是空的"，
     // 而不是"你勾过它" —— 后者会让用户以为已经设好防护了。
-    allowlist_empty: allowed.length === 0,
+    allowlist_empty: !malformed && allowed.length === 0,
+    // 列坏了要露出来，而且要给出处置办法（重存一次白名单）。不说的话现象是
+    // 「所有群都不响应」，而配置页看起来一切正常。
+    allowlist_malformed: malformed,
+  });
+});
+
+// ==================== 项目日记 ====================
+
+/**
+ * 只读。**这一整节都不写库、不调飞书接口。**
+ *
+ * 存在的理由是那几张多维表格**不在任何人的云文档空间里**（建表时没传 folder_token）
+ * 而且链接分享是主动关掉的 —— 链接被群消息刷走之后，飞书里搜不到、找不回。
+ * 群里可以 @ 助理说「有哪些项目」问回来，但那要求你在群里；这一页是网页侧的入口。
+ *
+ * 为什么坚持只读：记录是通过 @ 助理产生的，每条都带记录人、时间、原始 message_id，
+ * 而且同步是**只追加**的（推上去就置状态位，永不重推）。开一个网页写入口
+ * 就得回答「网页删掉的这条，表格里那行怎么办」——答案只能是"删不掉"，
+ * 于是库和表从此不一致。想改就在群里说，那条路径可追溯。
+ *
+ * **唯一的例外是删掉整个项目**（DELETE .../projects/:projectId）。它成立恰恰是因为
+ * 上面那条理由不适用：它不试图和表格保持一致，而是**放弃**那几张表 ——
+ * 飞书那侧一个字都不动，只解除关联并把链接还给用户。逐条删做不到这一点
+ *（删一行就得在表里也删一行，而那是不可逆的），删掉整个项目做得到。
+ */
+
+/** 取应用 + 校验归属。返回 undefined 表示已经写过响应了。 */
+function appForDiary(req: Request, res: Response) {
+  const app = getApp(req.params.id);
+  if (!app) {
+    res.status(404).json({ error: '应用不存在' });
+    return undefined;
+  }
+  if (!assertOwn(req, app.user_id)) {
+    // 日志内容就是公司内部的项目进展 —— 越权读这里比越权改配置更糟。
+    res.status(403).json({ error: '无权查看他人绑定的飞书应用' });
+    return undefined;
+  }
+  return app;
+}
+
+/**
+ * 本应用的项目清单 + 项目总表链接。
+ *
+ * `index_url` 可能是空串：第一个项目建出来之前总表还不存在，或者当初建总表
+ * 那一步失败了。前端必须区分"空串"和"有链接"，不能渲染成一个点不动的空链接。
+ */
+feishuAssistantRouter.get('/apps/:id/diary/projects', (req, res) => {
+  const app = appForDiary(req, res);
+  if (!app) return;
+
+  const index = diaryStore.getIndex(app.app_id);
+  const stats = diaryStore.projectStats(app.app_id);
+
+  res.json({
+    index: index
+      ? {
+          url: index.url,
+          // 关链接分享失败过的话要说出来：那意味着组织内拿到链接的人都能看。
+          link_share_closed: !!index.link_share_closed,
+        }
+      : null,
+    projects: diaryStore.listProjects(app.app_id).map((p) => ({
+      id: p.id,
+      name: p.name,
+      chat_id: p.chat_id,
+      chat_name: p.chat_name,
+      // 「记录」表和「复盘」表的两个链接都给：复盘存在表里的那份是完整版
+      // （群里那条被截到 1500 字），而它藏在 base 的第二张表里，
+      // 不给专门的链接的话用户点进去只看到「记录」表。
+      url: p.url,
+      review_url: reviewTableUrl(p),
+      link_share_closed: !!p.link_share_closed,
+      // null = 当初写进总表那一步失败了，下次在群里记录时会自动补登记。
+      in_index: !!p.index_record_id,
+      created_by_name: p.created_by_name,
+      created_at: p.created_at,
+      // 用 store 的初值，**不要在这里抄一份字面量**：抄的那份不会跟着
+      // DiaryProjectStats 加字段（任务数、群聊摘要数就是这么漏的），
+      // 而漏掉的键在前端读成 undefined、渲染成空白 ——
+      // 和「有数据但是 0」看起来完全一样。
+      ...(stats[p.id] ?? diaryStore.emptyStats()),
+    })),
+  });
+});
+
+/**
+ * 一个项目的日志记录，最新在前。
+ *
+ * project_id 必须**同时**校验 app_id：光按 id 查的话，拿到一个别家公司的
+ * project_id（uuid 猜不出来，但日志页会把它印出来）就能读到那家公司的全部日志。
+ */
+feishuAssistantRouter.get('/apps/:id/diary/projects/:projectId/records', (req, res) => {
+  const app = appForDiary(req, res);
+  if (!app) return;
+
+  const project = diaryStore.getProjectById(req.params.projectId);
+  if (!project || project.app_id !== app.app_id) {
+    res.status(404).json({ error: '项目不存在' });
+    return;
+  }
+
+  const { pageSize, offset } = parsePagination(req, { defaultSize: 50, maxSize: 200 });
+  const { records, total } = diaryStore.listRecordsPage(project.id, { limit: pageSize, offset });
+
+  res.json({
+    project: { id: project.id, name: project.name, url: project.url, review_url: reviewTableUrl(project) },
+    records: records.map((r) => ({
+      id: r.id,
+      content: r.content,
+      author_name: r.author_name,
+      created_ms: r.created_ms,
+      created_at: r.created_at,
+      // 'manual'（人说的原话）还是 'chat_digest'（AI 从群聊归纳的）。
+      // 必须露出来：这张表的全部价值在「当时到底怎么说的」，
+      // 而归纳的那些和原话并排放着 —— 分不出来的话整张表就不能当证据用了。
+      // 正文里有「【群聊摘要 …】」前缀，但那是给飞书表格用的兜底，
+      // 网页端要能据此单独标色/筛选。
+      origin: r.origin,
+      // 「表里看不到这条」的唯一提示。补推是跟着下一次记录发生的（没有定时任务），
+      // 所以一个不再活跃的项目可能长期停在这个状态。
+      synced: !!r.bitable_synced_at,
+    })),
+    total,
+  });
+});
+
+/** 一个项目的复盘记录。summary 是完整版（不截断的那份）。 */
+feishuAssistantRouter.get('/apps/:id/diary/projects/:projectId/summaries', (req, res) => {
+  const app = appForDiary(req, res);
+  if (!app) return;
+
+  const project = diaryStore.getProjectById(req.params.projectId);
+  if (!project || project.app_id !== app.app_id) {
+    res.status(404).json({ error: '项目不存在' });
+    return;
+  }
+
+  const { pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 100 });
+  const { summaries, total } = diaryStore.listSummariesPage(project.id, {
+    limit: pageSize,
+    offset,
+  });
+
+  res.json({
+    project: { id: project.id, name: project.name, review_url: reviewTableUrl(project) },
+    summaries: summaries.map((s) => ({
+      id: s.id,
+      range_label: s.range_label,
+      record_count: s.record_count,
+      // 群里那条被截到 1500 字，这里是完整版 —— 这也是这个接口的主要价值。
+      summary: s.summary,
+      created_by_name: s.created_by_name,
+      created_at: s.created_at,
+      synced: !!s.bitable_synced_at,
+    })),
+    total,
+  });
+});
+
+/**
+ * 删掉一个项目。**只删库里的关联，飞书那侧一个字都不动**，见 store.deleteProject。
+ *
+ * 回执里必须把那几张表的链接原样返回，而且前端必须显示出来。理由是那些表
+ * 不在任何人的云文档空间里、链接分享也是关掉的：删掉项目行之后，
+ * **这是最后一次能拿到链接的机会** —— 助理不再认识这个项目，
+ * 群里问「有哪些项目」也不会再列出它。回执不给链接的话，
+ * 这个操作看起来是"删掉了一个条目"，实际是把几张还活着的表变成了找不回的孤儿。
+ */
+feishuAssistantRouter.delete('/apps/:id/diary/projects/:projectId', (req, res) => {
+  const app = appForDiary(req, res);
+  if (!app) return;
+
+  // 同 records/summaries：必须**同时**校验 app_id。光按 id 删的话，
+  // 拿到别家公司的 project_id 就能删掉那家公司的日志关联。
+  const project = diaryStore.getProjectById(req.params.projectId);
+  if (!project || project.app_id !== app.app_id) {
+    res.status(404).json({ error: '项目不存在' });
+    return;
+  }
+
+  const removed = diaryStore.deleteProject(project.id);
+  if (!removed) {
+    res.status(404).json({ error: '项目不存在' });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    deleted: {
+      name: removed.project.name,
+      chat_id: removed.project.chat_id,
+      record_count: removed.recordCount,
+      summary_count: removed.summaryCount,
+      // 飞书里还活着的那几张表。空串表示当初就没建出来（前端别渲染死链接）。
+      log_url: removed.project.url,
+      review_url: reviewTableUrl(removed.project),
+      task_url: removed.project.task_base_url,
+      // 总表那一行也留着（它是事后找回上面几个链接的唯一途径），
+      // 于是总表会继续列着这个项目 —— 说出来，否则用户下次打开总表会以为没删掉。
+      still_in_index: !!removed.project.index_record_id,
+    },
   });
 });
 
@@ -335,7 +555,8 @@ feishuAssistantRouter.get('/apps/:id/chats', (req, res) => {
  *
  * 不是防滥用，是防**自伤**：这段话每解析一条指令就随 prompt 发一次，塞一份员工手册
  * 进来的直接后果是每条指令都变贵变慢，而且长文本会把后面的硬性规则（open_id 只许照抄、
- * 输出必须是 JSON）压下去 —— 表现是助理"忽然开始乱发消息"，没人会想到是这个文本框。
+ * 输出必须是 JSON）压下去 —— 表现是助理"忽然开始把任务派给错的人"，
+ * 没人会想到是这个文本框。
  * 真正有用的内容（术语、简称、时间习惯）几百字就够。
  */
 const MAX_SUPPLEMENT_CHARS = 4000;
@@ -393,21 +614,96 @@ feishuAssistantRouter.get('/commands', (req, res) => {
     }
   }
 
+  // 按群（= 按项目）筛。**不需要额外的归属校验**：非管理员的查询已经被
+  // user_id 钉死，传一个别人的 chat_id 只会得到空结果，不会越权。
+  // 管理员本来就看全部。
+  const chatId = req.query.chat_id ? String(req.query.chat_id) : undefined;
+
   const { commands, total } = listCommands({
     userId: isAdmin ? undefined : req.user!.id,
     appId,
+    chatId,
     status: req.query.status ? String(req.query.status) : undefined,
     limit: pageSize,
     offset,
   });
 
+  // 群名和项目名要一起给。
+  //
+  // 光有 `chat_id` 等于没有：`oc_xxx` 在飞书客户端里**看不到**，用户没有
+  // 任何办法把日志里那一行对上他心里的那个群。而这一页存在的意义正是
+  // 「A 项目那条记录到底进去了没有」，认不出群就等于认不出项目。
+  const labels = chatLabels(commands.map((c) => ({ appId: c.app_id, chatId: c.chat_id })));
+
   // error_detail 在库里是 JSON 字符串，这里解开成对象 ——
   // 让前端 JSON.parse 一遍没有意义，而且坏数据会炸在渲染里。
   res.json({
-    commands: commands.map((c) => ({ ...c, error_detail: parseDetail(c.error_detail) })),
+    commands: commands.map((c) => ({
+      ...c,
+      error_detail: parseDetail(c.error_detail),
+      ...(labels[`${c.app_id} ${c.chat_id}`] ?? { chat_name: '', project_name: '' }),
+    })),
     total,
+    // 筛选下拉的选项。只在指定了 app_id 时给：不指定时（管理员看全部）
+    // 各家公司的群会混在一个下拉里，而群名在不同租户之间可能重名，
+    // 选出来的结果对不上用户的预期。
+    chats: appId ? chatOptions(appId) : [],
   });
 });
+
+/**
+ * 一批 (app_id, chat_id) 的群名 / 项目名。
+ *
+ * 两个来源都要查，而且**项目名优先显示、群名兜底**：
+ * - `feishu_diary_projects` 有项目名（用户真正记得的那个称呼）；
+ * - `feishu_chats` 有群名，但它只在机器人被拉进群时能拿到（要 `im:chat:readonly`，
+ *   那不是必需权限），所以经常是空串。
+ * 两个都空时前端显示 chat_id 的后几位 —— 认不出来，但至少不是一片空白。
+ */
+function chatLabels(
+  keys: Array<{ appId: string; chatId: string }>
+): Record<string, { chat_name: string; project_name: string }> {
+  const appIds = [...new Set(keys.map((k) => k.appId).filter(Boolean))];
+  if (appIds.length === 0) return {};
+  const out: Record<string, { chat_name: string; project_name: string }> = {};
+  for (const appId of appIds) {
+    for (const c of listChats(appId)) {
+      out[`${appId} ${c.chat_id}`] = { chat_name: c.name, project_name: '' };
+    }
+    for (const p of diaryStore.listProjects(appId)) {
+      const k = `${appId} ${p.chat_id}`;
+      out[k] = {
+        // 项目行里也存了建项目那一刻的群名，chatStore 没有时用它。
+        chat_name: out[k]?.chat_name || p.chat_name,
+        project_name: p.name,
+      };
+    }
+  }
+  return out;
+}
+
+/** 某个应用的「群 / 项目」下拉选项。见 GET /commands 里 `chats` 字段的注释。 */
+function chatOptions(
+  appId: string
+): Array<{ chat_id: string; chat_name: string; project_name: string }> {
+  const labels = chatLabels(listChats(appId).map((c) => ({ appId, chatId: c.chat_id })));
+  const seen = new Set<string>();
+  const out: Array<{ chat_id: string; chat_name: string; project_name: string }> = [];
+  // 有项目的群排前面：这一页的主要用途是查项目里的指令。
+  for (const p of diaryStore.listProjects(appId)) {
+    seen.add(p.chat_id);
+    out.push({
+      chat_id: p.chat_id,
+      chat_name: labels[`${appId} ${p.chat_id}`]?.chat_name || p.chat_name,
+      project_name: p.name,
+    });
+  }
+  for (const c of listChats(appId)) {
+    if (seen.has(c.chat_id)) continue;
+    out.push({ chat_id: c.chat_id, chat_name: c.name, project_name: '' });
+  }
+  return out;
+}
 
 /** 解 error_detail。历史行是 null，解析失败也当没有：日志页不该因为一行坏数据打不开。 */
 function parseDetail(raw: string | null): unknown {

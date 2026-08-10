@@ -1,10 +1,11 @@
 import { getDatabase } from '../../db/index.js';
-import { decryptSecret } from '../../core/secrets.js';
+import { visibleSql } from './retention.js';
+import { getTenantToken, callOpenApi } from './feishuOpen.js';
 
 // 飞书多维表格同步。
 //
-// 和 feishuNotify.ts（群自定义机器人 webhook + HMAC 加签）是两套完全不同的鉴权：
-// 这里走开放平台应用凭据链 app_id/app_secret → tenant_access_token → 多维表格记录接口。
+// 鉴权、token 缓存和统一报错在 feishuOpen.ts（和 feishuNotify.ts 的群推送共用同一个
+// 自建应用与同一份 token 缓存）。这里只管表结构和写记录。
 // 文档：https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table-record/batch_create
 //
 // 数据流是单向的：多维表格自己不会来拉数据，只有我们往里写。
@@ -13,8 +14,6 @@ import { decryptSecret } from '../../core/secrets.js';
 //
 // 应用是每家客户在自己飞书企业里建的自建应用（自建应用只能在创建它的租户内使用），
 // 因此 app_id/app_secret 存在 per-user 的 tender_user_preferences 上，而不是平台级 system_config。
-
-const OPEN_BASE = 'https://open.feishu.cn/open-apis';
 
 export interface BitableConfig {
   appId: string;
@@ -49,6 +48,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   gdgpo: '广东省政府采购网',
   meicloud: '美的询源云',
   szecp: '华润守正',
+  ygcg: '广州国企阳光采购',
 };
 
 // 「全部标讯」表的单选项。爬虫写入是 draft，AI 抽取后 extracted，评分后 scored。
@@ -118,86 +118,6 @@ const ALL_TABLE_FIELDS = [
   { field_name: '标讯ID', type: 1 },
 ];
 
-// ==================== tenant_access_token ====================
-
-interface TokenCacheEntry {
-  token: string;
-  expireAtMs: number;
-}
-
-// 按 app_id 缓存（每家客户一个自建应用）。token 有效期 2h，提前 5min 过期避免边界失效。
-const tokenCache = new Map<string, TokenCacheEntry>();
-
-async function getTenantToken(appId: string, appSecret: string, nowMs: number): Promise<string> {
-  const cached = tokenCache.get(appId);
-  if (cached && cached.expireAtMs > nowMs) return cached.token;
-
-  // app_secret 在库里是加密的（migrations/050）。解密收在这一个点上：
-  // 它是 secret 唯一真正被使用的地方，各处 SELECT 出来的密文可以照原样传递，
-  // 于是 tender.ts 那几个只是把 row 转手传进来的调用点一行都不用改。
-  // decryptSecret 对旧明文原样返回，解不开则抛出可读原因。
-  const plainSecret = decryptSecret(appSecret);
-
-  const res = await fetch(`${OPEN_BASE}/auth/v3/tenant_access_token/internal`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ app_id: appId, app_secret: plainSecret }),
-    signal: AbortSignal.timeout(15000),
-  });
-
-  const data = (await res.json().catch(() => ({}))) as {
-    code?: number;
-    msg?: string;
-    tenant_access_token?: string;
-    expire?: number;
-  };
-
-  if (data.code !== 0 || !data.tenant_access_token) {
-    throw new Error(`获取 tenant_access_token 失败（code=${data.code ?? '?'} ${data.msg ?? ''}）`);
-  }
-
-  const ttlSec = typeof data.expire === 'number' ? data.expire : 7200;
-  tokenCache.set(appId, {
-    token: data.tenant_access_token,
-    expireAtMs: nowMs + Math.max(60, ttlSec - 300) * 1000,
-  });
-  return data.tenant_access_token;
-}
-
-// 凭据改了要立刻失效，否则后台换了 secret 还在用旧 token。
-export function invalidateTokenCache(appId?: string): void {
-  if (appId) tokenCache.delete(appId);
-  else tokenCache.clear();
-}
-
-async function callOpenApi(
-  token: string,
-  path: string,
-  method: 'GET' | 'POST',
-  body?: unknown
-): Promise<any> {
-  const res = await fetch(`${OPEN_BASE}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      Authorization: `Bearer ${token}`,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  const data = (await res.json().catch(() => ({}))) as { code?: number; msg?: string; data?: any };
-  if (data.code !== 0) {
-    // 1254302 / 403 基本都是同一个原因：应用没被加成这张表的协作者。
-    const hint =
-      data.code === 1254302 || res.status === 403
-        ? '（请确认应用已被添加为该多维表格的文档应用并授予「可编辑」）'
-        : '';
-    throw new Error(`飞书接口 ${path} 失败（code=${data.code ?? res.status} ${data.msg ?? ''}）${hint}`);
-  }
-  return data.data ?? {};
-}
-
 // ==================== 建表 ====================
 
 export interface CreatedBitable {
@@ -205,6 +125,8 @@ export interface CreatedBitable {
   tableId: string;
   allTableId: string;
   url: string;
+  /** false = 收紧链接分享失败，表处于租户默认可见范围，必须告知管理员。 */
+  linkShareClosed: boolean;
 }
 
 /**
@@ -232,6 +154,137 @@ export async function createAllTendersTable(
 }
 
 /**
+ * 给多维表格地址补上 `?table=`，让链接直接落在指定的那张表上。
+ *
+ * 不带这个参数时飞书打开 base 里的**第一张**表。而新建 App 自带一张
+ * 只有索引列的空「数据表」，排在我们建的两张前面 —— 于是卡片按钮点进去
+ * 是一张空表，用户以为链接错了或者数据没同步。
+ * （现在 createBitable 会删掉那张自带表，但历史数据里还有，
+ *   所以 getBitableUrl 读的时候也过一遍这个函数。）
+ *
+ * 已经带 table 参数的原样返回，不重复拼。
+ */
+export function withTableParam(url: string, tableId: string): string {
+  if (!url || !tableId) return url;
+  if (/[?&]table=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}table=${tableId}`;
+}
+
+/**
+ * 关掉「链接分享」，只有被显式授权的人能打开这张表。
+ *
+ * 为什么必须显式设置：不设的话跟随租户默认值，而实测租户默认是
+ * `link_share_entity: 'tenant_readable'` + `external_access: true` ——
+ * 「组织内获得链接的人可阅读」且「可转发到组织外」。
+ * 推送卡片底部那个多维表格按钮是**发到群里**的，群里每个人都看得到链接，
+ * 于是全公司（乃至公司外）任何拿到链接的人都能看这个账号的全部投标信息：
+ * 预算、评分、AI 分析与策略。这跟授权给谁、只读还是可编辑完全无关 ——
+ * grantPermission 管的是「能不能改」，这个字段管的是「能不能看」。
+ *
+ * 代价要说清楚：关掉之后，群里没被授权的人点卡片按钮会看到「无权限访问」。
+ * 想让整群能看，就把群授权成只读（/admin/bitable/:userId/grant，openchat）。
+ *
+ * 失败不抛异常，返回 false 由调用方报出来：这一步失败时表已经建好了，
+ * 抛出去只会留下一张孤儿表格，而且下次重建又是一张新的。
+ */
+export async function closeLinkShare(
+  cfg: { appId: string; appSecret: string },
+  appToken: string,
+  nowMs: number
+): Promise<boolean> {
+  try {
+    const token = await getTenantToken(cfg.appId, cfg.appSecret, nowMs);
+    await callOpenApi(token, `/drive/v1/permissions/${appToken}/public?type=bitable`, 'PATCH', {
+      link_share_entity: 'closed',
+      external_access_entity: 'closed',
+    });
+    return true;
+  } catch (e: any) {
+    console.error('[bitable] 关闭链接分享失败:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 删掉建 App 时自带的那张空表。
+ *
+ * 传进来的是**建我们的表之前**列出的 table_id —— 不靠名字或位置猜。
+ * （一个 base 至少要有一张表，所以必须先建好我们的再删它。）
+ * 失败只记日志：这时候 url 已经带 ?table= 指向正确的表了，残留一张空表是观感问题。
+ */
+async function deleteTables(
+  cfg: { appId: string; appSecret: string },
+  appToken: string,
+  tableIds: string[],
+  nowMs: number
+): Promise<void> {
+  if (tableIds.length === 0) return;
+  const token = await getTenantToken(cfg.appId, cfg.appSecret, nowMs);
+  for (const id of tableIds) {
+    try {
+      await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables/${id}`, 'DELETE');
+    } catch (e: any) {
+      console.error(`[bitable] 删除自带空表 ${id} 失败:`, e.message);
+    }
+  }
+}
+
+/**
+ * 清理历史 base 里那张建 App 时自带的空表。
+ *
+ * createBitable 现在建完就删，但早先创建的 base 里还留着它，而且排在
+ * 客户端 tab 的第一位 —— 用户切 tab 很容易点进去看到一张空表。
+ *
+ * 判定条件是**同时**满足三条，缺一不删：
+ *   1. 不是我们记录在库的两张表（keepIds）；
+ *   2. 一条记录都没有；
+ *   3. 只有一个字段（自带表就是一个「文本」索引列）。
+ * 只看前两条不够 —— 用户自己新建的表在他填数据之前也是 0 条，
+ * 而这个函数是管理员点一次按钮就跑的，误删了没有回收站。
+ *
+ * @returns 实际删掉的 table_id
+ */
+export async function cleanupDefaultTables(
+  cfg: { appId: string; appSecret: string },
+  appToken: string,
+  keepIds: string[],
+  nowMs: number
+): Promise<string[]> {
+  const token = await getTenantToken(cfg.appId, cfg.appSecret, nowMs);
+  const listed = await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables?page_size=50`, 'GET');
+  const keep = new Set(keepIds.filter(Boolean));
+  const removed: string[] = [];
+
+  for (const t of listed?.items || []) {
+    const id: string = t.table_id;
+    if (!id || keep.has(id)) continue;
+
+    // 空 + 单字段才动它。任何一步查询失败就跳过 —— 拿不准就不删。
+    try {
+      const recs = await callOpenApi(
+        token,
+        `/bitable/v1/apps/${appToken}/tables/${id}/records?page_size=1`,
+        'GET'
+      );
+      if ((recs?.items || []).length > 0) continue;
+
+      const fields = await callOpenApi(
+        token,
+        `/bitable/v1/apps/${appToken}/tables/${id}/fields?page_size=10`,
+        'GET'
+      );
+      if ((fields?.items || []).length !== 1) continue;
+
+      await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables/${id}`, 'DELETE');
+      removed.push(id);
+    } catch (e: any) {
+      console.error(`[bitable] 清理表 ${id} 时跳过:`, e.message);
+    }
+  }
+  return removed;
+}
+
+/**
  * 由服务端创建多维表格并建好列，返回 app_token / table_id / url。
  *
  * 相比让用户手工建表，这样列名不可能对不上，用户一个 id 都不用填，
@@ -239,6 +292,11 @@ export async function createAllTendersTable(
  *
  * 副作用：应用创建的文件归应用所有，默认不在用户云空间可见，
  * 所以建完要调 grantPermission 把表授权给用户/群，否则用户打不开。
+ * 而且这里会主动关掉链接分享（见 closeLinkShare），所以「授权」不是可选步骤 ——
+ * 不授权的话谁都打不开，包括表的主人。
+ *
+ * `linkShareClosed: false` 表示收紧链接分享这一步失败了，表仍然可用但
+ * 处于租户默认的可见范围（很可能是「组织内可阅读」），调用方必须把这件事说出来。
  */
 export async function createBitable(
   cfg: { appId: string; appSecret: string },
@@ -253,10 +311,18 @@ export async function createBitable(
   });
 
   const appToken: string = created?.app?.app_token;
-  const url: string = created?.app?.url || '';
+  const baseUrl: string = created?.app?.url || `https://feishu.cn/base/${appToken}`;
   if (!appToken) throw new Error('创建多维表格成功但未返回 app_token');
 
-  // 新建的 App 自带一个只有索引列的空数据表，我们另建一张列齐全的，不去改默认表。
+  // 建我们的表**之前**先记下自带的表有哪些，建完再删 —— 不靠名字猜哪张是自带的。
+  let preexisting: string[] = [];
+  try {
+    const listed = await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables?page_size=50`, 'GET');
+    preexisting = (listed?.items || []).map((t: any) => t.table_id).filter(Boolean);
+  } catch (e: any) {
+    console.error('[bitable] 列出自带表失败，跳过清理:', e.message);
+  }
+
   const table = await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables`, 'POST', {
     table: {
       name: '标讯推荐',
@@ -271,7 +337,23 @@ export async function createBitable(
   // 第二张表：全部标讯。和推荐表在同一个 App 里，用户在飞书里切 tab 就能看。
   const allTableId = await createAllTendersTable(cfg, appToken, nowMs);
 
-  return { appToken, tableId, allTableId, url: url || `https://feishu.cn/base/${appToken}` };
+  // 自带的空表现在可以删了（我们的表已存在，base 不会空）。
+  // 这里用 deleteTables 直删而不是 cleanupDefaultTables：base 是上面刚建的，
+  // 建我们的表之前列出来的**必然**是飞书自带的，比「空 + 单字段」的启发式判定更准。
+  // cleanupDefaultTables 是给历史 base 补救用的 —— 那时候已经分不清哪张是自带的，
+  // 只能靠特征猜，所以它才需要那三条严格条件。
+  await deleteTables(cfg, appToken, preexisting, nowMs);
+
+  const linkShareClosed = await closeLinkShare(cfg, appToken, nowMs);
+
+  return {
+    appToken,
+    tableId,
+    allTableId,
+    // 带上 ?table=，否则点进去是 base 里的第一张表。
+    url: withTableParam(baseUrl, tableId),
+    linkShareClosed,
+  };
 }
 
 /**
@@ -279,6 +361,13 @@ export async function createBitable(
  * memberType: 'openid'（用户 open_id）| 'openchat'（群 chat_id）| 'email'（飞书邮箱）
  *
  * 注意：授权给群需要应用已作为机器人在该群内，否则接口会因「互相不可见」失败。
+ *
+ * perm 在这里是原样透传的，但**群授权应当只给 'view'**：授权给群等于该群
+ * 全体成员都能开这张表，而表里是一个账号的全部投标信息（预算、评分、AI 分析
+ * 与策略）；给整群 edit 意味着任何成员都能改、能删记录，而 appendRecords
+ * 只追加不更新，别人删掉的行不会被补回来。这条规则由
+ * api/tender.ts 的 /admin/bitable/:userId/grant 强制（openchat → view），
+ * 新的调用方需要自己守住同一条线。
  */
 export async function grantPermission(
   cfg: { appId: string; appSecret: string },
@@ -337,6 +426,55 @@ export async function appendRecords(
     items.map((it) => toFields(it, nowMs)),
     nowMs
   );
+}
+
+/**
+ * 「平台」单选列补齐缺失的选项。
+ *
+ * 选项是建表那一刻按 PLATFORM_LABEL 写死的，所以**新增信息源后，老用户表里
+ * 没有这个选项** —— 而单选列写未登记的选项会整批 batch_create 失败，
+ * 于是那位用户的「全部标讯」表从此一条都同步不进来（toAllFields 那里的
+ * 「映射不到就留空」只挡代码侧不认识的 platform，挡不了这种表侧缺选项）。
+ *
+ * 不在这里报错也不静默跳过：直接把缺的选项补上。补齐要带上**全部**已有选项，
+ * 飞书的字段更新是整列替换，只传新选项会把旧的全删掉（旧记录的值随之失效）。
+ * 任何一步失败都只警告不抛 —— 补选项是尽力而为，真写不进去时让 batch_create
+ * 自己报那句更明确的错。
+ */
+async function ensurePlatformOptions(
+  token: string,
+  appToken: string,
+  tableId: string
+): Promise<void> {
+  try {
+    const list = await callOpenApi(token, `/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=100`, 'GET');
+    const field = (list?.items || []).find((f: any) => f.field_name === '平台');
+    if (!field?.field_id || field.type !== 3) return;
+
+    const existing: string[] = (field.property?.options || []).map((o: any) => o.name).filter(Boolean);
+    const missing = Object.values(PLATFORM_LABEL).filter((name) => !existing.includes(name));
+    if (missing.length === 0) return;
+
+    await callOpenApi(
+      token,
+      `/bitable/v1/apps/${appToken}/tables/${tableId}/fields/${field.field_id}`,
+      'PUT',
+      {
+        field_name: '平台',
+        type: 3,
+        // 已有选项在前且保留 id，飞书才认得出「这是同一个选项」而不是删了重建。
+        property: {
+          options: [
+            ...(field.property?.options || []).map((o: any) => ({ id: o.id, name: o.name })),
+            ...missing.map((name) => ({ name })),
+          ],
+        },
+      }
+    );
+    console.log(`[bitable] 「平台」列补齐选项: ${missing.join(', ')}`);
+  } catch (e: any) {
+    console.warn(`[bitable] 补齐「平台」选项失败（继续写入，若报 1254xxx 请手动在表里加选项）: ${e.message}`);
+  }
 }
 
 /** 分批 batch_create 的公共实现。单次上限 1000，BATCH_SIZE 留了余量。 */
@@ -458,13 +596,18 @@ export function bitableReady(pref: PrefRow | undefined): boolean {
   );
 }
 
+/**
+ * 卡片按钮和后台「打开表格」用的地址。
+ *
+ * 一律过一遍 withTableParam：库里存的可能是老数据 —— 早先存的是飞书返回的
+ * 裸 base 地址，不带 ?table=，点进去落在 base 的第一张表（那时候还有一张
+ * 建 App 时自带的空表排在前面），用户看到的是一张空表。
+ */
 export function getBitableUrl(userId: string): string {
   const pref = loadBitablePref(userId);
   if (!bitableReady(pref)) return '';
-  return (
-    pref!.bitable_url ||
-    `https://feishu.cn/base/${pref!.bitable_app_token}?table=${pref!.bitable_table_id}`
-  );
+  const base = pref!.bitable_url || `https://feishu.cn/base/${pref!.bitable_app_token}`;
+  return withTableParam(base, pref!.bitable_table_id || '');
 }
 
 /**
@@ -474,6 +617,13 @@ export function getBitableUrl(userId: string): string {
  * 推荐行在评分时就已入库，下一轮会被 existing 判断跳过，
  * 若只推内存里那批，一次推送失败这些标讯就永久漏掉了。
  * 状态位换来三件事：失败下轮自动重试、历史推荐可一键回填、后台可手动触发。
+ *
+ * 21 天时效闸门（retention.ts）也在这条 SQL 里。它和上面那个「失败下轮重试」
+ * 有一处交互要知道：一条推荐若连续 21 天推送失败（webhook 配错、飞书配额打满），
+ * 它会越过闸门，从此不再重试 —— 状态位仍是 NULL，但查询已经取不到它了。
+ * 这是有意的（21 天前的标讯推过去也没用），代价是它在库里留成一条
+ * 永远 pending 的记录。真要排查同步为什么没动，看 bitable_synced_at IS NULL
+ * 且 publish_date 已过期的行数。
  */
 export async function syncUserRecommendations(
   userId: string,
@@ -497,6 +647,7 @@ export async function syncUserRecommendations(
          AND r.bitable_synced_at IS NULL
          AND r.tier != 'filter'
          AND r.total_score >= ?
+         AND ${visibleSql('t.publish_date')}
        ORDER BY r.created_at DESC
        LIMIT ?`
     )
@@ -548,6 +699,12 @@ export async function syncUserRecommendations(
  *
  * limit 默认 2000：首次开启时库里可能已有几万条，一轮全推会打满飞书写入配额，
  * 分轮补齐即可（状态位保证不重不漏）。
+ *
+ * 21 天时效闸门（retention.ts）也在这条 SQL 里：过期标讯不再推给用户。
+ * 注意它挡掉的行**不会**落状态位 —— 这是故意的，把闸门放宽回 30 天后
+ * 它们会自动补推。代价是：入库时就已经超过 21 天的标讯永远不会进这张表
+ * （比如首次接入一个新平台、抓了三个月的历史公告），这符合「过期的不要推」的本意。
+ * 想补历史请调 TENDER_VISIBLE_DAYS，不要在这里绕过闸门。
  */
 export async function syncAllTenders(
   userId: string,
@@ -579,7 +736,7 @@ export async function syncAllTenders(
               t.status, t.url
        FROM tenders t
        LEFT JOIN tender_bitable_sync s ON s.tender_id = t.id AND s.user_id = ?
-       WHERE s.tender_id IS NULL${platformFilter}
+       WHERE s.tender_id IS NULL${platformFilter} AND ${visibleSql('t.publish_date')}
        ORDER BY t.publish_date DESC
        LIMIT ?`
     )
@@ -608,6 +765,14 @@ export async function syncAllTenders(
     status: r.status,
     url: r.url,
   }));
+
+  // 新增信息源后老用户的表里没有对应的「平台」选项，不补齐会整批写入失败。
+  // 只有这张表有「平台」单选列，所以只在这条路径上补。
+  await ensurePlatformOptions(
+    await getTenantToken(cfg.appId, cfg.appSecret, nowMs),
+    cfg.appToken,
+    pref!.bitable_all_table_id!
+  );
 
   const created = await batchCreate(
     cfg,

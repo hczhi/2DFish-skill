@@ -85,7 +85,7 @@ describe('绑了 skill 时', () => {
     bindSkill('随便写点什么');
     await call();
     // 注册表里的每个动作都还在。
-    for (const name of ['create_task', 'create_calendar_event', 'send_message', 'reply']) {
+    for (const name of ['create_diary_project', 'add_diary_record', 'create_task', 'reply']) {
       expect(captured.system).toContain(name);
     }
   });
@@ -255,7 +255,7 @@ describe('多步意图解析', () => {
   }
 
   const parse = () =>
-    parseIntent({ userId: 'u1', text: '给他们发消息并建个日程', mentions: [], nowMs: Date.now() });
+    parseIntent({ userId: 'u1', text: '记一笔并给张三派个任务', mentions: [], nowMs: Date.now() });
 
   it('单个 {action, params} 收成一步（老形状不能坏）', async () => {
     respondWith('{"action":"reply","params":{"text":"ok"}}');
@@ -265,12 +265,12 @@ describe('多步意图解析', () => {
 
   it('{actions:[...]} 收成多步', async () => {
     respondWith(
-      '{"actions":[{"action":"send_message","params":{"to":"张三","text":"hi"}},' +
-        '{"action":"create_calendar_event","params":{"summary":"会","start":"2026-08-07T09:30:00+08:00"}}]}'
+      '{"actions":[{"action":"add_diary_record","params":{"content":"客户要把 logo 改大"}},' +
+        '{"action":"create_task","params":{"summary":"改 logo","assignee":"张三"}}]}'
     );
     const out = await parse();
-    expect(out?.steps.map((s) => s.action)).toEqual(['send_message', 'create_calendar_event']);
-    expect(out?.steps[0].params.to).toBe('张三');
+    expect(out?.steps.map((s) => s.action)).toEqual(['add_diary_record', 'create_task']);
+    expect(out?.steps[1].params.assignee).toBe('张三');
   });
 
   it('模型用 steps 当键名也认（它经常换词）', async () => {
@@ -372,5 +372,231 @@ describe('接上一轮追问', () => {
     await call();
     expect(captured.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(captured.system).not.toContain('这句话是对上一轮追问的补充');
+  });
+});
+
+// 「项目」vs「任务」。这一组守的是本模块观察到的**头号误选**：
+// 用户在群里说「添加新项目，XX 纪录片」，模型选了 create_task，
+// 回帖「✅ 任务已创建」—— 看着成功了，而他要的那张项目日志表根本不存在。
+// 他接着说「创建项目 XX」，这次落到 update_task 上，回一句「没找到对得上的任务」。
+//
+// 防线有两道，**必须都在**：
+//   1. 注册表顺序（actions/index.ts）—— 模型顺着读，先撞上谁就选谁；
+//   2. 语义排除（PROJECT_VS_TASK_RULE + 两个 task 动作自己的描述）——
+//      说明"为什么不是那个"。
+// 位置只改变"先看到谁"，规则才给出理由；少任何一道都还会串。
+describe('「项目」和「任务」不能串味', () => {
+  const inGroup = (projectName: string | null) =>
+    parseIntent({
+      userId: 'u1',
+      text: '添加新项目，8月飞书skill开发',
+      mentions: [],
+      nowMs: Date.parse('2026-08-05T10:00:00+08:00'),
+      diary: { projectName },
+    });
+
+  it('项目日记的动作排在 create_task **之前**（模型顺着读，先撞上的就选了）', async () => {
+    await call();
+    const diaryAt = captured.system.indexOf('create_diary_project');
+    const taskAt = captured.system.indexOf('create_task');
+    expect(diaryAt).toBeGreaterThan(-1);
+    expect(taskAt).toBeGreaterThan(-1);
+    expect(diaryAt).toBeLessThan(taskAt);
+  });
+
+  it('日记那四个动作仍然挨在一起（拆开会让「记一下」滑到 create_task 上）', async () => {
+    await call();
+    const order = [
+      'create_diary_project',
+      'rename_diary_project',
+      'list_diary_projects',
+      'add_diary_record',
+      'review_diary',
+    ]
+      .map((n) => captured.system.indexOf(`**${n}**`));
+    expect(order.every((i) => i > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('create_diary_project 的描述覆盖用户真实说法（不只「新建/立项」）', async () => {
+    await call();
+    // 出事的那两句就是「添加新项目」和「创建项目」，原来的描述里一个都没有。
+    const desc = captured.system.slice(captured.system.indexOf('**create_diary_project**'));
+    for (const phrase of ['添加项目', '添加新项目', '创建项目', '新增项目']) {
+      expect(desc).toContain(phrase);
+    }
+  });
+
+  it('create_task 自己也说清「项目不是任务」—— 排除要写在被误选的那个动作上', async () => {
+    await call();
+    const start = captured.system.indexOf('**create_task**');
+    const desc = captured.system.slice(start, captured.system.indexOf('**update_task**'));
+    expect(desc).toContain('create_diary_project');
+  });
+
+  it('update_task 说清自己只改已存在的东西（「创建项目」曾经落到它身上）', async () => {
+    await call();
+    const start = captured.system.indexOf('**update_task**');
+    // update_task 现在是注册表最后一项，切到「可用动作」这一节结束为止。
+    const desc = captured.system.slice(start, captured.system.indexOf('## ', start));
+    expect(desc).toMatch(/只.*改已经存在/);
+    expect(desc).toContain('create_diary_project');
+  });
+
+  it('群里还没有项目时，明确指向 create_diary_project 而不是让它去建任务', async () => {
+    await inGroup(null);
+    expect(captured.system).toContain('还没有绑定项目日记');
+    // 这一段（运行时事实）自己就要给出正确出路，不能只靠动作描述。
+    const hint = captured.system.slice(captured.system.indexOf('还没有绑定项目日记'));
+    expect(hint).toContain('create_diary_project');
+  });
+
+  it('那条排除规则在「有项目」「没项目」两种情况下都带着', async () => {
+    // 「再开个项目」在已有项目的群里同样会被误选成建任务，所以两个分支都要有。
+    for (const name of [null, '印度纪录片']) {
+      captured.system = '';
+      await inGroup(name);
+      expect(captured.system).toContain('绝对不是 create_task');
+    }
+  });
+
+  it('不传 diary 时 prompt 里完全没有这一段（不关心日记的调用方照旧）', async () => {
+    await call();
+    expect(captured.system).not.toContain('还没有绑定项目日记');
+    expect(captured.system).not.toContain('已绑定项目日记');
+  });
+});
+
+// 项目现状快照（068 / req 6 的多轮那一半）。
+//
+// 这一节的收益是让模型认出指代：「那个 logo 的活推到周五」里的「那个 logo 的活」
+// 在没有快照时对它就是一串没有指向的字。
+// 而它的风险和收益是同一个来源 —— 模型看得见完整标题之后，很想替用户把话说全。
+// 那正是 update_task「有多个候选就绝不挑一个」那道闸被绕过去的方式：
+// 模型已经替他挑好了，于是改错了任务，回帖「已完成」。
+// 所以这一组里最要紧的两条断言是「不许出现任何 id」和「填参数照抄用户原话」。
+describe('项目现状快照进 prompt（多轮的一半）', () => {
+  const FULL = {
+    projectName: '印度纪录片',
+    tasks: [
+      '- 设计项目 logo｜负责人 李四｜2026-08-10 → 2026-08-13｜进行中',
+      '- 剪第三场｜负责人 王五｜未定 → 2026-08-20｜未开始',
+    ],
+    records: ['- 2026-08-10 张三：客户要把 logo 改大'],
+    recordTotal: 12,
+    openTaskTotal: 2,
+    closedTaskCount: 3,
+  };
+
+  const withCtx = (diary: Record<string, unknown>) =>
+    parseIntent({
+      userId: 'u1',
+      text: '那个 logo 的活推到周五',
+      mentions: [],
+      nowMs: Date.parse('2026-08-10T10:00:00+08:00'),
+      diary: diary as any,
+    });
+
+  it('在办任务和最近记录都进了 prompt', async () => {
+    await withCtx(FULL);
+    expect(captured.system).toContain('本项目现在的情况（印度纪录片）');
+    expect(captured.system).toContain('设计项目 logo');
+    expect(captured.system).toContain('客户要把 logo 改大');
+  });
+
+  it('**一个 id 都不出现**（模型看不到 guid 就编不出 guid）', async () => {
+    // 快照里最诱人的就是任务：把 guid 一起列出来「省一次反查」的代价是
+    // 模型有天给出一个拼错的 guid，而若刚好命中就是改了别人的东西 + 回「已完成」。
+    await withCtx({
+      ...FULL,
+      tasks: [...FULL.tasks],
+    });
+    expect(captured.system.match(/ou_[a-z0-9]{4,}/gi) ?? []).toEqual([]);
+    expect(captured.system).not.toMatch(/\bguid\b/i);
+    expect(captured.system.match(/rec[a-z0-9]{8,}/gi) ?? []).toEqual([]);
+  });
+
+  it('明写「填参数照抄用户原话」—— 否则模型会替用户把话补全并挑错任务', async () => {
+    await withCtx(FULL);
+    const block = captured.system.slice(captured.system.indexOf('本项目现在的情况'));
+    expect(block).toContain('照抄用户说的那几个字');
+    // 后果也要写出来：只说「照抄」而不说为什么，是最容易被后来的人删掉的那种句子。
+    expect(block).toMatch(/已完成/);
+  });
+
+  it('声明这一节是参考资料，不许自作主张动上面的任务', async () => {
+    // 带上截止时间之后，模型会「体贴地」去提醒快到期的那条 —— 而每一步都会真的执行。
+    await withCtx(FULL);
+    const block = captured.system.slice(captured.system.indexOf('本项目现在的情况'));
+    expect(block).toContain('不是用户的要求');
+    expect(block).toMatch(/不要.*自作主张/);
+  });
+
+  it('列不全的部分都说出来（模型会把列表当全集）', async () => {
+    await withCtx({
+      ...FULL,
+      tasks: FULL.tasks.slice(0, 1),
+      openTaskTotal: 9,
+    });
+    const block = captured.system.slice(captured.system.indexOf('本项目现在的情况'));
+    // 在办的没列全。
+    expect(block).toContain('未完成的一共 9 条');
+    // 已关闭的一条都没列，但要让模型知道它们存在 —— 否则用户说一个已完成任务的
+    // 名字时它会回「没有这个任务」，而动作层查的是全量的库，本来找得到。
+    expect(block).toContain('已完成/已取消');
+    expect(block).toContain('update_task');
+    // 记录也一样。
+    expect(block).toContain('共 12 条');
+  });
+
+  it('快照排在硬性规则之前（它是数据，不能压过约束）', async () => {
+    await withCtx(FULL);
+    const factsAt = captured.system.indexOf('本项目现在的情况');
+    expect(factsAt).toBeGreaterThan(-1);
+    expect(captured.system.indexOf('## 硬性规则')).toBeGreaterThan(factsAt);
+  });
+
+  it('排在 diaryHint **之后** —— 先给说明书，再给数据', async () => {
+    // 反过来的话模型先看到一堆任务行却不知道拿它们干什么。
+    await withCtx(FULL);
+    expect(captured.system.indexOf('已绑定项目日记')).toBeLessThan(
+      captured.system.indexOf('本项目现在的情况')
+    );
+  });
+
+  it('只传 projectName 时照旧只出提示、不出快照（老调用方不用改）', async () => {
+    await withCtx({ projectName: '印度纪录片' });
+    expect(captured.system).toContain('已绑定项目日记');
+    expect(captured.system).not.toContain('本项目现在的情况');
+  });
+
+  it('项目是空的（没记录没任务）时不插一个空章节', async () => {
+    await withCtx({ ...FULL, tasks: [], records: [], recordTotal: 0, openTaskTotal: 0, closedTaskCount: 0 });
+    expect(captured.system).not.toContain('本项目现在的情况');
+  });
+
+  it('没绑项目时不出快照（projectName 为 null 时其余字段一定是空的）', async () => {
+    await withCtx({ projectName: null, tasks: [], records: [] });
+    expect(captured.system).toContain('还没有绑定项目日记');
+    expect(captured.system).not.toContain('本项目现在的情况');
+  });
+
+  it('任务巨多时整段有字符上限，并且砍掉的部分照旧说明', async () => {
+    // 这段每条指令都送一遍。上限不是为了省钱，是防挤压：
+    // prompt 末尾那几条硬性规则被顶得越远，模型越容易忽略它们。
+    const many = Array.from(
+      { length: 60 },
+      (_, i) => `- 任务${i}｜负责人 某某某｜2026-08-01 → 2026-08-3${i % 10}｜进行中`
+    );
+    await withCtx({ ...FULL, tasks: many, openTaskTotal: 60 });
+    const block = captured.system.slice(
+      captured.system.indexOf('本项目现在的情况'),
+      captured.system.indexOf('## 输出格式')
+    );
+    expect(block.length).toBeLessThan(2000);
+    // 砍完之后「没列全」那句必须还在，否则模型会把剩下的当全集。
+    expect(block).toContain('未完成的一共 60 条');
+    // 免责声明也必须活下来 —— 它是这一节最容易被截断吃掉的尾巴。
+    expect(block).toContain('不是用户的要求');
   });
 });

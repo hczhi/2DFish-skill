@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
+import { isUniqueViolation } from '../../db/sqliteError.js';
 
 // 指令执行日志 + 事件去重。
 //
@@ -34,6 +35,14 @@ export interface CommandRow {
  * 用 INSERT 的主键冲突来判断，而不是先 SELECT 再 INSERT ——
  * 后者在同一条消息被并发投递两次时会双双通过检查（飞书重推间隔虽长，
  * 但重连瞬间补推 + 正常推送同时到达是真实存在的）。
+ *
+ * **只把主键冲突当"已处理"，别的错一律抛出去。** 这里以前是个 `catch {}`，
+ * 于是任何库故障（磁盘满、库被锁、表结构没迁移到位）都会被读成
+ * 「这条消息处理过了」，dispatcher 于是安静地 return —— 用户 @ 了没反应，
+ * 服务端一行日志都没有，连指令日志里都不会有那条 pending 行可查。
+ * 而这类故障恰恰是**每一条**消息都会撞上的，也就是整个模块彻底哑掉，
+ * 表现成"偶尔不灵"里最难查的那一种。抛出去的话至少落进 dispatcher 的收口，
+ * 有一条服务端错误日志。
  */
 export function claimEvent(messageId: string, appId: string, nowIso: string): boolean {
   try {
@@ -41,9 +50,9 @@ export function claimEvent(messageId: string, appId: string, nowIso: string): bo
       .prepare('INSERT INTO feishu_events (message_id, app_id, received_at) VALUES (?, ?, ?)')
       .run(messageId, appId, nowIso);
     return true;
-  } catch {
-    // UNIQUE 约束冲突 = 已处理过
-    return false;
+  } catch (e) {
+    if (isUniqueViolation(e)) return false;
+    throw e;
   }
 }
 
@@ -117,6 +126,19 @@ export interface ListCommandsFilter {
   /** 非管理员必须传，用于把结果限定在自己的应用上 */
   userId?: string;
   appId?: string;
+  /**
+   * 只看某一个群（= 某一个项目）的指令。
+   *
+   * 这个筛选存在的理由是**一个群 = 一个项目**：不按群分的话，一个绑了十个项目群的
+   * 应用，它的日志页就是十个项目的指令混在一起按时间排 —— 而人来这一页
+   * 几乎总是在查「A 项目那条记录到底记进去了没有」。混排时他要在几百行里
+   * 靠 chat_id 后六位认群，而 `oc_xxx` 在飞书客户端里根本看不到，
+   * 也就是说他没有任何办法确认自己认对了。
+   *
+   * 校验归属和 appId 一样是**调用方**的事（见 api/feishuAssistant.ts）：
+   * 这里只管拼 SQL。
+   */
+  chatId?: string;
   status?: string;
   limit?: number;
   offset?: number;
@@ -133,6 +155,10 @@ export function listCommands(f: ListCommandsFilter): { commands: CommandRow[]; t
   if (f.appId) {
     where += ' AND app_id = ?';
     params.push(f.appId);
+  }
+  if (f.chatId) {
+    where += ' AND chat_id = ?';
+    params.push(f.chatId);
   }
   if (f.status) {
     where += ' AND status = ?';
@@ -218,49 +244,53 @@ export function findPriorClarification(input: {
   return { text: row.text, reply };
 }
 
-/** 助理**自己建过**的某个东西（任务 / 日程），从指令日志里反查出来的。 */
+/** 助理**自己建过**的某个东西（目前只有飞书任务），从指令日志里反查出来的。 */
 export interface RecentActionRef {
   /** 产生它的那条指令 */
   commandId: string;
   createdAt: string;
   action: string;
   /**
-   * 那一步的结构化产物：`create_task` 给 `guid`/`url`/`title`，
-   * `create_calendar_event` 给 `event_id`/`calendar_id`/`title` 等。
+   * 那一步的结构化产物：`create_task` 给 `guid`/`url`/`title`。
    * 形状由各动作的 `ActionResult.data` 决定，见 dispatcher 落库那一段。
    */
   data: Record<string, unknown>;
 }
 
 /**
- * 一次最多回看多少条指令。
+ * 一次最多回看多少条**相关**指令。
  *
- * 不是"能改多久以前的东西"（那是 `withinMs`），而是一道成本闸：这张表每条 @ 消息
- * 一行，一个活跃的群一周就有几百行，而我们要在 JS 里逐行 JSON.parse。
- * 50 行足够覆盖"刚才/今天建的那个"，也就是这个功能唯一的使用场景。
+ * 这不是"能改多久以前的东西"（那是 `withinMs`），而是一道成本闸：要在 JS 里
+ * 逐行 JSON.parse。
+ *
+ * 关键是「相关」两个字。以前这里是无条件取最近 50 行，于是话术里承诺的
+ * 「最近 7 天内」其实是**最近 50 条指令**：一个活跃的群一天就能有几十条
+ * 「记一下…」，用户早上派的任务到下午就已经掉出窗口，助理却回一句
+ * 「我只能改我自己帮你建的那些（最近 7 天内）」—— 一句在他看来明显不成立的话。
+ * 所以先在 SQL 里按动作名过滤，让这 200 行全是**候选**，7 天这个承诺才是真的。
  */
-const LOOKBACK_ROWS = 50;
+const LOOKBACK_ROWS = 200;
 
 /**
- * 反查助理最近帮这个人建过的任务 / 日程。
+ * 反查助理最近帮这个人建过的任务。
  *
  * ── 为什么必须有这一层 ──
- * `task.patch` 要 guid、`calendarEvent.patch` 要 event_id，而**模型不可能知道它们**。
- * 这和 open_id 是同一类问题（见 actions/people.ts），也用同一套解法：id 绝不经过
- * LLM，只从代码控制的来源里取。这里的来源就是我们自己的执行日志 ——
- * 建的时候把 guid / event_id 存进了 `result`，现在原样读回来。
+ * `task.patch` 要 guid，而**模型不可能知道它**。这和 open_id 是同一类问题
+ * （见 actions/people.ts），也用同一套解法：id 绝不经过 LLM，只从代码控制的
+ * 来源里取。这里的来源就是我们自己的执行日志 —— 建的时候把 guid 存进了
+ * `result`，现在原样读回来。
  *
  * 让 LLM 输出 guid 的后果比编 open_id 更隐蔽：编出来的 guid 大概率 404，
  * 但**万一命中**就是改了别人的任务，而回帖会说「已完成」。
  *
  * ── 范围为什么是 app + 发言人，不含会话 ──
  * 「那个任务」指的是**我让助理建的**那个，跟他当时在哪个群说的没关系
- * （群里派的任务，回头在私聊里说「标记完成」是很自然的）。
+ * （在项目群里派的任务，回头在另一个群里说「标记完成」是很自然的）。
  * 而 app + 发言人这两条一条都不能少：跨应用是跨企业，跨人是改别人的东西。
  *
  * ── 为什么 failed 的指令也算 ──
- * `result` 里只会有**成功的那几步**（见 dispatcher）。一条"建任务 + 发通知"的指令
- * 在第二步失败时整条记为 `failed`，但任务是真建出来了 —— 不收它的话，
+ * `result` 里只会有**成功的那几步**（见 dispatcher）。一条"建任务 + 记一条日志"的
+ * 指令在第二步失败时整条记为 `failed`，但任务是真建出来了 —— 不收它的话，
  * 用户明明看到任务在飞书里，助理却说「我没帮你建过任务」。
  *
  * 注意这里**不能**复用 `findPriorClarification`：那个函数的 `action = 'reply'`
@@ -274,15 +304,31 @@ export function findRecentActionResults(input: {
   /** 往前看多久，默认 7 天 */
   withinMs?: number;
 }): RecentActionRef[] {
+  if (input.actions.length === 0) return [];
   const since = new Date(Date.now() - (input.withinMs ?? 7 * 86400_000)).toISOString();
+  // 按动作名先在 SQL 里筛一遍，见 LOOKBACK_ROWS 的注释：不筛的话行数配额会被
+  // 无关指令吃光，而「最近 7 天」就成了一句空话。
+  //
+  // 用 LIKE 而不是 `action = ?`：多步指令的 action 列存的是
+  // 「create_task + add_diary_record」这种拼接串（见 dispatcher），等号对不上。
+  // LIKE 宽一点没有代价 —— 下面逐步遍历 `steps` 时还要按 action 精确核一遍，
+  // 这里只是把明显不可能的行挡在 JSON.parse 之外。
+  const likeClause = input.actions.map(() => 'action LIKE ?').join(' OR ');
   const rows = getDatabase()
     .prepare(
       `SELECT id, action, result, created_at FROM feishu_commands
        WHERE app_id = ? AND sender_open_id = ?
          AND status IN ('done', 'failed') AND result IS NOT NULL AND created_at >= ?
+         AND (${likeClause})
        ORDER BY created_at DESC LIMIT ?`
     )
-    .all(input.appId, input.senderOpenId, since, LOOKBACK_ROWS) as Array<{
+    .all(
+      input.appId,
+      input.senderOpenId,
+      since,
+      ...input.actions.map((a) => `%${a}%`),
+      LOOKBACK_ROWS
+    ) as Array<{
     id: string;
     action: string | null;
     result: string | null;

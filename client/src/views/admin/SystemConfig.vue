@@ -12,18 +12,24 @@
       · <b>kind=image</b>：生图模型（地基已就位，extra_json 里填 <code>{"protocol":"dashscope"}</code> 之类，具体适配器接入后即可用）。<br />
       同一 tier 有多条时取最近更新的启用项；某档没配则回落到 default 档；一条都没配则回落到下方旧配置。<br />
       · 这里只列<b>平台级</b>接入点。要给某个用户配独立接口，去「用户管理 → 专属 AI」——
-      那里配的接入点只属于该用户，不会出现在本列表。
+      那里配的接入点只属于该用户，不会出现在本列表。<br />
+      · <b>应用</b>留空 = 全站通用。指定某个应用后，该应用优先用这条；<b>只对填了的应用生效，
+      其他应用捡不走</b>。某应用没配到的档位，先回落到该应用自己的 default，再回落通用配置。
     </p>
 
     <div class="config-card">
       <table class="prov-table" v-if="providers.length">
         <thead>
-          <tr><th>类型</th><th>档位</th><th>名称</th><th>模型</th><th>Base URL</th><th>Key</th><th>启用</th><th></th></tr>
+          <tr><th>类型</th><th>档位</th><th>应用</th><th>名称</th><th>模型</th><th>Base URL</th><th>Key</th><th>启用</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="p in providers" :key="p.id">
             <td>{{ p.kind }}</td>
             <td>{{ p.kind === 'llm' ? p.tier : '—' }}</td>
+            <td>
+              <span v-if="p.scope_app" class="scope-tag">{{ appLabel(p.scope_app) }}</span>
+              <span v-else class="hint">通用</span>
+            </td>
             <td>{{ p.label }}</td>
             <td class="mono">{{ p.model }}</td>
             <td class="mono ellip">{{ p.base_url }}</td>
@@ -60,13 +66,21 @@
               <option value="fast">fast 快模型</option>
             </select>
           </label>
+          <label v-if="editing.kind === 'llm'">应用<span class="sub">（留空=通用）</span>
+            <!-- 选项来自服务端 apps，不在前端硬编码：scope_app 是靠字符串等于
+                 gateway 的 source 来匹配的，手写一个 'ui_review' 会「保存成功但永不生效」。 -->
+            <select v-model="editing.scope_app" class="input">
+              <option value="">全站通用</option>
+              <option v-for="a in apps" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
+            </select>
+          </label>
           <label>名称
             <input v-model="editing.label" class="input" placeholder="如：强模型 qwen-plus" />
           </label>
           <label>模型
             <input v-model="editing.model" class="input" placeholder="qwen-plus" />
           </label>
-          <label class="wide">Base URL
+          <label class="wide">Base URL<span class="sub">（只填到 /v1，末尾的 /chat/completions 由程序自己拼）</span>
             <input v-model="editing.base_url" class="input" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
           </label>
           <label class="wide">API Key<span class="sub"> {{ editing.id ? '（留空表示不修改）' : '' }}</span>
@@ -100,7 +114,7 @@
       </div>
 
       <div class="form-group">
-        <label>API Base URL</label>
+        <label>API Base URL<span class="sub">（只填到 /v1）</span></label>
         <div class="input-row">
           <input v-model="form.platform_api_base_url" placeholder="https://api.openai.com/v1" class="input" />
           <button class="btn-primary" @click="save('platform_api_base_url', form.platform_api_base_url)">保存</button>
@@ -188,8 +202,11 @@ const saved = ref(false)
 interface Provider {
   id: string; kind: string; tier: string; label: string;
   base_url: string; api_key: string; model: string; extra_json: string; enabled: number;
+  scope_app: string;
 }
 const providers = ref<Provider[]>([])
+const apps = ref<Array<{ id: string; name: string }>>([])
+const appLabel = (id: string) => apps.value.find(a => a.id === id)?.name || id
 const testingId = ref('')
 const testResults = ref<Record<string, { ok: boolean; msg: string }>>({})
 
@@ -206,7 +223,7 @@ async function testProvider(p: Provider) {
 }
 
 function emptyEditor() {
-  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true }
+  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true, scope_app: '' }
 }
 const editing = ref(emptyEditor())
 
@@ -218,11 +235,13 @@ async function loadConfig() {
 async function loadProviders() {
   const data = await apiGet('/api/admin/providers')
   providers.value = data.providers || []
+  apps.value = data.apps || []
 }
 
 function editProvider(p: Provider) {
   // api_key 是脱敏值，不回填到输入框（留空 = 不修改）
-  editing.value = { id: p.id, kind: p.kind, tier: p.tier, label: p.label, base_url: p.base_url, api_key: '', model: p.model, extra_json: p.extra_json === '{}' ? '' : p.extra_json, enabled: !!p.enabled }
+  // scope_app 必须回填：漏了它，随手改个名就把「xhs 专用」变成全站通用。
+  editing.value = { id: p.id, kind: p.kind, tier: p.tier, label: p.label, base_url: p.base_url, api_key: '', model: p.model, extra_json: p.extra_json === '{}' ? '' : p.extra_json, enabled: !!p.enabled, scope_app: p.scope_app || '' }
 }
 
 function resetEditor() { editing.value = emptyEditor() }
@@ -239,6 +258,8 @@ async function saveProvider() {
     model: e.model.trim(),
     extra_json: e.extra_json.trim() || '{}',
     enabled: e.enabled,
+    // image 类型没有应用维度，别把上一次选的 app 带过去
+    scope_app: e.kind === 'llm' ? e.scope_app : '',
   })
   saved.value = true
   setTimeout(() => saved.value = false, 2000)
@@ -333,6 +354,7 @@ onMounted(() => { loadConfig(); loadProviders() })
 .prov-table th { color: var(--c-text-sub); font-weight: 600; font-size: 12px; }
 .prov-table .mono { font-family: var(--font-mono); font-size: 12px; }
 .prov-table .ellip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-tag { display: inline-block; padding: 1px 6px; border: 1px solid #3B5BDB; color: #3B5BDB; border-radius: 3px; font-size: 11px; white-space: nowrap; }
 .row-actions { display: flex; gap: 10px; white-space: nowrap; flex-wrap: wrap; }
 .link-btn { border: none; background: none; color: #3B5BDB; cursor: pointer; font-size: 13px; padding: 0; }
 .link-btn.danger { color: #dc2626; }

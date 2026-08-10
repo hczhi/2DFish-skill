@@ -23,6 +23,7 @@
         <router-link to="/admin/tender" class="nav-item" active-class="active" @click="sidebarOpen = false">标讯管理</router-link>
         <router-link to="/admin/feishu" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书助理</router-link>
         <router-link to="/admin/skills" class="nav-item" active-class="active" @click="sidebarOpen = false">Skill 管理</router-link>
+        <router-link to="/admin/agent-skills" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书 Skill</router-link>
         <div class="nav-group" :class="{ active: isUiReviewActive }" @mouseenter="openFlyout" @mouseleave="closeFlyout">
           <div class="nav-item nav-group-title">UI 测评</div>
           <div class="nav-submenu" :class="{ show: flyoutOpen }" :style="flyoutStyle">

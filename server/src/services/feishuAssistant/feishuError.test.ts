@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  assertOk,
   describeFeishuError,
   describeFeishuErrorDetail,
   isContactUnavailable,
@@ -223,6 +224,55 @@ describe('结构化输出（前端靠它渲染补权限按钮）', () => {
 
   it('普通 Error 也是 api_error', () => {
     expect(describeFeishuErrorDetail(new Error('缺少任务标题')).kind).toBe('api_error');
+  });
+});
+
+// 飞书的业务错误是 HTTP 200 + body.code != 0，而 SDK 在这种情况下**不抛**。
+// 真实事故：总表那一行的「关联群聊」传了裸字符串，飞书 200 回 1254001 整条被拒，
+// 调用点读 record_id 拿到 undefined，群里收到的是「✅ 项目已建好」+ 一张空总表。
+describe('assertOk（200 也可能是失败）', () => {
+  const REJECTED = {
+    code: 1254001,
+    msg: "WrongRequestBody: the value of 'GroupChat' must be a list of object",
+    log_id: 'LOG1254001',
+  };
+
+  it('code != 0 必须抛，不能让调用点当成功往下走', () => {
+    expect(() => assertOk(REJECTED, '写进项目总表')).toThrow(/写进项目总表失败/);
+  });
+
+  it('抛出来的错还能被 describeFeishuError 认出来（形状是 AxiosError）', () => {
+    // 不做成这个形状的话，回帖里只有「写进项目总表失败」，
+    // 没有 msg / code / log_id —— 用户和管理员都查不下去。
+    try {
+      assertOk(REJECTED, '写进项目总表');
+      expect.unreachable();
+    } catch (e) {
+      const out = describeFeishuError(e);
+      expect(out).toContain('GroupChat');
+      expect(out).toContain('1254001');
+      expect(out).toContain('LOG1254001');
+    }
+  });
+
+  it('缺权限有时也是 200 回的，要照样归到 scope_denied', () => {
+    // 走 HTTP 4xx 那条路时前端能渲染「一键补权限」，200 这条路不能弱一档。
+    const res = { code: 99991672, msg: '应用尚未开通所需的应用身份权限：[bitable:app]' };
+    try {
+      assertOk(res, '创建多维表格');
+      expect.unreachable();
+    } catch (e) {
+      expect(describeFeishuErrorDetail(e, 'cli_myapp').kind).toBe('scope_denied');
+      expect(isScopeDenied(e)).toBe(true);
+    }
+  });
+
+  it('code 0 和没有 code 的响应原样返回', () => {
+    // 有些接口（以及测试里的假实现）压根不带 code，不能因此把成功判成失败。
+    const ok = { code: 0, data: { record: { record_id: 'rec_1' } } };
+    expect(assertOk(ok, '写入')).toBe(ok);
+    const bare = { data: { record: { record_id: 'rec_1' } } };
+    expect(assertOk(bare, '写入')).toBe(bare);
   });
 });
 

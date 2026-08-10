@@ -54,6 +54,10 @@ beforeEach(() => {
   db.prepare('DELETE FROM feishu_events').run();
   db.prepare('DELETE FROM feishu_directory_users').run();
   db.prepare('DELETE FROM feishu_chats').run();
+  db.prepare('DELETE FROM feishu_diary_records').run();
+  db.prepare('DELETE FROM feishu_diary_summaries').run();
+  db.prepare('DELETE FROM feishu_diary_projects').run();
+  db.prepare('DELETE FROM feishu_diary_indexes').run();
   db.prepare('DELETE FROM feishu_apps').run();
 });
 
@@ -558,6 +562,369 @@ describe('本企业的补充规则', () => {
       .prepare('SELECT intent_supplement FROM feishu_apps WHERE id = ?')
       .get(created.id) as { intent_supplement: string };
     expect(row.intent_supplement).toBe('我们公司的说法');
+  });
+});
+
+// 项目日记的只读接口（migration 066）。存在的理由是那几张多维表格
+// **在飞书里搜不到**（建表时没传 folder_token + 链接分享是关掉的），
+// 所以网页这一页是链接之外唯一的入口。
+describe('项目日记（只读 + 删整个项目）', () => {
+  /** 直接写库建一个项目 —— 走真流程要调飞书接口。 */
+  function seedProject(
+    appIdStr: string,
+    id: string,
+    name: string,
+    over: Partial<{ chatId: string; url: string; reviewTableId: string; indexRecordId: string | null }> = {}
+  ) {
+    const now = new Date().toISOString();
+    getDatabase()
+      .prepare(
+        `INSERT INTO feishu_diary_projects
+           (id, app_id, chat_id, chat_name, name, base_app_token, record_table_id,
+            review_table_id, url, link_share_closed, index_record_id, created_by,
+            created_by_name, created_at, updated_at)
+         VALUES (?, ?, ?, '产品群', ?, 'bascn_1', 'tbl_rec', ?, ?, 1, ?, 'ou_c', '王五', ?, ?)`
+      )
+      .run(
+        id,
+        appIdStr,
+        over.chatId ?? `oc_${id}`,
+        name,
+        over.reviewTableId ?? 'tbl_rev',
+        over.url ?? 'https://feishu.cn/base/bascn_1?table=tbl_rec',
+        over.indexRecordId === undefined ? 'rec_idx' : over.indexRecordId,
+        now,
+        now
+      );
+  }
+
+  function seedRecord(appIdStr: string, projectId: string, content: string, synced = true) {
+    const now = new Date();
+    getDatabase()
+      .prepare(
+        `INSERT INTO feishu_diary_records
+           (id, app_id, project_id, content, source_text, author_open_id, author_name,
+            message_id, step_index, created_ms, created_at, bitable_synced_at)
+         VALUES (?, ?, ?, ?, '', 'ou_a', '张三', ?, 0, ?, ?, ?)`
+      )
+      .run(
+        `r-${projectId}-${content}`,
+        appIdStr,
+        projectId,
+        content,
+        `om-${projectId}-${content}`,
+        now.getTime(),
+        now.toISOString(),
+        synced ? now.toISOString() : null
+      );
+  }
+
+  function seedIndex(appIdStr: string, url: string, closed = 1) {
+    const now = new Date().toISOString();
+    getDatabase()
+      .prepare(
+        `INSERT INTO feishu_diary_indexes
+           (app_id, base_app_token, table_id, url, link_share_closed, created_at, updated_at)
+         VALUES (?, 'bascn_idx', 'tbl_idx', ?, ?, ?, ?)`
+      )
+      .run(appIdStr, url, closed, now, now);
+  }
+
+  it('列出项目 + 项目总表链接（这是总表在网页侧唯一的入口）', async () => {
+    const created = await createAppAs(userA, 'cli_diary');
+    seedIndex('cli_diary', 'https://feishu.cn/base/bascn_idx?table=tbl_idx');
+    seedProject('cli_diary', 'p1', '印度纪录片');
+    seedRecord('cli_diary', 'p1', 'a');
+    seedRecord('cli_diary', 'p1', 'b');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.index.url).toContain('bascn_idx');
+    expect(res.body.projects).toHaveLength(1);
+    expect(res.body.projects[0].name).toBe('印度纪录片');
+    expect(res.body.projects[0].record_count).toBe(2);
+    // 「复盘」表是 base 的第二张表，不给专门的链接的话点进去只看到「记录」表。
+    expect(res.body.projects[0].review_url).toContain('table=tbl_rev');
+  });
+
+  it('还没建总表时 index 是 null，不是空链接', async () => {
+    // 前端要能区分"没有总表"和"有总表但链接是空的" —— 后者会渲染出一个点不动的链接。
+    const created = await createAppAs(userA, 'cli_diary_noidx');
+    seedProject('cli_diary_noidx', 'p1', '项目A');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.body.index).toBeNull();
+    expect(res.body.projects).toHaveLength(1);
+  });
+
+  // 「未同步」是"库里有、多维表格里没有"的唯一提示。补推是跟着下一次记录发生的
+  // （没有定时任务），所以这个数字必须能在页面上看到，否则「表里少几条」查不出原因。
+  it('未同步条数单独统计', async () => {
+    const created = await createAppAs(userA, 'cli_diary_unsync');
+    seedProject('cli_diary_unsync', 'p1', '项目A');
+    seedRecord('cli_diary_unsync', 'p1', 'ok', true);
+    seedRecord('cli_diary_unsync', 'p1', 'pending1', false);
+    seedRecord('cli_diary_unsync', 'p1', 'pending2', false);
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.body.projects[0].record_count).toBe(3);
+    expect(res.body.projects[0].unsynced_count).toBe(2);
+  });
+
+  it('没登记进总表的项目标出来（in_index=false）', async () => {
+    const created = await createAppAs(userA, 'cli_diary_orphan');
+    seedIndex('cli_diary_orphan', 'https://feishu.cn/base/bascn_idx');
+    seedProject('cli_diary_orphan', 'p1', '项目A', { indexRecordId: null });
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.body.projects[0].in_index).toBe(false);
+  });
+
+  it('一条记录都没有的项目也返回，统计是 0 而不是缺字段', async () => {
+    const created = await createAppAs(userA, 'cli_diary_empty');
+    seedProject('cli_diary_empty', 'p1', '空项目');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.body.projects[0].record_count).toBe(0);
+    expect(res.body.projects[0].unsynced_count).toBe(0);
+    expect(res.body.projects[0].last_record_ms).toBeNull();
+    expect(res.body.projects[0].summary_count).toBe(0);
+  });
+
+  it('日志记录最新在前（这一页是给人翻的，不是喂给 LLM 的）', async () => {
+    const created = await createAppAs(userA, 'cli_diary_order');
+    seedProject('cli_diary_order', 'p1', '项目A');
+    const db = getDatabase();
+    const now = Date.now();
+    for (const [i, text] of ['最早', '中间', '最新'].entries()) {
+      db.prepare(
+        `INSERT INTO feishu_diary_records
+           (id, app_id, project_id, content, source_text, author_open_id, author_name,
+            message_id, step_index, created_ms, created_at, bitable_synced_at)
+         VALUES (?, 'cli_diary_order', 'p1', ?, '', 'ou_a', '张三', ?, 0, ?, ?, NULL)`
+      ).run(`r${i}`, text, `om${i}`, now + i * 1000, new Date(now + i * 1000).toISOString());
+    }
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/records`)
+      .set(userA.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.records.map((r: any) => r.content)).toEqual(['最新', '中间', '最早']);
+    expect(res.body.total).toBe(3);
+  });
+
+  it('复盘接口给的是完整版总结（群里那条被截到 1500 字）', async () => {
+    const created = await createAppAs(userA, 'cli_diary_sum');
+    seedProject('cli_diary_sum', 'p1', '项目A');
+    const long = '细节'.repeat(1200);
+    getDatabase()
+      .prepare(
+        `INSERT INTO feishu_diary_summaries
+           (id, app_id, project_id, range_label, range_start_ms, range_end_ms, record_count,
+            summary, created_by, created_by_name, created_at, bitable_synced_at)
+         VALUES ('s1', 'cli_diary_sum', 'p1', '本周（08-03 至 08-09）', 1, 2, 12, ?,
+                 'ou_a', '张三', ?, NULL)`
+      )
+      .run(long, new Date().toISOString());
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/summaries`)
+      .set(userA.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.summaries[0].summary).toBe(long);
+    expect(res.body.summaries[0].range_label).toBe('本周（08-03 至 08-09）');
+    expect(res.body.summaries[0].synced).toBe(false);
+  });
+
+  it('分页生效', async () => {
+    const created = await createAppAs(userA, 'cli_diary_page');
+    seedProject('cli_diary_page', 'p1', '项目A');
+    for (let i = 0; i < 5; i++) seedRecord('cli_diary_page', 'p1', `c${i}`);
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/records?page=2&page_size=2`)
+      .set(userA.auth);
+    expect(res.body.total).toBe(5);
+    expect(res.body.records).toHaveLength(2);
+  });
+
+  // 隔离键是 app_id：一个平台账号可以帮两家公司各绑一个应用。
+  it('只返回本应用的项目', async () => {
+    const a = await createAppAs(userA, 'cli_diary_a');
+    await createAppAs(userA, 'cli_diary_b');
+    seedProject('cli_diary_a', 'pa', 'A公司的项目');
+    seedProject('cli_diary_b', 'pb', 'B公司的项目');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${a.id}/diary/projects`)
+      .set(userA.auth);
+    expect(res.body.projects).toHaveLength(1);
+    expect(JSON.stringify(res.body)).not.toContain('B公司的项目');
+  });
+
+  // 最要紧的一条：光按 project_id 查的话，拿到别家公司的 project_id
+  // 就能读到那家公司的全部项目日志。
+  it('别的应用的 project_id 返回 404，不是那个项目的日志', async () => {
+    const a = await createAppAs(userA, 'cli_diary_x');
+    await createAppAs(userA, 'cli_diary_y');
+    seedProject('cli_diary_y', 'py', 'Y公司的项目');
+    seedRecord('cli_diary_y', 'py', 'Y公司的机密日志');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${a.id}/diary/projects/py/records`)
+      .set(userA.auth);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain('Y公司的机密日志');
+  });
+
+  it('不存在的项目返回 404', async () => {
+    const created = await createAppAs(userA, 'cli_diary_404');
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/nope/records`)
+      .set(userA.auth);
+    expect(res.status).toBe(404);
+  });
+
+  // 日志正文就是那家公司的项目进展 —— 越权读这里比越权改配置更糟。
+  it('userB 读不了 userA 的项目清单和日志', async () => {
+    const created = await createAppAs(userA, 'cli_diary_own');
+    seedProject('cli_diary_own', 'p1', '机密项目');
+    seedRecord('cli_diary_own', 'p1', '机密日志内容');
+
+    const list = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(userB.auth);
+    expect(list.status).toBe(403);
+    expect(JSON.stringify(list.body)).not.toContain('机密项目');
+
+    const recs = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/records`)
+      .set(userB.auth);
+    expect(recs.status).toBe(403);
+    expect(JSON.stringify(recs.body)).not.toContain('机密日志内容');
+
+    const sums = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/summaries`)
+      .set(userB.auth);
+    expect(sums.status).toBe(403);
+  });
+
+  it('无 token 时 401', async () => {
+    const created = await createAppAs(userA, 'cli_diary_anon');
+    const res = await request(app).get(`/api/feishu-assistant/apps/${created.id}/diary/projects`);
+    expect(res.status).toBe(401);
+  });
+
+  // 逐条写入口仍然没有，理由和群里只给 view 权限一样：同步只追加，
+  // 网页上删掉一条、表格里那行也删不掉，库和表从此不一致。
+  // （删**整个项目**是例外 —— 它不试图和表格保持一致，见下面那几条。）
+  it('没有逐条写入口 —— 往日志里 POST 一条不是已注册的路由', async () => {
+    const created = await createAppAs(userA, 'cli_diary_ro');
+    seedProject('cli_diary_ro', 'p1', '项目A');
+    seedRecord('cli_diary_ro', 'p1', '一条记录');
+
+    const post = await request(app)
+      .post(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1/records`)
+      .set(userA.auth)
+      .send({ content: '网页写进来的' });
+    expect(post.status).toBe(404);
+
+    // 确认真的一条都没被动过
+    const n = getDatabase()
+      .prepare('SELECT COUNT(*) AS n FROM feishu_diary_records WHERE project_id = ?')
+      .get('p1') as { n: number };
+    expect(n.n).toBe(1);
+  });
+
+  // 删项目的回执里必须带上飞书那几张表的链接。那些表建的时候没传 folder_token、
+  // 链接分享也关了，飞书里搜不到；项目行一删助理就不再认识它们 ——
+  // 这是最后一次能拿到链接的机会。回执少了链接，这个操作看起来只是
+  // 「删掉了一个条目」，实际是把几张还活着的表变成了找不回的孤儿。
+  it('删项目的回执带着飞书表格链接，且表本身没被删', async () => {
+    const created = await createAppAs(userA, 'cli_diary_rm');
+    seedProject('cli_diary_rm', 'p1', '项目A');
+    seedRecord('cli_diary_rm', 'p1', '一条记录');
+    getDatabase()
+      .prepare(
+        `UPDATE feishu_diary_projects
+            SET url = 'https://f.cn/base/bas_log?table=tbl_rec',
+                review_table_id = 'tbl_rev',
+                base_app_token = 'bas_log',
+                task_base_url = 'https://f.cn/base/bas_task?table=tbl_task'
+          WHERE id = 'p1'`
+      )
+      .run();
+
+    const del = await request(app)
+      .delete(`/api/feishu-assistant/apps/${created.id}/diary/projects/p1`)
+      .set(userA.auth);
+
+    expect(del.status).toBe(200);
+    expect(del.body.deleted.name).toBe('项目A');
+    expect(del.body.deleted.record_count).toBe(1);
+    expect(del.body.deleted.log_url).toContain('bas_log');
+    expect(del.body.deleted.review_url).toContain('tbl_rev');
+    expect(del.body.deleted.task_url).toContain('bas_task');
+
+    const left = getDatabase()
+      .prepare('SELECT COUNT(*) AS n FROM feishu_diary_records WHERE project_id = ?')
+      .get('p1') as { n: number };
+    expect(left.n).toBe(0);
+  });
+
+  it('拿别的应用的 project_id 删不掉那个项目', async () => {
+    const mine = await createAppAs(userA, 'cli_diary_rm_a');
+    await createAppAs(userA, 'cli_diary_rm_b');
+    seedProject('cli_diary_rm_b', 'p_other', '别家的项目');
+    seedRecord('cli_diary_rm_b', 'p_other', '别家的日志');
+
+    const del = await request(app)
+      .delete(`/api/feishu-assistant/apps/${mine.id}/diary/projects/p_other`)
+      .set(userA.auth);
+
+    expect(del.status).toBe(404);
+    const left = getDatabase()
+      .prepare('SELECT COUNT(*) AS n FROM feishu_diary_records WHERE project_id = ?')
+      .get('p_other') as { n: number };
+    expect(left.n).toBe(1);
+  });
+
+  it('管理员可以看任何人的项目日记（后台监控要用）', async () => {
+    const created = await createAppAs(userA, 'cli_diary_admin');
+    seedProject('cli_diary_admin', 'p1', '项目A');
+
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${created.id}/diary/projects`)
+      .set(admin.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.projects).toHaveLength(1);
+  });
+
+  it('解绑应用后数据清掉 —— 重新绑定不该看到上一次的项目', async () => {
+    const created = await createAppAs(userA, 'cli_diary_del');
+    seedIndex('cli_diary_del', 'https://feishu.cn/base/old');
+    seedProject('cli_diary_del', 'p1', '旧项目');
+    seedRecord('cli_diary_del', 'p1', '旧日志');
+    await request(app).delete(`/api/feishu-assistant/apps/${created.id}`).set(userA.auth);
+
+    const again = await createAppAs(userA, 'cli_diary_del');
+    const res = await request(app)
+      .get(`/api/feishu-assistant/apps/${again.id}/diary/projects`)
+      .set(userA.auth);
+    // 留着的话，那些项目会指向上一次建的表格，而新的应用身份对那些表没有任何权限 ——
+    // 表现是「记一下」永远同步失败。
+    expect(res.body.projects).toEqual([]);
+    expect(res.body.index).toBeNull();
   });
 });
 

@@ -58,6 +58,18 @@ import { migration_056 } from './056_seed_feishu_intent_skill.js';
 import { migration_057 } from './057_feishu_directory.js';
 import { migration_058 } from './058_feishu_chats.js';
 import { migration_059 } from './059_feishu_intent_supplement.js';
+import { migration_060 } from './060_tender_extract_prompt_deadline.js';
+import { migration_061 } from './061_tender_feishu_app_push.js';
+import { migration_062 } from './062_per_app_ai_channel.js';
+import { migration_063 } from './063_agent_skills.js';
+// 064 曾经播一个内置技能 group-assistant（aily 版群助理），
+// 已随该功能一起删除；067 负责把老库里那一行清掉。迁移号不复用。
+import { migration_065 } from './065_normalize_base_url.js';
+import { migration_066 } from './066_feishu_diary.js';
+import { migration_067 } from './067_drop_seed_group_assistant.js';
+import { migration_068 } from './068_feishu_project_tasks.js';
+import { migration_069 } from './069_feishu_diary_record_origin.js';
+import { migration_070 } from './070_feishu_task_base.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -119,4 +131,14 @@ export const allMigrations: Migration[] = [
   migration_057,
   migration_058,
   migration_059,
+  migration_060,
+  migration_061,
+  migration_062,
+  migration_063,
+  migration_065,
+  migration_066,
+  migration_067,
+  migration_068,
+  migration_069,
+  migration_070,
 ];

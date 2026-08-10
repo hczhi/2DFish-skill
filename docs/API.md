@@ -307,7 +307,7 @@ Query: `?module_id=fish&days=7&limit=100`
   "actions": [
     { "name": "create_task", "description": "...", "examples": ["..."], "scopes": ["task:task:write"] }
   ],
-  "scopes": ["im:message", "task:task:write", "im:message.group_at_msg:readonly"],
+  "scopes": ["im:message", "task:task:write", "bitable:app", "drive:drive", "im:message.group_at_msg:readonly"],
   "directory_scopes": ["contact:user.base:readonly", "contact:department.base:readonly", "im:chat:readonly"],
   "events": ["im.message.receive_v1"],
   "default_supplement": "以下规则用于帮助助理听懂本企业的说话方式…"
@@ -317,27 +317,30 @@ Query: `?module_id=fish&days=7&limit=100`
 加一个动作不用改本接口，接入指引里的权限清单也会自动多一项。
 
 `scopes` 里已经包含 `directory_scopes`（接入指引让用户一次配齐）；单独再列一份是因为
-它们的性质不同：**不开也能用助理**，只是必须 @ 到人，私聊里按姓名找同事会失败。
-前端据此把它们渲染成「可选，但强烈建议」而不是硬性前置条件。
+它们的性质不同：**不开也能用助理**，只是每次都必须在群里 @ 到人，
+说一个没 @ 的同事的名字会失败。前端据此把它们渲染成「可选，但强烈建议」
+而不是硬性前置条件。
+
+`bitable:app` / `drive:drive` 相反，是**项目日记的硬前置**：少了前者建不出项目的
+多维表格（「新建项目」直接报错），少了后者表能建出来但群里谁都打不开、
+链接分享也关不掉（见 FEISHU_DIARY.md 第一节）。
 
 `params` 的值是**给 LLM 看的自然语言说明**，不是 JSON Schema，前端原样展示。
-带部门参数的动作（`send_message.departments` /
-`create_calendar_event.attendee_departments`）收部门名，服务端查名册展开成人 ——
-所以按部门群发依赖 `directory_scopes` 那一组权限，没同步过名册时用不了。
+涉及人的参数（`create_task.assignee`、`update_task.followers`）收的是**姓名**，
+服务端查 mentions 和名册换成 open_id —— 所以指名一个没 @ 过的人依赖
+`directory_scopes` 那一组权限，没同步过名册时用不了。
 
 `default_supplement` 是**应用没填自己的补充规则时实际生效的那份**（skill slot
 `feishu-intent`，migration 056 播的示例模板）。前端「填入示例模板」按钮读它 ——
 客户端自己抄一份的话，平台改了模板之后按钮填出来的还是旧的，而用户以为那就是当前默认。
 
-动作绝大多数是写操作。唯一**面向用户**的读动作是 `query_freebusy`（查某人什么时候有空，
-权限点 `calendar:calendar.free_busy:read`）—— 忙闲是少数几个 tenant token 能读的东西，
-因为它只回时间区间、不回日程内容。「列出我的任务」「今天有什么日程」这类要 user token，
-本模块没有，也就不存在对应动作。
+面向用户的读动作只有项目日记那两个（`list_diary_projects` / `review_diary`），
+它们读的是**我们自己的库**，不是飞书。飞书那侧的读基本做不到：「列出我的任务」
+要 user token（见 FEISHU_ASSISTANT.md 第五节），本模块没有，也就不存在对应动作。
 
-`update_task` / `update_calendar_event` / `delete_calendar_event` 会顺带读一点东西
-（改时间前读原时长、删之前读原定时间），但那是**按 id 读一条已知的记录**，
-而不是列举——id 只可能来自我们自己的执行日志，所以这几个动作只对**助理自己建过的**
-任务/日程有效。用户在飞书里手动建的，助理既查不到也改不动，回帖会明说这一点
+`update_task` 会顺带读一点东西，但那是**按 guid 读一条已知的记录**而不是列举 ——
+guid 只可能来自我们自己的执行日志，所以这个动作只对**助理自己建过的**任务有效。
+用户在飞书里手动建的，助理既查不到也改不动，回帖会明说这一点
 （见 FEISHU_ASSISTANT.md 八·三）。
 
 ### GET /api/feishu-assistant/apps `PROTECTED`
@@ -397,7 +400,7 @@ Query: `?module_id=fish&days=7&limit=100`
 错误：`400` 应用已停用 · `403` 他人的应用 · `404` 不存在 · `502` 建连失败（含原因）
 
 ### POST /api/feishu-assistant/apps/:id/directory/sync `PROTECTED`
-同步组织架构名册（私聊里按姓名找同事的前提）。**绑定成功后会自动跑一次**，
+同步组织架构名册（指名一个没被 @ 到的同事的前提）。**绑定成功后会自动跑一次**，
 这个接口是之后「有人入职/离职/调岗」时的手动更新入口。
 
 **返回 `202` 就走**，不等同步完成 —— 全公司通讯录要几十到几百次 API 调用，
@@ -462,6 +465,104 @@ Query：`q`（模糊搜姓名/部门/职位）· `page` · `page_size`（默认 
 
 错误：`403` 他人的应用（群名等于公司内部信息）· `404` 不存在
 
+### 项目日记：三个只读接口
+
+下面四个接口是 `/feishu` >「项目日记」那一页的数据源，**除最后一个（删整个项目）之外只读**。
+只读是设计不是没做完：同步到多维表格是**只追加**的（推上去就置状态位、永不重推），
+所以网页上删掉一条，表格里那行删不掉 —— 开一个写入口就等于让库和表永久不一致，
+而用户看的是表。所有写路径都走群里 @ 助理（每一步都带记录人、时间、原始 `message_id`）。
+
+四者共用 `appForDiary()` 做归属校验，且 `:projectId` **必须同时匹配 `app_id`**：
+光按 id 查的话，拿到一个别家公司的 `project_id` 就能读到那家公司的全部项目日志，
+不匹配一律 `404`。403 的文案是「无权查看」—— 日志正文就是那家公司的项目进展，
+越权读这里比越权改配置更糟。
+
+#### GET /api/feishu-assistant/apps/:id/diary/projects `PROTECTED`
+项目清单 + 项目总表链接。
+```json
+{
+  "index": { "url": "https://…/base/bascn…", "link_share_closed": true },
+  "projects": [{
+    "id": "...", "name": "印度纪录片",
+    "chat_id": "oc_xxx", "chat_name": "印度纪录片项目群",
+    "url": "https://…?table=tbl…", "review_url": "https://…?table=tbl…",
+    "link_share_closed": true, "in_index": true,
+    "created_by_name": "张三", "created_at": "...",
+    "record_count": 37, "unsynced_count": 0,
+    "last_record_ms": 1786000000000, "summary_count": 3, "last_summary_at": "..."
+  }]
+}
+```
+- **`index` 可能是 `null`**（第一个项目建出来之前总表还不存在，或当初建总表那步失败了），
+  `url` 也可能是空串。前端要区分这两种和"有链接"，别渲染成一个点不动的空链接。
+- **`review_url` 单独给**：复盘存在 base 的第二张表里，群里发的那条被截到 1500 字，
+  完整版在表里。不给这个链接的话用户点进去只看到「记录」表。
+- **`unsynced_count` 必须显示出来。** 补推是跟着**下一次记录**发生的（没有定时任务），
+  所以一个不再活跃的群会永久停在"库里有、表里少几条"。不显示这个数字，那种缺失查不出原因。
+- `in_index: false` = 当初写进总表那一步失败了，下次在群里记录时会自动补登记。
+- `link_share_closed: false` 是**信息泄露面**，不是观感问题：链接分享没关成功意味着
+  组织内任何拿到链接的人都能看这个项目的全部日志，而链接是发在群里的。
+- 计数用两条 `GROUP BY` 一次算完（`projectStats`），不是每个项目查四次 —— 这页一打开就调。
+
+#### GET /api/feishu-assistant/apps/:id/diary/projects/:projectId/records `PROTECTED`
+一个项目的日志正文，最新在前。Query：`page` · `page_size`（默认 50，上限 200）
+```json
+{
+  "project": { "id": "...", "name": "印度纪录片", "url": "…", "review_url": "…" },
+  "records": [{
+    "id": "...", "content": "今天和导演对了分镜，第三场要重拍",
+    "author_name": "张三", "created_ms": 1786000000000, "created_at": "...",
+    "synced": true
+  }],
+  "total": 37
+}
+```
+`synced: false` 是「这条在表里看不到」的唯一提示，含义同上面的 `unsynced_count`。
+
+#### GET /api/feishu-assistant/apps/:id/diary/projects/:projectId/summaries `PROTECTED`
+一个项目的复盘记录。Query：`page` · `page_size`（默认 20，上限 100）
+```json
+{
+  "project": { "id": "...", "name": "印度纪录片", "review_url": "…" },
+  "summaries": [{
+    "id": "...", "range_label": "本周（08-03 至 08-09）", "record_count": 12,
+    "summary": "（完整版 markdown，不截断）",
+    "created_by_name": "张三", "created_at": "...", "synced": true
+  }],
+  "total": 3
+}
+```
+`summary` 是**完整版** —— 群里那条被截到 1500 字，这也是这个接口的主要价值。
+
+#### DELETE /api/feishu-assistant/apps/:id/diary/projects/:projectId `PROTECTED`
+删掉一个项目。**只删库里的关联，飞书那侧一个字都不动。**
+```json
+{
+  "ok": true,
+  "deleted": {
+    "name": "印度纪录片", "chat_id": "oc_xxx",
+    "record_count": 37, "summary_count": 3,
+    "log_url": "https://…?table=tbl…", "review_url": "https://…?table=tbl…",
+    "task_url": "https://…?table=tbl…",
+    "still_in_index": true
+  }
+}
+```
+- 库里删掉的是**日志记录 + 复盘 + 项目行**；`feishu_project_tasks` 只置空 `project_id`
+  （那些任务在负责人的飞书待办里真实存在，删掉库里的行会让「改一下那个任务」再也找不到它）。
+- **飞书的多维表格不删、项目总表那一行也不动。** 删除是一次网页点击，而我们既没有回收站
+  也没有第二份（070 之后任务**只存在**于表格里）—— 顺手删云文档的话按错一下就没了全部历史。
+- 所以 `log_url` / `review_url` / `task_url` **必须显示给用户**，而且不能用 alert
+  （点掉就没了）：那些表建的时候没传 `folder_token`、链接分享也是关掉的，飞书里搜不到，
+  而项目行一删助理就不再认识它们、群里问「有哪些项目」也不会再列出来 ——
+  **这是最后一次能拿到链接的机会**。空串 = 当初那张表就没建出来。
+- `still_in_index: true` 表示总表里那一行还在（它也是事后找回上面链接的途径），
+  于是总表会继续列着这个项目。要说出来，否则用户打开总表会以为没删掉。
+- 群和项目的绑定（`chat_id` 的 UNIQUE）随项目行消失，这个群之后可以重新「新建项目」——
+  但**新项目会另建一套表**，和老表没有关系。
+
+错误（四个都一样）：`403` 他人的应用 · `404` 应用不存在 / 项目不存在（含跨应用的 projectId）
+
 ### PUT /api/feishu-assistant/apps/:id/intent-supplement `PROTECTED`
 保存这个应用的「本企业补充规则」（migration 059）—— 让助理听懂本公司的术语、简称、
 时间习惯。请求体 `{ text: string }`，响应是更新后的整行（同 `GET /apps` 的形状）。
@@ -469,7 +570,7 @@ Query：`q`（模糊搜姓名/部门/职位）· `page` · `page_size`（默认 
 - **空串是合法值**，语义是「回落到平台默认那份」，不是「忽略本次请求」。
 - 上限 **4000 字**，超了 `400`。这段话每解析一条指令就随 prompt 发一次：
   太长会让每条指令都更慢更贵，而且会把后面的硬性规则（open_id 只许照抄、
-  输出必须是 JSON）压下去 —— 表现是助理"忽然开始乱发消息"。
+  输出必须是 JSON）压下去 —— 表现是助理"忽然开始把任务派给错的人"。
 - **按应用存，不按账号**。一个应用 = 一个飞书租户，一个账号能绑多个应用。
 - **改完不用重连**，下一条指令就生效（dispatcher 每条消息都重取应用行）。
 - 只影响"怎么听懂人话"。动作清单、JSON 格式、open_id 约束都在代码里，
@@ -488,26 +589,26 @@ Query：`status` (`pending`/`running`/`done`/`failed`/`ignored`) · `app_id` · 
 {
   "commands": [{
     "id": "...", "app_id": "cli_xxx", "chat_id": "oc_xxx", "chat_type": "group",
-    "sender_name": "张三", "text": "明天下午三点开个评审会",
-    "action": "create_calendar_event", "params": "{\"summary\":\"评审会\"}",
+    "sender_name": "张三", "text": "记一下：客户要把 logo 改大",
+    "action": "add_diary_record", "params": "{\"content\":\"客户要把 logo 改大\"}",
     "status": "done", "error": null, "error_detail": null,
-    "result": "{\"summary\":\"📅 日程已创建…\"}",
+    "result": "{\"summary\":\"📝 已记到 印度纪录片…\"}",
     "duration_ms": 2840, "created_at": "...", "completed_at": "..."
   }],
   "total": 1
 }
 ```
 
-一句话里说了两件事时（「给他们发消息，并建个日程」），`action` 是
-`"send_message + create_calendar_event"`，`params` 存的是步骤数组；一步时和以前逐字节相同。
+一句话里说了两件事时（「记一下客户要改 logo，顺便派给张三」），`action` 是
+`"add_diary_record + create_task"`，`params` 存的是步骤数组；一步时和以前逐字节相同。
 `result` 里 `summary` 是**做成了的那几步**的回复拼起来（前端详情页直接读它），
 `steps[]` 逐步给 `action` + `summary` + 该动作自己的 `data`：
 ```json
 {
-  "summary": "已通知 12 人（销赞云事业部 等 12 人）：周五九点半开会\n📅 日程已创建…",
+  "summary": "📝 已记到 印度纪录片：客户要把 logo 改大\n✅ 任务已创建：把 logo 改大（张三）",
   "steps": [
-    { "action": "send_message", "summary": "已通知 12 人…", "sent": [{ "open_id": "ou_x", "name": "张三" }], "failed": [] },
-    { "action": "create_calendar_event", "summary": "📅 日程已创建…", "event_id": "..." }
+    { "action": "add_diary_record", "summary": "📝 已记到 印度纪录片…", "project": "印度纪录片", "record_id": "...", "synced": true },
+    { "action": "create_task", "summary": "✅ 任务已创建…", "guid": "...", "title": "把 logo 改大", "url": "https://…" }
   ]
 }
 ```

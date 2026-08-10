@@ -7,8 +7,11 @@ import { generateApiToken, hashApiToken } from '../auth/middleware.js';
 import OpenAI from 'openai';
 import {
   listProviders, upsertProvider, deleteProvider, maskProvider, getProvider,
-  dedicatedChannelStatus, REQUIRED_LLM_TIERS,
+  dedicatedChannelStatus, appChannelStatus, REQUIRED_LLM_TIERS,
 } from '../services/aiProviderService.js';
+import { AI_APPS, isValidAppScope } from '../core/llm/apps.js';
+import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
+import { getAppQuotaStatus } from '../core/llm/gateway.js';
 import { parsePagination, patchRow } from '../core/http.js';
 import { encryptSecret, maskSecret } from '../core/secrets.js';
 
@@ -230,8 +233,16 @@ adminRouter.post('/config', (req: Request, res: Response) => {
 
   const db = getDatabase();
   const now = new Date().toISOString();
+  // base_url 入库先归一化，理由同 ai_providers：粘完整的 .../chat/completions
+  // 进来，SDK 会再拼一次，上游回 404 «Invalid URL»。见 core/llm/baseUrl.ts。
+  const stored =
+    key === 'platform_api_base_url'
+      ? normalizeBaseUrl(String(value))
+      : SECRET_CONFIG_KEYS.has(key)
+        ? encryptSecret(String(value))
+        : value;
   db.prepare('INSERT OR REPLACE INTO system_config (key, value, updated_at) VALUES (?, ?, ?)')
-    .run(key, SECRET_CONFIG_KEYS.has(key) ? encryptSecret(String(value)) : value, now);
+    .run(key, stored, now);
 
   res.json({ success: true });
 });
@@ -255,7 +266,9 @@ adminRouter.delete('/config/:key', (req: Request, res: Response) => {
 // 不传 owner_user_id 时只返回平台级，避免系统配置页混进用户私有配置。
 adminRouter.get('/providers', (req: Request, res: Response) => {
   const owner = req.query.owner_user_id ? String(req.query.owner_user_id) : undefined;
-  res.json({ providers: listProviders(owner).map(maskProvider) });
+  // apps 一并下发：scope_app 下拉框的选项必须来自服务端的同一份白名单。
+  // 前端自己抄一份的话，加了新模块只更新一边 —— 抄的那份漏了谁，谁就永远配不上。
+  res.json({ providers: listProviders(owner).map(maskProvider), apps: AI_APPS });
 });
 
 adminRouter.post('/providers', (req: Request, res: Response) => {
@@ -277,6 +290,20 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
     const exists = getDatabase().prepare('SELECT id FROM user WHERE id = ?').get(String(b.owner_user_id));
     if (!exists) { res.status(400).json({ error: 'owner_user_id 对应的用户不存在' }); return; }
   }
+  // scope_app 同理，而且更隐蔽：它靠字符串等于 GatewayOptions.source 来匹配，
+  // 写成 'XHS' 或 'ui_review' 的表现是「保存成功、界面正常、永远不生效」。
+  // 白名单在 core/llm/apps.ts。
+  if (b.scope_app && !isValidAppScope(String(b.scope_app))) {
+    res.status(400).json({
+      error: `scope_app「${b.scope_app}」不是已知应用。可选：${AI_APPS.map((a) => a.id).join(' / ')}`,
+    });
+    return;
+  }
+  // 归属类字段（owner_user_id / scope_app）只在 body 里**出现过**时才传下去。
+  // 写成 `b.scope_app || ''` 的话，一次没带该字段的编辑（改个 label、换个 model）
+  // 就把「xhs 专用」悄悄变成全站通用 —— 一个应用的 key 摊给所有应用；
+  // owner_user_id 同理，而且更严重：用户的专属配置会变成平台配置，从此平台替他付钱。
+  // upsertProvider 里用 `?? existing` 保留旧值，前提就是这里传 undefined 而不是空值。
   const saved = upsertProvider({
     id: b.id || undefined,
     kind: b.kind,
@@ -287,7 +314,8 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
     model: b.model,
     extra_json: b.extra_json,
     enabled: b.enabled,
-    owner_user_id: b.owner_user_id || null,
+    ...('owner_user_id' in b ? { owner_user_id: b.owner_user_id || null } : {}),
+    ...('scope_app' in b ? { scope_app: b.scope_app || '' } : {}),
   });
   res.json({ provider: maskProvider(saved) });
 });
@@ -313,7 +341,55 @@ adminRouter.get('/users/:id/dedicated-ai', (req: Request, res: Response) => {
     providers: listProviders(req.params.id).map(maskProvider),
     status: dedicatedChannelStatus(req.params.id),
     required_tiers: REQUIRED_LLM_TIERS,
+    apps: AI_APPS,
+    // 逐个应用、逐档报告「实际会用哪条配置」。
+    // 关键是 fallbackToShared：只配了 xhs 的 fast、忘了 strong 时，
+    // strong 会静默回落到通用配置（可能是很贵的模型），运行时完全看不出来。
+    app_resolutions: Object.fromEntries(
+      AI_APPS.map((a) => [a.id, appChannelStatus(req.params.id, a.id)])
+    ),
+    app_quotas: getAppQuotaStatus(req.params.id),
   });
+});
+
+// --- 按应用的每日额度（migrations/062）---
+// 语义：**额外的天花板，不替代账号总额**。没有行 = 该应用不限。
+// 与专属渠道无关：专属渠道用户同样受这个限制（见 checkAndDeductAppQuota 注释）。
+
+adminRouter.put('/users/:id/app-quota', (req: Request, res: Response) => {
+  const { app, daily_limit } = req.body || {};
+  const db = getDatabase();
+
+  const user = db.prepare('SELECT id FROM user WHERE id = ?').get(req.params.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  if (!isValidAppScope(app) || !app) {
+    res.status(400).json({ error: `app 必须是已知应用之一：${AI_APPS.map((a) => a.id).join(' / ')}` });
+    return;
+  }
+
+  // null / 负数 = 取消限制（删行）。0 是**合法且不同**的值：意思是「一次都不许调」，
+  // 是管理员临时掐停某个应用的手段，不能和「不限制」混在一起。
+  if (daily_limit === null || daily_limit === undefined) {
+    db.prepare('DELETE FROM ai_app_quota WHERE user_id = ? AND app = ?').run(req.params.id, app);
+    res.json({ success: true, app, daily_limit: null });
+    return;
+  }
+  if (typeof daily_limit !== 'number' || !Number.isInteger(daily_limit) || daily_limit < 0) {
+    res.status(400).json({ error: 'daily_limit 必须是非负整数，或传 null 表示取消限制' });
+    return;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  // 只改上限，不动 used_today —— 管理员中途调额度不该把今天已用的次数抹掉，
+  // 否则「调一次额度」就等于「白送一天」。ON CONFLICT 里刻意不写 used_today。
+  db.prepare(
+    `INSERT INTO ai_app_quota (user_id, app, daily_limit, used_today, last_reset_date)
+     VALUES (?, ?, ?, 0, ?)
+     ON CONFLICT(user_id, app) DO UPDATE SET daily_limit = excluded.daily_limit`
+  ).run(req.params.id, app, daily_limit, today);
+
+  res.json({ success: true, app, daily_limit });
 });
 
 adminRouter.patch('/users/:id/dedicated-ai', (req: Request, res: Response) => {
@@ -352,7 +428,15 @@ adminRouter.patch('/users/:id/dedicated-ai', (req: Request, res: Response) => {
  * strong 档额外带 response_format: json_object —— xhs 搭结构/校验/诊断等 6 处
  * 硬依赖它，而多数失败在业务层被兜底成空结果（表现是"点了没反应"而不是报错）。
  * 在这里探一次，把不兼容的模型挡在配置阶段。
+ *
+ * TEST_MAX_TOKENS 给得比"够回一个 ok"大得多，因为**推理模型的思考 token
+ * 也算在 max_tokens 里**：deepseek-v4-flash 之类的模型把预算全花在
+ * reasoning_content 上，content 是空字符串、finish_reason 是 'length'。
+ * 原来这里是 16，实测该模型必然返回空回复 —— 而 200 那行照样 success: true，
+ * 管理员看到"连通 ✓ 回复：（空）"，只能怀疑自己的 key。
+ * 空回复现在会被判成失败并给出明确提示。
  */
+const TEST_MAX_TOKENS = 512;
 adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
   const provider = getProvider(req.params.id);
   if (!provider) { res.status(404).json({ error: 'Provider not found' }); return; }
@@ -374,28 +458,56 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
     const r = await client.chat.completions.create({
       model: provider.model || 'gpt-4o',
       messages: [{ role: 'user', content: wantsJson ? '返回 JSON：{"ok":true}' : 'ping' }],
-      max_tokens: 16,
+      max_tokens: TEST_MAX_TOKENS,
       temperature: 0,
       ...(wantsJson ? { response_format: { type: 'json_object' as const } } : {}),
     });
+    const choice = r.choices?.[0];
+    const reply = choice?.message?.content || '';
+    // 推理模型的思考 token 也吃 max_tokens。空 content 意味着这个模型在
+    // 本项目实际用的 max_tokens（很多调用点是 300~1500）下有很大概率也吐空，
+    // 那对业务是静默失败。宁可在这里判失败。
+    const reasoningTokens =
+      (r.usage as any)?.completion_tokens_details?.reasoning_tokens ?? 0;
+    if (!reply.trim()) {
+      res.status(400).json({
+        success: false,
+        error: `模型返回了空内容（finish_reason=${choice?.finish_reason || '未知'}${reasoningTokens ? `，思考 token ${reasoningTokens}` : ''}）`,
+        hint: reasoningTokens
+          ? `这是一个推理模型：它的思考过程走 reasoning_content，且**思考 token 也算在 max_tokens 里**。本次已给到 ${TEST_MAX_TOKENS} 仍吐空，说明它在本项目多数调用点（max_tokens 300~1500）下也会返回空内容，不适合直接接入。`
+          : '模型连通但没有返回正文，请检查该模型名是否正确、是否需要特殊参数。',
+      });
+      return;
+    }
     res.json({
       success: true,
       duration_ms: Date.now() - started,
       model: r.model || provider.model,
       json_object_supported: wantsJson ? true : undefined,
-      reply: r.choices?.[0]?.message?.content?.slice(0, 200) || '',
+      reply: reply.slice(0, 200),
+      // 推理模型必须在配置阶段就说出来：它会静静吃掉 max_tokens 预算。
+      reasoning_tokens: reasoningTokens || undefined,
+      reasoning_hint: reasoningTokens
+        ? `这是推理模型（本次思考消耗 ${reasoningTokens} token，且计入 max_tokens）。项目里 max_tokens 较小的调用点（如摸鱼缸 300、看板 1000）有返回空内容的风险，建议先在对应功能里实测。`
+        : undefined,
     });
   } catch (e: any) {
     // 上游把 json_object 不支持报成 400，和「key 错了」区分开，否则管理员会去反复检查 key。
     const msg = String(e?.message || e);
     const jsonUnsupported = wantsJson && /response_format|json_object/i.test(msg);
+    // 404 «Invalid URL» 几乎总是 base_url 的问题，而报错字面上跟地址无关，
+    // 管理员会先怀疑 key 和模型名。base_url 现在入库/出库都会归一化，
+    // 所以走到这里通常是**路径本身**不对（少了 /v1、网关前缀写错）。
+    const badUrl = /invalid url|404/i.test(msg);
     res.status(400).json({
       success: false,
       error: msg.slice(0, 500),
       json_object_supported: jsonUnsupported ? false : undefined,
       hint: jsonUnsupported
         ? '该模型不支持 response_format=json_object，strong 档的结构化任务（小红书搭结构/校验/诊断）会失败，请换一个模型。'
-        : undefined,
+        : badUrl
+          ? `请检查 Base URL：这里要填**前缀**（如 https://host/v1），末尾的 /chat/completions 由程序自己拼。当前实际请求的前缀是「${provider.base_url || 'https://api.openai.com/v1'}」，也请确认模型名「${provider.model}」在该网关上存在。`
+          : undefined,
     });
   }
 });

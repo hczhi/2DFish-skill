@@ -153,3 +153,41 @@ export function prettyParams(row: Pick<FeishuCommandLike, 'params'>): string {
 export function chatLabel(chat: Pick<FeishuChatRow, 'name' | 'chat_id'>): string {
   return chat.name?.trim() || chat.chat_id
 }
+
+/** 一行指令日志/一个下拉项里和"这是哪个群"有关的那几个字段。 */
+export interface FeishuChatLabelled {
+  chat_id: string
+  chat_name: string
+  project_name: string
+}
+
+/**
+ * 一条指令属于哪个群/项目。
+ *
+ * **项目名优先，群名兜底，最后是 chat_id 尾号。** 三级都要，因为三种情况都常见：
+ * 建了项目的群有项目名（用户心里的称呼就是它）；没建项目的群只有群名；
+ * 而群名要 `im:chat:readonly` 才拿得到，那不是必需权限，所以经常两个都空。
+ * 最后那级不能省成空白 —— 一片空白的日志列表看起来像坏了，
+ * 而尾号至少能和展开详情里那串完整 id 对上。
+ *
+ * 放在这里而不是各页面自己写：用户侧和后台都要显示这一列，
+ * 而这个函数的三级兜底恰恰是最容易只改一边的那种逻辑。
+ */
+export function commandChatLabel(row: FeishuChatLabelled): string {
+  const project = row.project_name?.trim()
+  const chat = row.chat_name?.trim()
+  if (project) return chat ? `${project}（${chat}）` : project
+  if (chat) return chat
+  return `未命名群 …${(row.chat_id || '').slice(-6)}`
+}
+
+/**
+ * 「按项目群筛」下拉里那一项的文字。
+ *
+ * 没建项目的群要**标出来**：不标的话它和有项目的群长得一样，
+ * 用户会以为在那个群里说「记一下」也有地方记（实际会被回一句「先建项目」）。
+ */
+export function commandChatOptionLabel(row: FeishuChatLabelled): string {
+  const base = commandChatLabel(row)
+  return row.project_name?.trim() ? base : `${base}（未建项目）`
+}

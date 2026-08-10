@@ -9,6 +9,8 @@ import FeishuErrorDetail, { type FeishuErrorDetailData } from '../../components/
 import {
   COMMAND_STATUS_OPTIONS,
   chatLabel,
+  commandChatLabel as cmdChatLabel,
+  commandChatOptionLabel as cmdChatOptionLabel,
   commandStatusLabel as statusLabel,
   connStateClass as stateClass,
   connStateLabel as stateLabel,
@@ -17,6 +19,7 @@ import {
   fmtTime,
   prettyParams,
   resultSummary,
+  type FeishuChatLabelled,
   type FeishuChatRow,
 } from '../../lib/feishu'
 
@@ -65,7 +68,12 @@ interface DirectoryUser {
 interface CommandRow {
   id: string
   app_id: string
+  chat_id: string
   chat_type: string
+  /** 群名。飞书后台不给的时候是空串（要 `im:chat:readonly`，那不是必需权限）。 */
+  chat_name: string
+  /** 这个群绑的项目名。空串 = 这个群没建项目。 */
+  project_name: string
   sender_name: string
   text: string
   action: string | null
@@ -79,7 +87,69 @@ interface CommandRow {
   created_at: string
 }
 
-type Tab = 'apps' | 'directory' | 'rules' | 'logs' | 'guide'
+/** 日志页「按项目群筛」下拉的一项。文字由 lib/feishu 的 commandChatOptionLabel 算。 */
+type CommandChatOption = FeishuChatLabelled
+
+/** 项目日记的一行。逐条记录只读 —— 记录只能通过在飞书群里 @ 助理产生。 */
+interface DiaryProject {
+  id: string
+  name: string
+  chat_id: string
+  chat_name: string
+  /** 「记录」表的可点链接。空串 = 建表那一步失败过。 */
+  url: string
+  /** 「复盘」表（同一个 base 的第二张表）。完整版总结在这里。 */
+  review_url: string
+  link_share_closed: boolean
+  /** false = 当初写进项目总表失败了，下次在群里记录会自动补登记。 */
+  in_index: boolean
+  created_by_name: string
+  created_at: string
+  record_count: number
+  /**
+   * record_count 里有多少条是 AI 从群聊归纳的（不是谁的原话）。
+   * 单独显示，不混进总数：40 条记录读起来像 40 条一手事实，
+   * 而其中 30 条可能是自动生成的。
+   */
+  digest_count: number
+  /** 库里有、多维表格里还没有的条数。补推跟着下一次记录发生，没有定时任务。 */
+  unsynced_count: number
+  last_record_ms: number | null
+  summary_count: number
+  last_summary_at: string | null
+  task_count: number
+  /** 未完成（待办 / 进行中）的条数。 */
+  open_task_count: number
+  /** 任务里还没推进多维表格的条数。和 unsynced_count 同理，必须露出来。 */
+  unsynced_task_count: number
+}
+
+interface DiaryRecord {
+  id: string
+  content: string
+  author_name: string
+  created_ms: number
+  created_at: string
+  synced: boolean
+  /**
+   * 'manual' = 人说的原话，'chat_digest' = AI 从群聊归纳的。
+   * 必须标出来：这张表的价值全在「当时到底怎么说的」，
+   * 而归纳的那些和原话并排放着。
+   */
+  origin: 'manual' | 'chat_digest'
+}
+
+interface DiarySummary {
+  id: string
+  range_label: string
+  record_count: number
+  summary: string
+  created_by_name: string
+  created_at: string
+  synced: boolean
+}
+
+type Tab = 'apps' | 'diary' | 'directory' | 'rules' | 'logs' | 'guide'
 
 const activeTab = ref<Tab>('apps')
 
@@ -88,6 +158,8 @@ const capabilities = ref<{
   actions: any[]
   scopes: string[]
   directory_scopes: string[]
+  /** 开了才多一个功能的权限点，按功能分组。不开也能用助理的其余全部功能。 */
+  optional_scopes: Array<{ scopes: string[]; feature: string }>
   events: string[]
   /** 应用没填补充规则时实际生效的那份，「填入示例模板」按钮用它。 */
   default_supplement: string
@@ -207,13 +279,178 @@ async function saveRules() {
   }
 }
 
+// ---- 项目日记 ----
+// 这一页**除了删掉整个项目之外是只读的**，理由和群里只给 view 权限是同一条：
+// 同步是只追加的，网页上删掉一条记录，多维表格里那行永远不会被删掉，库和表从此不一致。
+// 要改就在群里 @ 助理说，那条路径每步都有记录人和时间。
+// 删整个项目是例外，因为它不试图和表格保持一致 —— 飞书那侧一个字都不动，
+// 只是助理不再认识那几张表（于是删除回执里必须把链接给出来，见 diaryDeleted）。
+//
+// 页面存在的理由是那些多维表格**在飞书里搜不到**（建表时没传 folder_token，
+// 链接分享也是关掉的）。群里能 @ 助理问「有哪些项目」，但那要求你在群里。
+const diaryAppId = ref('')
+const diaryIndex = ref<{ url: string; link_share_closed: boolean } | null>(null)
+const diaryProjects = ref<DiaryProject[]>([])
+const diaryLoading = ref(false)
+/** 展开看日志的那个项目。null = 只看清单。 */
+const diaryOpenId = ref<string | null>(null)
+const diaryView = ref<'records' | 'summaries'>('records')
+const diaryRecords = ref<DiaryRecord[]>([])
+const diarySummaries = ref<DiarySummary[]>([])
+const diaryDetailTotal = ref(0)
+const diaryDetailPage = ref(1)
+const DIARY_PAGE_SIZE = 50
+const diaryDetailLoading = ref(false)
+
+const diaryApp = computed(() => apps.value.find((a) => a.app_id === diaryAppId.value))
+const diaryDetailPages = computed(() => Math.max(1, Math.ceil(diaryDetailTotal.value / DIARY_PAGE_SIZE)))
+
+/**
+ * 库里有、表里还没有的总条数。非 0 时要在页面上说清楚，否则「表里少几条」查不出原因。
+ *
+ * 记录和任务**加在一起**：这条横幅回答的是「表里为什么少东西」，
+ * 而用户不会先分清少的是记录还是任务。分开报在每个项目那一行上。
+ */
+const diaryUnsyncedTotal = computed(() =>
+  diaryProjects.value.reduce((n, p) => n + p.unsynced_count + p.unsynced_task_count, 0)
+)
+
+async function loadDiary() {
+  const app = diaryApp.value
+  if (!app) { diaryProjects.value = []; diaryIndex.value = null; return }
+  diaryLoading.value = true
+  try {
+    const res = await apiGet<{ index: typeof diaryIndex.value; projects: DiaryProject[] }>(
+      `/api/feishu-assistant/apps/${app.id}/diary/projects`
+    )
+    diaryIndex.value = res.index
+    diaryProjects.value = res.projects
+  } catch (e: any) {
+    console.error(e)
+  } finally {
+    diaryLoading.value = false
+  }
+}
+
+async function loadDiaryDetail() {
+  const app = diaryApp.value
+  const pid = diaryOpenId.value
+  if (!app || !pid) return
+  diaryDetailLoading.value = true
+  try {
+    if (diaryView.value === 'records') {
+      const res = await apiGet<{ records: DiaryRecord[]; total: number }>(
+        `/api/feishu-assistant/apps/${app.id}/diary/projects/${pid}/records`,
+        { page: diaryDetailPage.value, page_size: DIARY_PAGE_SIZE }
+      )
+      diaryRecords.value = res.records
+      diaryDetailTotal.value = res.total
+    } else {
+      const res = await apiGet<{ summaries: DiarySummary[]; total: number }>(
+        `/api/feishu-assistant/apps/${app.id}/diary/projects/${pid}/summaries`,
+        { page: diaryDetailPage.value, page_size: DIARY_PAGE_SIZE }
+      )
+      diarySummaries.value = res.summaries
+      diaryDetailTotal.value = res.total
+    }
+  } catch (e: any) {
+    console.error(e)
+  } finally {
+    diaryDetailLoading.value = false
+  }
+}
+
+function openDiaryProject(p: DiaryProject) {
+  // 再点一次收起：清单本身就是这一页的主视图。
+  if (diaryOpenId.value === p.id) { diaryOpenId.value = null; return }
+  diaryOpenId.value = p.id
+  diaryView.value = 'records'
+  diaryDetailPage.value = 1
+  diaryRecords.value = []
+  diarySummaries.value = []
+  loadDiaryDetail()
+}
+
+function switchDiaryView(v: 'records' | 'summaries') {
+  if (diaryView.value === v) return
+  diaryView.value = v
+  diaryDetailPage.value = 1
+  loadDiaryDetail()
+}
+
+function goDiaryPage(n: number) {
+  if (n < 1 || n > diaryDetailPages.value) return
+  diaryDetailPage.value = n
+  loadDiaryDetail()
+}
+
+/**
+ * 删掉项目之后的回执。**留在页面上，不用 alert**。
+ *
+ * 那几张多维表格在飞书里搜不到（建表时没传 folder_token，链接分享是关掉的），
+ * 而项目行一删，助理就不再认识它们、群里问「有哪些项目」也不会再列出来 ——
+ * 这份回执里的链接是最后一次拿到它们的机会。用 alert 的话用户点掉「确定」
+ * 就没了，而这个操作看起来只是"删掉了一个条目"。
+ */
+const diaryDeleted = ref<{
+  name: string
+  record_count: number
+  summary_count: number
+  log_url: string
+  review_url: string
+  task_url: string
+  still_in_index: boolean
+} | null>(null)
+const diaryDeleting = ref('')
+
+async function removeDiaryProject(p: DiaryProject) {
+  const app = diaryApp.value
+  if (!app) return
+  // 说清三件事：库里丢什么、飞书里不丢什么、这个群之后会怎样。
+  // 只写「确定删除吗」的话，用户以为连飞书表格一起删了（或者反过来以为什么都没删）。
+  if (
+    !confirm(
+      `确定删除项目「${p.name}」吗？\n\n` +
+        `· 会删掉本系统里的 ${p.record_count} 条日志记录、${p.summary_count} 次复盘，助理不再认识这个项目。\n` +
+        `· 飞书多维表格（日志表 / 复盘表 / 任务管理表）**不会被删除**，删完会把链接列给你 —— ` +
+        `那些表在飞书里搜不到，链接丢了就找不回。\n` +
+        `· 「${p.chat_name || '这个群'}」之后可以重新新建项目，但会另建一套新表，和老表没有关系。`
+    )
+  )
+    return
+  diaryDeleting.value = p.id
+  try {
+    const res = await apiDelete<{ deleted: NonNullable<typeof diaryDeleted.value> }>(
+      `/api/feishu-assistant/apps/${app.id}/diary/projects/${p.id}`
+    )
+    diaryDeleted.value = res.deleted
+    if (diaryOpenId.value === p.id) diaryOpenId.value = null
+    await loadDiary()
+  } catch (e: any) {
+    alert(e?.message || '删除失败')
+  } finally {
+    diaryDeleting.value = ''
+  }
+}
+
+function pickDiaryApp() {
+  diaryOpenId.value = null
+  // 回执属于上一个应用，换应用后留着会指向另一家公司的表。
+  diaryDeleted.value = null
+  loadDiary()
+}
+
 const commands = ref<CommandRow[]>([])
 const cmdTotal = ref(0)
 const cmdStatus = ref('')
 const cmdAppId = ref('')
+/** 按项目群筛。空 = 全部群。选项只在选定了应用之后才有（见后端注释）。 */
+const cmdChatId = ref('')
+const cmdChats = ref<CommandChatOption[]>([])
 const cmdPage = ref(1)
 const CMD_PAGE_SIZE = 20
 const expanded = ref<Record<string, boolean>>({})
+
 
 // ---- 组织架构名册 ----
 const dirAppId = ref('')
@@ -267,18 +504,34 @@ async function loadAll() {
 
 async function loadCommands() {
   try {
-    const res = await apiGet<{ commands: CommandRow[]; total: number }>('/api/feishu-assistant/commands', {
-      status: cmdStatus.value || undefined,
-      app_id: cmdAppId.value || undefined,
-      page: cmdPage.value,
-      // 后端 parsePagination 读的是 page_size（下划线），传 pageSize 会被忽略。
-      page_size: CMD_PAGE_SIZE,
-    })
+    const res = await apiGet<{ commands: CommandRow[]; total: number; chats: CommandChatOption[] }>(
+      '/api/feishu-assistant/commands',
+      {
+        status: cmdStatus.value || undefined,
+        app_id: cmdAppId.value || undefined,
+        chat_id: cmdChatId.value || undefined,
+        page: cmdPage.value,
+        // 后端 parsePagination 读的是 page_size（下划线），传 pageSize 会被忽略。
+        page_size: CMD_PAGE_SIZE,
+      }
+    )
     commands.value = res.commands
     cmdTotal.value = res.total
+    cmdChats.value = res.chats || []
   } catch (e: any) {
     console.error(e)
   }
+}
+
+/**
+ * 换应用时必须清掉群筛选。
+ *
+ * 不清的话，选了 A 应用的某个群、再切到 B 应用，chat_id 还挂在请求上 ——
+ * 结果永远是空列表，而下拉里那一项已经不在选项里了，页面上看不出为什么空。
+ */
+function pickCmdApp() {
+  cmdChatId.value = ''
+  applyCmdFilter()
 }
 
 async function loadDirectory() {
@@ -347,7 +600,17 @@ function switchTab(tab: Tab) {
     // 已经选过就别重置 —— 那会把用户写了一半、还没保存的文本冲掉。
     if (!rulesAppId.value && apps.value.length) pickRulesApp(apps.value[0].id)
   }
+  if (tab === 'diary') {
+    // 默认选第一个应用，和「组织架构」页一致。
+    if (!diaryAppId.value && apps.value.length) diaryAppId.value = apps.value[0].app_id
+    loadDiary()
+  }
   if (tab === 'logs') {
+    // 默认选中第一个应用，和「项目日记」「组织架构」两页一致。
+    // 这里还多一层理由：**按项目群筛的下拉只在选定应用后才有内容**
+    // （不同租户的群名会重名，混在一个下拉里选出来的结果对不上预期），
+    // 而按项目分正是这一页最常用的看法。停在「全部应用」等于默认藏起这个筛选。
+    if (!cmdAppId.value && apps.value.length) cmdAppId.value = apps.value[0].app_id
     loadCommands()
     // pending/running 的指令几秒内就会变成终态，5 秒够用又不至于打接口太狠。
     pollTimer = setInterval(loadCommands, 5000)
@@ -419,8 +682,12 @@ async function saveApp() {
     await loadAll()
     // 保存成功但建连失败要单独说 —— 凭证填错是最常见的情况，
     // 只提示"已保存"会让用户以为可以去飞书里试了。
+    //
+    // 排查方向由后端给（connection.ts:explainConnectError 按 SDK 的错误码分类）。
+    // 这里不再追加「请核对 App ID / App Secret」——网络不通时那句是错的方向，
+    // 而它曾经无条件出现在每一种失败后面。
     if (res.conn_error) {
-      alert(`配置已保存，但长连接没建起来：\n${res.conn_error}\n\n请核对 App ID / App Secret，以及应用是否已开启「长连接」订阅方式。`)
+      alert(`配置已保存，但长连接没建起来：\n${res.conn_error}`)
     }
   } catch (e: any) {
     alert(e?.message || '保存失败')
@@ -485,13 +752,14 @@ function applyCmdFilter() {
           <div class="header-titles">
             <h1 class="hero-title">飞书助理</h1>
             <p class="fs-subtitle">
-              在飞书里 @ 一下机器人，用一句话建任务、约日程、给同事发消息，
+              把机器人拉进项目群 @ 一下，用一句话建项目、记日志、派任务、复盘，
               也能改它建过的那些。
             </p>
           </div>
           <div class="header-controls">
             <div class="fs-tabs">
               <button :class="{ active: activeTab === 'apps' }" @click="switchTab('apps')">应用绑定</button>
+              <button :class="{ active: activeTab === 'diary' }" @click="switchTab('diary')">项目日记</button>
               <button :class="{ active: activeTab === 'directory' }" @click="switchTab('directory')">组织架构</button>
               <button :class="{ active: activeTab === 'rules' }" @click="switchTab('rules')">助理规则</button>
               <button :class="{ active: activeTab === 'logs' }" @click="switchTab('logs')">指令日志</button>
@@ -544,7 +812,7 @@ function applyCmdFilter() {
                     <span :class="['state-pill', dirStateClass(app)]">名册 {{ dirStateLabel(app) }}</span>
                     <span v-if="app.dir_user_count">{{ app.dir_user_count }} 人</span>
                     <span v-else class="warn-text">
-                      还没有名册 —— 私聊里说「给张三发消息」会查不到人
+                      还没有名册 —— 说「派给张三」时没 @ 他就查不到人
                     </span>
                   </div>
                   <p v-if="app.conn_error" class="conn-error">{{ app.conn_error }}</p>
@@ -632,7 +900,9 @@ function applyCmdFilter() {
               <p class="section-hint">
                 一个都不勾 = 不限群聊，首次接入时方便调试。
                 但机器人被拉进任何群都能被 @，会消耗本账号的 AI 额度 ——
-                试通之后建议回来勾上白名单。私聊不受此限制。
+                试通之后建议回来勾上白名单。
+                （助理<strong>只在群聊里工作</strong>，私聊会被回一句「请到群里 @ 我」，
+                不会花额度。）
               </p>
             </div>
 
@@ -645,6 +915,262 @@ function applyCmdFilter() {
           </section>
         </div>
 
+        <!-- ============ 项目日记 ============ -->
+        <div v-if="activeTab === 'diary'" class="tab-content">
+          <section class="fs-section">
+            <div class="section-head">
+              <div>
+                <h2>项目日记</h2>
+                <p class="section-desc">
+                  在飞书群里 @ 助理说「记一下：……」产生的日志，和「复盘一下本周」生成的总结。
+                  这里<strong>只能看</strong> —— 记录要在群里 @ 助理来记，
+                  这样每条都带记录人和时间，也没人能误删。
+                </p>
+              </div>
+              <div class="filters">
+                <select v-model="diaryAppId" @change="pickDiaryApp">
+                  <option value="">选择应用</option>
+                  <option v-for="a in apps" :key="a.id" :value="a.app_id">{{ a.name }}</option>
+                </select>
+                <button class="btn-sm" :disabled="!diaryAppId" @click="loadDiary">刷新</button>
+              </div>
+            </div>
+
+            <p v-if="apps.length === 0" class="empty-hint">
+              先在「应用绑定」里绑一个飞书应用，然后在飞书群里说一句「新建项目：XXX」。
+            </p>
+
+            <template v-else-if="diaryApp">
+              <!--
+                项目总表在飞书里搜不到（建表时没传 folder_token，链接分享也是关掉的），
+                所以这个链接是它在网页侧唯一的入口。没有它的时候要说清是为什么，
+                否则「我的总表呢」查不出原因。
+              -->
+              <div v-if="diaryIndex" class="diary-index">
+                <a :href="diaryIndex.url" target="_blank" rel="noopener" class="diary-index-link">
+                  📊 打开项目总表（飞书多维表格）
+                </a>
+                <span v-if="!diaryIndex.link_share_closed" class="warn-text">
+                  ⚠️ 这张表的链接分享没关成功，组织内拿到链接的人都能看，请在飞书里手动收紧。
+                </span>
+              </div>
+              <p v-else-if="diaryProjects.length === 0" class="empty-hint">
+                这个应用还没有任何项目。去飞书群里 @ 助理说一句「新建项目：XXX」——
+                项目是跟群绑定的，一个群一个项目，所以私聊里建不了。
+              </p>
+              <p v-else class="section-hint warn-text">
+                还没有项目总表（当初建它的那一步失败了）。各项目的日志表仍然正常，
+                下面每一行都有链接。
+              </p>
+
+              <p v-if="diaryUnsyncedTotal > 0" class="section-hint warn-text">
+                有 {{ diaryUnsyncedTotal }} 条记录/任务还没同步到多维表格 ——
+                <strong>库里在、表里看不到</strong>。补推是跟着下一次记录发生的（没有后台定时任务），
+                在对应群里随便再记一条就会连着补上。
+              </p>
+
+              <!--
+                删除回执。**必须留在页面上**（不是 alert）：那几张表在飞书里搜不到，
+                项目一删助理就不再认识它们，这是最后一次能拿到链接的机会。
+                关掉要用户自己点 ×。
+              -->
+              <div v-if="diaryDeleted" class="diary-receipt">
+                <button class="receipt-close" @click="diaryDeleted = null" title="关闭">×</button>
+                <p>
+                  已删除项目「<strong>{{ diaryDeleted.name }}</strong>」：本系统里的
+                  {{ diaryDeleted.record_count }} 条记录、{{ diaryDeleted.summary_count }} 次复盘已清除，
+                  助理不再认识这个项目。
+                </p>
+                <p>
+                  <strong>飞书多维表格没有被删除</strong>，但它们在飞书里搜不到 ——
+                  下面是最后一次拿到链接的机会，需要的话现在存下来：
+                </p>
+                <p class="receipt-links">
+                  <a v-if="diaryDeleted.log_url" :href="diaryDeleted.log_url" target="_blank" rel="noopener">日志表 ↗</a>
+                  <a v-if="diaryDeleted.review_url" :href="diaryDeleted.review_url" target="_blank" rel="noopener">复盘表 ↗</a>
+                  <a v-if="diaryDeleted.task_url" :href="diaryDeleted.task_url" target="_blank" rel="noopener">任务管理表 ↗</a>
+                  <span v-if="!diaryDeleted.log_url && !diaryDeleted.review_url && !diaryDeleted.task_url">
+                    这个项目当初没有建出任何表格。
+                  </span>
+                </p>
+                <p v-if="diaryDeleted.still_in_index">
+                  项目总表里那一行<strong>留着</strong>（它也是事后找回上面这几个链接的途径），
+                  所以总表里还会看到这个项目 —— 需要的话去飞书里手动删那一行。
+                </p>
+              </div>
+
+              <p v-if="diaryLoading" class="empty-hint">加载中…</p>
+
+              <div v-else-if="diaryProjects.length" class="diary-list">
+                <div v-for="p in diaryProjects" :key="p.id" class="diary-card">
+                  <div class="diary-head" @click="openDiaryProject(p)">
+                    <span class="diary-name">{{ p.name }}</span>
+                    <span class="diary-meta">
+                      {{ p.record_count }} 条记录<!--
+                        群聊摘要单独括出来，不混进总数：40 条记录读起来像 40 条
+                        一手事实，而其中 30 条可能是 AI 从群聊里归纳的。
+                      -->
+                      <template v-if="p.digest_count > 0">（含 {{ p.digest_count }} 条群聊摘要）</template>
+                      · {{ p.task_count }} 个任务<template v-if="p.open_task_count > 0">（{{ p.open_task_count }} 在办）</template>
+                      · {{ p.summary_count }} 次复盘
+                      <template v-if="p.last_record_ms">
+                        · 最近 {{ fmtTime(new Date(p.last_record_ms).toISOString()) }}
+                      </template>
+                    </span>
+                    <span v-if="p.unsynced_count > 0" class="chat-tag bad">
+                      {{ p.unsynced_count }} 条记录未同步
+                    </span>
+                    <!-- 任务的未同步要单独报：它和记录走的是两张表、两条同步路径，
+                         合成一个数字的话「甘特图上少了两条」查不到原因。 -->
+                    <span v-if="p.unsynced_task_count > 0" class="chat-tag bad">
+                      {{ p.unsynced_task_count }} 个任务未同步
+                    </span>
+                    <span v-if="!p.in_index" class="chat-tag idle">未登记进总表</span>
+                    <span class="log-caret">{{ diaryOpenId === p.id ? '▾' : '▸' }}</span>
+                  </div>
+                  <div class="diary-sub">
+                    <span>群：{{ p.chat_name || p.chat_id }}</span>
+                    <span class="dot">·</span>
+                    <span>{{ p.created_by_name || '未知' }} 建于 {{ fmtTime(p.created_at) }}</span>
+                    <a v-if="p.url" :href="p.url" target="_blank" rel="noopener" class="diary-link">日志表 ↗</a>
+                    <a v-if="p.review_url" :href="p.review_url" target="_blank" rel="noopener" class="diary-link">复盘表 ↗</a>
+                    <span v-if="!p.link_share_closed" class="warn-text">链接分享未关闭</span>
+                    <!-- 删除放在这一行的最右，不放标题行：标题行整条是展开/收起的点击区，
+                         按钮挤在那里等于把「想看日志」变成一次误删。 -->
+                    <button
+                      class="btn-sm btn-danger diary-del"
+                      :disabled="diaryDeleting === p.id"
+                      @click="removeDiaryProject(p)"
+                    >
+                      {{ diaryDeleting === p.id ? '删除中…' : '删除项目' }}
+                    </button>
+                  </div>
+
+                  <div v-if="diaryOpenId === p.id" class="diary-detail">
+                    <div class="diary-switch">
+                      <button :class="{ active: diaryView === 'records' }" @click="switchDiaryView('records')">
+                        日志记录（{{ p.record_count }}）
+                      </button>
+                      <button :class="{ active: diaryView === 'summaries' }" @click="switchDiaryView('summaries')">
+                        复盘（{{ p.summary_count }}）
+                      </button>
+                    </div>
+
+                    <p v-if="diaryDetailLoading" class="empty-hint">加载中…</p>
+
+                    <template v-else-if="diaryView === 'records'">
+                      <p v-if="diaryRecords.length === 0" class="empty-hint">
+                        还没有记录。在「{{ p.chat_name || '这个群' }}」里 @ 助理说「记一下：……」。
+                      </p>
+                      <ul v-else class="diary-records">
+                        <li v-for="r in diaryRecords" :key="r.id">
+                          <div class="rec-meta">
+                            <span class="rec-author">{{ r.author_name || '未知' }}</span>
+                            <span class="rec-time">{{ fmtTime(r.created_at, true) }}</span>
+                            <!--
+                              AI 归纳的那些必须一眼能认出来。正文里也有「【群聊摘要 …】」
+                              前缀（那是给飞书表格用的，那边加不了列），但这一页要能扫着看：
+                              这张表的价值全在「当时到底怎么说的」，而归纳的和原话并排放着。
+                            -->
+                            <span v-if="r.origin === 'chat_digest'" class="chat-tag idle">
+                              AI 归纳（非原话）
+                            </span>
+                            <span v-if="!r.synced" class="chat-tag bad">未同步到表格</span>
+                          </div>
+                          <!-- 原文照抄，不做任何 markdown 渲染：日志的价值就在于当时怎么说的。 -->
+                          <div class="rec-body">{{ r.content }}</div>
+                        </li>
+                      </ul>
+                    </template>
+
+                    <template v-else>
+                      <p v-if="diarySummaries.length === 0" class="empty-hint">
+                        还没有复盘。在群里 @ 助理说「复盘一下本周」。
+                      </p>
+                      <ul v-else class="diary-records">
+                        <li v-for="s in diarySummaries" :key="s.id">
+                          <div class="rec-meta">
+                            <span class="rec-author">{{ s.range_label || '（未标注范围）' }}</span>
+                            <span class="rec-time">{{ s.record_count }} 条 · {{ s.created_by_name || '未知' }} · {{ fmtTime(s.created_at, true) }}</span>
+                            <span v-if="!s.synced" class="chat-tag bad">未同步到表格</span>
+                          </div>
+                          <!-- 完整版：群里那条被截到 1500 字，这一份没截。 -->
+                          <div class="rec-body pre-wrap">{{ s.summary }}</div>
+                        </li>
+                      </ul>
+                    </template>
+
+                    <div v-if="diaryDetailPages > 1" class="pager">
+                      <button class="btn-sm" :disabled="diaryDetailPage <= 1" @click="goDiaryPage(diaryDetailPage - 1)">上一页</button>
+                      <span class="pager-info">{{ diaryDetailPage }} / {{ diaryDetailPages }}（共 {{ diaryDetailTotal }} 条）</span>
+                      <button class="btn-sm" :disabled="diaryDetailPage >= diaryDetailPages" @click="goDiaryPage(diaryDetailPage + 1)">下一页</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </section>
+
+          <section v-if="diaryApp" class="fs-section">
+            <h2>关于这一页的几件事</h2>
+            <ul class="caveats">
+              <li>
+                <strong>逐条记录只能看，不能改。</strong>
+                同步是只追加的 —— 记录推进多维表格之后就不会再推第二遍。
+                所以网页上删掉一条，表格里那行也删不掉，库和表从此不一致，
+                而人看的是表。要改就在群里 @ 助理说。
+              </li>
+              <li>
+                <strong>「删除项目」删的只是本系统里的关联。</strong>
+                飞书的日志表 / 复盘表 / 任务管理表都不会被删除（我们没有回收站，
+                而 070 之后任务只存在于表格里），项目总表里那一行也留着。
+                删完的回执里会把那几个链接列出来 —— <strong>那是最后一次能拿到它们的机会</strong>，
+                因为助理从此不再认识这个项目。那个群之后可以重新新建项目，但会另建一套新表。
+              </li>
+              <li>
+                <strong>飞书里搜不到那些表格，链接是唯一入口。</strong>
+                项目总表和各项目日志表都由机器人身份创建，不在任何人的云文档空间里，
+                链接分享也是主动关掉的。上面这些链接（和群里 @ 助理说「有哪些项目」）
+                就是全部的入口。
+              </li>
+              <li>
+                <strong>「未同步」= 库里有、表格里没有。</strong>
+                写飞书会失败（限流、权限没发版）。记录已经安全落库了，
+                但补推是<strong>跟着下一次记录</strong>发生的，没有后台定时任务 ——
+                不再活跃的项目会长期停在这个状态，在群里随便再记一条就补上。
+              </li>
+              <li>
+                <strong>复盘这里的是完整版。</strong>
+                群里的回帖最多 1500 字，超了会截断；这一页和「复盘」表里的那份没截。
+              </li>
+              <li>
+                <strong>一个群一个项目。</strong>
+                项目跟群绑定（这样群里说「记一下……」才知道记到哪儿），
+                所以新项目要另建一个群、把助理拉进去，在里面说「新建项目：XXX」。
+              </li>
+              <li>
+                <strong>带「AI 归纳」标记的那些不是原话。</strong>
+                群里说「总结一下今天聊了什么」时，助理会读群消息、挑出值得记的写进日志 ——
+                那几条是<strong>模型归纳的</strong>，和大家自己记的原话并排存在同一张表里，
+                所以单独标了出来（飞书表格里是「【群聊摘要 …】」前缀）。
+                归纳错了在群里说一句，助理会按你说的原话再记一条。
+              </li>
+              <li>
+                <strong>「总结群聊」要额外开一个权限。</strong>
+                读没有 @ 助理的消息需要
+                <code>im:message.group_msg</code>，它在飞书后台要单独说明用途，
+                所以没有列进「接入前请先开通」那份清单里（见「接入指引」最后那一组可选权限）。
+                没开的话第一次用会报缺权限，其余功能都不受影响。
+              </li>
+              <li>
+                <strong>任务和记录是两条同步路径。</strong>
+                记录只追加，任务会被改（改期、改状态、换负责人），所以推表的方式不一样，
+                「未同步」也分开报。任务在项目日志表的「任务」表里，还有一个甘特图视图。
+              </li>
+            </ul>
+          </section>
+        </div>
+
         <!-- ============ 组织架构名册 ============ -->
         <div v-if="activeTab === 'directory'" class="tab-content">
           <section class="fs-section">
@@ -652,9 +1178,9 @@ function applyCmdFilter() {
               <div>
                 <h2>组织架构名册</h2>
                 <p class="section-desc">
-                  同步一份公司通讯录到本地，助理就能在<strong>私聊里</strong>按姓名找人 ——
-                  「给李四建个任务」不用先把他 @ 到。
-                  没有名册时只认这条消息里 @ 出来的人，而私聊里没法 @ 任何人。
+                  同步一份公司通讯录到本地，助理就能<strong>按姓名找人</strong> ——
+                  「给李四建个任务」不用先把他 @ 到，他也不必在这个群里。
+                  没有名册时只认这条消息里 @ 出来的人。
                 </p>
               </div>
               <div class="filters">
@@ -764,7 +1290,7 @@ function applyCmdFilter() {
               <li>
                 <strong>助理永远不会自己编一个账号。</strong>
                 大模型只负责把你说的姓名原样交出来，账号是在这份名册里精确查到的。
-                查不到、有同名、已离职三种情况它都会回来问你，而不是挑一个发出去。
+                查不到、有同名、已离职三种情况它都会回来问你，而不是挑一个派过去。
               </li>
               <li>
                 <strong>同名的人必须 @ 一下。</strong>
@@ -797,7 +1323,7 @@ function applyCmdFilter() {
                 <h2>本企业的补充规则</h2>
                 <p class="section-desc">
                   写下你们公司自己的说法，助理就能听懂 ——「过一下方案」是评审会、
-                  「早会」是九点半、「同步一下」是发消息而不是建任务。
+                  「小 P」指的是某个项目、「盯一下」是派任务而不是记日志。
                   <strong>只写"怎么听懂人话"这一件事</strong>：能做哪些动作、
                   参数长什么样、账号怎么查，都由系统保证，写在这里无效。
                 </p>
@@ -890,6 +1416,7 @@ function applyCmdFilter() {
                 <p class="section-desc">
                   @ 了没反应时看这里：没有记录 = 事件没进来（连接或权限问题）；
                   「未识别」= 收到了但没听懂；「失败」= 调飞书接口报错，错误原文在展开里。
+                  一个群 = 一个项目，所以按项目群筛就是按项目看。
                 </p>
               </div>
               <div class="filters">
@@ -897,20 +1424,41 @@ function applyCmdFilter() {
                   <option value="">全部状态</option>
                   <option v-for="o in COMMAND_STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
                 </select>
-                <select v-model="cmdAppId" @change="applyCmdFilter">
+                <select v-model="cmdAppId" @change="pickCmdApp">
                   <option value="">全部应用</option>
                   <option v-for="a in apps" :key="a.id" :value="a.app_id">{{ a.name }}</option>
+                </select>
+                <!--
+                  只有选定了应用才给这个下拉：不同租户的群名会重名，
+                  混在一起选出来的结果对不上用户的预期（后端也只在带 app_id 时返回选项）。
+                -->
+                <select v-if="cmdAppId" v-model="cmdChatId" @change="applyCmdFilter">
+                  <option value="">全部项目群</option>
+                  <option v-for="c in cmdChats" :key="c.chat_id" :value="c.chat_id">
+                    {{ cmdChatOptionLabel(c) }}
+                  </option>
                 </select>
                 <button class="btn-sm" @click="loadCommands">刷新</button>
               </div>
             </div>
 
-            <p v-if="commands.length === 0" class="empty-hint">暂无指令记录。</p>
+            <p v-if="cmdChatId && commands.length === 0" class="empty-hint">
+              这个群还没有指令记录。换个群，或者选「全部项目群」看看。
+            </p>
 
-            <div v-else class="log-list">
+            <p v-else-if="commands.length === 0" class="empty-hint">暂无指令记录。</p>
+
+            <div v-if="commands.length" class="log-list">
               <div v-for="row in commands" :key="row.id" class="log-row">
                 <div class="log-head" @click="expanded[row.id] = !expanded[row.id]">
                   <span :class="['status-pill', row.status]">{{ statusLabel(row.status) }}</span>
+                  <!--
+                    项目/群名要在**折叠状态下**就看得见。
+                    藏进展开里的话，「A 项目那条记录进去了没有」这个最常见的问题
+                    要一行行点开才能回答，而 chat_id 在飞书里看不到，
+                    等于没有办法确认自己看的是哪个群。
+                  -->
+                  <span class="log-project" :title="row.chat_id">{{ cmdChatLabel(row) }}</span>
                   <span class="log-sender">{{ row.sender_name || '未知' }}</span>
                   <span class="log-text">{{ row.text }}</span>
                   <span class="log-action">{{ row.action || '—' }}</span>
@@ -922,7 +1470,11 @@ function applyCmdFilter() {
                 <div v-if="expanded[row.id]" class="log-detail">
                   <div class="detail-line">
                     <span class="detail-label">来源</span>
-                    <span class="mono">{{ row.chat_type === 'p2p' ? '私聊' : '群聊' }} · {{ row.app_id }}</span>
+                    <!-- chat_id 也印出来：配白名单、去库里查这个群的数据都要用它。 -->
+                    <span class="mono">
+                      {{ row.chat_type === 'p2p' ? '私聊' : '群聊' }} · {{ cmdChatLabel(row) }} ·
+                      {{ row.chat_id }} · {{ row.app_id }}
+                    </span>
                   </div>
                   <div v-if="row.params" class="detail-line">
                     <span class="detail-label">解析出的参数</span>
@@ -988,11 +1540,30 @@ function applyCmdFilter() {
                   （或全部成员）—— 只勾上面的权限点是读不到通讯录的，报错会是
                   <code>no dept authority error</code>。
                 </p>
+                <!--
+                  单列一段，而不是混进上面那张 scope-grid：读群聊记录那两项在飞书
+                  后台要额外填用途说明，是最难批的一档。混进「一次性加齐」里的话，
+                  每个人的接入都会卡在一个大部分人用不到的功能上。
+                  但也不能不说 —— 不说的话「总结群聊」在所有人那里都缺权限，
+                  而没人知道要去开。见 actions/index.ts 的 OPTIONAL_SCOPES。
+                -->
+                <div
+                  v-for="g in capabilities?.optional_scopes || []"
+                  :key="g.feature"
+                  class="optional-scopes"
+                >
+                  <p class="sub-hint">
+                    <strong>下面这组是可选的</strong>，用到「{{ g.feature }}」时再开：
+                  </p>
+                  <div class="scope-grid">
+                    <code v-for="s in g.scopes" :key="s">{{ s }}</code>
+                  </div>
+                </div>
               </li>
               <li>
                 <!--
                   这一步是用户最容易漏的：可用范围默认只有创建者本人，
-                  于是「给同事发消息」必然报 230013，而飞书的报错是英文的、
+                  于是「派给同事」必然报 230013，而飞书的报错是英文的、
                   一个字都没提可用范围。
                 -->
                 <strong>把「可用范围」放开</strong>
@@ -1002,19 +1573,21 @@ function applyCmdFilter() {
                 </p>
                 <p class="sub-hint">
                   这是和权限完全无关的第三套设置，默认<strong>只有你自己</strong>可用。
-                  不放开的话，机器人给同事发消息会报
-                  <code>Bot has NO availability to this user</code>。
+                  不放开的话，把任务派给同事会报
+                  <code>Bot has NO availability to this user</code>，
+                  群里其他同事也没法 @ 它。
                 </p>
               </li>
               <li>
                 <strong>回来绑定，然后在飞书里试</strong>
                 <p>
                   把 App ID / App Secret 填到「应用绑定」，状态变成「已连接」即可。
-                  在群里 @ 机器人，或直接私聊它说一句话。
+                  然后把机器人拉进一个群，在群里 @ 它说话 ——
+                  <strong>助理只在群聊里工作</strong>，私聊会被回一句「请到群里 @ 我」。
                 </p>
                 <p class="sub-hint">
                   绑定成功会自动同步一次公司组织架构 —— 有了名册，
-                  私聊里说「给李四建个任务」才能查到人。同步结果在「组织架构」页看。
+                  说「给李四建个任务」时不 @ 他也能查到人。同步结果在「组织架构」页看。
                 </p>
               </li>
             </ol>
@@ -1043,32 +1616,73 @@ function applyCmdFilter() {
             <h2>几个必须知道的限制</h2>
             <ul class="caveats">
               <li>
-                <strong>日程是机器人建的，你是被邀请人。</strong>
-                免去授权流程的代价：日程落在机器人自己的日历上，你会收到邀请。
+                <strong>任务是机器人建的，你是负责人。</strong>
+                免去授权流程的代价：任务的创建者显示为机器人，
+                指派的那个人会在任务中心的「我负责的」里看到它。
               </li>
               <li>
-                <strong>只能改它自己帮你建过的东西。</strong>
-                助理认得的任务和日程，只有它自己建的那些（最近 7 天内）——
+                <strong>只能改它自己帮你建过的任务。</strong>
+                助理认得的任务只有它自己建的那些（最近 7 天内）——
                 你在飞书里手动建的它看不见，也改不动。
                 说「那个任务完成了」而它同时建过好几个时，
                 它会把候选列出来让你挑，不会替你猜一个。
               </li>
               <li>
-                <strong>不能列清单。</strong>
-                「我今天有哪些任务」「明天有什么日程」做不到 ——
-                读你自己的列表需要单独的用户授权。
-                但「某人什么时候有空」可以（那只回时间段，不回内容）。
+                <strong>不能列任务清单。</strong>
+                「我今天有哪些任务」做不到 —— 读你自己的任务列表需要单独的用户授权。
+                项目的进展要用「复盘一下本周」，那读的是本群项目的日志记录。
               </li>
               <li>
-                <strong>给别人建任务 / 发消息，要么 @ 一下，要么先同步组织架构。</strong>
-                @ 过来的账号最准；同步过名册之后在私聊里直接说姓名也行。
+                <strong>派任务给别人，要么 @ 一下，要么先同步组织架构。</strong>
+                @ 过来的账号最准；同步过名册之后直接说姓名也行（他不必在这个群里）。
                 两者都没有时助理会回来问你，不会猜 —— 猜错人比不做更糟。
                 详见「组织架构」页。
+              </li>
+              <li>
+                <!-- 私聊不是"暂未支持"而是有意关掉的，理由要写出来：
+                     不然用户会当成 bug 报上来，或者一直等它哪天支持。 -->
+                <strong>只在群聊里工作，私聊不处理指令。</strong>
+                私聊 @ 它只会收到一句「请到群里 @ 我」。
+                这样每条指令都留在群里，同事看得到谁让助理做了什么；
+                而且项目日记本身就是绑群的，私聊里能做的事本来就是群聊的真子集。
               </li>
               <li>
                 <strong>执行是异步的。</strong>
                 飞书要求 3 秒内响应，而理解一句话要调大模型，
                 所以它先默默接单、干完再回帖。慢几秒是正常的。
+              </li>
+              <li>
+                <strong>项目日记：一个群一个项目。</strong>
+                项目是跟群绑定的（这样群里说「记一下……」才知道记到哪儿），
+                所以要在项目群里说「新建项目：XXX」，私聊里建不了。
+                要开第二个项目就另建一个群。
+              </li>
+              <li>
+                <!--
+                  这些多维表格不在任何人的云文档空间里（建表时没传 folder_token），
+                  链接分享也是关掉的 —— 链接被消息刷走之后，"问回来"是唯一的途径。
+                -->
+                <strong>表格链接丢了：这一页的「项目日记」标签里都有，或者 @ 助理说「有哪些项目」。</strong>
+                项目总表和各项目日志表都不在你的云文档列表里，也搜不到，链接是唯一入口。
+                「项目日记」标签列出了本应用所有项目和它们的两个表格链接，
+                在群里问助理会得到同样的一份。
+              </li>
+              <li>
+                <strong>项目日志表对群里是只读的。</strong>
+                日志只能通过 @ 助理来记 —— 这样每条都带记录人和时间，
+                也没人能误删。同步是只追加的，表里被删掉的行不会被补回来，
+                所以不给群编辑权限。要改就在群里 @ 助理说。
+              </li>
+              <li>
+                <strong>记录原样存，不会被改写。</strong>
+                助理只去掉「记一下」这类前缀，其余一个字不动 ——
+                日志的价值就在于当时是怎么说的。
+                复盘是在这些原文之上另外生成的摘要，不覆盖原始记录。
+              </li>
+              <li>
+                <strong>复盘一次要花 2 次 AI 额度。</strong>
+                一次用来听懂指令，一次用来归纳。
+                如果给「飞书助理」单独配了应用额度，记得把这件事算进去。
               </li>
             </ul>
           </section>
@@ -1532,7 +2146,7 @@ function applyCmdFilter() {
 
 .log-head {
   display: grid;
-  grid-template-columns: 72px 90px minmax(0, 1fr) 130px 100px 62px 20px;
+  grid-template-columns: 72px 120px 90px minmax(0, 1fr) 130px 100px 62px 20px;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -1541,6 +2155,13 @@ function applyCmdFilter() {
 }
 
 .log-head:hover { background: #f3f4f6; }
+
+.log-project {
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .log-sender {
   font-weight: 600;
@@ -1629,6 +2250,190 @@ function applyCmdFilter() {
   margin-top: 16px;
 }
 
+/* ---- 项目日记 ---- */
+.diary-index {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-fill);
+  font-size: 13px;
+}
+
+.diary-index-link {
+  font-weight: 600;
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+.diary-index-link:hover { text-decoration: underline; }
+
+.diary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diary-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-fill);
+  overflow: hidden;
+}
+
+.diary-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.diary-head:hover { background: #f3f4f6; }
+.diary-head .log-caret { margin-left: auto; }
+
+.diary-name { font-weight: 600; }
+
+.diary-meta {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.diary-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 10px;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.diary-link {
+  color: var(--primary-color);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.diary-link:hover { text-decoration: underline; }
+
+/* 推到最右，和「日志表 ↗」这些链接拉开距离 —— 挨着放的话点链接容易点到删除。 */
+.diary-del { margin-left: auto; }
+
+.diary-receipt {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 12px 32px 12px 14px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #78350f;
+}
+
+.diary-receipt p { margin: 0 0 4px; }
+.diary-receipt p:last-child { margin-bottom: 0; }
+
+.receipt-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.receipt-links a {
+  color: var(--primary-color);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.receipt-links a:hover { text-decoration: underline; }
+
+.receipt-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: none;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #92400e;
+}
+
+.diary-detail {
+  padding: 12px 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.diary-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.diary-switch button {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  color: var(--color-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diary-switch button.active {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.diary-records {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diary-records li {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-fill);
+}
+
+.rec-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.rec-author { font-weight: 600; color: var(--color-text); }
+.rec-time { color: var(--color-muted); font-family: var(--font-mono); }
+
+.rec-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--color-text);
+  /* 原文里的换行要留着 —— 一条会议记录被压成一行就看不出结构了。 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pre-wrap { white-space: pre-wrap; }
+
 .pager-info {
   font-size: 12px;
   color: var(--color-muted);
@@ -1691,6 +2496,18 @@ function applyCmdFilter() {
   background: var(--color-fill);
   border: 1px solid var(--color-border);
   font-size: 11px;
+}
+
+/* 可选权限：和上面那张必需清单在视觉上分开，否则又变成「一次性加齐」的一部分。 */
+.optional-scopes {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px dashed var(--color-border);
+}
+
+.optional-scopes .sub-hint {
+  margin: 0;
 }
 
 .action-list {
@@ -1839,6 +2656,9 @@ input:focus, select:focus, textarea:focus {
     grid-template-columns: 72px minmax(0, 1fr) 20px;
     row-gap: 4px;
   }
+  /* 项目名占满第一行的剩余部分，第二行才是「谁说了什么」。
+     窄屏上项目名比发言人更重要 —— 用户是带着「A 项目怎么了」来的。 */
+  .log-project { grid-column: 2 / 4; }
   .log-action, .log-time, .log-dur { display: none; }
 }
 </style>

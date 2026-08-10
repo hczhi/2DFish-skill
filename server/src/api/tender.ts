@@ -6,11 +6,13 @@ import { aiGateway, SAMPLING, QuotaExceededError } from '../core/llm/gateway.js'
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
 import { pushTenderRecommendations } from '../services/tender/feishuNotify.js';
+import { visibleSql, expiredSql, TENDER_VISIBLE_DAYS } from '../services/tender/retention.js';
 import {
   createBitable, createAllTendersTable, grantPermission,
-  syncUserRecommendations, syncAllTenders,
-  invalidateTokenCache, getBitableUrl,
+  syncUserRecommendations, syncAllTenders, getBitableUrl,
+  closeLinkShare, withTableParam, cleanupDefaultTables,
 } from '../services/tender/feishuBitable.js';
+import { invalidateTokenCache } from '../services/tender/feishuOpen.js';
 import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
 import { requireAdmin } from '../auth/guards.js';
 import { parsePagination, patchRow } from '../core/http.js';
@@ -128,7 +130,8 @@ tenderRouter.get('/list', (req, res) => {
   const platform = (req.query.platform as string) || '';
   const keyword = (req.query.keyword as string) || '';
 
-  let where = "status != 'draft'";
+  // 21 天时效闸门：过期标讯从列表里消失，但数据不删（见 retention.ts）。
+  let where = `status != 'draft' AND ${visibleSql()}`;
   const params: any[] = [];
 
   if (search) {
@@ -756,6 +759,13 @@ tenderRouter.post('/admin/extract', async (req, res) => {
 
 // ==================== Admin: Separate Recommend Endpoint ====================
 
+// 评分入口。**按用户**评分，不再按标讯：
+// 传 userId 就只评这个用户，不传则遍历全部用户；候选标讯由服务层按
+// 「该用户还没评过的、21 天内的、他关注的平台」自行取（见 loadUnscoredForUser）。
+//
+// tenderIds 仍然接受，但只给「重评指定几条」这类内部调用用（前端已经不传了）。
+// 保留它是因为 force 删除逻辑依赖它 —— 没有 id 范围的「强制重评」等于
+// 把该用户的全部推荐历史删掉重打一遍 token，这不该是一个按钮能干的事。
 tenderRouter.post('/admin/recommend', async (req, res) => {
   const { tenderIds, userId, force } = req.body;
 
@@ -768,6 +778,7 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
   const db = getDatabase();
 
   const job = startJob('tender-recommend', {
+    // 按用户模式下总数由服务层算（每个用户不一样），这里给 0 让进度条只显示已完成数。
     total: tenderIds?.length || 0,
     step: 'recommend',
     message: `为用户计算推荐评分中...`,
@@ -794,10 +805,14 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
     }, userId);
     job.log(`推荐计算完成: ${result.processed} 条评分，涉及 ${result.users} 个用户`);
 
-    // Update status to 'scored' for processed tenders
-    if (tenderIds && tenderIds.length > 0) {
-      const placeholders = tenderIds.map(() => '?').join(',');
-      db.prepare(`UPDATE tenders SET status = 'scored' WHERE id IN (${placeholders})`).run(...tenderIds);
+    // 只把**真正产出了推荐行**的标讯标成 scored。
+    // 原来是把请求里的 tenderIds 全标上，两个问题：按用户模式没有 tenderIds 可用，
+    // 而且被 21 天闸门或平台过滤挡掉的也会被标成「已评分」——
+    // 列表上写着已评分、推荐表里却查不到，看起来像评分丢了结果。
+    if (result.scoredTenderIds.length > 0) {
+      const ids = result.scoredTenderIds;
+      const mark = db.prepare(`UPDATE tenders SET status = 'scored' WHERE id = ?`);
+      db.transaction(() => { for (const id of ids) mark.run(id); })();
     }
 
     job.done({ processed: result.processed, users: result.users }, `推荐计算完成：${result.processed} 条评分`);
@@ -853,14 +868,13 @@ tenderRouter.get('/admin/users', (req, res) => {
 tenderRouter.get('/admin/feishu/:userId', (req, res) => {
   const db = getDatabase();
   const row = db.prepare(
-    `SELECT feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
+    `SELECT feishu_chat_id, feishu_enabled, feishu_min_score,
             feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
             bitable_all_table_id, bitable_url, bitable_enabled
      FROM tender_user_preferences WHERE user_id = ?`
   ).get(req.params.userId) as any;
   res.json({
-    feishu_webhook: row?.feishu_webhook || '',
-    feishu_secret: row?.feishu_secret || '',
+    feishu_chat_id: row?.feishu_chat_id || '',
     feishu_enabled: !!row?.feishu_enabled,
     feishu_min_score: row?.feishu_min_score ?? 55,
     feishu_app_id: row?.feishu_app_id || '',
@@ -878,7 +892,7 @@ tenderRouter.get('/admin/feishu/:userId', (req, res) => {
 
 tenderRouter.put('/admin/feishu/:userId', (req, res) => {
   const {
-    feishu_webhook, feishu_secret, feishu_enabled, feishu_min_score,
+    feishu_chat_id, feishu_enabled, feishu_min_score,
     feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
     bitable_url, bitable_enabled,
   } = req.body;
@@ -902,14 +916,15 @@ tenderRouter.put('/admin/feishu/:userId', (req, res) => {
 
   db.prepare(`
     UPDATE tender_user_preferences
-    SET feishu_webhook = ?, feishu_secret = ?, feishu_enabled = ?, feishu_min_score = ?,
+    SET feishu_chat_id = ?, feishu_enabled = ?, feishu_min_score = ?,
         feishu_app_id = ?, feishu_app_secret = ?, bitable_app_token = ?,
         bitable_table_id = ?, bitable_url = ?, bitable_enabled = ?,
         updated_at = ?
     WHERE user_id = ?
   `).run(
-    feishu_webhook || '',
-    feishu_secret || '',
+    // 群 ID 去空白：从飞书客户端复制常带首尾空格，带着空格调接口报 230002
+    //「群不存在」，管理员会以为自己复制错了。
+    String(feishu_chat_id || '').trim(),
     feishu_enabled ? 1 : 0,
     Number.isFinite(Number(feishu_min_score)) ? Number(feishu_min_score) : 55,
     feishu_app_id || '',
@@ -976,6 +991,52 @@ tenderRouter.post('/admin/bitable/:userId/init', async (req, res) => {
   }
 });
 
+// 给已经在用的表格补做两件 createBitable 现在会自动做、但历史表格没做过的事：
+//   1. bitable_url 补上 ?table=（不带的话点进去是 base 的第一张表 ——
+//      早期建的 base 里还留着一张自带的空「数据表」排在最前面）；
+//   2. 关掉链接分享（租户默认是「组织内获得链接的人可阅读」+ 可转发到组织外，
+//      而卡片按钮是发到群里的，等于全公司可看这个账号的全部投标信息）。
+// 不能让老用户走 init force=true —— 那会换掉 app_token，旧表里的跟进标记全部失联。
+tenderRouter.post('/admin/bitable/:userId/secure', async (req, res) => {
+  const db = getDatabase();
+  const userId = req.params.userId;
+  const row = db.prepare(
+    `SELECT feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id, bitable_url
+     FROM tender_user_preferences WHERE user_id = ?`
+  ).get(userId) as any;
+
+  if (!row?.bitable_app_token) return res.status(400).json({ error: '该用户尚未初始化多维表格' });
+  if (!row.bitable_table_id) return res.status(400).json({ error: '缺少「标讯推荐」表 ID，请先补建表' });
+
+  const base = row.bitable_url || `https://feishu.cn/base/${row.bitable_app_token}`;
+  const fixedUrl = withTableParam(base, row.bitable_table_id);
+  const urlChanged = fixedUrl !== row.bitable_url;
+  if (urlChanged) {
+    db.prepare('UPDATE tender_user_preferences SET bitable_url = ? WHERE user_id = ?').run(fixedUrl, userId);
+  }
+
+  const cred = { appId: row.feishu_app_id, appSecret: row.feishu_app_secret };
+  const linkShareClosed = await closeLinkShare(cred, row.bitable_app_token, Date.now());
+
+  // 顺手清掉建 App 时自带的空表（它排在客户端 tab 第一位，用户切 tab 会点进去看到空表）。
+  // 失败不影响前两件事 —— 链接已经指向正确的表了，残留一张空表只是观感问题。
+  let removedTables: string[] = [];
+  try {
+    removedTables = await cleanupDefaultTables(
+      cred,
+      row.bitable_app_token,
+      [row.bitable_table_id, row.bitable_all_table_id],
+      Date.now()
+    );
+  } catch (e: any) {
+    console.error('[bitable] 清理自带空表失败:', e.message);
+  }
+
+  // 三件事各自成败分开报。合成一个 success 的话，链接分享没关掉却因为
+  // url 改成功而显示「已处理」，管理员会以为表已经不对外了。
+  res.json({ success: true, urlChanged, url: fixedUrl, linkShareClosed, removedTables });
+});
+
 // 把表格授权给用户或群，否则应用创建的文件不在用户云空间里，用户打不开。
 tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
   const { member_type, member_id, perm } = req.body || {};
@@ -983,7 +1044,15 @@ tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
   const allowedPerms = ['view', 'edit', 'full_access'];
   if (!allowedTypes.includes(member_type)) return res.status(400).json({ error: 'member_type 不合法' });
   if (!member_id) return res.status(400).json({ error: '缺少 member_id' });
-  const usePerm = allowedPerms.includes(perm) ? perm : 'edit';
+
+  // 群授权一律降级成只读，**不管前端传的是什么**。
+  // 授权给群 = 该群全体成员都能开这张表，而表里是这个账号的全部投标信息
+  // （预算、评分、AI 分析与策略）。给整群 edit 意味着任何成员都能改、能删记录，
+  // 而 appendRecords 是只追加不更新的，别人删掉的行不会被补回来。
+  // 前端也做了同样的判断，但那只是让按钮文字对得上 ——
+  // 这一行才是闸门：前端改坏、或有人直接打这个接口，都落到只读。
+  const requested = allowedPerms.includes(perm) ? perm : 'edit';
+  const usePerm = member_type === 'openchat' ? 'view' : requested;
 
   const db = getDatabase();
   const row = db.prepare(
@@ -1000,7 +1069,9 @@ tenderRouter.post('/admin/bitable/:userId/grant', async (req, res) => {
       usePerm,
       Date.now()
     );
-    res.json({ success: true });
+    // 回显实际生效的权限。降级必须说出来 —— 请求 edit 却静默变成 view
+    // 的话，调用方会以为群成员能编辑，直到有人反馈「改不了」才发现。
+    res.json({ success: true, perm: usePerm, downgraded: usePerm !== requested });
   } catch (e: any) {
     res.status(400).json({ error: e.message || '授权失败' });
   }
@@ -1059,28 +1130,31 @@ tenderRouter.post('/admin/bitable/:userId/sync', async (req, res) => {
   }
 });
 
-// 发送一条测试消息，验证 webhook 配置是否正确
+// 发送一条测试消息，验证应用凭据 + 群 ID + 机器人是否已在群里。
+//
+// 这个接口是必要的，不是锦上添花：真实推送发生在后台评分任务里，失败只写进一行任务日志
+// 且不重试。没有测试按钮的话，「应用没被拉进群」（230013）这个 100% 会撞到的问题
+// 要等到某次评分之后翻日志才发现，而那时候达标的推荐已经作为「本轮新产生」推过一次了。
 tenderRouter.post('/admin/feishu/:userId/test', async (req, res) => {
   const db = getDatabase();
   const row = db.prepare(
-    'SELECT feishu_webhook, feishu_secret FROM tender_user_preferences WHERE user_id = ?'
+    'SELECT feishu_app_id, feishu_app_secret, feishu_chat_id FROM tender_user_preferences WHERE user_id = ?'
   ).get(req.params.userId) as any;
 
-  if (!row?.feishu_webhook) return res.status(400).json({ error: '该用户未配置飞书 webhook' });
-
-  try {
-    const result = await pushTenderRecommendations(
-      row.feishu_webhook,
-      row.feishu_secret || undefined,
-      [{ title: '【测试】标讯推送配置成功', purchaserName: '示例采购人', totalScore: 88, tier: 'priority', budgetAmount: 1000000, regionName: '广东', url: null }],
-      Date.now(),
-      getBitableUrl(req.params.userId) || undefined
-    );
-    if (result.ok) return res.json({ success: true });
-    return res.status(400).json({ error: `飞书返回 code=${result.code ?? '?'} ${result.msg ?? ''}` });
-  } catch (e: any) {
-    return res.status(400).json({ error: e.message || '推送失败' });
+  if (!row?.feishu_app_id || !row?.feishu_app_secret) {
+    return res.status(400).json({ error: '请先填写并保存 App ID / App Secret' });
   }
+  if (!row?.feishu_chat_id) return res.status(400).json({ error: '该用户未配置推送群 ID（oc_ 开头）' });
+
+  const result = await pushTenderRecommendations(
+    { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
+    row.feishu_chat_id,
+    [{ title: '【测试】标讯推送配置成功', purchaserName: '示例采购人', totalScore: 88, tier: 'priority', budgetAmount: 1000000, regionName: '广东', url: null }],
+    Date.now(),
+    getBitableUrl(req.params.userId) || undefined
+  );
+  if (result.ok) return res.json({ success: true });
+  return res.status(400).json({ error: result.error || '推送失败' });
 });
 
 tenderRouter.get('/keywords-used', (req, res) => {
@@ -1096,6 +1170,10 @@ tenderRouter.get('/admin/stats', (req, res) => {
   const todayTenders = (db.prepare("SELECT COUNT(*) as count FROM tenders WHERE created_at >= date('now')").get() as any).count;
   const totalRecommendations = (db.prepare('SELECT COUNT(*) as count FROM tender_recommendations').get() as any).count;
   const platforms = db.prepare('SELECT platform, COUNT(*) as count FROM tenders GROUP BY platform').all();
+  // 已过时效的条数要能看见：这些标讯还在库里（totalTenders 含它们），
+  // 但已从用户列表/评分/推送里消失。不报出来的话 totalTenders 和用户
+  // 实际看到的条数长期不一致，会被当成 bug 查。
+  const expiredTenders = (db.prepare(`SELECT COUNT(*) as count FROM tenders WHERE ${expiredSql()}`).get() as any).count;
 
-  res.json({ totalTenders, todayTenders, totalRecommendations, platforms });
+  res.json({ totalTenders, todayTenders, totalRecommendations, platforms, expiredTenders, visibleDays: TENDER_VISIBLE_DAYS });
 });

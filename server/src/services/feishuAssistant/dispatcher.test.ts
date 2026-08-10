@@ -241,13 +241,57 @@ describe('handleMessage 受理判定', () => {
     await settled;
   });
 
-  it('私聊不受群白名单限制', async () => {
-    const app = makeApp({ allowed_chats: JSON.stringify(['oc_allowed']) });
-    vi.mocked(parseIntent).mockResolvedValue(intent({ steps: [{ action: 'reply', params: { text: 'ok' } }] }));
+});
+
+// 助理只在群聊里工作。这一组守的是「拒绝，但**说出来**」——
+// 白名单外的群是静默拦（回话等于向任意群暴露自己），而私聊必须回一句：
+// 用户是特意来找机器人说话的，没反应和"坏了"完全同形。
+describe('只在群聊里工作', () => {
+  it('私聊被拒，回一句「到群里说」，不花额度也不落指令日志', async () => {
+    const app = makeApp();
+    const { deps, replies, settled } = makeDeps(app);
+
+    expect(handleMessage(makeMsg({ chatType: 'p2p', chatId: 'oc_p2p' }), deps)).toBe('p2p_rejected');
+    await settled;
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain('群聊');
+    // 这两条是重点：意图解析没被调用（= 没花 AI 额度），
+    // 也没有指令日志行（那张表是"已受理指令"的日志）。
+    expect(vi.mocked(parseIntent)).not.toHaveBeenCalled();
+    expect(listCommands({ userId: 'user-1' }).total).toBe(0);
+  });
+
+  it('私聊也去重 —— 飞书重推不该让用户连收五条同样的拒绝', async () => {
+    const app = makeApp();
+    const first = makeDeps(app);
+    expect(handleMessage(makeMsg({ chatType: 'p2p' }), first.deps)).toBe('p2p_rejected');
+    await first.settled;
+
+    const second = makeDeps(app);
+    expect(handleMessage(makeMsg({ chatType: 'p2p' }), second.deps)).toBe('duplicate');
+    expect(second.replies).toEqual([]);
+  });
+
+  it('私聊不受群白名单影响 —— 一律拒，白名单空着也一样', async () => {
+    // 以前这里是「私聊不受群白名单限制」（= 一律放行）。反过来了：
+    // 空白名单意味着"不限**群**"，从来不意味着"私聊也行"。
+    const app = makeApp({ allowed_chats: '[]' });
     const { deps, settled } = makeDeps(app);
 
-    expect(handleMessage(makeMsg({ chatType: 'p2p', chatId: 'oc_p2p' }), deps)).toBe('accepted');
+    expect(handleMessage(makeMsg({ chatType: 'p2p', chatId: 'oc_p2p' }), deps)).toBe('p2p_rejected');
     await settled;
+    expect(vi.mocked(parseIntent)).not.toHaveBeenCalled();
+  });
+
+  it('回帖失败也不抛（游离 promise，抛出去只会变成 unhandledRejection）', () => {
+    const app = makeApp();
+    const deps: DispatchDeps = {
+      app,
+      client: {} as Client,
+      reply: async () => { throw new Error('飞书挂了'); },
+    };
+    expect(() => handleMessage(makeMsg({ chatType: 'p2p' }), deps)).not.toThrow();
   });
 });
 
@@ -507,16 +551,22 @@ describe('一句话两件事（多步执行）', () => {
     // 前面那条路径是新写的（不再重新抛给外层 catch），所以要单独守一下
     // error_detail 没丢 —— 少了它后台就渲染不出「一键补权限」按钮。
     const app = makeApp();
+    // 复刻 SDK 抛出的形状：AxiosError 上挂 response.data。
     const axiosLike = new Error('Request failed with status code 400');
     (axiosLike as unknown as { response: { data: unknown } }).response = {
       data: { code: 230013, msg: 'Bot has NO availability to this user', log_id: 'LOG_Y' },
     };
-    // 让第一步动作抛出飞书错误：用一个动作名合法但会抛的组合最省事 ——
-    // 直接 mock 掉 client 上的方法。
+    // 让**动作里那次飞书调用**抛（而不是让参数校验抛）：这条路径要验的是
+    // describeCommandError 在多步循环里也认得 axios 形状。
+    // 塞一个只有 task.v2.task.create 的假 client —— 断言 kind 而不只是
+    // 「error_detail 非空」，否则假 client 少一层属性抛出 TypeError 时测试照样绿。
     vi.mocked(parseIntent).mockResolvedValue(intent({
-      steps: [{ action: 'send_message', params: { to: 'ou_x', text: 'hi' } }],
+      steps: [{ action: 'create_task', params: { summary: '写季度报告' } }],
     }));
     const { deps, settled } = makeDeps(app);
+    deps.client = {
+      task: { v2: { task: { create: async () => { throw axiosLike; } } } },
+    } as unknown as Client;
     handleMessage(makeMsg(), deps);
     await settled;
 
@@ -524,7 +574,7 @@ describe('一句话两件事（多步执行）', () => {
       .prepare('SELECT status, error_detail FROM feishu_commands LIMIT 1')
       .get() as { status: string; error_detail: string | null };
     expect(row.status).toBe('failed');
-    expect(row.error_detail).toBeTruthy();
+    expect(JSON.parse(row.error_detail!).kind).toBe('availability_denied');
   });
 
   it('步骤里混进一个不存在的动作名时，好的那一步照做', async () => {
@@ -814,8 +864,10 @@ describe('接上一轮追问', () => {
     expect(priorArg()).toEqual({ text: '约个评审会', reply: '你想约几点？' });
   });
 
-  it('上一条是写操作时不带 —— 「再发一条」不该重放一次发消息', async () => {
-    seedClarification({ action: 'send_message' });
+  it('上一条是写操作时不带 —— 「再记一条」不该重放一次日志', async () => {
+    // 上一轮已经写过东西了，把它当上文带下去，模型会把「再来一条」理解成
+    // 「照上次那条再做一遍」—— 于是日志里多一条一样的记录、任务建两个。
+    seedClarification({ action: 'add_diary_record' });
     await run();
     expect(priorArg()).toBeUndefined();
   });

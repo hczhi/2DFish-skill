@@ -92,6 +92,7 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/admin/users' },
         { path: 'users', name: 'admin-users', component: () => import('../views/admin/UserManagement.vue') },
+        { path: 'users/:id/dedicated-ai', name: 'admin-dedicated-ai', component: () => import('../views/admin/DedicatedAi.vue') },
         { path: 'quotas', name: 'admin-quotas', component: () => import('../views/admin/QuotaManagement.vue') },
         { path: 'usage', name: 'admin-usage', component: () => import('../views/admin/AIDashboard.vue') },
         { path: 'ai-logs', name: 'admin-ai-logs', component: () => import('../views/admin/AILogs.vue') },
@@ -119,6 +120,8 @@ const router = createRouter({
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
         { path: 'skills/:id/edit', name: 'admin-skill-edit', component: () => import('../views/admin/SkillEditor.vue') },
+        { path: 'agent-skills', name: 'admin-agent-skills', component: () => import('../views/admin/AgentSkills.vue') },
+        { path: 'agent-skills/:id', name: 'admin-agent-skill-edit', component: () => import('../views/admin/AgentSkillEditor.vue') },
       ],
     },
     {

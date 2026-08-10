@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { aiGatewayStream, QuotaExceededError, resolveLLMConfig } from '../core/llm/gateway.js';
+import { aiGatewayStream, QuotaExceededError } from '../core/llm/gateway.js';
 import { toolDefinitions } from '../core/tools/definitions.js';
 import { streamWithToolCalls } from '../core/streaming.js';
 import { buildSystemPrompt } from '../core/prompts/system.js';
@@ -90,13 +90,14 @@ chatRouter.post('/stream', async (req: Request, res: Response) => {
     ];
 
     // Check quota and get stream config
-    const { stream: _, model, onComplete } = await aiGatewayStream(
+    const { stream: _, model, client, onComplete } = await aiGatewayStream(
       { messages: fullMessages, tools: toolDefinitions, stream_options: { include_usage: true } },
       { userId, source: 'chat', operation: 'stream', requestSummary: message.slice(0, 50) }
     );
 
-    // Use shared streaming utility with the resolved client
-    const { client } = resolveLLMConfig();
+    // client 必须用 gateway 解析出来的那个。原来这里是 resolveLLMConfig() 无参重解析，
+    // 拿到的永远是平台配置 —— 专属渠道/按应用配置的用户会出现 model 来自专属、
+    // key 来自平台的错配。
     const startTime = Date.now();
 
     const { content, totalInput, totalOutput } = await streamWithToolCalls({

@@ -3,9 +3,16 @@ import { getDatabase } from '../../db/index.js';
 import { logAIUsage } from './client.js';
 import { resolveLLMProvider, usesDedicatedChannel, type LLMTier } from '../../services/aiProviderService.js';
 import { decryptSecret } from '../secrets.js';
+import { appName } from './apps.js';
+import { normalizeBaseUrl } from './baseUrl.js';
 
 export interface GatewayOptions {
   userId: string;
+  /**
+   * 哪个应用发起的调用。**同时是**「按应用配 token / 配额」的 scope key
+   * （见 migrations/062、core/llm/apps.ts）—— 取值必须在 AI_APPS 白名单里，
+   * 否则那个应用永远匹配不到自己的配置。有测试扫这件事。
+   */
   source: string;
   operation: string;
   requestSummary?: string;
@@ -59,10 +66,19 @@ export const SAMPLING = {
 export class QuotaExceededError extends Error {
   remaining = 0;
   dailyLimit: number;
-  constructor(dailyLimit: number) {
-    super(`今日 AI 额度已用完（${dailyLimit}次/天），请联系管理员提升额度。\nDaily AI quota exceeded (${dailyLimit}/day). Please contact admin to increase your limit.`);
+  /** 有值 = 撞的是这个应用的单独额度，不是用户总额（migrations/062）。 */
+  app?: string;
+  constructor(dailyLimit: number, app?: string) {
+    // 撞哪个限制必须写在文案里：两条限制的解法不同（提总额 vs 提应用额度），
+    // 只说「额度用完」会让用户去改错的那个数，改完发现还是不行。
+    super(
+      app
+        ? `「${appName(app)}」今日 AI 额度已用完（${dailyLimit}次/天）。这是该功能的单独额度，与账号总额度分开计算，请联系管理员调整。\nDaily quota for app "${app}" exceeded (${dailyLimit}/day).`
+        : `今日 AI 额度已用完（${dailyLimit}次/天），请联系管理员提升额度。\nDaily AI quota exceeded (${dailyLimit}/day). Please contact admin to increase your limit.`
+    );
     this.name = 'QuotaExceededError';
     this.dailyLimit = dailyLimit;
+    this.app = app;
   }
 }
 
@@ -83,9 +99,11 @@ export interface ResolvedLLM {
  * 平台路径（默认）不变：
  *   1. ai_providers 里该 tier 的启用 provider（取不到回落 default 档）；
  *   2. 都没有再回落旧 system_config 的 platform_* 裸 key（保证老配置照常跑）。
+ *
+ * `app`（= GatewayOptions.source）先试「该应用专用」再回落 owner 通用，见 migrations/062。
  */
-export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string): ResolvedLLM {
-  const provider = resolveLLMProvider(tier, userId);
+export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string, app: string = ''): ResolvedLLM {
+  const provider = resolveLLMProvider(tier, userId, app);
   if (provider) {
     const client = new OpenAI({
       apiKey: provider.api_key,
@@ -112,7 +130,9 @@ export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string): Re
   const client = new OpenAI({
     // 库里是密文（migrations/050）；decryptSecret 对没有前缀的旧明文原样返回
     apiKey: decryptSecret(sysKey.value),
-    baseURL: sysBase?.value || 'https://api.openai.com/v1',
+    // 归一化同 ai_providers：这一格也是管理员手填的，同样会粘进完整的
+    // .../chat/completions（SDK 会再拼一次 → 404 «Invalid URL»）。
+    baseURL: normalizeBaseUrl(sysBase?.value) || 'https://api.openai.com/v1',
   });
   return { client, model: sysModel?.value || 'gpt-4o', providerId: null, providerOwner: 'platform' };
 }
@@ -144,6 +164,59 @@ export function checkAndDeductQuota(userId: string): void {
   db.prepare('UPDATE ai_quota SET used_today = used_today + 1 WHERE user_id = ?').run(userId);
 }
 
+/**
+ * 应用级额度（migrations/062）。**额外的天花板，不替代用户总额。**
+ *
+ * 没有配置行 = 该应用不限（纯 opt-in，老用户零影响）。
+ *
+ * 三条刻意的选择：
+ *
+ * 1. **专属渠道用户同样受限。** 专属渠道绕过 ai_quota 是因为那是「平台默认限流」，
+ *    用户烧自己的 key，平台没理由限他。但应用级额度是管理员为这个用户的
+ *    这个应用**特意填的一个数**；绕过它等于该功能对「有自己 token 的用户」
+ *    完全失效 —— 而那恰好是提这个需求的场景。
+ *
+ * 2. **先扣应用额度，再扣总额。** 反过来的话，应用额度撞墙时总额已经被扣掉一次，
+ *    用户白掉一次总额度却什么都没得到。
+ *
+ * 3. **anon: 主体也走这里。** 它在 ai_quota 里有独立行（requester.ts），
+ *    在这张表里同样按 user_id 记，不需要特殊分支。
+ */
+export function checkAndDeductAppQuota(userId: string, app: string): void {
+  if (!app) return;
+  const db = getDatabase();
+  const today = new Date().toISOString().split('T')[0];
+
+  const row = db.prepare('SELECT * FROM ai_app_quota WHERE user_id = ? AND app = ?').get(userId, app) as
+    | { daily_limit: number; used_today: number; last_reset_date: string }
+    | undefined;
+  if (!row) return; // 没配 = 不限
+
+  const used = row.last_reset_date === today ? row.used_today : 0;
+  if (used >= row.daily_limit) {
+    throw new QuotaExceededError(row.daily_limit, app);
+  }
+
+  // 日期变了就顺手归零。和 ai_quota 一样用「读时重置」而不是定时任务，
+  // 服务器半夜没在跑也不会漏掉重置。
+  db.prepare(
+    'UPDATE ai_app_quota SET used_today = ?, last_reset_date = ? WHERE user_id = ? AND app = ?'
+  ).run(used + 1, today, userId, app);
+}
+
+/** 某用户各应用的额度使用情况。null limit = 未配置 = 不限。 */
+export function getAppQuotaStatus(userId: string): Array<{ app: string; used: number; limit: number; remaining: number }> {
+  const db = getDatabase();
+  const today = new Date().toISOString().split('T')[0];
+  const rows = db.prepare('SELECT * FROM ai_app_quota WHERE user_id = ? ORDER BY app').all(userId) as Array<{
+    app: string; daily_limit: number; used_today: number; last_reset_date: string;
+  }>;
+  return rows.map((r) => {
+    const used = r.last_reset_date === today ? r.used_today : 0;
+    return { app: r.app, used, limit: r.daily_limit, remaining: Math.max(0, r.daily_limit - used) };
+  });
+}
+
 export function getQuotaStatus(userId: string): { used: number; limit: number; remaining: number } {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
@@ -162,8 +235,11 @@ export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
 ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
-  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId);
+  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId, options.source);
 
+  // 应用级额度先扣：它对专属渠道也生效，且要在总额之前判，
+  // 否则应用额度撞墙时总额已经白扣了一次。见 checkAndDeductAppQuota 的注释。
+  checkAndDeductAppQuota(options.userId, options.source);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
   if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
@@ -196,6 +272,13 @@ export async function aiGateway(
 export interface StreamGatewayResult {
   stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
   model: string;
+  /**
+   * 已解析好的客户端。带工具调用的路径（chat / consultant）要自己跑多轮循环，
+   * 必须用**这一个**，不要再调 resolveLLMConfig() 重新解析一次 ——
+   * 无参调用拿到的是平台配置，会造成「model 是专属/应用专用的、
+   * key 却是平台的」这种错配：请求可能直接 401，也可能悄悄花错人的钱。
+   */
+  client: OpenAI;
   /** 流式收尾：传入 token 数、耗时，以及累计拼接后的完整输出正文（供后台日志记全文）。 */
   onComplete: (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => void;
 }
@@ -204,8 +287,10 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId);
+  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId, options.source);
 
+  // 顺序同 aiGateway：应用级额度先扣（对专属渠道也生效），再扣平台总额。
+  checkAndDeductAppQuota(options.userId, options.source);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
   if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
@@ -227,7 +312,7 @@ export async function aiGatewayStream(
     );
   };
 
-  return { stream, model, onComplete };
+  return { stream, model, client, onComplete };
 }
 
 /** 序列化 messages 存日志；超大体量截断，避免个别超长 prompt 撑爆单行。 */

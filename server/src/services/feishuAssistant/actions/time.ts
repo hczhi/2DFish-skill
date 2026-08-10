@@ -2,9 +2,10 @@
 // （如 2026-08-05T15:00:00+08:00），这里只做解析和格式转换，不做自然语言理解——
 // 「明天下午三点」这类相对表述由 LLM 在拿到当前时间的前提下算成绝对时间。
 //
-// 单独成文件是因为任务的 due 和日程的 start/end 都要用，而两边要的格式不同：
-// 任务 due.timestamp 是**毫秒**字符串，日程 start_time.timestamp 是**秒**字符串。
-// 这个差异踩过一次就够了。
+// 单独成文件是因为「毫秒还是秒」这个坑不止一处：飞书任务的 due.timestamp 是
+// **毫秒**字符串，而日程的 start_time.timestamp 是**秒**（日程动作已删，
+// 但多维表格的日期字段又是毫秒），写反了不报错，只会把日期排到 1970 年。
+// 所以每个格式都有一个具名函数，而不是在调用处 `String(ms)` / `ms/1000`。
 
 export const DEFAULT_TIMEZONE = 'Asia/Shanghai';
 
@@ -18,11 +19,6 @@ export function parseIso(raw: string, label: string): number {
 /** 飞书任务 due.timestamp：毫秒字符串。 */
 export function toTaskTimestamp(ms: number): string {
   return String(ms);
-}
-
-/** 飞书日程 start_time/end_time.timestamp：秒字符串。 */
-export function toEventTimestamp(ms: number): string {
-  return String(Math.floor(ms / 1000));
 }
 
 /** 给用户看的时间。固定用飞书租户所在时区，不用服务器本地时区。 */
@@ -95,53 +91,16 @@ export function wallToMs(
   return ms;
 }
 
-/**
- * RFC 3339（`2026-08-06T09:00:00+08:00`）。
- *
- * 忙闲查询的 time_min/time_max 用的是这个格式，**不是**日程接口那种
- * unix 秒字符串 —— 同一个 calendar 命名空间下两种时间格式，很容易写反。
- */
-export function toRfc3339(ms: number, timeZone = DEFAULT_TIMEZONE): string {
+/** 只要「2026-08-06」。多维表格里只到天的日期字段、日志分组用这个。 */
+export function fmtDate(ms: number, timeZone = DEFAULT_TIMEZONE): string {
   const p = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23', // hour12:false 在部分 ICU 下会把午夜给成 24
   }).formatToParts(new Date(ms));
   const get = (t: string) => p.find((x) => x.type === t)?.value ?? '00';
-  const off = offsetMinutes(ms, timeZone);
-  const sign = off < 0 ? '-' : '+';
-  const a = Math.abs(off);
-  const tz = off === 0 ? 'Z' : `${sign}${pad2(Math.floor(a / 60))}:${pad2(a % 60)}`;
-  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${tz}`;
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-/** 只要「08月06日（周四）」。忙闲结果按天分组时用。 */
-export function fmtDayLabel(ms: number, timeZone = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone,
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-  }).format(new Date(ms));
-}
-
-/** 只要「09:00」。同一天内的时间段用这个，带上年月日会糊成一团。 */
-export function fmtHm(ms: number, timeZone = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(new Date(ms));
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 /** 拼进 prompt 的「当前时间」。带时区和星期，否则 LLM 算不对「下周三」。 */

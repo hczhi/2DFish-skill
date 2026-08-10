@@ -2,6 +2,7 @@ import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
 import { ACTIONS, getAction } from './actions/index.js';
 import { getSkillForSlot } from '../skillRegistryService.js';
 import { nowForPrompt } from './actions/time.js';
+import { renderDiaryContext, type DiaryContext } from './diary/context.js';
 
 // 自然语言 → 结构化动作。
 //
@@ -22,8 +23,8 @@ export interface ParsedIntent {
   /**
    * 要依次执行的动作。绝大多数指令只有一步。
    *
-   * 允许多步是因为一句话里塞两件事是很自然的说法（「给他们发个消息，
-   * 并建个日程」）。在只支持一步的年代，这种句子的结果是 LLM 挑一件做掉、
+   * 允许多步是因为一句话里塞两件事是很自然的说法（「记一下客户要改 logo，
+   * 顺便派给张三」）。在只支持一步的年代，这种句子的结果是 LLM 挑一件做掉、
    * 另一件**静默消失** —— 用户以为都办了。
    */
   steps: ParsedStep[];
@@ -41,8 +42,8 @@ export interface ParsedIntent {
 /**
  * 一条指令最多拆几步。
  *
- * 这是个防跑偏的闸，不是能力上限：模型偶尔会把一件事拆成「先查忙闲、
- * 再建日程、再发通知」这种自作主张的计划，而每一步都是真的会执行的写操作。
+ * 这是个防跑偏的闸，不是能力上限：模型偶尔会把一件事拆成「先记一条日志、
+ * 再建任务、再复盘一次」这种自作主张的计划，而每一步都是真的会执行的写操作。
  * 超过就只保留前几步并在回帖里说清 —— 静默截断会让用户以为全做了。
  */
 export const MAX_STEPS = 3;
@@ -92,9 +93,9 @@ function supplementParts(appSupplement?: string): { block: string; rule: string 
 /**
  * 名册的存在与否要告诉 LLM，因为它改变"该不该选写操作"的判断。
  *
- * 没同步过名册时，用户说「给李四发个消息」而李四没被 @ 到，正确反应是
- * reply 提示他 @ 一下 —— 选 send_message 只会让动作层抛错，多绕一圈。
- * 同步过之后反过来：该大胆选 send_message，让动作层去查名册。
+ * 没同步过名册时，用户说「派给李四一个任务」而李四没被 @ 到，正确反应是
+ * reply 提示他 @ 一下 —— 选 create_task 只会让动作层抛错，多绕一圈。
+ * 同步过之后反过来：该大胆选 create_task，让动作层去查名册。
  *
  * 这段是**运行时事实**（库里有没有数据），不是可配置的规则，所以在代码里，
  * 不在 skill 里。
@@ -114,6 +115,88 @@ function directoryHint(peopleCount: number): string {
 }
 
 /**
+ * 「项目」和「任务」是两件事，这一段是防它们串味的地方。
+ *
+ * 这是本模块观察到的**头号误选**：用户说「添加新项目，XX 纪录片」，模型选了
+ * create_task，回帖「✅ 任务已创建」—— 看起来成功了，而用户要的那张日志表
+ * 根本不存在。他接着说「创建项目 XX」，模型这次选了 update_task
+ * （"创建"没对上、"项目"也没对上，于是掉进了最近的那个改任务动作），
+ * 回一句「没找到对得上的任务」。三轮下来一件事都没办成。
+ *
+ * 根因有两层：注册表里 create_task 排在 create_diary_project **前面六位**
+ * （模型顺着读，先撞上的就选了），而「项目」这个词在 create_task 的描述里
+ * 完全没被提及、也没被排除。位置在 index.ts 里调过了，这段负责语义上的排除 ——
+ * 两个都要，缺一个都还会串。
+ *
+ * 放在代码里而不是 skill 里：这是动作语义的一部分，不是某家公司的说话习惯。
+ */
+const PROJECT_VS_TASK_RULE =
+  '\n\n**「项目」和「任务」是两件不同的东西，最容易搞混，务必分清：**\n' +
+  '- 用户话里出现「项目」「立项」「新项目」「建个项目」「添加项目」「开个项目」时，' +
+  '一律是项目日记的 create_diary_project，**绝对不是 create_task、也不是 update_task**。' +
+  '项目 = 一个群一张日志表，是长期的；任务 = 一条待办，是一次性的。\n' +
+  '- 只有出现「任务」「待办」「派给」「提醒我」「几点前做完」这类词时才是 create_task。\n' +
+  '- 用户说「创建/新建/添加 + 项目名」而你不确定他要项目还是任务时，选 create_diary_project' +
+  '（他说了「项目」两个字，就按项目办）。';
+
+/**
+ * 这个群有没有绑项目日记，是**运行时事实**，会改变动作选择。
+ *
+ * 没绑项目时，「记一下明天要交片」这句话该走 reply 提示先建项目 ——
+ * 选 add_diary_record 只会让动作层回一句「这个群还没有项目」，绕了一圈。
+ * 绑了项目就反过来：该大胆选 add_diary_record，而且要明确「记录 ≠ 建任务」，
+ * 这是这三个动作最容易被误选的一处（「记一下明天要交片」听起来很像待办）。
+ *
+ * 和 directoryHint 一样放在代码里而不是 skill 里：它是库里有没有数据，不是可配置的规则。
+ *
+ * 没有私聊分支：助理只在群聊里工作，私聊在 dispatcher 就被挡掉了，
+ * 走到这里的一定是群消息。
+ */
+function diaryHint(projectName: string | null): string {
+  // 「找表格链接」在哪种情况下都要能答上：那些多维表格不在任何人的云文档空间里，
+  // 链接分享也是关掉的，所以**问助理是唯一的找回途径**。
+  // 这一句对两个分支都成立（连一个项目都没有时，动作自己会回「先去建项目」），
+  // 所以放在最前面而不是塞进某一个分支。
+  const listHint =
+    '\n用户问「有哪些项目 / 项目列表 / 表格链接发一下 / 项目总表在哪」时选 list_diary_projects' +
+    '（它只回项目清单和链接，不看日志内容 —— 问「这周干了什么」是 review_diary）。';
+
+  if (!projectName) {
+    return (
+      '\n本群**还没有绑定项目日记**。用户说「新建项目 / 建个项目 / 添加项目 / 立项」时' +
+      '选 create_diary_project（这正是本群该做的第一件事）；' +
+      '说「记一下……」这类话时用 reply 告诉他先说一句「新建项目：XXX」，' +
+      '不要选 add_diary_record。' +
+      listHint +
+      PROJECT_VS_TASK_RULE
+    );
+  }
+  return (
+    `\n本群已绑定项目日记：**${projectName}**。用户说「记一下 / 记录一下 / 写进日志」时` +
+    '选 add_diary_record（project 参数留空即可，系统知道是本群这个项目）；' +
+    '说「复盘 / 总结一下 / 这周干了什么」时选 review_diary。\n' +
+    // 这两个动作是这一块里最容易串味的一对，而串了之后拿到的东西是**反的**：
+    // 用户要助理去读群聊，收到的是一份基于日志的复盘（很可能是空的，因为
+    // 群里的事本来就没人手动记过）。所以在这里点明分界线是「读的是什么」。
+    '**「总结群聊」是另一个动作**：用户明确说要处理**群里的聊天记录**' +
+    '（「总结一下今天群里聊了什么」「把群聊整理进日志」）时选 digest_chat —— ' +
+    '它去读群消息原话，产出是往日志里新增几条记录。' +
+    '只说「复盘 / 总结一下」而没提群聊时，一律是 review_diary（读的是已经记好的日志）。\n' +
+    '**注意区分**：「记一下」是写日志（add_diary_record），' +
+    '「提醒我 / 派给谁 / 几点前做完」才是待办（create_task）。' +
+    '同一句话里既是记录又是待办时，才拆成两步。\n' +
+    // 「进度怎么样」这句话两个动作都说得通，而拿错的后果是反的：他想看还剩哪些活，
+    // 收到一份按时间段归纳的复盘（还白花一次额度）。分界线是"看的是哪张表"。
+    '**「有哪些活在办」是 list_tasks**：用户问「还有什么没做完 / 任务列表 / ' +
+    '张三手上有几个活 / 我的任务 / 现在进度怎么样」时选它 —— 它读的是**任务管理表**' +
+    '（谁负责、什么时候截止、做到哪了），而 review_diary 读的是日志。' +
+    '问「这周干了什么」是 review_diary，问「还剩哪些活」是 list_tasks。' +
+    listHint +
+    PROJECT_VS_TASK_RULE
+  );
+}
+
+/**
  * 有上一轮反问时，要明确告诉模型「现在这句话是补充，不是新指令」。
  *
  * 光把两轮对话塞进 messages 是不够的：模型会把上一轮当成"已经办完的历史"，
@@ -129,12 +212,19 @@ const FOLLOWUP_RULE =
   '信息已经齐了就不要再反问一次（用户已经答过一遍了）。' +
   '如果这句话明显和上一轮无关（他换了个话题），就当新指令正常处理。';
 
+/**
+ * 本群项目的现状快照。**只有 projectName 是必需的**，其余字段缺省时这一节
+ * 就不出现 —— 调用方（包括测试）只关心「有没有项目」时不必凑齐一整份数据。
+ */
+export type DiaryOption = { projectName: string | null } & Partial<DiaryContext>;
+
 function buildSystemPrompt(
   nowMs: number,
   mentions: Array<{ openId: string; name: string }>,
   peopleCount: number,
   hasPrior = false,
-  appSupplement?: string
+  appSupplement?: string,
+  diary?: DiaryOption
 ): string {
   const actionDocs = ACTIONS.map((a) => {
     const params = Object.entries(a.params)
@@ -157,6 +247,21 @@ function buildSystemPrompt(
 
   const supplement = supplementParts(appSupplement);
 
+  // 项目现状快照（记录 + 在办任务）。放在 diaryHint 之后、补充规则之前：
+  // 它是**数据**，而 diaryHint 是读这份数据的说明书，顺序反了模型会先看到一堆
+  // 任务行却不知道该拿它们干什么（观察到的表现是自作主张去改快到期的那条）。
+  // 硬性规则仍然压在最后 —— 这一节自带的免责声明也点名引用了它们。
+  const diaryFacts = diary
+    ? renderDiaryContext({
+        projectName: diary.projectName,
+        records: diary.records ?? [],
+        tasks: diary.tasks ?? [],
+        recordTotal: diary.recordTotal ?? 0,
+        openTaskTotal: diary.openTaskTotal ?? 0,
+        closedTaskCount: diary.closedTaskCount ?? 0,
+      })
+    : '';
+
   return `你是飞书助理的指令解析器。用户在飞书里 @ 你并下达一句指令，你要判断他想做什么，输出一个 JSON。
 
 当前时间：${nowForPrompt(nowMs)}
@@ -169,6 +274,8 @@ ${actionDocs}
 
 ${mentionList}
 ${directoryHint(peopleCount)}
+${diary ? diaryHint(diary.projectName) : ''}
+${diaryFacts}
 ${supplement.block}
 ## 输出格式
 
@@ -176,7 +283,7 @@ ${supplement.block}
 
 {"action": "动作名", "params": {"参数名": "值"}}
 
-一句话里要办**两件事**时（如「给他们发个消息，并建个日程」），
+一句话里要办**两件事**时（如「记一下客户要改 logo，顺便派给张三」），
 输出 actions 数组，按执行顺序排列（最多 ${MAX_STEPS} 步）：
 
 {"actions": [{"action": "动作名", "params": {...}}, {"action": "动作名", "params": {...}}]}
@@ -192,10 +299,10 @@ ${supplement.block}
    用户完全没说是谁时就留空，别自己挑一个人。
 4. 指令不明确、信息不足、或你不确定该用哪个动作时，一律用 reply 动作，
    在 text 里说明还需要用户补充什么。宁可多问一句，也不要猜着执行写操作
-   （建错任务、发错消息的代价远大于多问一句）。
+   （建错任务、记到错的项目里，代价远大于多问一句）。
 5. 可选参数用户没提到就不要填，不要自己编默认值。
 6. **只拆用户明确要求的那几件事**，一件事就是一步。不要自己加"顺手做一下"的步骤
-   （比如他只说建日程，你不要额外发一条通知）—— 每一步都会真的执行。
+   （比如他只说记一条日志，你不要额外建个任务）—— 每一步都会真的执行。
    同一件事也不要拆成两步。${supplement.rule}${hasPrior ? FOLLOWUP_RULE : ''}`;
 }
 
@@ -221,6 +328,15 @@ export async function parseIntent(opts: {
    * 空/未传 = 回落到平台默认的 skill slot，见 supplementParts。
    */
   supplement?: string;
+  /**
+   * 本群的项目日记状态 + 现状快照（在办任务、最近记录）。
+   * 由 dispatcher 从库里查（见 diary/context.ts:buildDiaryContext）。
+   *
+   * 不传时 prompt 里完全不出现这段 —— 测试里不关心日记的用例照旧。
+   * 只传 projectName 也是合法的：快照那几个字段都是可选的，缺了就只出提示、
+   * 不出数据（`Partial<DiaryContext>`）。
+   */
+  diary?: DiaryOption;
 }): Promise<ParsedIntent | null> {
   // 把上一轮反问还原成真正的对话轮次，而不是塞进 system prompt 里描述一遍。
   // 模型对 role 结构的理解比对「上文是这样的：…」这种叙述可靠得多，
@@ -242,7 +358,8 @@ export async function parseIntent(opts: {
             opts.mentions,
             opts.peopleCount ?? 0,
             !!opts.prior,
-            opts.supplement
+            opts.supplement,
+            opts.diary
           ),
         },
         ...priorTurns,

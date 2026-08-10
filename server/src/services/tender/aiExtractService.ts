@@ -46,7 +46,7 @@ const DEFAULT_EXTRACT_PROMPT = `你是一个招标信息结构化提取专家。
     "budgetText": "<原文预算表述>",
     "projectLocation": "<项目执行地点>",
     "projectType": "<从以下选择：品牌全案/整合营销/媒介投放/活动策划/视频制作/宣传片/设计制作/公关传播/数字营销/舆情监测/其他>",
-    "deadline": "<截标日期 YYYY-MM-DD。未提及则空>",
+    "deadline": "<截标时间。原文写了几点就带上：YYYY-MM-DD HH:mm:ss；只写了日期就给 YYYY-MM-DD。未提及则空>",
     "procurementMethod": "<公开招标/竞争性磋商/竞争性谈判/询价/单一来源/其他>",
     "qualificationRequirements": ["<资质要求1>"],
     "projectSummary": "<2-3句话概括核心需求>",
@@ -58,7 +58,9 @@ const DEFAULT_EXTRACT_PROMPT = `你是一个招标信息结构化提取专家。
 - 必须返回 {{count}} 个元素，顺序与输入一致
 - budgetAmount 必须是数字（单位：元）
 - 没有明确提到的字段给空字符串或空数组
-- projectType 尽量归入给定分类`;
+- projectType 尽量归入给定分类
+- deadline 不要自己推算：原文写「公告发布之日起5个工作日」这类相对说法时给空串，
+  由入库逻辑保留爬虫解析的值`;
 
 async function extractBatch(
   items: Array<{ id: string; title: string; contentText: string; regionName: string }>,
@@ -155,12 +157,25 @@ export async function runAIExtractForTenders(
     for (const tender of batch) {
       const result = batchResult.data.get(tender.id);
       if (result) {
+        // deadline 和 budget_amount / purchaser_name 一样只在空时才写。
+        //
+        // 原来是无条件覆盖，两个后果：
+        //   1. 爬虫解析出的「2026-08-11 17:00:00」被压成「2026-08-11」——
+        //      prompt 只要 YYYY-MM-DD，而 szecp/meicloud/ygcg 三个爬虫都从
+        //      平台字段或正文里拿到了精确到分钟的截止时间。丢掉时分意味着
+        //      「今天 17:00 截止」看起来和「今天已过」没区别。
+        //   2. LLM 没读出来（正文里写「公告发布之日起 5 个工作日」这类）时返回空串，
+        //      直接把爬虫辛苦解析的值擦掉。ygcg 现在全量入库、不按状态过滤，
+        //      deadline 是用户区分「已过期」和「压根没写截止时间」的唯一依据,
+        //      擦掉它等于把这个判断依据也擦掉了。
+        // 反过来 gdgpo 不解析 deadline（列表接口没这个字段），它的空值仍由 AI 补上,
+        // 所以这个 CASE 对 gdgpo 是纯增益、对其余三个是保护。
         db.prepare(`
           UPDATE tenders SET
             ai_extracted = ?,
             project_type = ?,
             project_location = ?,
-            deadline = ?,
+            deadline = CASE WHEN deadline IS NULL OR deadline = '' THEN ? ELSE deadline END,
             qualification_requirements = ?,
             project_summary = ?,
             budget_amount = CASE WHEN budget_amount = 0 THEN ? ELSE budget_amount END,

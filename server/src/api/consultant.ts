@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { aiGatewayStream, QuotaExceededError, resolveLLMConfig } from '../core/llm/gateway.js';
+import { aiGatewayStream, QuotaExceededError } from '../core/llm/gateway.js';
 import { toolDefinitions } from '../core/tools/definitions.js';
 import { streamWithToolCalls } from '../core/streaming.js';
 import { loadAllSkills, findMatchingSkills, buildSkillPromptSection } from '../services/skillService.js';
@@ -96,12 +96,12 @@ consultantRouter.post('/stream', async (req: Request, res: Response) => {
       ...contextMessages,
     ];
 
-    const { stream: _, model, onComplete } = await aiGatewayStream(
+    const { stream: _, model, client, onComplete } = await aiGatewayStream(
       { messages: fullMessages, tools: toolDefinitions, stream_options: { include_usage: true } },
       { userId, source: 'consultant', operation: 'stream', requestSummary: message.slice(0, 50) }
     );
 
-    const { client } = resolveLLMConfig();
+    // 同 api/chat.ts：用 gateway 给的 client，不要 resolveLLMConfig() 重解析。
     const startTime = Date.now();
 
     const { content, totalInput, totalOutput } = await streamWithToolCalls({

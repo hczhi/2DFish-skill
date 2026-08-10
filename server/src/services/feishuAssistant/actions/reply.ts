@@ -17,6 +17,8 @@ export const replyAction: ActionDef = {
     text: '必填。要回复给用户的内容，支持 markdown。',
   },
   examples: ['你能做什么', '你好', '帮我搞一下那个事情（指令不明确 → 用本动作追问）'],
+  // 「我目前会：……」的清单里不该出现「回一句话」——那不是用户来找助理办的事。
+  hint: undefined,
   scopes: [],
   async run(params) {
     const text = requireStr(params, 'text', '回复内容');

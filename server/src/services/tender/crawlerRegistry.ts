@@ -1,6 +1,7 @@
 import { crawlGdgpo, type CrawlProgress, type ProgressCallback } from './crawlerService.js';
 import { crawlMeicloud } from './meicloudCrawlerService.js';
 import { crawlSzecp } from './szecpCrawlerService.js';
+import { crawlYgcg } from './ygcgCrawlerService.js';
 
 export interface CrawlerDef {
   id: string;
@@ -30,6 +31,13 @@ registry.set('szecp', {
   name: '华润守正',
   description: '华润守正采购交易平台 (www.szecp.com.cn)',
   crawl: crawlSzecp,
+});
+
+registry.set('ygcg', {
+  id: 'ygcg',
+  name: '广州国企阳光采购',
+  description: '广州国企阳光采购信息发布平台 (ygcg.gzggzy.cn)',
+  crawl: crawlYgcg,
 });
 
 export function getCrawler(platformId: string): CrawlerDef | undefined {
