@@ -342,6 +342,71 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   (parse + summarize) while everything else costs one, and it deliberately spends the
   second one only when the range actually has records.
 
+## 标讯多维表格的可见范围
+
+- **标讯表是「企业内获得链接的人可阅读」，日记表是「关闭分享」—— 两个模块故意不同。**
+  `feishuBitable.ts:setTenantReadable` 发 `link_share_entity: 'tenant_readable'`；
+  diary 的 `closeLinkShare` 发 `'closed'`。标讯表要在应用所属企业内全员可见（推送
+  卡片发到群里，换个人或转给同事都该能直接打开），所以 `grantPermission` 不再是
+  「能不能打开」的前提，只用来给编辑权。改回 `closed` 的后果不是报错，是企业内的人
+  点卡片按钮全是「无权限访问」，而后台显示「✅ 已处理」。
+- **`external_access` 是布尔，不是 `external_access_entity`。** `/drive/v1/permissions/
+  :token/public` 是 v1 端点，v2 才用那个枚举。传错的字段被**静默忽略**且接口照样
+  返回 `code=0` —— 于是「已设置」是真的，「不能转发到组织外」是假的，表里的预算/
+  评分/AI 策略可以被转出公司。`bitableShare.test.ts` 断言请求体守这一条。
+  同一个坑在 diary 的 `bitable.ts` / `taskBase.ts` 注释里也记着。
+- 凭据只有一份：`tender_user_preferences.feishu_app_id/secret`（migration 045/050），
+  建表、写记录、群推送共用它和同一份 token 缓存，没有任何写死的 app_id。
+
+## 标讯手动推送与清空重灌
+
+- **「现在该让用户看到哪些标讯」只定义在 `candidates.ts`。** 三个消费者：预览数、
+  卡片条目、清空重灌的内容。三者不同源时的失败全是无声的 —— 卡片标题写 28 条、
+  点按钮进表里只有 12 行；或者预览说 0 条不给推而表里一堆。它**不看**
+  `bitable_synced_at` / `tender_bitable_sync`（那两个是「增量推到哪了」，
+  和「现在该看到什么」无关；拿它当条件的话同步过一次之后手动推送永远是空的）。
+  计数带着和取数**同一个 limit**：截断了却显示总数，用户以为漏推了一批。
+- **手动推送 = 清空重灌 + 发卡片，顺序不能反，重灌失败就不发卡片。**
+  写入路径是 append-only，一行写进去就再也不会变，而 `aiExtractService` 事后才补
+  截止日期/预算、`status` 事后才变 scored —— 所以不重灌的话用户点开永远看到
+  「待处理」和空的截止日期。重灌中途失败时表是**空的**，这时候照样发卡片，用户点
+  按钮看到空表会以为数据丢了；群里没消息是看得见的，所以宁可不发
+  （`pushService.ts:runManualPush`，`pushService.test.ts` 守这一条）。
+- **清空重灌必须先把「跟进状态」读出来再写回去。** 那一列我们只建不写，是用户在
+  飞书里自己点的 —— 整条链路当初做成 append-only 就是为了它（`toFields` 压根不写
+  这一列）。改成重灌就得自己接住：不保的话用户的标记每次清零，而后台报「✅ 已重建」。
+  `snapshotTable` 一趟同时取 record_id 和这一列，不分两趟：分两趟之间表可能被改过，
+  读到的标记对应的行已经不是要删的那些。
+- **重灌成功后状态位要对齐表里的内容**（先全清再按重灌进去的那批置位）。不重置的
+  后果两个方向都有：留着「已同步」的行若已不在表里，增量同步再也不会补它；
+  而 NULL 的行若其实在表里，下次增量同步会再追加一遍。
+- **评分流程不发卡片，手动按钮是唯一入口。** 自动推送发的是「本轮新评出来的」，
+  而那一刻行里的截止日期/预算/status 还没被 `aiExtractService` 补上 —— 卡片说的和
+  用户点进去看到的不是一回事，且 append-only 意味着那行以后也不会变。评分里保留的是
+  **增量同步**（表里有数据是随时能自己打开看的前提），去掉的只有推送。日志最后一行
+  必须写「不再自动推送」：以前评分日志是以「📮 已推送 N 条」收尾的，不说的话管理员
+  会等一条永远不会来的群消息，而日志显示「全部完成」。
+- **`feishu_enabled` 列已无人读**（migration 035 建的，列留着）。它管的就是那次自动
+  推送，所以自动推送去掉后 GET/PUT 都不再回显和写它，前端那个开关也删了 ——
+  留着比删掉更糟：管理员关掉它以为不会再推，而按钮照样能推。
+- **`tender_user_preferences.feishu_chat_id` 存的是逗号分隔的多个群 ID**（没有额外
+  状态要存，不值得开表），所以每个读它的地方都必须过 `feishuNotify.parseChatIds`
+  —— 整列当一个 chat_id 用的话飞书只回一句 230002「群不存在」，管理员盯着自己刚
+  复制的两个 id 只会以为是复制错了。中英文逗号/分号/换行都当分隔符（手拼时这三种
+  都很自然，只认半角的话另两种会静默变成一个怪 id）。前端 `TenderManagement.vue`
+  里有一份同规则的拆分，改了这个正则要一起改，否则复选框显示没勾却照样推过去了。
+- **多群推送逐群报成败，不合成一个 `ok`。** 部分成功是常态（最常见是机器人没被拉进
+  某个群，230013）：合成成功会把那个群的失败吃掉（那群人从此收不到推送，后台一直
+  显示 ✅），合成失败会让管理员重推（另外几个群于是收到两条一样的卡片）。
+  `pushToChats` 返回 `ChatPushResult[]`，`ManualPushResult.ok` 的含义只是「至少推成
+  一个群」，`chats` 才是真相，调用方必须逐条显示 —— 手动推送、测试消息、评分流程
+  里的自动推送三处都得报。串行发不 `Promise.all`：同一应用并发发消息撞频控 230020。
+- **群列表（`listBotChats`）是可选增强，拿不到必须退回手填。** `GET /im/v1/chats`
+  要 `im:chat:readonly`，它**不在**推送必需权限里，所以那个接口永远返回 200 带
+  `{available:false, reason}`，报 4xx 会让没开这个权限的用户连群都配不了。手填输入框
+  也永远可见：机器人被移出群之后它就不在列表里了，只有输入框能看到「配了但列表里没有」
+  的那些 id（前端把它们单独警告出来，否则那个群会稳定失败而没人知道）。
+
 ## Environment Variables
 
 ```

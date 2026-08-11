@@ -416,7 +416,7 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
 // ==================== 飞书推送配置 ====================
 const feishuUserId = ref('')
 const feishuCfg = ref({
-  feishu_chat_id: '', feishu_enabled: false, feishu_min_score: 55,
+  feishu_chat_id: '', feishu_min_score: 55,
   feishu_app_id: '', feishu_app_secret: '',
   bitable_app_token: '', bitable_table_id: '', bitable_all_table_id: '',
   bitable_url: '', bitable_enabled: false,
@@ -424,6 +424,15 @@ const feishuCfg = ref({
 const feishuSaved = ref(false)
 const feishuTesting = ref(false)
 const bitableBusy = ref('')
+// 手动推送的预览数。null = 还没取到（选人之后才有）。
+const pushSummary = ref<any>(null)
+const pushing = ref(false)
+// 机器人所在的群列表。null = 还没拉过；available:false 时只能手填。
+const botChats = ref<{ chatId: string; name: string }[]>([])
+const chatsState = ref<{ loaded: boolean; available: boolean; reason: string }>({
+  loaded: false, available: false, reason: '',
+})
+const chatsLoading = ref(false)
 const grantType = ref<'email' | 'openid' | 'openchat'>('email')
 const grantId = ref('')
 
@@ -434,6 +443,105 @@ async function loadFeishuCfg() {
   } catch (e: any) {
     console.error(e)
   }
+  botChats.value = []
+  chatsState.value = { loaded: false, available: false, reason: '' }
+  await loadPushSummary()
+  // 没填凭据时不去拉：只会拿回一句权限错误，把「先填 App ID」这件事说糊了。
+  if (feishuCfg.value.feishu_app_id && feishuCfg.value.feishu_app_secret) await loadBotChats()
+}
+
+// 阈值改了、表格重建了，条数都会变，所以每次 loadFeishuCfg 之后都重取一遍。
+async function loadPushSummary() {
+  if (!feishuUserId.value) { pushSummary.value = null; return }
+  try {
+    pushSummary.value = await apiGet(`/api/tender/admin/feishu/${feishuUserId.value}/push-summary`)
+  } catch (e: any) {
+    pushSummary.value = null
+    console.error(e)
+  }
+}
+
+// feishu_chat_id 这一列存的是**逗号分隔的多个群 ID**，和后端 parseChatIds 一个规则。
+// 前端也得按同样的规则拆，否则勾选状态会和实际推送的群不一致 ——
+// 复选框显示没勾，卡片却发过去了。
+function parseChatIds(raw: string): string[] {
+  return String(raw || '').split(/[,，;；\s]+/).map((s) => s.trim()).filter(Boolean)
+}
+
+const selectedChatIds = computed(() => parseChatIds(feishuCfg.value.feishu_chat_id))
+// 已配置但不在机器人群列表里的 id。必须单独列出来：这些通常是机器人被踢出群了，
+// 而下面的复选框列表里根本不会出现它 —— 不提示的话管理员以为只配了 2 个群，
+// 实际推送时那第 3 个会稳定失败。
+const unknownChatIds = computed(() =>
+  selectedChatIds.value.filter((id) => !botChats.value.some((c) => c.chatId === id))
+)
+
+function toggleChat(chatId: string, on: boolean) {
+  const cur = selectedChatIds.value.filter((id) => id !== chatId)
+  if (on) cur.push(chatId)
+  feishuCfg.value.feishu_chat_id = cur.join(',')
+}
+
+// 拉机器人所在的群。需要 im:chat:readonly，它不在推送必需权限里，
+// 所以拿不到时不报错、退回手填输入框，把原因显示出来。
+async function loadBotChats() {
+  if (!feishuUserId.value) return
+  chatsLoading.value = true
+  try {
+    const r: any = await apiGet(`/api/tender/admin/feishu/${feishuUserId.value}/chats`)
+    botChats.value = r.chats || []
+    chatsState.value = { loaded: true, available: !!r.available, reason: r.reason || '' }
+  } catch (e: any) {
+    botChats.value = []
+    chatsState.value = { loaded: true, available: false, reason: e.message || '拉取失败' }
+  } finally {
+    chatsLoading.value = false
+  }
+}
+
+async function manualPush() {
+  const s = pushSummary.value
+  if (!s) return
+  const chats: string[] = s.chatIds || []
+  const steps = [
+    `1. 把多维表格两张表**清空重灌**成当前数据（${s.recommendCount} 条达标推荐 + ${s.totalCount} 条全部标讯）；用户自己填的「跟进状态」会被保留。`,
+    // 群要逐个列出来，不能只说「N 个群」：多勾一个群就是把标讯发到了不该看的人那里，
+    // 而这一步一旦发出去撤不回来。
+    `2. 向以下 ${chats.length} 个群各推送一张卡片（只列前 5 条，底部按钮跳到这张表）：\n   ${chats.join('\n   ')}`,
+  ]
+  if (!confirm(`将执行两件事：\n${steps.join('\n')}\n\n重灌是覆盖式的：表里除「跟进状态」外的人工修改会丢。\n\n继续？`)) return
+  pushing.value = true
+  try {
+    const r: any = await apiPost(`/api/tender/admin/feishu/${feishuUserId.value}/push`, {})
+    const lines: string[] = []
+    if (r.rebuild) {
+      const rec = r.rebuild.recommend
+      lines.push(`✅ 「标讯推荐」表：清掉 ${rec.cleared} 行，重灌 ${rec.written} 行`)
+      if (r.rebuild.all) {
+        lines.push(`✅ 「全部标讯」表：清掉 ${r.rebuild.all.cleared} 行，重灌 ${r.rebuild.all.written} 行`)
+      }
+      if (r.rebuild.followKept > 0) lines.push(`✅ 保留了 ${r.rebuild.followKept} 条「跟进状态」标记`)
+    }
+    // 逐群报成败。多群时部分成功是常态（最常见是机器人没被拉进某个群），
+    // 只报一句「已推送 N 条」的话那个群的失败就被吃掉了 —— 那群人从此收不到推送，
+    // 后台一直显示 ✅。
+    lines.push(`\n已推送 ${r.pushed} 条：`)
+    for (const c of (r.chats || [])) {
+      lines.push(c.ok ? `  ✅ ${c.chatId}` : `  ❌ ${c.chatId}：${c.error}`)
+    }
+    // 实推条数要报出来：和刚才看到的预览数不一样意味着这中间库变了（比如又评了一批）。
+    if (r.pushed !== s.recommendCount) {
+      lines.push(`\n注意：点按钮时显示 ${s.recommendCount} 条，实际推了 ${r.pushed} 条 —— 这中间库里的推荐变了。`)
+    }
+    alert(lines.join('\n'))
+    await loadPushSummary()
+  } catch (e: any) {
+    // 重灌清空成功但灌入失败时表是空的，这条必须让人看到 —— 后端在这种情况下
+    // 故意没发卡片，不说的话管理员只会以为「推送失败，重试一下」而不知道表已经空了。
+    alert(e.message || '推送失败')
+  } finally {
+    pushing.value = false
+  }
 }
 
 async function saveFeishuCfg() {
@@ -442,6 +550,8 @@ async function saveFeishuCfg() {
     await apiPut(`/api/tender/admin/feishu/${feishuUserId.value}`, feishuCfg.value)
     feishuSaved.value = true
     setTimeout(() => { feishuSaved.value = false }, 2000)
+    // 阈值是保存后才生效的，不重取的话按钮旁边还是改之前的条数。
+    await loadPushSummary()
   } catch (e: any) {
     alert(e.message || '保存失败')
   }
@@ -451,8 +561,11 @@ async function testFeishu() {
   if (!feishuUserId.value) { alert('请先选择用户'); return }
   feishuTesting.value = true
   try {
-    await apiPost(`/api/tender/admin/feishu/${feishuUserId.value}/test`, {})
-    alert('测试消息已发送，请检查飞书群')
+    const r: any = await apiPost(`/api/tender/admin/feishu/${feishuUserId.value}/test`, {})
+    // 群要逐个列出来。测试按钮存在的意义就是发现「某个群没把机器人拉进去」，
+    // 只说一句「已发送」的话恰好把它藏了。
+    const lines = (r.chats || []).map((c: any) => c.ok ? `✅ ${c.chatId}` : `❌ ${c.chatId}：${c.error}`)
+    alert(['测试消息已发送，请检查飞书群：', ...lines].join('\n'))
   } catch (e: any) {
     alert(e.message || '测试失败')
   } finally {
@@ -470,12 +583,12 @@ async function initBitable() {
   try {
     const r: any = await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/init`, rebuild ? { force: true } : {})
     await loadFeishuCfg()
-    // 链接分享没关掉必须说出来。默认是「组织内获得链接的人可阅读」，
-    // 而卡片按钮是发到群里的 —— 等于全公司都能看这个账号的投标信息。
-    const warn = r?.linkShareClosed === false
-      ? '\n\n⚠️ 但「链接分享」没能关闭，这张表目前处于飞书租户的默认可见范围（通常是「组织内获得链接的人可阅读」）。请点「收紧权限」重试，或在飞书里手动改成「仅被邀请的人可访问」。'
-      : '\n\n链接分享已关闭：只有被授权的人能打开。'
-    alert('多维表格已创建（含「标讯推荐」「全部标讯」两张表）。接下来请「授权给用户」，否则用户打不开这张表。' + warn)
+    // 这一步失败必须说出来：表会停在租户默认可见范围，可能比「企业内」更宽
+    // （管理员配成了「互联网上获得链接的人可阅读」），也可能更严（谁都打不开）。
+    const warn = r?.tenantReadable === false
+      ? '\n\n⚠️ 但「链接分享」没设置成功，这张表目前停在飞书租户的默认可见范围 —— 可能比企业内更宽（互联网可见），也可能谁都打不开。请点「设为企业内可见」重试。'
+      : '\n\n链接分享已设为「本企业内获得链接的人可阅读」，并禁止转发到组织外：企业内的人点卡片按钮就能打开，不用逐个授权。'
+    alert('多维表格已创建（含「标讯推荐」「全部标讯」两张表）。' + warn + '\n\n下面的「授权给用户 / 群」只在需要给人**编辑**权（维护「跟进状态」那类列）时才用。')
   } catch (e: any) {
     alert(e.message || '创建失败')
   } finally {
@@ -483,9 +596,9 @@ async function initBitable() {
   }
 }
 
-// 历史表格补做 createBitable 现在会自动做的两件事：链接补 ?table=、关掉链接分享。
+// 历史表格补做 createBitable 现在会自动做的两件事：链接补 ?table=、设为企业内可见。
 async function secureBitable() {
-  if (!confirm('将执行三件事：\n1. 修正表格链接，使其直接打开「标讯推荐」表；\n2. 关闭链接分享，只有被授权的人能打开；\n3. 删掉建应用时自带的那张空表（仅删「0 条记录且只有 1 个字段」的表，你自己建的表不会被动）。\n\n关闭链接分享后，群里没被授权的成员点推送卡片的按钮会看到「无权限访问」。要让整群能看，请把群 Chat ID 授权成只读。\n\n继续？')) return
+  if (!confirm('将执行三件事：\n1. 修正表格链接，使其直接打开「标讯推荐」表；\n2. 把链接分享设为「本企业内获得链接的人可阅读」，并禁止转发到组织外；\n3. 删掉建应用时自带的那张空表（仅删「0 条记录且只有 1 个字段」的表，你自己建的表不会被动）。\n\n第 2 步之后，应用所属企业内的人拿到链接就能只读打开，不用逐个授权；组织外的人打不开。\n\n继续？')) return
   bitableBusy.value = 'secure'
   try {
     const r: any = await apiPost(`/api/tender/admin/bitable/${feishuUserId.value}/secure`, {})
@@ -493,7 +606,7 @@ async function secureBitable() {
     const removed: string[] = r.removedTables || []
     const lines = [
       r.urlChanged ? '✅ 表格链接已修正（补上了 ?table=，现在直接打开「标讯推荐」）' : '· 表格链接本来就是对的，未改动',
-      r.linkShareClosed ? '✅ 链接分享已关闭，只有被授权的人能打开' : '⚠️ 链接分享关闭失败，表仍处于租户默认可见范围，请在飞书里手动改成「仅被邀请的人可访问」',
+      r.tenantReadable ? '✅ 链接分享已设为「本企业内可阅读」，且不能转发到组织外' : '⚠️ 链接分享设置失败，表仍停在租户默认可见范围（可能互联网可见，也可能谁都打不开），请重试',
       removed.length > 0 ? `✅ 已删掉 ${removed.length} 张自带空表（${removed.join('、')}）` : '· 没有需要清理的自带空表',
     ]
     alert(lines.join('\n'))
@@ -1130,7 +1243,8 @@ function copyText(text: string) {
           <h4 class="bitable-title">飞书自建应用</h4>
           <ol class="bitable-steps">
             <li>在飞书开发者后台创建<b>企业自建应用</b>，把 App ID / App Secret 填在下面并保存。</li>
-            <li>权限管理开通 <code>im:message:send_as_bot</code>（群推送）和 <code>bitable:app</code>（多维表格），都选<b>应用身份</b>，然后创建版本并发布。</li>
+            <li>权限管理开通 <code>im:message:send_as_bot</code>（群推送）和 <code>bitable:app</code>（多维表格），都选<b>应用身份</b>，然后创建版本并发布。
+              另可选开 <code>im:chat:readonly</code>：只用来把机器人所在的群列出来给你勾选，不开就手填群 ID，推送不受影响。</li>
             <li>「应用功能 → 机器人」打开开关，再把这个应用拉进要接收推送的群。</li>
           </ol>
           <div class="edit-form-group">
@@ -1145,16 +1259,59 @@ function copyText(text: string) {
           <hr class="bitable-sep" />
 
           <h4 class="bitable-title">群推送</h4>
+          <!-- 这里原来有个「启用飞书推送」开关，管的是评分流程里的自动推送。
+               自动推送去掉之后它就什么都不管了 —— 留着比删掉更糟：管理员关掉它以为
+               不会再推，而下面的按钮照样能推。推送现在只有「点按钮」这一个入口。 -->
+          <p class="bitable-hint">
+            卡片<b>不会</b>在评分结束时自动发出，只在下面点「立即推送到飞书群」时发。
+            原因是多维表格只追加不更新：评分刚结束时行里的截止日期、预算、处理状态都还是空的，
+            那时发卡片，用户点进去看到的和卡片说的不是一回事。手动推送会先把表清空重灌成当前数据。
+          </p>
+          <!-- 推送群支持多选，存成一列逗号分隔的 id。优先给复选框（oc_xxx 在飞书客户端里
+               基本不可见，手填就是让人填错），拉不到列表时退回手填而不是卡死。 -->
           <div class="edit-form-group">
-            <label class="force-checkbox">
-              <input type="checkbox" v-model="feishuCfg.feishu_enabled" />
-              启用飞书推送
-            </label>
-          </div>
-          <div class="edit-form-group">
-            <label>推送群 ID</label>
-            <input v-model="feishuCfg.feishu_chat_id" class="edit-input" placeholder="oc_xxxxxxxxxxxxxxxx" />
-            <span class="bitable-note">在飞书群「设置 → 群信息」里复制。应用必须已作为机器人在该群内。</span>
+            <label>推送群（可多选，已选 {{ selectedChatIds.length }} 个）</label>
+
+            <div v-if="chatsLoading" class="bitable-note">正在拉取机器人所在的群…</div>
+
+            <div v-else-if="chatsState.available && botChats.length" class="chat-list">
+              <label v-for="c in botChats" :key="c.chatId" class="chat-item">
+                <input
+                  type="checkbox"
+                  :checked="selectedChatIds.includes(c.chatId)"
+                  @change="toggleChat(c.chatId, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="chat-name">{{ c.name }}</span>
+                <code class="chat-id">{{ c.chatId }}</code>
+              </label>
+            </div>
+
+            <div v-else-if="chatsState.loaded && chatsState.available" class="bitable-note">
+              这个应用还没被拉进任何群。到飞书群「设置 → 群机器人 → 添加机器人」把它加进去，再点下面的刷新。
+            </div>
+
+            <!-- 拉不到群列表（多半是没开 im:chat:readonly）时，手填仍然要能配 -->
+            <div v-else-if="chatsState.loaded" class="bitable-note push-blocked">
+              取不到群列表（{{ chatsState.reason }}）—— 下面手填群 ID 即可，推送本身不需要这个权限。
+            </div>
+
+            <!-- 手填兜底永远可见：机器人被踢出群之后上面的列表里就没有它了，
+                 只有这里能看到「已经配了但列表里没有」的那些 id。 -->
+            <input
+              v-model="feishuCfg.feishu_chat_id"
+              class="edit-input"
+              style="margin-top:8px"
+              placeholder="oc_xxxx,oc_yyyy（多个用逗号分隔）"
+            />
+            <span class="bitable-note">
+              手填时多个群用逗号分隔。群 ID 在飞书群「设置 → 群信息」里复制；应用必须已作为机器人在群内，否则推送报 230013。
+            </span>
+            <span v-if="unknownChatIds.length" class="push-blocked">
+              这 {{ unknownChatIds.length }} 个已配置的群不在机器人所在的群里（可能机器人已被移出），推送会失败：{{ unknownChatIds.join('、') }}
+            </span>
+            <div class="scoring-actions" style="margin-top:6px">
+              <button class="btn-secondary" @click="loadBotChats" :disabled="chatsLoading">刷新群列表</button>
+            </div>
           </div>
           <div class="edit-form-group">
             <label>推送分数阈值（≥ 此分才推送）</label>
@@ -1169,6 +1326,37 @@ function copyText(text: string) {
             <span v-if="feishuSaved" class="save-success" style="margin-left:10px">已保存</span>
           </div>
 
+          <!-- 手动推送。推的是「当前所有达标推荐」，不是「本轮新评出来的」——
+               所以这里的条数就是卡片标题里的那个数。 -->
+          <div v-if="pushSummary" class="push-box">
+            <div class="push-nums">
+              当前达标推荐 <b>{{ pushSummary.recommendCount }}</b> 条（≥ {{ pushSummary.minScore }} 分）
+              · 库里可见标讯共 <b>{{ pushSummary.totalCount }}</b> 条
+            </div>
+            <!-- 会收到卡片的群要列出来，只显示个数的话多勾一个群没人看得出，
+                 而发出去的标讯撤不回来。这里显示的是**已保存**的配置（后端返回的），
+                 上面刚勾还没保存的不算 —— 两者不一致时管理员该先点保存。 -->
+            <div v-if="pushSummary.chatIds?.length" class="push-nums">
+              会推送到 {{ pushSummary.chatIds.length }} 个群：{{ pushSummary.chatIds.join('、') }}
+            </div>
+            <div class="scoring-actions">
+              <button
+                class="btn-primary" @click="manualPush"
+                :disabled="pushing || !!pushSummary.blockedBy"
+              >
+                {{ pushing ? '推送中…' : '立即推送到飞书群' }}
+              </button>
+              <button class="btn-secondary" @click="loadPushSummary" style="margin-left:8px">刷新条数</button>
+              <!-- 按钮为什么点不了必须写出来，否则管理员只看到一个灰按钮 -->
+              <span v-if="pushSummary.blockedBy" class="push-blocked">不能推送：{{ pushSummary.blockedBy }}</span>
+            </div>
+            <span class="bitable-note">
+              点一次会先把多维表格<b>清空重灌</b>成当前数据（这样处理状态、截止日期、预算才是最新的
+              —— 增量同步只追加不更新，写进去的行不会再变），再发卡片。用户填的「跟进状态」会保留。
+              重灌中途失败时不会发卡片（那时表是空的）。
+            </span>
+          </div>
+
           <hr class="bitable-sep" />
 
           <h4 class="bitable-title">多维表格同步</h4>
@@ -1178,7 +1366,8 @@ function copyText(text: string) {
             表格由服务端创建并建好列，用户不用填任何 ID。推送卡片底部的按钮就跳到这张表。
           </p>
           <ol class="bitable-steps">
-            <li>点「创建多维表格」，再点「授权给用户」把表给到人（应用创建的文件默认不在用户云空间里）。</li>
+            <li>点「创建多维表格」即可。表会自动设成<b>应用所属企业内获得链接的人可阅读</b>（不能转发到组织外），企业内的人点卡片按钮就能打开，不用逐个授权。</li>
+            <li>下面的「授权给用户 / 群」只在需要给人<b>编辑</b>权时才用（比如表主人要自己维护「跟进状态」列）。应用创建的文件不在任何人的云空间里，只能靠链接打开。</li>
             <li>可选：机器人自定义菜单加一项，类型选<b>跳转链接</b>，URL 填下面生成的表格地址 —— 用户在机器人窗口就有常驻入口。</li>
           </ol>
 
@@ -1211,13 +1400,13 @@ function copyText(text: string) {
               v-if="feishuCfg.bitable_app_token"
               class="btn-secondary" @click="secureBitable" :disabled="!!bitableBusy" style="margin-left:8px"
             >
-              {{ bitableBusy === 'secure' ? '处理中…' : '修正链接并收紧权限' }}
+              {{ bitableBusy === 'secure' ? '处理中…' : '修正链接并设为企业内可见' }}
             </button>
             <a v-if="feishuCfg.bitable_url" :href="feishuCfg.bitable_url" target="_blank" class="bitable-open">打开表格 ↗</a>
           </div>
           <span v-if="feishuCfg.bitable_app_token" class="bitable-note">
-            新建的表格已自动带 <code>?table=</code> 并关闭链接分享。早先创建的表格请点一次「修正链接并收紧权限」——
-            不带 <code>?table=</code> 的链接点进去是 base 里的第一张（空）表，而链接分享默认是「组织内获得链接的人可阅读」。
+            新建的表格已自动带 <code>?table=</code> 并设为企业内可阅读。早先创建的表格请点一次「修正链接并设为企业内可见」——
+            那时候的表是<b>关闭</b>链接分享的（企业内的人打开是「无权限访问」），而不带 <code>?table=</code> 的链接点进去是 base 里的第一张（空）表。
           </span>
 
           <template v-if="feishuCfg.bitable_app_token">
@@ -1368,6 +1557,15 @@ function copyText(text: string) {
 .bitable-grant-type { max-width:150px; }
 .bitable-note { display:block; margin-top:6px; font-size:12px; color:#94a3b8; }
 .bitable-note-warn { color:#fbbf24; line-height:1.6; }
+
+.push-box { margin-top:16px; padding:14px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; }
+.push-nums { margin-bottom:10px; font-size:14px; color:#334155; }
+.push-nums b { color:#2563eb; font-size:16px; }
+.push-blocked { margin-left:10px; font-size:13px; color:#f59e0b; }
+.chat-list { max-height:220px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px; background:#fff; }
+.chat-item { display:flex; align-items:center; gap:8px; padding:5px 0; font-size:14px; cursor:pointer; }
+.chat-name { color:#334155; }
+.chat-id { font-size:12px; color:#94a3b8; }
 
 .tender-admin {
   padding: 24px;

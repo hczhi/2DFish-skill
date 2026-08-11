@@ -1,6 +1,9 @@
 import { getDatabase } from '../../db/index.js';
 import { visibleSql } from './retention.js';
 import { getTenantToken, callOpenApi } from './feishuOpen.js';
+import {
+  loadRecommendCandidates, loadAllTenderCandidates, parsePlatforms,
+} from './candidates.js';
 
 // 飞书多维表格同步。
 //
@@ -125,8 +128,8 @@ export interface CreatedBitable {
   tableId: string;
   allTableId: string;
   url: string;
-  /** false = 收紧链接分享失败，表处于租户默认可见范围，必须告知管理员。 */
-  linkShareClosed: boolean;
+  /** false = 设置链接分享失败，表停在租户默认值，可见范围不确定，必须告知管理员。 */
+  tenantReadable: boolean;
 }
 
 /**
@@ -171,23 +174,31 @@ export function withTableParam(url: string, tableId: string): string {
 }
 
 /**
- * 关掉「链接分享」，只有被显式授权的人能打开这张表。
+ * 把链接分享设成「本企业内获得链接的人可阅读」，同时禁止转发到组织外。
  *
- * 为什么必须显式设置：不设的话跟随租户默认值，而实测租户默认是
- * `link_share_entity: 'tenant_readable'` + `external_access: true` ——
- * 「组织内获得链接的人可阅读」且「可转发到组织外」。
- * 推送卡片底部那个多维表格按钮是**发到群里**的，群里每个人都看得到链接，
- * 于是全公司（乃至公司外）任何拿到链接的人都能看这个账号的全部投标信息：
- * 预算、评分、AI 分析与策略。这跟授权给谁、只读还是可编辑完全无关 ——
- * grantPermission 管的是「能不能改」，这个字段管的是「能不能看」。
+ * 这是用户拍的板，和 diary 模块（bitable.ts:closeLinkShare）**故意不一样**：
+ * 标讯表要在应用所属企业内全员可见 —— 推送卡片是发到群里的，群里换一个人、
+ * 或者把链接转给同事，都应该能直接打开，而不是一个个去 grantPermission。
+ * 所以这里给的是 `tenant_readable`（企业内可阅读）而不是 `closed`。
  *
- * 代价要说清楚：关掉之后，群里没被授权的人点卡片按钮会看到「无权限访问」。
- * 想让整群能看，就把群授权成只读（/admin/bitable/:userId/grant，openchat）。
+ * 为什么必须显式设置、不能省掉这一步：不设就跟随租户默认值，而默认值是
+ * 租户管理员配的，可能是 `anyone_readable`（互联网上拿到链接的人都能看）。
+ * 表里是这个账号的全部投标信息：预算、评分、AI 分析与策略。所以
+ * `external_access` 必须显式关掉 —— 企业内可见是要的，公开到互联网不是。
+ *
+ * 这跟 grantPermission 是两件事：那个管「能不能改」，这个管「能不能看到」。
+ * 企业内的人靠这个字段就能只读打开，不需要再授权；要能编辑（维护「跟进状态」
+ * 那类列）才需要 grantPermission。
+ *
+ * 字段名有个坑：这个 v1 端点要的是 `external_access`（布尔），
+ * v2 才是 `external_access_entity`（枚举）。传错的那个会被**静默忽略**，
+ * 接口照样返回 code=0 —— 于是「已设置」是真的，「不能转发到组织外」是假的。
+ * diary 那两处（bitable.ts / taskBase.ts）注释里也记着同一条。
  *
  * 失败不抛异常，返回 false 由调用方报出来：这一步失败时表已经建好了，
  * 抛出去只会留下一张孤儿表格，而且下次重建又是一张新的。
  */
-export async function closeLinkShare(
+export async function setTenantReadable(
   cfg: { appId: string; appSecret: string },
   appToken: string,
   nowMs: number
@@ -195,12 +206,12 @@ export async function closeLinkShare(
   try {
     const token = await getTenantToken(cfg.appId, cfg.appSecret, nowMs);
     await callOpenApi(token, `/drive/v1/permissions/${appToken}/public?type=bitable`, 'PATCH', {
-      link_share_entity: 'closed',
-      external_access_entity: 'closed',
+      link_share_entity: 'tenant_readable',
+      external_access: false,
     });
     return true;
   } catch (e: any) {
-    console.error('[bitable] 关闭链接分享失败:', e.message);
+    console.error('[bitable] 设置链接分享（企业内可阅读）失败:', e.message);
     return false;
   }
 }
@@ -290,13 +301,13 @@ export async function cleanupDefaultTables(
  * 相比让用户手工建表，这样列名不可能对不上，用户一个 id 都不用填，
  * 而且表是应用自己创建的 → 天然有编辑权限，不需要「添加文档应用」那一步。
  *
- * 副作用：应用创建的文件归应用所有，默认不在用户云空间可见，
- * 所以建完要调 grantPermission 把表授权给用户/群，否则用户打不开。
- * 而且这里会主动关掉链接分享（见 closeLinkShare），所以「授权」不是可选步骤 ——
- * 不授权的话谁都打不开，包括表的主人。
+ * 副作用：应用创建的文件归应用所有，默认不在用户云空间可见 ——
+ * 所以表**不会**出现在任何人的「我的空间」里，只能靠链接打开。
+ * 建完会把链接分享设成企业内可阅读（见 setTenantReadable），于是企业内的人
+ * 拿到链接就能看；要能编辑才需要额外 grantPermission。
  *
- * `linkShareClosed: false` 表示收紧链接分享这一步失败了，表仍然可用但
- * 处于租户默认的可见范围（很可能是「组织内可阅读」），调用方必须把这件事说出来。
+ * `tenantReadable: false` 表示设置链接分享这一步失败了，表仍然可用但停在
+ * 租户默认值（可能比企业内更宽，也可能更严），调用方必须把这件事说出来。
  */
 export async function createBitable(
   cfg: { appId: string; appSecret: string },
@@ -344,7 +355,7 @@ export async function createBitable(
   // 只能靠特征猜，所以它才需要那三条严格条件。
   await deleteTables(cfg, appToken, preexisting, nowMs);
 
-  const linkShareClosed = await closeLinkShare(cfg, appToken, nowMs);
+  const tenantReadable = await setTenantReadable(cfg, appToken, nowMs);
 
   return {
     appToken,
@@ -352,7 +363,7 @@ export async function createBitable(
     allTableId,
     // 带上 ?table=，否则点进去是 base 里的第一张表。
     url: withTableParam(baseUrl, tableId),
-    linkShareClosed,
+    tenantReadable,
   };
 }
 
@@ -361,6 +372,9 @@ export async function createBitable(
  * memberType: 'openid'（用户 open_id）| 'openchat'（群 chat_id）| 'email'（飞书邮箱）
  *
  * 注意：授权给群需要应用已作为机器人在该群内，否则接口会因「互相不可见」失败。
+ *
+ * 表本身已经是「企业内获得链接的人可阅读」（setTenantReadable），所以授权
+ * **不再是**「能不能打开」的前提，只用于给人**编辑**权（维护「跟进状态」那类列）。
  *
  * perm 在这里是原样透传的，但**群授权应当只给 'view'**：授权给群等于该群
  * 全体成员都能开这张表，而表里是一个账号的全部投标信息（预算、评分、AI 分析
@@ -474,6 +488,70 @@ async function ensurePlatformOptions(
     console.log(`[bitable] 「平台」列补齐选项: ${missing.join(', ')}`);
   } catch (e: any) {
     console.warn(`[bitable] 补齐「平台」选项失败（继续写入，若报 1254xxx 请手动在表里加选项）: ${e.message}`);
+  }
+}
+
+/**
+ * 把一张表整个读出来：record_id 列表 + 「标讯ID → 用户手填列的值」。
+ *
+ * 两件事一次读完，不分两趟：清空要 record_id，保「跟进状态」要那一列，
+ * 分两趟就是同一张表读两遍（几千行时是两倍的分页往返），而且两趟之间
+ * 表可能被人改过 —— 读到的标记对应的行已经不是要删的那些。
+ *
+ * 「跟进状态」我们只建不写，是用户在飞书里自己点的。不保的话每次重灌他的标记
+ * 清零，而后台报「✅ 已重建」。单选列的值飞书返回字符串，非字符串一律跳过
+ * （写回去时类型不对会整批 1254xxx 失败，等于重灌失败）。
+ */
+async function snapshotTable(
+  token: string,
+  appToken: string,
+  tableId: string,
+  keepColumn?: string
+): Promise<{ recordIds: string[]; kept: Map<string, string> }> {
+  const recordIds: string[] = [];
+  const kept = new Map<string, string>();
+  let pageToken = '';
+  do {
+    const q = `page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+    const data = await callOpenApi(
+      token,
+      `/bitable/v1/apps/${appToken}/tables/${tableId}/records?${q}`,
+      'GET'
+    );
+    for (const rec of data?.items || []) {
+      if (rec?.record_id) recordIds.push(rec.record_id);
+      if (!keepColumn) continue;
+      const id = rec?.fields?.['标讯ID'];
+      const val = rec?.fields?.[keepColumn];
+      if (typeof id === 'string' && id && typeof val === 'string' && val) kept.set(id, val);
+    }
+    pageToken = data?.has_more ? data?.page_token || '' : '';
+  } while (pageToken);
+  return { recordIds, kept };
+}
+
+/**
+ * 删掉给定的记录。
+ *
+ * 顺序对调用方是硬要求：**先删干净、成功了再灌**。删一半就开始灌等于表里出现
+ * 重复行，而日志说「已重建」—— 所以这里任何一步失败都**抛**，不吞。
+ * （batchCreate 那边是相反的约定：写失败保持状态位不动，下轮重试。）
+ *
+ * batch_delete 单次上限 500，和 BATCH_SIZE 一致。
+ */
+async function deleteRecords(
+  token: string,
+  appToken: string,
+  tableId: string,
+  recordIds: string[]
+): Promise<void> {
+  for (let i = 0; i < recordIds.length; i += BATCH_SIZE) {
+    await callOpenApi(
+      token,
+      `/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_delete`,
+      'POST',
+      { records: recordIds.slice(i, i + BATCH_SIZE) }
+    );
   }
 }
 
@@ -792,4 +870,147 @@ export async function syncAllTenders(
   markAll(rows.map((r) => r.id));
 
   return { synced: created };
+}
+
+// ==================== 清空重灌 ====================
+
+export interface RebuildResult {
+  /** 推荐表：清掉多少行、写进多少行。 */
+  recommend: { cleared: number; written: number };
+  /** 全部标讯表。没建过这张表时是 undefined。 */
+  all?: { cleared: number; written: number };
+  /** 保住了多少条用户手填的「跟进状态」。 */
+  followKept: number;
+  /** 清空成功但灌入失败时的说明。有值意味着**表现在是空的**，必须报给用户。 */
+  error?: string;
+}
+
+/**
+ * 把两张表清空、按当前数据全量重灌。
+ *
+ * 为什么需要它：写入路径是 append-only（`appendRecords` 只 batch_create），
+ * 一行写进去就再也不会变，而底层 `tenders` 还在变 —— AI 抽取事后补上的截止日期
+ * 和预算、`status` 从 draft 变成 scored，全都进不了表。于是用户点开卡片按钮看到的是
+ * 「处理状态：待处理」和空的截止日期，而这两列正是他最关心的。表还会随时间单调增长
+ * （21 天闸门只挡「还没同步的」，管不了已经写进去的行）。
+ *
+ * 三条不能改的约定：
+ *
+ * 1. **先清空，成功了再灌**。反过来或者边清边灌 = 表里重复行，而回报是「✅ 已重建」。
+ *    所以 clearTable 失败直接抛，不吞。
+ * 2. **「跟进状态」列先读出来再写回去**。那一列我们只建不写，是用户在飞书里
+ *    自己点的。不保的话每次重灌他的标记清零 —— 这是整条链路当初做成 append-only
+ *    的唯一原因，改成重灌就必须自己接住它。
+ * 3. **清空成功、灌入失败要显式报出来**（`error` 字段）。这时表是空的，
+ *    只报一句「同步失败」的话用户点开卡片按钮看到空表，会以为数据丢了。
+ *
+ * 两个状态位（`bitable_synced_at` / `tender_bitable_sync`）在重灌成功后按重灌的内容
+ * 重置：不重置的话下一次增量同步会把已经在表里的行再追加一遍（状态位是 NULL 的那些），
+ * 或者反过来漏掉重灌时被 limit 截断的那些。
+ */
+export async function rebuildBitableTables(
+  userId: string,
+  nowMs: number
+): Promise<RebuildResult & { skipped?: string }> {
+  const db = getDatabase();
+  const pref = loadBitablePref(userId);
+  if (!bitableReady(pref)) {
+    return { recommend: { cleared: 0, written: 0 }, followKept: 0, skipped: '未启用或配置不完整' };
+  }
+
+  const cfg: BitableConfig = {
+    appId: pref!.feishu_app_id!,
+    appSecret: pref!.feishu_app_secret!,
+    appToken: pref!.bitable_app_token!,
+    tableId: pref!.bitable_table_id!,
+  };
+  const token = await getTenantToken(cfg.appId, cfg.appSecret, nowMs);
+  const minScore = pref!.feishu_min_score ?? 55;
+  const platforms = parsePlatforms(pref!.platforms);
+
+  // 1. 先把表读一遍（在清空之前，否则手填的列就读不到了）。
+  const recSnap = await snapshotTable(token, cfg.appToken, cfg.tableId, '跟进状态');
+  const follow = recSnap.kept;
+  const allSnap = pref!.bitable_all_table_id
+    ? await snapshotTable(token, cfg.appToken, pref!.bitable_all_table_id)
+    : { recordIds: [], kept: new Map<string, string>() };
+
+  // 2. 取数用 candidates.ts —— 和手动推送的预览数/卡片内容同一条 SQL。
+  const recItems: BitableRecordItem[] = loadRecommendCandidates(userId, minScore).map((c) => ({
+    tenderId: c.tenderId,
+    title: c.title,
+    purchaserName: c.purchaserName,
+    totalScore: c.totalScore,
+    tier: c.tier,
+    budgetAmount: c.budgetAmount,
+    budgetText: c.budgetText,
+    regionName: c.regionName,
+    url: c.url,
+    publishDate: c.publishDate,
+  }));
+  const allItems = pref!.bitable_all_table_id ? loadAllTenderCandidates(platforms) : [];
+
+  // 3. 清空。任何一张失败就整体中止（deleteRecords 抛）—— 只清了一张就灌两张，
+  //    表之间会对不上，而回报是「已重建」。
+  await deleteRecords(token, cfg.appToken, cfg.tableId, recSnap.recordIds);
+  const recCleared = recSnap.recordIds.length;
+  let allCleared = 0;
+  if (pref!.bitable_all_table_id) {
+    await deleteRecords(token, cfg.appToken, pref!.bitable_all_table_id, allSnap.recordIds);
+    allCleared = allSnap.recordIds.length;
+  }
+
+  // 4. 灌入。到这里表已经空了，所以失败必须带着 cleared 数一起报出来。
+  let recWritten = 0;
+  let allWritten = 0;
+  try {
+    recWritten = await batchCreate(
+      cfg,
+      cfg.tableId,
+      recItems.map((it) => ({ ...toFields(it, nowMs), ...(follow.has(it.tenderId) ? { 跟进状态: follow.get(it.tenderId) } : {}) })),
+      nowMs
+    );
+
+    if (pref!.bitable_all_table_id) {
+      await ensurePlatformOptions(token, cfg.appToken, pref!.bitable_all_table_id);
+      allWritten = await batchCreate(cfg, pref!.bitable_all_table_id, allItems.map(toAllFields), nowMs);
+    }
+  } catch (e: any) {
+    return {
+      recommend: { cleared: recCleared, written: recWritten },
+      all: pref!.bitable_all_table_id ? { cleared: allCleared, written: allWritten } : undefined,
+      followKept: 0,
+      error: `表已清空，但写入中断（${e.message}）—— 表格现在是不完整的，请再点一次重建。`,
+    };
+  }
+
+  // 5. 状态位对齐重灌后的内容。见函数注释第三段。
+  const stamp = new Date(nowMs).toISOString();
+  const resetRec = db.transaction(() => {
+    db.prepare('UPDATE tender_recommendations SET bitable_synced_at = NULL WHERE user_id = ?').run(userId);
+    const mark = db.prepare(
+      `UPDATE tender_recommendations SET bitable_synced_at = ? WHERE user_id = ? AND tender_id = ?`
+    );
+    for (const it of recItems) mark.run(stamp, userId, it.tenderId);
+  });
+  resetRec();
+
+  if (pref!.bitable_all_table_id) {
+    const resetAll = db.transaction(() => {
+      db.prepare('DELETE FROM tender_bitable_sync WHERE user_id = ?').run(userId);
+      const mark = db.prepare(
+        'INSERT OR IGNORE INTO tender_bitable_sync (user_id, tender_id, synced_at) VALUES (?, ?, ?)'
+      );
+      for (const it of allItems) mark.run(userId, it.tenderId, stamp);
+    });
+    resetAll();
+  }
+
+  return {
+    recommend: { cleared: recCleared, written: recWritten },
+    all: pref!.bitable_all_table_id ? { cleared: allCleared, written: allWritten } : undefined,
+    // 只算真的写回去了的那些：读到 5 条但只有 3 条还在达标名单里，报 5 会让用户
+    // 以为标记都在，而另 2 条已经随着 21 天闸门/阈值变化从表里消失了。
+    followKept: recItems.filter((it) => follow.has(it.tenderId)).length,
+  };
 }

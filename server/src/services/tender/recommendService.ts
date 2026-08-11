@@ -1,7 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
 import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
-import { pushTenderRecommendations, type FeishuTenderItem } from './feishuNotify.js';
 import { syncUserRecommendations, syncAllTenders, getBitableUrl } from './feishuBitable.js';
 import { parseFirstJson } from '../../core/llm/parseJson.js';
 import { visibleSql, TENDER_VISIBLE_DAYS } from './retention.js';
@@ -603,19 +602,11 @@ export async function runRecommendationsForAllUsers(
       }
     }
 
-    // 飞书推送：本轮该用户新产生的、达到阈值的推荐（评完统一推送一条）。
-    // 开关判断看 app_id + chat_id，不再看 webhook（migration 061 起改成应用推送）。
-    const feishuPref = db.prepare(
-      `SELECT feishu_app_id, feishu_app_secret, feishu_chat_id, feishu_enabled, feishu_min_score
-       FROM tender_user_preferences WHERE user_id = ?`
-    ).get(user.id) as any;
-    const feishuOn =
-      !!feishuPref?.feishu_enabled &&
-      !!feishuPref?.feishu_app_id &&
-      !!feishuPref?.feishu_app_secret &&
-      !!feishuPref?.feishu_chat_id;
-    const feishuMinScore = feishuPref?.feishu_min_score ?? 55;
-    const feishuItems: FeishuTenderItem[] = [];
+    // 评分流程**不发飞书卡片**。推送是后台「飞书推送」页上的手动按钮
+    // （`pushService.ts:runManualPush`），理由是自动推送发的是「本轮新评出来的」，
+    // 而多维表格是 append-only：卡片一发出去，行里的截止日期/预算/状态还是 AI 补料前的
+    // 空值，用户点进去看到的和卡片说的不是一回事。手动推送每次先清空重灌再发卡片，
+    // 两者才对得上。这里再收集一遍 items 只会让人以为自动推送还在。
 
     for (const tender of tenders) {
       // 未勾选的平台完全不参与：不评分、不入推荐表、不推送。
@@ -671,27 +662,15 @@ export async function runRecommendationsForAllUsers(
         userProcessed++;
         processed++;
         scoredTenderIds.add(tender.id);
-        // 达到飞书推送阈值（且非 filter 档）则收集，评完统一推送
-        if (feishuOn && score.tier !== 'filter' && score.totalScore >= feishuMinScore) {
-          feishuItems.push({
-            title: tender.title,
-            purchaserName: tender.purchaser_name,
-            totalScore: score.totalScore,
-            tier: score.tier,
-            budgetAmount: tender.budget_amount,
-            regionName: tender.region_name,
-            url: tender.url ?? null,
-          });
-        }
         const llmDetail = score._prompt ? `📤 Prompt:\n${score._prompt.slice(0, 600)}...\n\n📥 Response:\n${score._response.slice(0, 600)}${score._response.length > 600 ? '...' : ''}` : undefined;
         onLog?.(`  [${userProcessed}] ${tender.title.slice(0, 25)} → ${score.tier} (${score.totalScore}分)`, llmDetail);
       } catch (e: any) {
         if (e instanceof QuotaExceededError) {
-          // 原来这里是 `return`，于是**已经评出来的推荐既不同步表格也不推送** ——
+          // 原来这里是 `return`，于是**已经评出来的推荐连表格都不同步** ——
           // token 已经花了，结果却烂在库里，用户什么都收不到。
-          // 改成跳出本用户的循环、走完下面的同步/推送，再由 quotaExhausted 停掉后续用户
+          // 改成跳出本用户的循环、走完下面的同步，再由 quotaExhausted 停掉后续用户
           // （额度是平台级的，下一个用户照样打不通，接着跑只会刷一屏同样的错）。
-          onLog?.(`⚠️ AI额度已用完，评分中止（已评出的 ${userProcessed} 条仍会同步并推送）`);
+          onLog?.(`⚠️ AI额度已用完，评分中止（已评出的 ${userProcessed} 条仍会同步进多维表格）`);
           quotaExhausted = true;
           break;
         }
@@ -702,12 +681,12 @@ export async function runRecommendationsForAllUsers(
 
     onLog?.(`用户 ${user.id.slice(0, 8)} 完成：LLM评分 ${userProcessed} 条${userSkippedByPlatform > 0 ? `，跳过 ${userSkippedByPlatform} 条未关注平台` : ''}`);
 
-    // 多维表格同步（失败不影响评分主流程）。
-    // 必须排在卡片推送之前：卡片按钮会跳到这张表，先把数据写进去，用户点开才不是空的。
-    // 与群推送是独立通道 —— 没配推送群也照样同步。
-    let bitableUrl = '';
+    // 多维表格增量同步（失败不影响评分主流程）。这一步保留而推送去掉了：
+    // 表里有数据是「用户随时能自己打开看」的前提，而卡片是一次性通知，
+    // 只该在管理员显式点推送时发。增量同步只追加、不更新已有行 ——
+    // 所以手动推送前那次清空重灌才是让行内容变最新的唯一途径。
     try {
-      bitableUrl = getBitableUrl(user.id);
+      const bitableUrl = getBitableUrl(user.id);
       if (bitableUrl) {
         const r = await syncUserRecommendations(user.id, Date.now());
         if (r.synced > 0) {
@@ -730,26 +709,6 @@ export async function runRecommendationsForAllUsers(
       onLog?.(`  ⚠️ 多维表格同步失败：${e.message}`);
     }
 
-    // 飞书推送（失败不影响评分主流程，也不重试 —— 明确的产品决定）。
-    // 卡片只列前 5 条，但这里把**全部**达标条目传进去：条数和「还有 N 条」那句
-    // 都由 buildCard 按完整列表算，截断在卡片层做。
-    if (feishuOn && feishuItems.length > 0) {
-      const result = await pushTenderRecommendations(
-        { appId: feishuPref.feishu_app_id, appSecret: feishuPref.feishu_app_secret },
-        feishuPref.feishu_chat_id,
-        feishuItems,
-        Date.now(),
-        bitableUrl || undefined
-      );
-      if (result.ok) {
-        onLog?.(`  📮 飞书已推送 ${feishuItems.length} 条给用户 ${user.id.slice(0, 8)}`);
-      } else {
-        // 不重试，所以这行日志是用户唯一能知道「推送没成功」的地方。
-        console.error(`[tender] Feishu push failed for user=${user.id}:`, result.error);
-        onLog?.(`  ⚠️ 飞书推送失败（不重试）：${result.error}`);
-      }
-    }
-
     if (quotaExhausted) {
       if (users.length > 1) {
         onLog?.(`⚠️ AI额度已用完，剩余 ${users.length - users.indexOf(user) - 1} 个用户本轮未评分`);
@@ -758,6 +717,10 @@ export async function runRecommendationsForAllUsers(
     }
   }
 
+  // 「没有推送」必须写在日志最后一行。评分日志以前是以「📮 飞书已推送 N 条」收尾的，
+  // 现在到这里就结束了 —— 不说的话管理员会等一条永远不会来的群消息，
+  // 而日志看起来完全正常（「全部完成」）。
   onLog?.(`推荐评分全部完成：共处理 ${processed} 条`);
+  onLog?.('ℹ️ 评分不再自动推送飞书卡片。要发卡片请到「飞书推送」页点「立即推送到飞书群」（会先把多维表格清空重灌成当前数据）。');
   return { processed, users: users.length, scoredTenderIds: [...scoredTenderIds] };
 }

@@ -6,8 +6,8 @@ import request from 'supertest';
 // 就 import 了一整串（createBitable / syncUserRecommendations / getBitableUrl…），
 // 少一个就整个 tender 路由挂不起来。
 const grantCalls: any[] = [];
-const closeCalls: any[] = [];
-let closeLinkShareResult = true;
+const shareCalls: any[] = [];
+let setTenantReadableResult = true;
 vi.mock('../services/tender/feishuBitable.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/tender/feishuBitable.js')>();
   return {
@@ -15,9 +15,9 @@ vi.mock('../services/tender/feishuBitable.js', async (importOriginal) => {
     grantPermission: vi.fn(async (_cfg: any, appToken: string, memberType: string, memberId: string, perm: string) => {
       grantCalls.push({ appToken, memberType, memberId, perm });
     }),
-    closeLinkShare: vi.fn(async (_cfg: any, appToken: string) => {
-      closeCalls.push({ appToken });
-      return closeLinkShareResult;
+    setTenantReadable: vi.fn(async (_cfg: any, appToken: string) => {
+      shareCalls.push({ appToken });
+      return setTenantReadableResult;
     }),
   };
 });
@@ -50,8 +50,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   grantCalls.length = 0;
-  closeCalls.length = 0;
-  closeLinkShareResult = true;
+  shareCalls.length = 0;
+  setTenantReadableResult = true;
   // /secure 会改写 bitable_url，每个用例回到「老数据」的起点：裸 base 地址。
   getDatabase()
     .prepare(`UPDATE tender_user_preferences SET bitable_url = ?, bitable_table_id = 'tblREC' WHERE user_id = ?`)
@@ -116,9 +116,9 @@ describe('多维表格授权：个人保持可编辑', () => {
 });
 
 // /secure：给历史表格补做 createBitable 现在会自动做的两件事。
-// 这两件事必须分开报成败 —— 合成一个 success 的话，链接分享没关掉却因为
-// url 改成功而显示「已处理」，管理员会以为表已经不对外了。
-describe('多维表格补救：修正链接 + 关闭链接分享', () => {
+// 这两件事必须分开报成败 —— 合成一个 success 的话，链接分享没设成功却因为
+// url 改成功而显示「已处理」，管理员会以为企业内已经能打开了。
+describe('多维表格补救：修正链接 + 设为企业内可阅读', () => {
   const secure = () =>
     request(app).post(`/api/tender/admin/bitable/${owner.id}/secure`).set(admin.auth).send({});
 
@@ -134,25 +134,26 @@ describe('多维表格补救：修正链接 + 关闭链接分享', () => {
     expect(saved.bitable_url).toBe('https://x.feishu.cn/base/bascnTEST?table=tblREC');
   });
 
-  it('链接本来就对时 urlChanged = false，但仍然会去关链接分享', async () => {
-    // 两件事互相独立：链接早就修过的表，权限可能还没收紧。
+  it('链接本来就对时 urlChanged = false，但仍然会去设链接分享', async () => {
+    // 两件事互相独立：链接早就修过的表，可见范围可能还是老的「关闭分享」。
     getDatabase()
       .prepare('UPDATE tender_user_preferences SET bitable_url = ? WHERE user_id = ?')
       .run('https://x.feishu.cn/base/bascnTEST?table=tblREC', owner.id);
 
     const res = await secure();
     expect(res.body.urlChanged).toBe(false);
-    expect(closeCalls).toHaveLength(1);
+    expect(shareCalls).toHaveLength(1);
   });
 
-  it('关闭链接分享失败要如实报出来，不能算成功', async () => {
-    // 这一步失败意味着表还停在租户默认可见范围（实测是「组织内获得链接的人可阅读」），
-    // 报成功的话管理员会以为表已经不对外了。
-    closeLinkShareResult = false;
+  it('设置链接分享失败要如实报出来，不能算成功', async () => {
+    // 这一步失败意味着表还停在租户默认可见范围 —— 可能比企业内更宽（互联网可见），
+    // 也可能是老表的「关闭分享」（企业内的人打开是无权限）。报成功的话
+    // 管理员会以为全员已经能看了，直到有人说「打不开」才发现。
+    setTenantReadableResult = false;
     const res = await secure();
     expect(res.status).toBe(200);
-    expect(res.body.urlChanged).toBe(true);       // 链接这件事成了
-    expect(res.body.linkShareClosed).toBe(false); // 权限这件事没成，分开报
+    expect(res.body.urlChanged).toBe(true);      // 链接这件事成了
+    expect(res.body.tenantReadable).toBe(false); // 可见范围这件事没成，分开报
   });
 
   it('没建过表格的用户直接拒绝，不去打飞书', async () => {
@@ -162,7 +163,7 @@ describe('多维表格补救：修正链接 + 关闭链接分享', () => {
       .set(admin.auth)
       .send({});
     expect(res.status).toBe(400);
-    expect(closeCalls).toHaveLength(0);
+    expect(shareCalls).toHaveLength(0);
   });
 
   it('缺 bitable_table_id 时拒绝 —— 否则会存出一个 ?table= 空值的链接', async () => {
@@ -171,7 +172,7 @@ describe('多维表格补救：修正链接 + 关闭链接分享', () => {
       .run(owner.id);
     const res = await secure();
     expect(res.status).toBe(400);
-    expect(closeCalls).toHaveLength(0);
+    expect(shareCalls).toHaveLength(0);
   });
 
   it('非管理员打不到这个接口', async () => {
@@ -181,7 +182,7 @@ describe('多维表格补救：修正链接 + 关闭链接分享', () => {
       .set(outsider.auth)
       .send({});
     expect(res.status).toBe(403);
-    expect(closeCalls).toHaveLength(0);
+    expect(shareCalls).toHaveLength(0);
   });
 });
 

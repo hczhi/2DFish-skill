@@ -5,13 +5,14 @@ import { getCrawler, getAllPlatforms } from '../services/tender/crawlerRegistry.
 import { aiGateway, SAMPLING, QuotaExceededError } from '../core/llm/gateway.js';
 import { runRecommendationsForAllUsers } from '../services/tender/recommendService.js';
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
-import { pushTenderRecommendations } from '../services/tender/feishuNotify.js';
+import { pushToChats, parseChatIds, listBotChats } from '../services/tender/feishuNotify.js';
 import { visibleSql, expiredSql, TENDER_VISIBLE_DAYS } from '../services/tender/retention.js';
 import {
   createBitable, createAllTendersTable, grantPermission,
   syncUserRecommendations, syncAllTenders, getBitableUrl,
-  closeLinkShare, withTableParam, cleanupDefaultTables,
+  setTenantReadable, withTableParam, cleanupDefaultTables,
 } from '../services/tender/feishuBitable.js';
+import { loadPushSummary, runManualPush } from '../services/tender/pushService.js';
 import { invalidateTokenCache } from '../services/tender/feishuOpen.js';
 import { tenderSdkGuard, registerSdkRoutes, registerSdkAdminRoutes } from './tenderSdk.js';
 import { requireAdmin } from '../auth/guards.js';
@@ -867,15 +868,16 @@ tenderRouter.get('/admin/users', (req, res) => {
 
 tenderRouter.get('/admin/feishu/:userId', (req, res) => {
   const db = getDatabase();
+  // 不返回 feishu_enabled：自动推送去掉之后没有任何代码读它，回显出来
+  // 前端就会给它画个开关，而那个开关关掉也照样能推。列留着（migration 035），只是没人读。
   const row = db.prepare(
-    `SELECT feishu_chat_id, feishu_enabled, feishu_min_score,
+    `SELECT feishu_chat_id, feishu_min_score,
             feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
             bitable_all_table_id, bitable_url, bitable_enabled
      FROM tender_user_preferences WHERE user_id = ?`
   ).get(req.params.userId) as any;
   res.json({
     feishu_chat_id: row?.feishu_chat_id || '',
-    feishu_enabled: !!row?.feishu_enabled,
     feishu_min_score: row?.feishu_min_score ?? 55,
     feishu_app_id: row?.feishu_app_id || '',
     // 脱敏回显。原来是把 App Secret 明文吐给后台页面的——
@@ -892,7 +894,7 @@ tenderRouter.get('/admin/feishu/:userId', (req, res) => {
 
 tenderRouter.put('/admin/feishu/:userId', (req, res) => {
   const {
-    feishu_chat_id, feishu_enabled, feishu_min_score,
+    feishu_chat_id, feishu_min_score,
     feishu_app_id, feishu_app_secret, bitable_app_token, bitable_table_id,
     bitable_url, bitable_enabled,
   } = req.body;
@@ -916,16 +918,17 @@ tenderRouter.put('/admin/feishu/:userId', (req, res) => {
 
   db.prepare(`
     UPDATE tender_user_preferences
-    SET feishu_chat_id = ?, feishu_enabled = ?, feishu_min_score = ?,
+    SET feishu_chat_id = ?, feishu_min_score = ?,
         feishu_app_id = ?, feishu_app_secret = ?, bitable_app_token = ?,
         bitable_table_id = ?, bitable_url = ?, bitable_enabled = ?,
         updated_at = ?
     WHERE user_id = ?
   `).run(
-    // 群 ID 去空白：从飞书客户端复制常带首尾空格，带着空格调接口报 230002
-    //「群不存在」，管理员会以为自己复制错了。
-    String(feishu_chat_id || '').trim(),
-    feishu_enabled ? 1 : 0,
+    // 这一列存的是**逗号分隔的多个群 ID**。存前过一遍 parseChatIds 归一化：
+    // 从飞书客户端复制常带首尾空格/换行，手拼多个时还常用中文逗号 —— 原样存进去，
+    // 读的时候会把「oc_a，oc_b 」当成一个不存在的群，报 230002「群不存在」，
+    // 而管理员看着自己刚复制的两个 id 只会以为是复制错了。
+    parseChatIds(feishu_chat_id).join(','),
     Number.isFinite(Number(feishu_min_score)) ? Number(feishu_min_score) : 55,
     feishu_app_id || '',
     nextAppSecret,
@@ -994,8 +997,9 @@ tenderRouter.post('/admin/bitable/:userId/init', async (req, res) => {
 // 给已经在用的表格补做两件 createBitable 现在会自动做、但历史表格没做过的事：
 //   1. bitable_url 补上 ?table=（不带的话点进去是 base 的第一张表 ——
 //      早期建的 base 里还留着一张自带的空「数据表」排在最前面）；
-//   2. 关掉链接分享（租户默认是「组织内获得链接的人可阅读」+ 可转发到组织外，
-//      而卡片按钮是发到群里的，等于全公司可看这个账号的全部投标信息）。
+//   2. 把链接分享设成「本企业内获得链接的人可阅读」+ 禁止转发到组织外。
+//      早先这里是**关掉**链接分享，于是企业内的人点卡片按钮全是「无权限访问」，
+//      要一个个 grantPermission 才能看 —— 这就是权限不对的来源。
 // 不能让老用户走 init force=true —— 那会换掉 app_token，旧表里的跟进标记全部失联。
 tenderRouter.post('/admin/bitable/:userId/secure', async (req, res) => {
   const db = getDatabase();
@@ -1016,7 +1020,7 @@ tenderRouter.post('/admin/bitable/:userId/secure', async (req, res) => {
   }
 
   const cred = { appId: row.feishu_app_id, appSecret: row.feishu_app_secret };
-  const linkShareClosed = await closeLinkShare(cred, row.bitable_app_token, Date.now());
+  const tenantReadable = await setTenantReadable(cred, row.bitable_app_token, Date.now());
 
   // 顺手清掉建 App 时自带的空表（它排在客户端 tab 第一位，用户切 tab 会点进去看到空表）。
   // 失败不影响前两件事 —— 链接已经指向正确的表了，残留一张空表只是观感问题。
@@ -1032,9 +1036,9 @@ tenderRouter.post('/admin/bitable/:userId/secure', async (req, res) => {
     console.error('[bitable] 清理自带空表失败:', e.message);
   }
 
-  // 三件事各自成败分开报。合成一个 success 的话，链接分享没关掉却因为
-  // url 改成功而显示「已处理」，管理员会以为表已经不对外了。
-  res.json({ success: true, urlChanged, url: fixedUrl, linkShareClosed, removedTables });
+  // 三件事各自成败分开报。合成一个 success 的话，链接分享没设成功却因为
+  // url 改成功而显示「已处理」，管理员会以为企业内已经能打开了。
+  res.json({ success: true, urlChanged, url: fixedUrl, tenantReadable, removedTables });
 });
 
 // 把表格授权给用户或群，否则应用创建的文件不在用户云空间里，用户打不开。
@@ -1144,17 +1148,75 @@ tenderRouter.post('/admin/feishu/:userId/test', async (req, res) => {
   if (!row?.feishu_app_id || !row?.feishu_app_secret) {
     return res.status(400).json({ error: '请先填写并保存 App ID / App Secret' });
   }
-  if (!row?.feishu_chat_id) return res.status(400).json({ error: '该用户未配置推送群 ID（oc_ 开头）' });
+  const chatIds = parseChatIds(row?.feishu_chat_id);
+  if (chatIds.length === 0) return res.status(400).json({ error: '该用户未配置推送群' });
 
-  const result = await pushTenderRecommendations(
+  // 测试消息要发到**每一个**配置的群：只测第一个的话，「第二个群没把机器人拉进去」
+  // 这个 100% 会撞到的问题恰好是测试按钮存在的理由，而它会显示「✅ 已发送」。
+  const results = await pushToChats(
     { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
-    row.feishu_chat_id,
+    chatIds,
     [{ title: '【测试】标讯推送配置成功', purchaserName: '示例采购人', totalScore: 88, tier: 'priority', budgetAmount: 1000000, regionName: '广东', url: null }],
     Date.now(),
     getBitableUrl(req.params.userId) || undefined
   );
-  if (result.ok) return res.json({ success: true });
-  return res.status(400).json({ error: result.error || '推送失败' });
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length === 0) return res.json({ success: true, chats: results });
+  // 部分成功也算失败：报成功会把失败的那个群吃掉。chats 让前端逐群显示。
+  return res.status(400).json({
+    error: failed.map((f) => `${f.chatId}：${f.error}`).join('\n'),
+    chats: results,
+  });
+});
+
+// 机器人所在的群列表，给「推送群」的多选用。
+//
+// 拿不到时返回 available:false + reason，而不是 4xx —— 这个接口要 im:chat:readonly，
+// 它不在推送必需权限里，没开的用户照样得能手填群 ID。当成错误的话前端会把整块
+// 配置区变成一个报错，用户连群都配不了。
+tenderRouter.get('/admin/feishu/:userId/chats', async (req, res) => {
+  const db = getDatabase();
+  const row = db.prepare(
+    'SELECT feishu_app_id, feishu_app_secret FROM tender_user_preferences WHERE user_id = ?'
+  ).get(req.params.userId) as any;
+
+  if (!row?.feishu_app_id || !row?.feishu_app_secret) {
+    return res.json({ available: false, reason: '请先填写并保存 App ID / App Secret', chats: [] });
+  }
+  try {
+    const chats = await listBotChats(
+      { appId: row.feishu_app_id, appSecret: row.feishu_app_secret },
+      Date.now()
+    );
+    res.json({ available: true, chats });
+  } catch (e: any) {
+    res.json({ available: false, reason: e.message || '获取群列表失败', chats: [] });
+  }
+});
+
+// 手动推送的预览数。按钮旁边显示「达标 N 条 / 全部 M 条」，点了推的就是这 N 条。
+// 有 blockedBy 时前端把按钮禁掉并显示原因 —— 缺群 ID 就让人点，只会收到一句
+// 「推送失败」，管理员分不清是配置问题还是飞书那边的问题。
+tenderRouter.get('/admin/feishu/:userId/push-summary', (req, res) => {
+  res.json(loadPushSummary(req.params.userId));
+});
+
+// 手动触发一次推送：先把多维表格清空重灌，再发卡片。
+// 推的是**当前所有达标推荐**，不是「本轮新评出来的」。
+//
+// pushed 和 rebuild 都要如实回给前端：pushed 与点按钮时的预览数不一致说明中间库变了；
+// rebuild.error 意味着**表现在是空的**（清空成功、灌入失败），这时候卡片故意没发出去。
+tenderRouter.post('/admin/feishu/:userId/push', async (req, res) => {
+  const result = await runManualPush(req.params.userId, Date.now());
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error || '推送失败', rebuild: result.rebuild });
+  }
+  res.json({
+    success: true,
+    pushed: result.pushed,
+    messageId: result.messageId,
+    rebuild: result.rebuild,
+  });
 });
 
 tenderRouter.get('/keywords-used', (req, res) => {
