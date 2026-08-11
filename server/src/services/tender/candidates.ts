@@ -21,7 +21,7 @@ const RECOMMEND_FROM = `
   WHERE r.user_id = ?
     AND r.tier != 'filter'
     AND r.total_score >= ?
-    AND ${visibleSql('t.publish_date')}
+    AND ${visibleSql('t')}
 `;
 
 export interface RecommendCandidate {
@@ -111,7 +111,7 @@ export function loadAllTenderCandidates(
               t.region_name, t.notice_type, t.keyword, t.publish_date, t.deadline,
               t.status, t.url
        FROM tenders t
-       WHERE ${visibleSql('t.publish_date')}${platformClause(platforms)}
+       WHERE ${visibleSql('t')}${platformClause(platforms)}
        ORDER BY t.publish_date DESC
        LIMIT ?`
     )
@@ -140,7 +140,7 @@ export function countAllTenderCandidates(platforms: string[], limit = 2000): num
     .prepare(
       `SELECT COUNT(*) AS c FROM (
          SELECT t.id FROM tenders t
-         WHERE ${visibleSql('t.publish_date')}${platformClause(platforms)}
+         WHERE ${visibleSql('t')}${platformClause(platforms)}
          LIMIT ?)`
     )
     .get(...platforms, limit) as any).c;

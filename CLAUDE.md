@@ -407,6 +407,31 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   也永远可见：机器人被移出群之后它就不在列表里了，只有输入框能看到「配了但列表里没有」
   的那些 id（前端把它们单独警告出来，否则那个群会稳定失败而没人知道）。
 
+## 标讯的时效闸门（14 天，两个日期都算）
+
+- **`retention.ts` 只在读的时候过滤，从不删行。** 爬虫的去重集合就是 `tenders` 表
+  本身（`content_hash`），删了行等于让同一条标讯明天再抓一遍、再评一次分；
+  `recommendService` 还要 JOIN 回来读用户反馈，`ai_reason` 也是花了 token 的。
+- **`created_at` 和 `publish_date` 必须同时在窗口内，少一个都会漏一类。**
+  只看入库时间：gdgpo 真有 `publish_date=2024-12-05` 的历史公告，今天抓进来就以
+  「新标讯」身份挂满 14 天，还要花 token 评分；只看发布日期：很久以前入库、发布日期
+  写成今天的行永远不过期。两类都不报错，只是列表里多出用户不想看的东西。
+- **`created_at` 故意不容忍空值，`publish_date` 必须容忍。** 后者是爬虫写的
+  `item.releaseTime || ''`，平台漏给时间就是空串，而 SQLite 里 `'' >= date(...)`
+  为 false —— 不显式兜的话新抓的标讯会被判成过期，静默地不进列表、不评分、不推送。
+  前者始终由代码写 `new Date().toISOString()`，容忍它等于开一个绕过闸门的后门。
+- **`expiredSql` 是对整个表达式取 `NOT`，不是把每个条件分别取反。** 分别取反会让
+  「入库很久 + 发布日期是今天」这类行两边都不落，后台的「已超期 N 条」于是比实际少，
+  读起来像口径问题而不是漏了一批。`retention.test.ts` 用真 sqlite 断言两者互补。
+- **`visibleSql(alias)` 收的是表别名不是列名**（各处查询都是 `FROM tenders t`）。
+  传错不报错，只是 SQL 里少了一半条件。
+- **后台列表也过闸门，并且要显示挡掉了多少条。** 只挡用户侧的话，后台看到 3000 条、
+  用户侧 200 条，两边都写「全部标讯」，谁都不会想到是两套过滤条件；而后台突然从
+  3000 变 200 又会读成数据丢了，所以 `/admin/tenders` 回 `hiddenExpired` +
+  `visibleDays`，前端必须显示出来。列表按 `created_at DESC` 排而不是发布日期：
+  按发布日期排的话今天新抓的一批散落在中间，管理员翻第一页看不到本次爬取的结果，
+  只会以为爬虫没抓到东西。
+
 ## Environment Variables
 
 ```

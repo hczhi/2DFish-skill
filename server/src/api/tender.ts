@@ -131,7 +131,7 @@ tenderRouter.get('/list', (req, res) => {
   const platform = (req.query.platform as string) || '';
   const keyword = (req.query.keyword as string) || '';
 
-  // 21 天时效闸门：过期标讯从列表里消失，但数据不删（见 retention.ts）。
+  // 14 天时效闸门（入库和发布都算）：过期标讯从列表里消失，但数据不删（见 retention.ts）。
   let where = `status != 'draft' AND ${visibleSql()}`;
   const params: any[] = [];
 
@@ -676,16 +676,29 @@ tenderRouter.get('/admin/tenders', (req, res) => {
   const search = (req.query.search as string) || '';
   const keyword = (req.query.keyword as string) || '';
 
-  let where = "status IN ('extracted', 'scored')";
+  // 时效闸门也管后台这张列表（原来只管用户侧 /list）。「入库超过 14 天的不再展示」
+  // 就是这一条 —— 只挡用户侧的话，管理员在后台看到 3000 条、用户侧只有 200 条，
+  // 两边都显示「全部标讯」，谁都不会想到是两套过滤条件。数据仍在库里（见 retention.ts）。
+  let where = `status IN ('extracted', 'scored') AND ${visibleSql()}`;
   const params: any[] = [];
   if (platform) { where += ' AND platform = ?'; params.push(platform); }
   if (search) { where += ' AND (title LIKE ? OR purchaser_name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
   if (keyword) { where += ' AND keyword = ?'; params.push(keyword); }
 
   const total = (db.prepare(`SELECT COUNT(*) as count FROM tenders WHERE ${where}`).get(...params) as any).count;
-  const items = db.prepare(`SELECT id, platform, notice_id, title, publish_date, budget, budget_amount, purchaser_name, region_name, notice_type, url, keyword, status, created_at FROM tenders WHERE ${where} ORDER BY publish_date DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
+  // 按**入库时间**倒序，不按发布日期：这个列表是给管理员看「刚爬回来的是什么」的，
+  // 而爬虫一次会带回跨十几天发布日期的公告 —— 按发布日期排的话，今天新抓的
+  // 一批会散落到列表中间，管理员翻第一页看不到本次爬取的结果，只会以为爬虫没抓到东西。
+  // 前端必须同时显示「入库时间」列：按一个看不见的列排序，页面读起来就是乱序。
+  const items = db.prepare(`SELECT id, platform, notice_id, title, publish_date, budget, budget_amount, purchaser_name, region_name, notice_type, url, keyword, status, created_at FROM tenders WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
 
-  res.json({ items, total, page, page_size: pageSize });
+  // 被闸门挡掉的条数要报出来。加上闸门之后这个列表会「凭空少一批」，
+  // 不说的话看起来像爬虫的数据丢了或者数据库被清过 —— 而它们其实都还在库里。
+  const hiddenExpired = (db.prepare(
+    `SELECT COUNT(*) as count FROM tenders WHERE status IN ('extracted', 'scored') AND ${expiredSql()}`
+  ).get() as any).count;
+
+  res.json({ items, total, page, page_size: pageSize, hiddenExpired, visibleDays: TENDER_VISIBLE_DAYS });
 });
 
 tenderRouter.patch('/admin/tenders/:id', (req, res) => {
@@ -762,7 +775,7 @@ tenderRouter.post('/admin/extract', async (req, res) => {
 
 // 评分入口。**按用户**评分，不再按标讯：
 // 传 userId 就只评这个用户，不传则遍历全部用户；候选标讯由服务层按
-// 「该用户还没评过的、21 天内的、他关注的平台」自行取（见 loadUnscoredForUser）。
+// 「该用户还没评过的、14 天内的、他关注的平台」自行取（见 loadUnscoredForUser）。
 //
 // tenderIds 仍然接受，但只给「重评指定几条」这类内部调用用（前端已经不传了）。
 // 保留它是因为 force 删除逻辑依赖它 —— 没有 id 范围的「强制重评」等于
@@ -808,7 +821,7 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
 
     // 只把**真正产出了推荐行**的标讯标成 scored。
     // 原来是把请求里的 tenderIds 全标上，两个问题：按用户模式没有 tenderIds 可用，
-    // 而且被 21 天闸门或平台过滤挡掉的也会被标成「已评分」——
+    // 而且被 14 天闸门或平台过滤挡掉的也会被标成「已评分」——
     // 列表上写着已评分、推荐表里却查不到，看起来像评分丢了结果。
     if (result.scoredTenderIds.length > 0) {
       const ids = result.scoredTenderIds;

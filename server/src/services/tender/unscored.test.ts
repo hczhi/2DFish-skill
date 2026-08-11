@@ -112,7 +112,7 @@ describe('取「该用户未评分的标讯」', () => {
     expect(countUnscoredForUser(USER_A, [])).toBe(20);
   });
 
-  it('21 天闸门同样管住这里：过期标讯不进候选', () => {
+  it('14 天闸门同样管住这里：过期标讯不进候选', () => {
     seedTender({ title: '还在窗口内', publishDate: daysAgo(TENDER_VISIBLE_DAYS - 1) });
     seedTender({ title: '已过时效', publishDate: daysAgo(TENDER_VISIBLE_DAYS + 1) });
 

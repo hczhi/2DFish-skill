@@ -1,6 +1,7 @@
 import { crawlGdgpo, type CrawlProgress, type ProgressCallback } from './crawlerService.js';
 import { crawlMeicloud } from './meicloudCrawlerService.js';
 import { crawlSzecp } from './szecpCrawlerService.js';
+import { crawlSzexgrp } from './szexgrpCrawlerService.js';
 import { crawlYgcg } from './ygcgCrawlerService.js';
 
 export interface CrawlerDef {
@@ -38,6 +39,14 @@ registry.set('ygcg', {
   name: '广州国企阳光采购',
   description: '广州国企阳光采购信息发布平台 (ygcg.gzggzy.cn)',
   crawl: crawlYgcg,
+});
+
+// 注意 id 不能叫 ygcg —— 那个已经被广州国企占了。深圳这个用 szexgrp（域名主体）。
+registry.set('szexgrp', {
+  id: 'szexgrp',
+  name: '深圳阳光采购',
+  description: '深圳阳光采购平台 (ygcg.szexgrp.com)',
+  crawl: crawlSzexgrp,
 });
 
 export function getCrawler(platformId: string): CrawlerDef | undefined {

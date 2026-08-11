@@ -10,6 +10,10 @@ const platform = ref('')
 const keywordFilter = ref('')
 const loading = ref(false)
 const usedKeywords = ref<string[]>([])
+// 被时效闸门挡掉的条数。列表加上闸门之后会「凭空少一批」，
+// 不显示的话看起来像数据丢了 —— 它们其实都还在库里，只是不再展示和推送。
+const hiddenExpired = ref(0)
+const visibleDays = ref(14)
 
 // Keyword pool
 const keywordPool = ref<any[]>([])
@@ -100,6 +104,8 @@ async function loadTenders() {
     const data = await apiGet('/api/tender/admin/tenders', params)
     tenders.value = data.items
     total.value = data.total
+    hiddenExpired.value = data.hiddenExpired || 0
+    visibleDays.value = data.visibleDays || 14
   } catch (e: any) {
     console.error(e)
   } finally {
@@ -258,6 +264,16 @@ function formatBudget(amount: number): string {
   if (!amount) return '-'
   if (amount >= 10000) return `${(amount / 10000).toFixed(1)}万`
   return `${amount}元`
+}
+
+// 入库时间显示到分钟：同一次爬取的行日期都一样，只显示到天的话
+// 看不出「这批是刚抓的还是昨天的」，而这正是按它排序的目的。
+function formatCreatedAt(iso: string): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso.slice(0, 16).replace('T', ' ')
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 // Drafts batch operations
@@ -831,6 +847,13 @@ function copyText(text: string) {
         <button class="btn-batch-score" @click="openScoreDialog()">按用户评分</button>
       </div>
 
+      <!-- 闸门挡掉了多少条必须写出来：不说的话列表「凭空少一批」看起来像数据丢了。 -->
+      <p class="list-note">
+        列表按<b>入库时间</b>倒序（最新在前）。只显示入库和发布都在 {{ visibleDays }} 天内的标讯 ——
+        超期的不再展示、不再评分、不再推送给用户，但数据仍在库里。
+        <span v-if="hiddenExpired > 0">当前有 <b>{{ hiddenExpired }}</b> 条已超期未显示。</span>
+      </p>
+
       <div v-if="loading" class="loading">加载中...</div>
       <table v-else class="tender-table">
         <thead>
@@ -841,6 +864,9 @@ function copyText(text: string) {
             <th>预算</th>
             <th>地区</th>
             <th>发布日期</th>
+            <!-- 列表按入库时间倒序，所以这一列必须显示出来：
+                 排序依据看不见的话，一个按发布日期看起来乱序的列表读不出规律。 -->
+            <th>入库时间</th>
             <th>状态</th>
             <th>操作</th>
           </tr>
@@ -856,6 +882,7 @@ function copyText(text: string) {
             <td>{{ formatBudget(t.budget_amount) }}</td>
             <td>{{ t.region_name || '-' }}</td>
             <td>{{ t.publish_date?.slice(0, 10) }}</td>
+            <td class="td-created">{{ formatCreatedAt(t.created_at) }}</td>
             <td><span :class="['tender-status', t.status || 'extracted']">{{ getStatusLabel(t.status) }}</span></td>
             <td class="td-actions">
               <button class="btn-sm btn-danger" @click="deleteTender(t.id)">删除</button>
@@ -1452,12 +1479,13 @@ function copyText(text: string) {
             </select>
           </div>
           <p class="scoring-hint">
-            将对该用户<b>尚未评分</b>的标讯逐条评分（近 21 天、且属于他关注的平台）。
-            达到推送阈值的会自动同步到多维表格并推送到飞书群。
+            将对该用户<b>尚未评分</b>的标讯逐条评分（入库和发布都在 14 天内、且属于他关注的平台）。
+            已经评过的不会再评，也不会再花 AI 额度。达到推送阈值的会同步进多维表格。
           </p>
           <p class="scoring-hint scoring-hint-warn">
-            单轮上限 200 条／用户。未评完的条数会写在运行日志里，再点一次继续。
-            AI 额度用完时评分会中止，已评出的部分照常推送。
+            评分<b>不发飞书卡片</b> —— 要发去「飞书推送」页点「立即推送到飞书群」。
+            单轮上限 200 条／用户，未评完的条数会写在运行日志里，再点一次继续。
+            AI 额度用完时评分会中止，已评出的部分仍会同步进表格。
           </p>
         </div>
         <div class="modal-footer">
@@ -1548,6 +1576,9 @@ function copyText(text: string) {
 .bitable-sep { border:none; border-top:1px solid #e2e8f0; margin:22px 0 16px; }
 .bitable-title { margin:0 0 6px; font-size:15px; }
 .bitable-hint { margin:0 0 10px; font-size:13px; color:#64748b; }
+.list-note { margin:0 0 12px; font-size:13px; color:#64748b; }
+.list-note b { color:#334155; }
+.td-created { font-size:12px; color:#64748b; white-space:nowrap; }
 .bitable-steps { margin:0 0 16px; padding-left:20px; font-size:13px; color:#475569; }
 .bitable-steps li { margin:5px 0; }
 .bitable-steps code { background:#f1f5f9; padding:1px 5px; border-radius:3px; font-size:12px; }

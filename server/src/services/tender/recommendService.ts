@@ -469,7 +469,7 @@ export function loadUnscoredForUser(userId: string, platforms: string[], limit: 
       `SELECT ${COLS.split(', ').map((c) => `t.${c}`).join(', ')}
        FROM tenders t
        WHERE t.status != 'draft'
-         AND ${visibleSql('t.publish_date')}${platformFilter}
+         AND ${visibleSql('t')}${platformFilter}
          AND NOT EXISTS (
            SELECT 1 FROM tender_recommendations r
            WHERE r.user_id = ? AND r.tender_id = t.id
@@ -489,7 +489,7 @@ export function countUnscoredForUser(userId: string, platforms: string[]): numbe
       .prepare(
         `SELECT COUNT(*) AS c FROM tenders t
          WHERE t.status != 'draft'
-           AND ${visibleSql('t.publish_date')}${platformFilter}
+           AND ${visibleSql('t')}${platformFilter}
            AND NOT EXISTS (
              SELECT 1 FROM tender_recommendations r
              WHERE r.user_id = ? AND r.tender_id = t.id
@@ -526,7 +526,7 @@ export async function runRecommendationsForAllUsers(
 
   const explicitIds = !!(tenderIds && tenderIds.length > 0);
 
-  // 21 天闸门同样管住评分：过期标讯不再花 token 打分，也就不会产生新的推荐行。
+  // 14 天闸门同样管住评分：过期标讯不再花 token 打分，也就不会产生新的推荐行。
   // 已有的推荐行不动 —— 那是花过 token 的，且推荐列表本身另有 20 天窗口。
   let explicitTenders: TenderRow[] = [];
   if (explicitIds) {

@@ -324,11 +324,11 @@ async function submitFeedback() {
           <div v-else-if="tenders.length === 0" class="empty-state">
             <p>{{ locale === 'en' ? 'No tenders found.' : '暂无标讯数据。' }}</p>
           </div>
-          <!-- 说明列表为什么只到 21 天：不写的话「上周看到的那条不见了」会被当成 bug 报。 -->
+          <!-- 说明列表为什么只到 14 天：不写的话「上周看到的那条不见了」会被当成 bug 报。 -->
           <p v-else class="list-note">
             {{ locale === 'en'
-              ? 'Showing tenders published within the last 21 days.'
-              : '仅显示近 21 天发布的标讯，更早的已过时效不再展示。' }}
+              ? 'Showing tenders published and collected within the last 14 days.'
+              : '仅显示近 14 天内发布且入库的标讯，更早的已过时效不再展示。' }}
           </p>
           <div v-if="tenders.length" class="tender-list">
             <div v-for="tender in tenders" :key="tender.id" class="tender-card" @click="viewDetail(tender.id)">

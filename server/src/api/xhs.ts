@@ -598,7 +598,12 @@ xhsRouter.post('/revise', async (req, res) => {
         // 且要 json_object 强约束），避免空返回。
         temperature: 0.7,
         response_format: { type: 'json_object' },
-        max_tokens: 1500,
+        // revise 的契约是把改写后的**整段原样吐回来**（revised 字段），
+        // 所以输出长度下限就是选中片段的长度 —— 1500 时选一大段正文必然
+        // 撞到 finish_reason=length，JSON 被截在半句话上没有收尾的 `"}`，
+        // parseFirstJson 配平不上返回 null，用户看到「AI 返回格式异常，请重试」，
+        // 而重试用的是同一个 body，截断是确定性的，第二次一样断（白烧一倍 token）。
+        max_tokens: 10000,
       }),
       { userId: req.user!.id, source: 'xhs', operation: 'revise', tier: 'strong' }
     );

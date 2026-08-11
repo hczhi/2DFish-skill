@@ -52,6 +52,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   meicloud: '美的询源云',
   szecp: '华润守正',
   ygcg: '广州国企阳光采购',
+  szexgrp: '深圳阳光采购',
 };
 
 // 「全部标讯」表的单选项。爬虫写入是 draft，AI 抽取后 extracted，评分后 scored。
@@ -696,10 +697,10 @@ export function getBitableUrl(userId: string): string {
  * 若只推内存里那批，一次推送失败这些标讯就永久漏掉了。
  * 状态位换来三件事：失败下轮自动重试、历史推荐可一键回填、后台可手动触发。
  *
- * 21 天时效闸门（retention.ts）也在这条 SQL 里。它和上面那个「失败下轮重试」
- * 有一处交互要知道：一条推荐若连续 21 天推送失败（webhook 配错、飞书配额打满），
+ * 14 天时效闸门（入库和发布都算）（retention.ts）也在这条 SQL 里。它和上面那个「失败下轮重试」
+ * 有一处交互要知道：一条推荐若连续 14 天推送失败（webhook 配错、飞书配额打满），
  * 它会越过闸门，从此不再重试 —— 状态位仍是 NULL，但查询已经取不到它了。
- * 这是有意的（21 天前的标讯推过去也没用），代价是它在库里留成一条
+ * 这是有意的（14 天前的标讯推过去也没用），代价是它在库里留成一条
  * 永远 pending 的记录。真要排查同步为什么没动，看 bitable_synced_at IS NULL
  * 且 publish_date 已过期的行数。
  */
@@ -725,7 +726,7 @@ export async function syncUserRecommendations(
          AND r.bitable_synced_at IS NULL
          AND r.tier != 'filter'
          AND r.total_score >= ?
-         AND ${visibleSql('t.publish_date')}
+         AND ${visibleSql('t')}
        ORDER BY r.created_at DESC
        LIMIT ?`
     )
@@ -778,9 +779,9 @@ export async function syncUserRecommendations(
  * limit 默认 2000：首次开启时库里可能已有几万条，一轮全推会打满飞书写入配额，
  * 分轮补齐即可（状态位保证不重不漏）。
  *
- * 21 天时效闸门（retention.ts）也在这条 SQL 里：过期标讯不再推给用户。
+ * 14 天时效闸门（入库和发布都算）（retention.ts）也在这条 SQL 里：过期标讯不再推给用户。
  * 注意它挡掉的行**不会**落状态位 —— 这是故意的，把闸门放宽回 30 天后
- * 它们会自动补推。代价是：入库时就已经超过 21 天的标讯永远不会进这张表
+ * 它们会自动补推。代价是：入库时就已经超过 14 天的标讯永远不会进这张表
  * （比如首次接入一个新平台、抓了三个月的历史公告），这符合「过期的不要推」的本意。
  * 想补历史请调 TENDER_VISIBLE_DAYS，不要在这里绕过闸门。
  */
@@ -814,7 +815,7 @@ export async function syncAllTenders(
               t.status, t.url
        FROM tenders t
        LEFT JOIN tender_bitable_sync s ON s.tender_id = t.id AND s.user_id = ?
-       WHERE s.tender_id IS NULL${platformFilter} AND ${visibleSql('t.publish_date')}
+       WHERE s.tender_id IS NULL${platformFilter} AND ${visibleSql('t')}
        ORDER BY t.publish_date DESC
        LIMIT ?`
     )
@@ -892,7 +893,7 @@ export interface RebuildResult {
  * 一行写进去就再也不会变，而底层 `tenders` 还在变 —— AI 抽取事后补上的截止日期
  * 和预算、`status` 从 draft 变成 scored，全都进不了表。于是用户点开卡片按钮看到的是
  * 「处理状态：待处理」和空的截止日期，而这两列正是他最关心的。表还会随时间单调增长
- * （21 天闸门只挡「还没同步的」，管不了已经写进去的行）。
+ * （14 天闸门只挡「还没同步的」，管不了已经写进去的行）。
  *
  * 三条不能改的约定：
  *
@@ -1010,7 +1011,7 @@ export async function rebuildBitableTables(
     recommend: { cleared: recCleared, written: recWritten },
     all: pref!.bitable_all_table_id ? { cleared: allCleared, written: allWritten } : undefined,
     // 只算真的写回去了的那些：读到 5 条但只有 3 条还在达标名单里，报 5 会让用户
-    // 以为标记都在，而另 2 条已经随着 21 天闸门/阈值变化从表里消失了。
+    // 以为标记都在，而另 2 条已经随着 14 天闸门/阈值变化从表里消失了。
     followKept: recItems.filter((it) => follow.has(it.tenderId)).length,
   };
 }
