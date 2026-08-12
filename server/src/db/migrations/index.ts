@@ -71,6 +71,9 @@ import { migration_068 } from './068_feishu_project_tasks.js';
 import { migration_069 } from './069_feishu_diary_record_origin.js';
 import { migration_070 } from './070_feishu_task_base.js';
 import { migration_071 } from './071_fix_szexgrp_detail_url.js';
+import { migration_072 } from './072_task_base_gantt.js';
+import { migration_073 } from './073_task_url_backfill.js';
+import { migration_074 } from './074_cross_links.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -143,4 +146,7 @@ export const allMigrations: Migration[] = [
   migration_069,
   migration_070,
   migration_071,
+  migration_072,
+  migration_073,
+  migration_074,
 ];

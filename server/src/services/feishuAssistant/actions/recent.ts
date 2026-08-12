@@ -93,7 +93,7 @@ function titleOf(ref: RecentActionRef): string {
  * 全部去掉而不是把连续空白压成一个：英文短语里空格是有意义的分隔，但那种情况
  * 去掉之后仍然能匹配上（两边同样处理），而中文场景只有全去掉才对得上。
  */
-function norm(s: string): string {
+export function norm(s: string): string {
   return s.toLowerCase().replace(/\s+/g, '');
 }
 

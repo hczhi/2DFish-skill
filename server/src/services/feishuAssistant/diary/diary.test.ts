@@ -232,8 +232,6 @@ function fakeClient(
     failIndexRecordCreate?: boolean;
     /** 甘特视图建不出来（缺权限 / 视图数超限）。任务本身不该因此失败。 */
     failViewCreate?: boolean;
-    /** 任务表的行写不进去。任务本身也不该因此失败。 */
-    failTaskRecordCreate?: boolean;
     /** 任务**管理**表（070 那张开放编辑的）的行写不进去。 */
     failTaskBaseRecordCreate?: boolean;
     /** 重放查重的搜索接口挂了。这时候宁可多一行，也不能让派活失败。 */
@@ -332,10 +330,13 @@ function fakeClient(
           calls.recordCreate.push(arg);
           const tid = arg.path?.table_id;
           const name = tableNames[tid] ?? '';
-          if (name === '任务') {
-            if (opts.failTaskRecordCreate) throw new Error('写任务表失败');
-          } else if (name === '任务管理表') {
+          if (name === '任务管理表') {
             if (opts.failTaskBaseRecordCreate) throw new Error('写任务管理表失败');
+            // 「🔗 相关链接」（074）也走这个接口。它必须单列一支：落到下面
+            // failIndexRecordCreate 那一支的话，「总表写失败」的用例会连带
+            // 让互跳入口也失败，报出来的原因和用例名字完全无关。
+          } else if (name === '🔗 相关链接') {
+            /* 导航表，不注入失败 */
           } else if (opts.failIndexRecordCreate) {
             throw new Error('写总表失败');
           }
@@ -866,9 +867,17 @@ describe('create_diary_project', () => {
       'tbl_default',
       'tbl_default',
     ]);
-    // 日志 base 只有「记录」+「复盘」两张（任务搬到独立 base 了）。
+    // 日志 base 只有「记录」+「复盘」两张（任务搬到独立 base 了），
+    // 两个 base 最后各多一张「🔗 相关链接」（074 的互跳入口）。
     const names = calls.tableCreate.map((c) => c.data.table.name);
-    expect(names).toEqual(['项目列表', '记录', '复盘', '任务管理表']);
+    expect(names).toEqual([
+      '项目列表',
+      '记录',
+      '复盘',
+      '任务管理表',
+      '🔗 相关链接',
+      '🔗 相关链接',
+    ]);
   });
 
   it('任务表建在独立 base 里，且**开放给群 edit**（日志表仍然只给 view）', async () => {
@@ -1064,7 +1073,10 @@ describe('create_diary_project', () => {
     // 而那是 HTTP 200 —— 群里照样收到「✅ 项目已建好」，只是总表是空的。
     expect(idx.data.fields['关联群聊']).toEqual([{ id: CHAT_ID }]);
     expect(idx.data.fields['记录数']).toBe(0);
-    expect(project.index_record_id).toBe('rec_1');
+    // 总表那一行的 record_id 要存下来：后面刷记录数/改名/补任务表链接都靠它。
+    expect(project.index_record_id).toBeTruthy();
+    // 074 起总表还多一列「任务表」，指向那个独立的任务 base。
+    expect(idx.data.fields['任务表'].link).toContain(project.task_base_url);
   });
 
   it('日志表建不出来时回滚占位行，否则这个群永远卡在「有项目但没有表」', async () => {
@@ -1531,21 +1543,10 @@ describe('review_diary', () => {
   });
 });
 
-// ==================== 项目任务 / 甘特图（068）====================
+// ==================== 项目任务（068 落库 / 070 任务管理表）====================
 
 describe('create_task 落进项目任务表', () => {
-  /** 任务表里那一行的字段（同步到多维表格时写的那份）。 */
-  function taskRowFields(calls: FakeCalls, project: store.DiaryProjectRow) {
-    // **必须重新取一次行**：老「任务」表现在是第一次派活时才补建的（070 把任务
-    // 搬到独立 base 之后，建项目不再建它），所以调用方手上那份 project 里
-    // task_table_id 还是空的 —— 拿它去 find 会返回 undefined，
-    // 而用例会报成「字段读不到」，跟真正的原因完全不像。
-    const fresh = store.getProjectById(project.id)!;
-    const c = calls.recordCreate.find((x) => x.path.table_id === fresh.task_table_id);
-    return c?.data.fields as Record<string, any> | undefined;
-  }
-
-  it('任务同时落库并同步到「任务」表，起止时间按毫秒写', async () => {
+  it('任务落库，起止时间按毫秒写', async () => {
     // 这是 req 5 的核心：飞书任务读不回来（tenant token 只看得到自己建的），
     // 所以「这个项目派了哪些活」只能问我们自己的表。
     const { calls, ctx, project } = await createProject();
@@ -1572,25 +1573,18 @@ describe('create_task 落进项目任务表', () => {
     expect(sent.start.timestamp).toBe(String(Date.parse('2026-08-10T09:00:00+08:00')));
     expect(sent.due.timestamp).toBe(String(Date.parse('2026-08-13T18:00:00+08:00')));
 
-    // 同步进「任务」表，日期列也是毫秒（和任务接口同一个单位，但和日程不同）。
-    const fields = taskRowFields(calls, project)!;
-    expect(fields['任务名称']).toBe('设计项目 logo');
-    expect(fields['开始时间']).toBe(Date.parse('2026-08-10T09:00:00+08:00'));
-    expect(fields['状态']).toBe('待开始');
-    expect(fields['负责人']).toEqual([{ id: 'ou_sender' }]);
-    // 行号存下来了：下次改这条任务要更新那一行，而不是再追加一条。
+    // 「N 个任务未同步」那个统计位要被置上：写进任务管理表之后不置位的话，
+    // 后台会永远显示一个不存在的缺口。
     expect(store.listTasks(project.id)[0].bitable_record_id).toBeTruthy();
-    expect(store.listUnsyncedTasks(project.id)).toHaveLength(0);
-    expect(res.summary).toContain('甘特图');
+    expect(res.summary).toContain('任务管理表');
   });
 
   it('状态只收枚举里的词，模型编别的写法一律当未开始', async () => {
     // 单选字段的选项在写入未知值时会自动新建，于是「进行中」「in progress」
     // 会变成几个看起来一样的选项 —— 甘特图按状态上色随即失效。
-    const { calls, ctx, project } = await createProject();
+    const { ctx, project } = await createProject();
     await getAction('create_task')!.run({ summary: 'A', status: '正在做' }, ctx);
     expect(store.listTasks(project.id)[0].status).toBe('doing');
-    expect(taskRowFields(calls, project)!['状态']).toBe('进行中');
 
     const fake2 = fakeClient();
     await getAction('create_task')!.run(
@@ -1624,63 +1618,6 @@ describe('create_task 落进项目任务表', () => {
     expect(res.summary).toMatch(/点/);
   });
 
-  it('同步失败只带 warning，任务不算失败（否则用户会重派一次）', async () => {
-    await createProject();
-    const fake = fakeClient({ failTaskRecordCreate: true });
-    const ctx = makeCtx({ client: fake.client, messageId: 'om_sync_fail' });
-    const project = store.getProjectByChat(APP_ID, CHAT_ID)!;
-
-    const res = await getAction('create_task')!.run({ summary: '写脚本' }, ctx);
-
-    expect(res.summary).toContain('✅ 任务已创建');
-    expect(res.summary).toMatch(/还没同步/);
-    // 库里有，状态位没置 —— 下次派活会连它一起补推。
-    expect(store.listTasks(project.id)).toHaveLength(1);
-    expect(store.listUnsyncedTasks(project.id)).toHaveLength(1);
-  });
-
-  it('补推：上次没同步的那条会在下次派活时一起进表', async () => {
-    await createProject();
-    const project = store.getProjectByChat(APP_ID, CHAT_ID)!;
-    await getAction('create_task')!.run(
-      { summary: '第一条' },
-      makeCtx({ client: fakeClient({ failTaskRecordCreate: true }).client, messageId: 'om_1' })
-    );
-    const fake = fakeClient();
-    await getAction('create_task')!.run(
-      { summary: '第二条' },
-      makeCtx({ client: fake.client, messageId: 'om_2' })
-    );
-    // 两条一起写进去了。补推没有定时任务，只能骑在下一次操作上。
-    // 表 id 要在派活**之后**再取：老「任务」表是第一次派活时补建的。
-    const taskTableId = store.getProjectById(project.id)!.task_table_id;
-    const written = fake.calls.recordCreate.filter((c) => c.path.table_id === taskTableId);
-    expect(written.map((c) => c.data.fields['任务名称'])).toEqual(['第一条', '第二条']);
-    expect(store.listUnsyncedTasks(project.id)).toHaveLength(0);
-  });
-
-  it('068 之前的老项目没有「任务」表，第一次派活时补建（含甘特视图）', async () => {
-    // 迁移里不能调飞书接口：迁移失败会让整个服务起不来，而一次建表失败
-    // 只该让那一条指令带个 warning。
-    await createProject();
-    const project = store.getProjectByChat(APP_ID, CHAT_ID)!;
-    getDatabase()
-      .prepare("UPDATE feishu_diary_projects SET task_table_id = '', task_view_id = '' WHERE id = ?")
-      .run(project.id);
-
-    const fake = fakeClient();
-    await getAction('create_task')!.run(
-      { summary: '老项目派个活' },
-      makeCtx({ client: fake.client, messageId: 'om_lazy' })
-    );
-
-    const fresh = store.getProjectById(project.id)!;
-    expect(fresh.task_table_id).toBeTruthy();
-    expect(fresh.task_view_id).toBeTruthy();
-    expect(fake.calls.tableCreate.map((c) => c.data.table.name)).toEqual(['任务']);
-    expect(fake.calls.viewCreate[0].data.view_type).toBe('gantt');
-  });
-
   it('没绑项目的群里也照样落库（project_id 为 NULL），不进任何表格', async () => {
     // 不记的话这条任务就只存在于飞书任务中心，而那里我们读不回来。
     const fake = fakeClient();
@@ -1689,7 +1626,7 @@ describe('create_task 落进项目任务表', () => {
       makeCtx({ client: fake.client, chatId: 'oc_nowhere' })
     );
     expect(res.summary).toContain('✅ 任务已创建');
-    expect(res.summary).not.toContain('甘特图');
+    expect(res.summary).not.toContain('任务管理表');
     const rows = store.findTasksByKeyword({ appId: APP_ID, senderOpenId: 'ou_sender' });
     expect(rows).toHaveLength(1);
     expect(rows[0].project_id).toBeNull();
@@ -1705,8 +1642,6 @@ describe('create_task 落进项目任务表', () => {
       makeCtx({ client: fake.client, messageId: ctx.messageId })
     );
     expect(store.listTasks(project.id)).toHaveLength(1);
-    // 第二次没有待同步的行，所以一行都不写。
-    expect(fake.calls.recordCreate.filter((c) => c.path.table_id === project.task_table_id)).toHaveLength(0);
   });
 
   // ── 070：写进那张开放编辑的「任务管理表」──
@@ -1780,15 +1715,33 @@ describe('create_task 落进项目任务表', () => {
     const { project } = await createProject();
     const fresh = store.getProjectById(project.id)!;
     const fake = fakeClient({ failFieldList: true });
-    const res = await getAction('create_task')!.run(
-      { summary: '不该写进去' },
-      makeCtx({ client: fake.client, messageId: 'om_nofields' })
-    );
+    await expect(
+      getAction('create_task')!.run(
+        { summary: '不该写进去' },
+        makeCtx({ client: fake.client, messageId: 'om_nofields' })
+      )
+    ).rejects.toThrow(/没能写进/);
 
     expect(
       fake.calls.recordCreate.filter((c) => c.path.table_id === fresh.task_base_table_id)
     ).toHaveLength(0);
-    expect(res.summary).toMatch(/没能写进/);
+  });
+
+  it('写不进任务管理表就整条失败，并说清「别重说一遍」', async () => {
+    // 老「任务」表砍掉之后这张表是唯一的数据源，`list_tasks` 也只读它。
+    // 回一句「✅ 已创建」而表里没有那行 = 下一句「还有什么没做完」不会提它，
+    // 两句都不报错。而飞书任务**已经建好了**，所以话术必须拦住重派 ——
+    // 少这一句的话用户重说一遍，任务中心里就多一条一样的活。
+    const { project } = await createProject();
+    const fake = fakeClient({ failTaskBaseRecordCreate: true });
+    await expect(
+      getAction('create_task')!.run(
+        { summary: '写不进去的活' },
+        makeCtx({ client: fake.client, messageId: 'om_mgmt_fail' })
+      )
+    ).rejects.toThrow(/别重说一遍/);
+    // 库里那份还留着（统计里会露出「未同步」），但状态位没置。
+    expect(store.listTasks(project.id)[0].bitable_record_id).toBeFalsy();
   });
 
   it('事件重投时任务管理表里不多一行（靠助理标记查重）', async () => {
@@ -1817,10 +1770,12 @@ describe('create_task 落进项目任务表', () => {
       { summary: '同步成功的' },
       makeCtx({ client: fakeClient().client, messageId: 'om_ok' })
     );
-    await getAction('create_task')!.run(
-      { summary: '没同步的' },
-      makeCtx({ client: fakeClient({ failTaskRecordCreate: true }).client, messageId: 'om_bad' })
-    );
+    await expect(
+      getAction('create_task')!.run(
+        { summary: '没同步的' },
+        makeCtx({ client: fakeClient({ failTaskBaseRecordCreate: true }).client, messageId: 'om_bad' })
+      )
+    ).rejects.toThrow();
     const stats = store.projectStats(APP_ID)[project.id];
     expect(stats.task_count).toBe(2);
     expect(stats.open_task_count).toBe(2);
@@ -1832,8 +1787,6 @@ describe('update_task 写回项目任务表', () => {
   async function seedTask(summary = '设计项目 logo', extra: Record<string, unknown> = {}) {
     const { ctx, project } = await createProject();
     await getAction('create_task')!.run({ summary, ...extra }, ctx);
-    // 派活**之后**再取项目行：老「任务」表是第一次派活时才补建的，
-    // createProject 刚返回时 task_table_id 还是空的。
     return { project: store.getProjectById(project.id)!, row: store.listTasks(project.id)[0] };
   }
 
@@ -1866,12 +1819,15 @@ describe('update_task 写回项目任务表', () => {
     );
 
     expect(store.getTaskById(row.id)!.status).toBe('done');
-    const updates = fake.calls.recordUpdate.filter((c) => c.path.table_id === project.task_table_id);
+    const updates = fake.calls.recordUpdate.filter(
+      (c) => c.path.table_id === project.task_base_table_id
+    );
     expect(updates).toHaveLength(1);
-    expect(updates[0].path.record_id).toBe(row.bitable_record_id);
-    expect(updates[0].data.fields['状态']).toBe('已完成');
-    expect(fake.calls.recordCreate.filter((c) => c.path.table_id === project.task_table_id)).toHaveLength(0);
-    expect(res.summary).toContain('甘特图');
+    expect(updates[0].data.fields['进展']).toBe('已完成');
+    expect(
+      fake.calls.recordCreate.filter((c) => c.path.table_id === project.task_base_table_id)
+    ).toHaveLength(0);
+    expect(res.summary).toContain('任务管理表');
   });
 
   it('只说状态时不去动飞书的完成位（「取消」不等于「完成」）', async () => {
@@ -1895,7 +1851,7 @@ describe('update_task 写回项目任务表', () => {
     expect(store.getTaskById(row.id)!.status).toBe('doing');
   });
 
-  it('改开始时间会走 patch 的 start，并同步进甘特图那一列', async () => {
+  it('改开始时间会走 patch 的 start，并同步进任务管理表那一列', async () => {
     const { project, row } = await seedTask();
     const fake = fakeClient();
     await getAction('update_task')!.run(
@@ -1906,8 +1862,10 @@ describe('update_task 写回项目任务表', () => {
     expect(body.update_fields).toEqual(['start']);
     expect(body.task.start.timestamp).toBe(String(Date.parse('2026-08-11T09:00:00+08:00')));
     expect(store.getTaskById(row.id)!.start_ms).toBe(Date.parse('2026-08-11T09:00:00+08:00'));
-    const updates = fake.calls.recordUpdate.filter((c) => c.path.table_id === project.task_table_id);
-    expect(updates[0].data.fields['开始时间']).toBe(Date.parse('2026-08-11T09:00:00+08:00'));
+    const updates = fake.calls.recordUpdate.filter(
+      (c) => c.path.table_id === project.task_base_table_id
+    );
+    expect(updates[0].data.fields['开始日期']).toBe(Date.parse('2026-08-11T09:00:00+08:00'));
   });
 
   it('改名之后按**新**名字还能找到（日志里存的也是新标题）', async () => {
@@ -2009,7 +1967,6 @@ describe('rename_diary_project', () => {
       { summary: '剪第三场' },
       makeCtx({ client: fakeClient().client, messageId: 'om_t1' })
     );
-    // 派活会补建老「任务」表，所以改名前的基准要在这之后取。
     const before = store.getProjectById(project.id)!;
 
     const res = await getAction('rename_diary_project')!.run({ name: '印度纪录片二期' }, ctx);
@@ -2019,8 +1976,8 @@ describe('rename_diary_project', () => {
     expect(fresh.name).toBe('印度纪录片二期');
     expect(fresh.url).toBe(before.url);
     expect(fresh.base_app_token).toBe(before.base_app_token);
-    expect(fresh.task_table_id).toBe(before.task_table_id);
-    expect(before.task_table_id).toBeTruthy();
+    expect(fresh.task_base_table_id).toBe(before.task_base_table_id);
+    expect(before.task_base_table_id).toBeTruthy();
     expect(store.countRecords(project.id)).toBe(1);
     expect(store.listTasks(project.id)).toHaveLength(1);
     // 回帖要把「什么没变」说出来，否则用户会担心之前记的跟丢了。

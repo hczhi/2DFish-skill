@@ -1,13 +1,7 @@
 import type { Client } from '@larksuiteoapi/node-sdk';
 import { assertOk, describeFeishuError } from '../feishuError.js';
 import * as store from './store.js';
-import type {
-  DiaryProjectRow,
-  DiaryRecordRow,
-  DiarySummaryRow,
-  FeishuProjectTaskRow,
-} from './store.js';
-import { TASK_STATUS_OPTIONS, statusLabel } from './taskStatus.js';
+import type { DiaryProjectRow, DiaryRecordRow, DiarySummaryRow } from './store.js';
 
 // 项目日记的飞书侧：建多维表格、收权限、追加记录。
 //
@@ -24,15 +18,13 @@ import { TASK_STATUS_OPTIONS, statusLabel } from './taskStatus.js';
 
 /**
  * 字段类型编号（飞书字段编辑指南）：
- * 1 文本 / 2 数字 / 3 单选 / 5 日期 / 11 人员 / 15 超链接 / 23 群
+ * 1 文本 / 2 数字 / 5 日期 / 11 人员 / 15 超链接 / 23 群
  *
  * 第一个字段是**索引字段**，只能是 1/2/5/13/15/20/22 —— 人员和群都不行。
- * 所以「记录」表第一列是文本（记录正文），项目总表第一列是文本（项目名称），
- * 「任务」表第一列是文本（任务名称）。
+ * 所以「记录」表第一列是文本（记录正文），项目总表第一列是文本（项目名称）。
  */
 const F_TEXT = 1;
 const F_NUMBER = 2;
-const F_SELECT = 3;
 const F_DATE = 5;
 const F_USER = 11;
 const F_URL = 15;
@@ -45,21 +37,24 @@ const BATCH_SIZE = 500;
 const INDEX_BASE_NAME = '项目总表';
 const INDEX_TABLE_NAME = '项目列表';
 
-/** 每个项目自己的三张表。 */
+/** 每个项目自己的两张表。任务在独立的任务 base 里（070）。 */
 const RECORD_TABLE_NAME = '记录';
 const REVIEW_TABLE_NAME = '复盘';
-const TASK_TABLE_NAME = '任务';
-
-/** 「任务」表上那个甘特视图的名字。用户在飞书里会看到这几个字。 */
-const TASK_GANTT_VIEW_NAME = '甘特图';
 
 // 表结构故意和 xzy-diary-skills 那版**不完全一致**：
 // 那版有「类型/负责人/部门成员/项目状态/总结文档链接」等列，但它们全靠
 // 智能体手填、没有任何代码在维护，实际用起来大半是空的。这里只建
 // 「代码会写、或用户明确会用来筛」的列 —— 空列比没有列更误导人。
+/** 总表里那一列的名字。老总表是第一次建项目/派活时补这一列的（074）。 */
+const INDEX_TASK_FIELD = '任务表';
+
 const INDEX_FIELDS = [
   { field_name: '项目名称', type: F_TEXT },
   { field_name: '日志表', type: F_URL },
+  // 任务表的入口（074）。这两张表在**两个不同的 base** 里（070：权限粒度是 base，
+  // 日志只读、任务可编辑），而它们都不在任何人的云文档空间里 ——
+  // 群消息一被刷走，总表就是唯一还能找到任务表的地方。
+  { field_name: INDEX_TASK_FIELD, type: F_URL },
   // 群用 type 23（群）而不是文本：这一列点开就能跳进那个群，
   // 而 oc_xxx 存成文本对人完全没有意义（客户端里看不到这串 id）。
   { field_name: '关联群聊', type: F_CHAT },
@@ -81,32 +76,6 @@ const REVIEW_FIELDS = [
   { field_name: '记录数', type: F_NUMBER },
   { field_name: '发起人', type: F_USER },
   { field_name: '总结', type: F_TEXT },
-];
-
-/**
- * 「任务」表（068）。列的顺序和取舍就是**甘特图能不能用**：
- * 甘特视图要的是「一个标题 + 开始 + 结束」，缺开始时间的行在图上只是个点。
- *
- * 状态用单选（type 3）而不是文本，而且**选项在建表时就写死**：
- * 单选字段的选项在写入未知值时会自动新建，而 LLM 对同一个意思有四五种写法
- * （「进行中」「进行中的」「in progress」「已完成✅」），于是那一列很快就有一堆
- * 看起来一样的选项 —— 甘特图按状态上色因此失效，按状态筛也只筛到一部分，
- * 而每一行看上去都是对的。取值收敛在 diary/taskStatus.ts。
- */
-const TASK_FIELDS = [
-  // 索引列（第一列）只能是 1/2/5/13/15/20/22，所以任务名称用文本。
-  { field_name: '任务名称', type: F_TEXT },
-  { field_name: '负责人', type: F_USER },
-  { field_name: '开始时间', type: F_DATE },
-  { field_name: '结束时间', type: F_DATE },
-  {
-    field_name: '状态',
-    type: F_SELECT,
-    property: { options: TASK_STATUS_OPTIONS.map((name) => ({ name })) },
-  },
-  { field_name: '内容', type: F_TEXT },
-  { field_name: '派活人', type: F_USER },
-  { field_name: '飞书任务', type: F_URL },
 ];
 
 /** 一步失败但不致命时的说明。调用方必须把它拼进回帖 —— 静默降级读起来就是成功。 */
@@ -274,6 +243,21 @@ export function withTableParam(url: string, tableId: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}table=${tableId}`;
 }
 
+/**
+ * 任务表的可点链接，尽量落在进度看板上。
+ *
+ * 定义在这里而不是 taskBase.ts（那才是任务表的主人）：项目总表要把这个链接写进
+ * 「任务表」那一列，而 taskBase 已经 import 了本模块 —— 反向再 import 就成环了。
+ * 这个函数只读项目行上的两列，不碰任务表的任何逻辑，所以放这边没有代价。
+ * taskBase 那边 re-export 了它，调用方照旧从那儿拿。
+ */
+export function taskBaseUrl(project: DiaryProjectRow): string {
+  if (!project.task_base_url) return '';
+  if (!project.task_board_view_id) return project.task_base_url;
+  const sep = project.task_base_url.includes('?') ? '&' : '?';
+  return `${project.task_base_url}${sep}view=${project.task_board_view_id}`;
+}
+
 // ==================== 项目总表 ====================
 
 /**
@@ -363,6 +347,11 @@ export async function addToIndex(
           fields: {
             项目名称: project.name,
             ...(project.url ? { 日志表: { text: project.name, link: project.url } } : {}),
+            // 任务表在另一个 base 里（070），链接是这一行唯一的入口。
+            // 任务 base 建失败的项目这一格留空 —— 写一个空链接会点出「无权限」。
+            ...(taskBaseUrl(project)
+              ? { [INDEX_TASK_FIELD]: { text: '任务表', link: taskBaseUrl(project) } }
+              : {}),
             // 群聊列（type 23）要的是 `[{id}]`，不是裸字符串数组。传错的后果不是
             // 这一列为空，而是**整条 record 被拒**（1254001 WrongRequestBody），
             // 而飞书是 HTTP 200 回的 —— 所以在加 assertOk 之前，这里的表现是
@@ -385,6 +374,96 @@ export async function addToIndex(
       warning: `项目已建好，但写进项目总表失败了（${describeFeishuError(e)}），下次在本群记录时会自动补上。`,
     };
   }
+}
+
+/**
+ * 给老的项目总表补上「任务表」那一列（074）。
+ *
+ * 为什么不在迁移里做：要调飞书接口，而迁移跑在启动路径上（一次网络抖动 = 服务起不来）。
+ * 所以和 072/073 一样挂在下一次建项目/派活上，会被反复执行。
+ *
+ * 幂等靠 `task_col_added`，而**置位前先 list 一次**看列是不是已经在了：
+ * 飞书对重名列是直接拒的，只凭那一位的话，一个已经有这列的老总表会在每次建项目时
+ * 挂一句永远不会好的 warning。列真的不在才 create。
+ *
+ * 用户手动删掉这一列之后我们不再重建（那一位已经置了）—— 他删一次我们加一次
+ * 才是更糟的那种：每次都成功，而他每次都得再删。
+ */
+export async function ensureIndexTaskColumn(client: Client, appId: string): Promise<Warning> {
+  const index = store.getIndex(appId);
+  if (!index || index.task_col_added) return null;
+  try {
+    const listed = assertOk(
+      await client.bitable.appTableField.list({
+        path: { app_token: index.base_app_token, table_id: index.table_id },
+        params: { page_size: 100 },
+      }),
+      '读总表的列',
+    );
+    const has = (listed.data?.items ?? []).some((f) => f.field_name === INDEX_TASK_FIELD);
+    if (!has) {
+      assertOk(
+        await client.bitable.appTableField.create({
+          path: { app_token: index.base_app_token, table_id: index.table_id },
+          data: { field_name: INDEX_TASK_FIELD, type: F_URL },
+        }),
+        `给总表补上「${INDEX_TASK_FIELD}」列`,
+      );
+    }
+  } catch (e) {
+    return `项目总表里还少一列「${INDEX_TASK_FIELD}」（${describeFeishuError(e)}），下次建项目/派活时会再试。`;
+  }
+  store.markIndexTaskCol(appId, 'added');
+  return null;
+}
+
+/**
+ * 把已有项目的任务表链接补进总表那一列（074）。
+ *
+ * 补出来的列对**已经在表里的行**是空的，而这一列是那些项目唯一还能找到任务表的
+ * 地方（两个 base 都不在任何人的云文档空间里，链接分享也关着）。不补的话总表里
+ * 那一列看着只是「没填」，谁都不会想到是漏了一批。
+ *
+ * 逐行 update 而不是 batchUpdate：某一行的 record_id 可能已经失效（用户在总表里
+ * 手动删过行），而 batchUpdate 对一个坏 id 是**整批拒掉** —— 于是所有项目都补不上。
+ *
+ * 补完**无论成败都置位**，失败的那几个在 warning 里点名。这是有意的：一个永久失效的
+ * record_id 会让这段代码每次派活都重跑一遍并每次都挂同一句 warning，而用户按提示
+ * 手填一次就解决了。
+ */
+export async function backfillIndexTaskLinks(
+  client: Client,
+  appId: string,
+  links: Array<{ recordId: string; name: string; url: string }>,
+): Promise<Warning> {
+  const index = store.getIndex(appId);
+  if (!index || !index.task_col_added || index.task_col_backfilled) return null;
+
+  const failed: string[] = [];
+  for (const l of links) {
+    try {
+      assertOk(
+        await client.bitable.appTableRecord.update({
+          path: {
+            app_token: index.base_app_token,
+            table_id: index.table_id,
+            record_id: l.recordId,
+          },
+          data: { fields: { [INDEX_TASK_FIELD]: { text: '任务表', link: l.url } } },
+        }),
+        '补总表里的任务表链接',
+      );
+    } catch (e) {
+      console.error(`[diary] 补总表任务表链接失败（${l.name}）:`, (e as Error).message);
+      failed.push(l.name);
+    }
+  }
+  store.markIndexTaskCol(appId, 'backfilled');
+  if (!failed.length) return null;
+  return (
+    `项目总表里这几个项目的「${INDEX_TASK_FIELD}」链接没补上：${failed.join('、')}。\n` +
+    `在群里 @ 我说「有哪些项目」能拿到它们的链接，手动贴进那一列即可（我不会再自动补了）。`
+  );
 }
 
 /**
@@ -498,174 +577,44 @@ export async function createProjectBitable(
   return { url, warning: warnings.length ? warnings.join('\n') : null };
 }
 
-// ==================== 任务表 + 甘特图 ====================
+// ==================== 老「任务」表（068）的收尾 ====================
 
 /**
- * 在「任务」表上建一个甘特视图。
+ * 把日记 base 里那张老「任务」表从飞书那侧删掉。
  *
- * 甘特图是这个功能被要求的形态，但它**只是一个视图** —— 同一张表的另一种画法。
- * 所以建不出来只降级成 warning：数据全在，用户看到的是表格而不是横条图。
- * 抛出去反而会把「任务已派」变成失败，而任务其实已经建好了。
+ * 为什么要删而不是留着看历史：两张表的内容**不同步**，而它们长得一样。老表是
+ * 库里那份任务的投影（只追加/更新，不回读），任务管理表（070）才是数据源 ——
+ * 群里的人在任务管理表里改了进展，老表那一格还是派活当天的样子。留着的净结果是
+ * 同一个项目里两个互相矛盾的任务清单，而两个都不报错。用户已经拍板直接删。
  *
- * 视图上限 200 个/base（含个人视图），这里一个项目只建一个，撞不到。
- * 甘特图用哪两列做起止是飞书那侧按字段类型自己认的（表里只有「开始时间」
- * 「结束时间」两个日期列），API 不接受指定 —— 所以 TASK_FIELDS 里
- * 不要再加第三个日期列，否则它认哪一对就不好说了。
+ * 删之前**必须先把老表里的任务补进任务管理表**（taskBase.importLegacyTasks）——
+ * 070 之前派的活只在老表和库里，删完就只剩库里那份，而 `list_tasks` 只读新表：
+ * 「还有什么没做完」从此漏掉它们，一句错都不报。
+ *
+ * 删成之后清空 `task_table_id`/`task_view_id`（那两列就是「飞书那边还有这张表」
+ * 的凭据）。**顺序不能反**：先清库再删表的话，删失败之后我们再也不会回来，
+ * 那张僵尸 tab 就永远留在用户的文档里。
+ *
+ * 失败只返回 warning：任务已经派出去了，而下次派活会再试一次。
  */
-async function createGanttView(
-  client: Client,
-  appToken: string,
-  tableId: string,
-): Promise<{ viewId: string; warning: Warning }> {
-  if (!tableId) return { viewId: '', warning: null };
+export async function dropTaskTable(client: Client, project: DiaryProjectRow): Promise<Warning> {
+  if (!project.base_app_token || !project.task_table_id) return null;
   try {
-    const res = assertOk(
-      await client.bitable.appTableView.create({
-        path: { app_token: appToken, table_id: tableId },
-        data: { view_name: TASK_GANTT_VIEW_NAME, view_type: 'gantt' },
+    assertOk(
+      await client.bitable.appTable.delete({
+        path: { app_token: project.base_app_token, table_id: project.task_table_id },
       }),
-      '创建视图',
+      '删掉老「任务」表',
     );
-    return { viewId: res.data?.view?.view_id ?? '', warning: null };
   } catch (e) {
-    return {
-      viewId: '',
-      warning: `「任务」表已建好，但甘特视图没建成（${describeFeishuError(e)}），任务仍然会记进表格里；想要甘特图可以在飞书里手动加一个视图。`,
-    };
-  }
-}
-
-/**
- * 拿到（必要时补建）这个项目的「任务」表。
- *
- * 存在的理由是 068 之前建的项目已经有 base 和前两张表了，而迁移里不能调飞书接口
- * （迁移失败会让整个服务起不来，而一次建表失败只该让那一条指令带个 warning）。
- * 所以老项目的「任务」表是第一次派活时补建的。
- *
- * 返回空 tableId = 补建失败或这个项目根本没有 base（建表那步当初失败过）。
- * 调用方据此跳过同步，任务仍然落库 —— 库是数据源，表格是镜像。
- */
-export async function ensureTaskTable(
-  client: Client,
-  project: DiaryProjectRow,
-): Promise<{ tableId: string; warning: Warning }> {
-  if (!project.base_app_token) return { tableId: '', warning: null };
-  if (project.task_table_id) return { tableId: project.task_table_id, warning: null };
-
-  let tableId = '';
-  try {
-    const res = assertOk(
-      await client.bitable.appTable.create({
-        path: { app_token: project.base_app_token },
-        data: {
-          table: {
-            name: TASK_TABLE_NAME,
-            default_view_name: '全部',
-            fields: TASK_FIELDS,
-          },
-        },
-      }),
-      '创建数据表',
+    return (
+      `项目日志表里那张老「任务」表没能删掉（${describeFeishuError(e)}）。` +
+      `它的内容已经搬进任务管理表了，**别再看它** —— 里面是派活当天的旧值。` +
+      `下次派活时我会再试一次删。`
     );
-    tableId = res.data?.table_id ?? '';
-  } catch (e) {
-    return {
-      tableId: '',
-      warning: `任务已记到系统里，但这个项目的「任务」表还没建出来（${describeFeishuError(e)}），下次派任务时会再试。`,
-    };
   }
-  if (!tableId) {
-    return {
-      tableId: '',
-      warning: '任务已记到系统里，但建「任务」表没返回表 id，下次派任务时会再试。',
-    };
-  }
-
-  const gantt = await createGanttView(client, project.base_app_token, tableId);
-  // 先落库再管视图：视图建失败时表 id 也必须存下来，否则下次又建一张新的
-  // 「任务」表，同一个 base 里两张同名表，而任务分散在两张里。
-  store.setProjectTaskTable(project.id, tableId, gantt.viewId);
-  return { tableId, warning: gantt.warning };
-}
-
-/**
- * 把未同步的任务写进「任务」表。
- *
- * 和 pushRecords 的关键区别：记录是**只追加**的，任务**会被改**（改期、改状态、
- * 换负责人）。所以这里按 `bitable_record_id` 分两路 —— 有行号的更新那一行，
- * 没有的追加一行并把行号存下来。少了这一步的后果是每次改任务都在表里多一条，
- * 甘特图上同一个任务好几条横条，各自的进度还不一样。
- *
- * 因此也不能用 batchCreate 一把梭：更新和追加混在一起，而追加必须逐条拿回
- * record_id。任务的量级是"一个项目几十条"，逐条调用是可以接受的。
- *
- * 失败只返回 warning：任务已经落库了（而且飞书任务也建了），状态位没置，
- * 下次派活或改任务时会连这次的一起补推。
- */
-export async function pushTasks(
-  client: Client,
-  project: DiaryProjectRow,
-): Promise<{ pushed: number; warning: Warning }> {
-  if (!project.base_app_token || !project.task_table_id) return { pushed: 0, warning: null };
-  const pending = store.listUnsyncedTasks(project.id);
-  if (!pending.length) return { pushed: 0, warning: null };
-
-  let pushed = 0;
-  try {
-    for (const t of pending) {
-      if (t.bitable_record_id) {
-        assertOk(
-          await client.bitable.appTableRecord.update({
-            path: {
-              app_token: project.base_app_token,
-              table_id: project.task_table_id,
-              record_id: t.bitable_record_id,
-            },
-            params: { user_id_type: 'open_id' },
-            data: { fields: taskFields(t) },
-          }),
-          '更新任务行',
-        );
-        store.markTaskSynced(t.id, t.bitable_record_id);
-      } else {
-        const res = assertOk(
-          await client.bitable.appTableRecord.create({
-            path: {
-              app_token: project.base_app_token,
-              table_id: project.task_table_id,
-            },
-            params: { user_id_type: 'open_id' },
-            data: { fields: taskFields(t) },
-          }),
-          '写入任务行',
-        );
-        const recordId = res.data?.record?.record_id ?? '';
-        // 拿不到 record_id 也要置位，但**行号留空**：不置位的话下一次同步会
-        // 再追加一行（表里两条）；而行号留空意味着以后改这条任务只能再追加，
-        // 那是两害里轻的一个 —— 重复行看得见，静默不同步看不见。
-        store.markTaskSynced(t.id, recordId);
-      }
-      pushed += 1;
-    }
-  } catch (e) {
-    const left = pending.length - pushed;
-    return {
-      pushed,
-      warning: `任务已记到系统里，但有 ${left} 条还没同步到项目表格（${describeFeishuError(e)}），下次派任务时会自动补推。`,
-    };
-  }
-  return { pushed, warning: null };
-}
-
-/** 「任务」表（尽量落在甘特视图上）的可点链接。回帖里指过去用。 */
-export function taskTableUrl(project: DiaryProjectRow): string {
-  if (!project.url || !project.task_table_id) return project.url;
-  const base = project.url.replace(/[?&]table=[^&]*/, '').replace(/[?&]view=[^&]*/, '');
-  const withTable = withTableParam(base, project.task_table_id);
-  // 不带 view 的话点进去是默认的表格视图，用户看不到甘特图 ——
-  // 而甘特图正是这个功能被要求的形态。
-  if (!project.task_view_id) return withTable;
-  return `${withTable}${withTable.includes('?') ? '&' : '?'}view=${project.task_view_id}`;
+  store.clearProjectTaskTable(project.id);
+  return null;
 }
 
 /**
@@ -737,31 +686,6 @@ function recordFields(r: DiaryRecordRow): Record<string, FieldValue> {
     // 人员字段要 open_id 数组。没有作者 id 时整个字段省掉 ——
     // 传空数组会被飞书拒掉，那样整批都写不进去。
     ...(r.author_open_id ? { 记录人: [{ id: r.author_open_id }] } : {}),
-  };
-}
-
-/**
- * 一条任务 → 「任务」表的一行。
- *
- * 空值一律**省掉字段**而不是写空串/空数组：这条是更新路径上的硬要求 ——
- * 更新是整字段覆盖，所以「这次没提到负责人」写成空数组会把原来的负责人清掉
- * （和飞书任务 `update_fields` 那个坑同一个形状）。省掉字段则保留原值。
- * 缺开始/结束时间的行在甘特图上只是个点，这是可接受的降级：
- * 用户说「派给张三设计 logo」但没说时间，也该记下来。
- *
- * 状态**永远写**（`statusLabel` 有兜底值），因为它是甘特图上色和筛选的依据，
- * 空着那一行在图上就没有颜色。
- */
-function taskFields(t: FeishuProjectTaskRow): Record<string, FieldValue> {
-  return {
-    任务名称: t.title,
-    ...(t.owner_open_id ? { 负责人: [{ id: t.owner_open_id }] } : {}),
-    ...(t.start_ms != null ? { 开始时间: t.start_ms } : {}),
-    ...(t.end_ms != null ? { 结束时间: t.end_ms } : {}),
-    状态: statusLabel(t.status),
-    ...(t.content ? { 内容: t.content } : {}),
-    ...(t.created_by ? { 派活人: [{ id: t.created_by }] } : {}),
-    ...(t.url ? { 飞书任务: { text: '打开任务', link: t.url } } : {}),
   };
 }
 

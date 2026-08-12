@@ -267,9 +267,22 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   anyone notices ("the assistant suddenly stopped understanding us"). 4000-char cap:
   the text ships with every single command, and a long one pushes the hard rules down.
 - **Nor does it emit `guid` / `record_id` — same rule, same reason.** `update_task`
-  resolves "which one" by reverse-lookup from `feishu_commands.result`
-  (`commandLog.findRecentActionResults`
-  → `actions/recent.ts:findRecentTarget`), scoped to app + speaker, 7 days, 50 rows.
+  resolves "which one" by reverse-lookup,三条路按这个顺序：**任务管理表（070）→
+  `feishu_project_tasks`（068）→ 执行日志**（`feishu_commands.result` 经
+  `commandLog.findRecentActionResults` → `actions/recent.ts:findRecentTarget`，
+  scoped to app + speaker, 7 days, 50 rows）。表排在最前面是因为它是开放编辑的、
+  而且 `list_tasks` 只读它 —— 用户在表里把标题改成「Q3 报告」之后，只按库反查会
+  回一句「我只能改我自己帮你建的那些」，而那一行就在他打开的表里。走表这条路时
+  guid 从「飞书任务」那格链接的 query 参数里取（`taskBase.guidFromUrl`，取不到的行
+  直接不作为候选 —— 空 guid 去 patch 只会撞一句飞书原文），行号直接用 `record_id`
+  写回（`writeTaskRow`，不再按「助理标记」查一次：那一列用户也能改），库里那行
+  按标记回查后一并更新（按标题回查会静默漏掉库和甘特图两处）。**表这条路也要筛
+  「我负责的 或 我派出去的」**，和库那条一个口径：整个群都看得见这张表，不筛的话
+  「周报做完了」会撞上同名的、别人那一行，改掉它再回一句「✅ 已标记完成」。
+  「我派出去的」现在只能靠库里那行的 `created_by` 认 —— 库那份砍掉之前，表里得先
+  有一列记下派活人，否则派活人从此改不动自己派的活。表**读失败**时退回库那条路，
+  但最终那句「找不到」里必须带上「任务管理表这次没读出来」：不说的话用户会照着
+  「我只能改我自己帮你建的那些」去手动改，而真实原因是权限掉了/接口挂了。
   A fabricated guid mostly 404s, but *if it hits* the assistant modified someone
   else's task and replied 「已完成」. Ambiguity is **always** refused with the
   candidates listed — including the no-keyword case, where it deliberately does
@@ -301,6 +314,57 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   parts landed. `patch`'s `update_fields` is strictly paired with the values —
   a field named but not supplied is **cleared**. A task needs a `due` before a reminder
   can exist, and supports only one (`relative_fire_minute`).
+- **A task lives in three places, and `list_tasks` reads exactly one of them.**
+  Native Feishu task + `feishu_project_tasks` + 任务管理表（070）。
+  读回只走 070 那张（`taskBase.queryTasks`），所以任何写路径
+  漏掉它都是假成功：`update_task` 一度只写前两处，于是「把 X 标记完成」回
+  「✅ 已标记完成」，紧接着「还有什么没做完」照样列出 X，两句都不报错。定位那一行
+  只能靠建它时写进「助理标记」列的 `<message_id>#<step_index>`（标题会被改），
+  找不到行时**必须说出来**而不是静默返回成功。完成/重新打开还要一并写/清
+  「实际完成日期」—— 只改进展会让那两列互相矛盾。
+- **任务管理表的结构是「下次派活时补建」出来的**（迁移里不能调飞书接口 ——
+  一次网络抖动会让服务起不来）。所以 `taskBase.upgradeTaskBase` 会被反复执行，
+  幂等只靠两个存下来的值：列看 `task_field_map` 里有没有那个键（**不是**看表里有没有
+  那一列 —— 用户手动删掉的列会被无限重建），甘特视图看 `task_gantt_view_id`（072）
+  是否为空。少任何一半，每次派活都多建一个同名视图 / 多加一列，而每次都成功、
+  回帖里看不出异常。公式列（是否延期）故意不补：它缺失就是当初公式被拒过，
+  补也补不上，只会每次派活挂一句永远不会好的 warning。甘特图用哪两列当起止是飞书
+  自己认的（表里有三个日期列，接口指定不了），所以建完必须提示用户扫一眼 ——
+  认错了不报错，只是横条画在别的区间上。
+- **补出来的列对老行是空的，所以「飞书任务」这一列要回填一次**（073 的
+  `task_url_backfilled`，同样挂在下次派活上）。这一列是库里那份任务砍掉之后
+  **唯一**还能定位到飞书任务的东西（guid 藏在 applink 里），老行不补的话那些任务
+  从此只剩一个标题、点不进飞书也改不动，而没有任何一处会报错。对齐只认「助理标记」
+  （`<message_id>#<step_index>`）：按标题对齐会把链接贴到另一个任务上，那一格看着
+  完全正常，点进去是别人的活。已经有值的格子不覆盖（用户手填的比库里那份新）。
+  失败**不置位**（下次再试），所以置位只能在真写成之后；提前置位 = 那批链接永远是空的。
+- **老「任务」表（068，日记 base 里那张带甘特图的 tab）已经删掉了**（074）。任务只剩
+  任务管理表那一份，`create_task` 写不进它就**整条抛错**：以前那是个 warning，因为库里
+  还有一份；现在回一句「✅ 已创建」而表里没有那行，下一句「还有什么没做完」就不提它，
+  两句都不报错。抛错的话飞书任务**已经建出来了**，所以话术必须带上链接并明说
+  **「别重说一遍」**（`client_token` 按 message_id 算，新消息就是新 token，挡不住）。
+  库里 `feishu_project_tasks` 那份从此只用于两件事：判「这活是我派出去的」（`update_task`
+  的授权）和统计未同步数 —— 后者靠 `appendTaskRow` 之后那次 `markTaskSynced`，
+  不置位的话后台会永远显示一个不存在的缺口。
+- **删老表之前必须先把老任务搬进任务管理表**（`taskBase.importLegacyTasks`，
+  返回 `ok` 才允许 `bitable.dropTaskTable`）。070 之前派的活只存在于库和老表里，
+  而 `list_tasks` 只读任务管理表 —— 老表一删，那些任务在飞书里就只剩各人任务中心那一条，
+  「还有什么没做完」从此漏掉它们，一句错都不报。搬不完（查重列读不到 / 表超过扫描上限 /
+  写到一半失败）就**不删**，下次派活接着搬；查重和写入共用「助理标记」那一列，
+  没有它就整个放弃（否则每次派活把同一批老任务再写一遍，而每次都成功）。
+- **三张表之间的互跳入口是「一张表」，不是文档里的一句话**（074，`diary/crossLinks.ts`）。
+  多维表格没有「插一句话」这种能力，所以两个 base 各建一张一行的「🔗 相关链接」表
+  （tab 栏上看得见），项目总表多一列「任务表」。做这件事的原因是两个 base 都不在任何人的
+  云文档空间里（建表没传 folder_token）且链接分享是关的 —— 群消息一刷走，用户手上有哪张
+  表就只剩哪张。幂等全靠库里存的四个值：`link_table_id` / `task_link_table_id` /
+  `task_col_added` / `task_col_backfilled`，**不去飞书看现状**（用户手动删掉那张表之后，
+  看现状的写法会他删一次我们建一次，而每次都成功）。表建出来了但那一行没写进去也要存
+  table_id，否则下次派活又多一张同名表。`ensureIndexTaskColumn` 是唯一的例外（会 list
+  一次列）：飞书拒同名列，不看一眼就会每次派活挂一句永远不会好的 warning。
+  回填**无论成败都置位**并在 warning 里点名失败的项目 —— 一个永久失效的 record_id
+  会让这段每次派活重跑，而用户手填一次就解决了。补列必须在 `addToIndex` **之前**：
+  老总表没这一列，而 `record.create` 遇到不认识的列名是**整行失败** ——
+  新项目压根没进总表，回帖里只有一句「总表这次没更新」。
 - **The LLM emits names, never open_ids.** The prompt contains no `ou_xxx` at all
   (there's a test asserting `/ou_[a-z0-9]{4,}/` never appears in it), and actions take
   `create_task.assignee` / `update_task.followers` as **names**.

@@ -1,22 +1,24 @@
 import { type ActionDef, type ActionContext, bool, posInt, str, strList } from './types.js';
 import { fmtForHuman, parseIso, toTaskTimestamp } from './time.js';
 import { resolvePerson } from './people.js';
-import { findRecentTarget, TargetNotResolvedError } from './recent.js';
+import { findRecentTarget, TargetNotResolvedError, norm } from './recent.js';
 import { describeFeishuError } from '../feishuError.js';
 import * as store from '../diary/store.js';
-import * as bitable from '../diary/bitable.js';
+import * as taskBase from '../diary/taskBase.js';
 import { normalizeStatus, statusLabel, TASK_STATUS_PARAM_DOC, type TaskStatus } from '../diary/taskStatus.js';
 
 /**
  * 任务的后续动作：标记完成 / 改起止时间 / 改状态 / 加协作人 / 设提醒 / 加一条评论。
- * 改完同时把项目任务表（甘特图那张）里那一行更新掉。
+ * 改完同时把**任务管理表**（070，助理读回在办任务的那张，甘特图也在它上面）里的
+ * 那一行更新掉。这一步不是可选的：`list_tasks` 只读它，见下面第 6 步。
  *
  * ── 「哪个任务」是这个动作真正的难点 ──
  * 飞书的 `task.patch` 要 guid，而**模型不知道 guid** —— 这和 open_id 是同一类
  * 问题，用同一套解法：guid 只从代码控制的来源里反查，绝不让模型输出。
- * 来源现在有两个，顺序是有讲究的（见 resolveTarget）：
- *   1. `feishu_project_tasks`（068 之后建的任务都在这儿，**不限 7 天**）
- *   2. 执行日志（`actions/recent.ts`，068 之前建的任务只有这一份，7 天窗口）
+ * 来源有三个，顺序是有讲究的（见 resolveTarget）：
+ *   1. **任务管理表**（070，用户眼里的那份清单，标题以它为准；guid 从那格链接里取）
+ *   2. `feishu_project_tasks`（068 之后建的任务都在这儿，**不限 7 天**）
+ *   3. 执行日志（`actions/recent.ts`，068 之前建的任务只有这一份，7 天窗口）
  * 查到多条**绝不挑一个**。
  *
  * ── 一条必须一直说清的限制 ──
@@ -46,58 +48,167 @@ function completedWord(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
-/** 反查到的目标。`row` 只有走库那条路时才有（老任务只在日志里）。 */
+/** 反查到的目标。三条路各带回一部分东西，见 resolveTarget。 */
 interface TaskTarget {
   guid: string;
   title: string;
   /** 建它/上次改它时留下的结构化产物。日志那条路的 url、due 从这里取。 */
   data: Record<string, unknown>;
+  /** 库里那一行（068）。走表那条路时按「助理标记」一并找出来，找不到就没有。 */
   row?: store.FeishuProjectTaskRow;
+  /** 表里那一行（070）。有它就直接按 record_id 写回，不用再按标记查一次。 */
+  table?: { project: store.DiaryProjectRow; row: taskBase.TaskRow };
 }
 
 /** 列给用户挑的时候最多列几个。和 recent.ts 的 MAX_OPTIONS 同一个理由。 */
 const MAX_OPTIONS = 5;
 
 /**
+ * 先从**任务管理表**里认（070）。
+ *
+ * 为什么表要排在库前面：这张表是开放编辑的，而且 `list_tasks` 只读它 —— 也就是
+ * 用户眼里的那份清单就是它。他在表里把标题改成「Q3 报告」，库里还是「季度报告」，
+ * 于是「把 Q3 报告标记完成」在库那条路上匹配不到，回一句「我只能改我自己帮你建的
+ * 那些」，而那一行明明就在他打开的表里。反过来（表里认出来了）没有这个问题：
+ * 库那一行还是按「助理标记」找的，跟标题无关。
+ *
+ * 三种返回：认出来一个（target）/ 表读不出来（readError，让后面两条路继续，
+ * 但话要说出来）/ 表里没这个东西（空对象 —— 可能是别的群建的，继续往下找）。
+ * 认出多个时**直接抛**，绝不挑一个。
+ */
+async function resolveFromTaskBase(
+  keyword: string | undefined,
+  ctx: ActionContext
+): Promise<{ target?: TaskTarget; readError?: string }> {
+  const project =
+    ctx.chatType === 'group' ? store.getProjectByChat(ctx.appId, ctx.chatId) : undefined;
+  if (!project?.task_base_table_id) return {};
+
+  let rows: taskBase.TaskRow[];
+  try {
+    rows = (await taskBase.queryTasks(ctx.client, project)).rows;
+  } catch (e) {
+    // 读不出来不能就此认输：库里那份还在，多半还能改成。但这件事必须带到
+    // 最终的错误话术里 —— 否则用户看到的是「我只能改我自己帮你建的那些」，
+    // 而真正的原因是权限掉了/接口挂了。
+    console.error('[task] 读任务管理表失败，退回库反查:', (e as Error).message);
+    return { readError: (e as Error).message };
+  }
+
+  // 没有 guid 的行认不了：改飞书任务必须有它，拿空 guid 去 patch 只会撞一个
+  // 莫名的参数错误。这类行是用户自己在表里加的，或者老行还没回填链接（073）。
+  //
+  // 范围仍然是「我负责的 或 我派出去的」，和库那条路一个口径：这张表整个群都能看，
+  // 不筛的话「周报做完了」会撞上同名的、别人的那一行 —— 改掉它，回一句
+  // 「✅ 已标记完成」，两个人都要过几天才发现。（「我派出去的」现在只能从库里那行
+  // 的 created_by 认；库那份砍掉之前，表里得先有一列记下派活人。）
+  const cands = rows
+    .filter((r) => taskBase.guidFromUrl(r.taskUrl))
+    // 库里那行还要跟着改（甘特图是从库里推的）。按「助理标记」找，不按标题 ——
+    // 标题在表里被改过之后，按标题回查会静默漏掉库和甘特图那两处。
+    .map((row) => {
+      const [messageId, step] = row.idem.split('#');
+      return { row, db: store.findTaskByMessage(ctx.appId, messageId ?? '', Number(step) || 0) };
+    })
+    .filter(
+      (c) =>
+        (!!ctx.senderOpenId && c.row.ownerOpenId === ctx.senderOpenId) ||
+        (!!ctx.senderOpenId && c.db?.created_by === ctx.senderOpenId)
+    );
+  if (!cands.length) return {};
+
+  const kw = keyword ? norm(keyword) : '';
+  // 匹配范围带上「任务情况总结」：用户常按原始要求里的词来称呼一个任务
+  //（标题是助理拟的一句话，不一定是他记住的那几个字）。
+  const hits = kw
+    ? cands.filter((c) => norm(`${c.row.title}\n${c.row.digest}`).includes(kw))
+    : cands;
+
+  if (hits.length === 1) {
+    const { row, db } = hits[0];
+    return {
+      target: {
+        guid: taskBase.guidFromUrl(row.taskUrl),
+        title: row.title,
+        data: { url: row.taskUrl, due: row.dueMs ?? '' },
+        row: db,
+        table: { project, row },
+      },
+    };
+  }
+  if (hits.length > 1) {
+    const opts = hits.slice(0, MAX_OPTIONS).map((c) => `· ${c.row.title}`).join('\n');
+    throw new TargetNotResolvedError(
+      keyword
+        ? `有 ${hits.length} 个任务都能对上「${keyword}」：\n${opts}\n请说全一点，我不敢替你挑。`
+        : // 没给关键词时**不能**默认取最近那个：「那个任务完成了」里的"那个"
+          // 指的是他心里想的那件事，不一定是时间上最近的一件。
+          `不确定你说的是哪个任务。这个项目里现在有这些：\n${opts}\n` +
+            `请带上名字再说一遍，比如「把 XXX 那个任务…」。`
+    );
+  }
+  // 有关键词但表里没对上：可能是在别的群派的活。交给下面两条路。
+  return {};
+}
+
+/**
  * 「用户说的是哪个任务」。
  *
- * **先查库，查不到再退回执行日志。** 顺序反了会有一个具体的坏结果：日志只留 7 天，
- * 而库里是全量的 —— 先查日志的话，「上个月派的那个 logo 任务改一下」会先撞上
- * 「我这边没有可以改的任务」（recent.ts 在候选为空时直接抛），根本走不到库那一步。
+ * 三条路，顺序是有讲究的：**任务管理表 → 库 → 执行日志**。
+ * - 表在最前，理由见 resolveFromTaskBase（它才是用户看到的那份，标题也以它为准）；
+ * - 库在日志前面：日志只留 7 天，而库里是全量的 —— 反过来的话「上个月派的那个
+ *   logo 任务改一下」会先撞上「我这边没有可以改的任务」（recent.ts 在候选为空时
+ *   直接抛），根本走不到库那一步。
  *
  * 库里没有 guid 的行排除掉：那种行改不动飞书任务（没有 guid 就没法 patch），
  * 拿它当目标只会在第一个接口上撞一个莫名的参数错误。
  */
-function resolveTarget(keyword: string | undefined, ctx: ActionContext): TaskTarget {
-  const rows = store
-    .findTasksByKeyword({ appId: ctx.appId, senderOpenId: ctx.senderOpenId, keyword })
-    .filter((r) => r.guid);
+async function resolveTarget(
+  keyword: string | undefined,
+  ctx: ActionContext
+): Promise<TaskTarget> {
+  const fromTable = await resolveFromTaskBase(keyword, ctx);
+  if (fromTable.target) return fromTable.target;
 
-  if (rows.length === 1) {
-    const r = rows[0];
-    return { guid: r.guid, title: r.title, data: { url: r.url, due: r.end_ms ?? '' }, row: r };
-  }
-  if (rows.length > 1) {
-    // 绝不挑一个。挑错的后果是动了另一件事，而回帖说的是「已完成」。
-    const opts = rows.slice(0, MAX_OPTIONS).map((r) => `· ${r.title}`).join('\n');
-    throw new TargetNotResolvedError(
-      keyword
-        ? `有 ${rows.length} 个任务都能对上「${keyword}」：\n${opts}\n请说全一点，我不敢替你挑。`
-        : // 没给关键词时**不能**默认取最近那个：「那个任务完成了」里的"那个"
-          // 指的是他心里想的那件事，不一定是时间上最近的一件。
-          `不确定你说的是哪个任务。你最近这些任务我都能改：\n${opts}\n` +
-            `请带上名字再说一遍，比如「把 XXX 那个任务…」。`
-    );
-  }
+  try {
+    const rows = store
+      .findTasksByKeyword({ appId: ctx.appId, senderOpenId: ctx.senderOpenId, keyword })
+      .filter((r) => r.guid);
 
-  // 库里没有 → 退回执行日志（068 之前建的任务只在那儿）。
-  const ref = findRecentTarget(keyword, ctx, {
-    // 把自己也列进来：改过标题之后，用户会用**新**名字来称呼它。
-    actions: ['create_task', 'update_task'],
-    label: '任务',
-    requireKeys: ['guid'],
-  });
-  return { guid: String(ref.data.guid), title: ref.title, data: ref.data };
+    if (rows.length === 1) {
+      const r = rows[0];
+      return { guid: r.guid, title: r.title, data: { url: r.url, due: r.end_ms ?? '' }, row: r };
+    }
+    if (rows.length > 1) {
+      // 绝不挑一个。挑错的后果是动了另一件事，而回帖说的是「已完成」。
+      const opts = rows.slice(0, MAX_OPTIONS).map((r) => `· ${r.title}`).join('\n');
+      throw new TargetNotResolvedError(
+        keyword
+          ? `有 ${rows.length} 个任务都能对上「${keyword}」：\n${opts}\n请说全一点，我不敢替你挑。`
+          : `不确定你说的是哪个任务。你最近这些任务我都能改：\n${opts}\n` +
+              `请带上名字再说一遍，比如「把 XXX 那个任务…」。`
+      );
+    }
+
+    // 库里也没有 → 退回执行日志（068 之前建的任务只在那儿）。
+    const ref = findRecentTarget(keyword, ctx, {
+      // 把自己也列进来：改过标题之后，用户会用**新**名字来称呼它。
+      actions: ['create_task', 'update_task'],
+      label: '任务',
+      requireKeys: ['guid'],
+    });
+    return { guid: String(ref.data.guid), title: ref.title, data: ref.data };
+  } catch (e) {
+    // 表读失败之后又什么都没找到：这时候「我只能改我自己帮你建的那些」是**假话**，
+    // 用户会照着这句去手动改，而实际上那一行就在表里、只是我们这次没读到。
+    if (fromTable.readError && e instanceof TargetNotResolvedError) {
+      throw new TargetNotResolvedError(
+        `${e.message}\n\n⚠️ 另外：**任务管理表这次没读出来**（${fromTable.readError}），` +
+          `所以上面这份清单可能不全 —— 过一会儿再说一遍试试。`
+      );
+    }
+    throw e;
+  }
 }
 
 /**
@@ -177,7 +288,7 @@ export const updateTaskAction: ActionDef = {
   scopes: ['task:task:write', 'bitable:app'],
   async run(params: Record<string, unknown>, ctx: ActionContext) {
     // 先确定改哪个。反查失败会抛错，此时一次接口都还没调 —— 用户重说是安全的。
-    const target = resolveTarget(str(params, 'task'), ctx);
+    const target = await resolveTarget(str(params, 'task'), ctx);
     const guid = target.guid;
 
     // bool() 认的是 true/是/要 那一类；模型在这个参数上还会直接给「完成」
@@ -304,7 +415,11 @@ export const updateTaskAction: ActionDef = {
         // 提醒有个前置条件：任务必须先有截止时间，否则"提前 N 分钟"无从计算。
         // 飞书的报错不会说这件事，而这是最常见的失败原因 —— 用户看到原文
         // 完全无从下手，所以补一句。
-        const hasDue = dueMs !== undefined || target.row?.end_ms != null || !!target.data.due;
+        const hasDue =
+          dueMs !== undefined ||
+          target.row?.end_ms != null ||
+          target.table?.row.dueMs != null ||
+          !!target.data.due;
         const hint = hasDue
           ? ''
           : '（任务要先有截止时间才能设提醒，可以说「截止改到周五、提前一小时提醒」）';
@@ -340,8 +455,13 @@ export const updateTaskAction: ActionDef = {
     // 「那个任务取消了」这类只改状态的指令一次飞书接口都不用调 —— 它照样是一次
     // 真实的改动，不能算进下面「一处都没改成」里。（漏了这一条的表现是
     // 「取消」「改成进行中」全都报错，而用户看不出为什么「标记完成」就行。）
+    //
+    // 表或库有一处能落下就算：只认库的话，从表里认出来、而库里那行早被清掉的任务
+    // 会被判成「没地方存状态」，回一句「这是旧版本建的任务」—— 而它就在表里。
     const statusLanded =
-      status !== undefined && !!target.row && (completed === undefined || patchLanded);
+      status !== undefined &&
+      (!!target.row || !!target.table) &&
+      (completed === undefined || patchLanded);
 
     // 一件都没做成 = 整体失败。回「已更新」是在假装成功。
     // 注意这个判断在写库之前：飞书那边一处都没改成的话，库里也不该改 ——
@@ -350,7 +470,7 @@ export const updateTaskAction: ActionDef = {
       // 只说了状态、而这条任务只在执行日志里（068 之前建的，库里没有行）——
       // 状态是库里的字段，没有行就无处可写。这不是失败，是**存不下**，
       // 所以话要说成「怎么办」而不是「出错了」。
-      if (!failed.length && status !== undefined && !target.row) {
+      if (!failed.length && status !== undefined && !target.row && !target.table) {
         throw new Error(
           `「${target.title}」是旧版本建的任务，我这边没有它的状态可以改。\n` +
             '可以说「标记完成」（这个直接改飞书任务），或者重新派一个任务。'
@@ -359,8 +479,9 @@ export const updateTaskAction: ActionDef = {
       throw new Error(`「${target.title}」一处都没改成。\n${failed.join('\n')}`);
     }
 
-    // ── 5. 写回库 + 重推甘特图 ──
-    let ganttUrl = '';
+    // ── 5. 写回库（本地那份影子记录）──
+    // 这里**只写库**：任务/甘特图都在任务管理表里，那是下面第 6 步的事。
+    // 库里这份现在只用来判「这活是我派出去的」（授权）和统计未同步数。
     let statusWritten = false;
     if (target.row) {
       try {
@@ -371,20 +492,90 @@ export const updateTaskAction: ActionDef = {
           ...(statusLanded ? { status } : {}),
         });
         statusWritten = statusLanded;
-        const project = target.row.project_id ? store.getProjectById(target.row.project_id) : undefined;
-        if (project) {
-          const push = await bitable.pushTasks(ctx.client, project);
-          if (push.warning) failed.push(push.warning);
-          else ganttUrl = bitable.taskTableUrl(project);
-        }
       } catch (e) {
         // 库写失败**通常**不该把「已改」变成失败：飞书那边已经生效了。
         // 但只改状态那条路上飞书压根没被调过 —— 库写失败就意味着一件事都没成，
         // 此时回「✅ 已更新」是纯粹的假成功，得抛出去让用户重说。
-        if (done.length === 0) {
+        // 除非表那条路还在（下面第 6 步）：状态落进表里就是真落了，
+        // `list_tasks` 读的正是它 —— 这时候抛错反而会让用户把已生效的改动重下一遍。
+        if (done.length === 0 && !target.table) {
           throw new Error(`「${target.title}」的状态没改成：${(e as Error).message}`);
         }
-        failed.push(`⚠️ 飞书那边已改好，但项目任务表没跟上（${(e as Error).message}），甘特图上还是旧的。`);
+        failed.push(`⚠️ 飞书那边已改好，但本地那份任务记录没跟上（${(e as Error).message}）。`);
+      }
+    }
+
+    // ── 6. 写回任务管理表（070）──
+    //
+    // **这一步不做就是一次假成功。** `list_tasks` 只读这张表，而这个动作以前
+    // 只写飞书 + 库 + 甘特图：于是「把 X 标记完成」回一句「✅ 已标记完成」，
+    // 紧接着「还有什么没做完」照样把 X 列出来。两句都不报错，用户只能得出
+    // 「这助理记不住事」的结论。
+    //
+    // 只写**飞书那边确实生效了**的字段（patchLanded / statusLanded），理由和上面
+    // 写库那段一样：表里不该显示一个飞书任务上并不存在的值。
+    const rowPatch: taskBase.TaskRowPatch = {
+      ...(patchLanded && newSummary ? { title: newSummary } : {}),
+      ...(statusLanded ? { status } : {}),
+      ...(patchLanded && startMs !== undefined ? { startMs } : {}),
+      ...(patchLanded && dueMs !== undefined ? { dueMs } : {}),
+      // 完成/重新打开要落到「实际完成日期」上：只改进展的话那一列会和进展互相矛盾。
+      ...(patchLanded && completed !== undefined
+        ? { doneAtMs: completed ? Date.now() : null }
+        : {}),
+      // 评论同时进「最新进展记录」—— 用户写评论就是为了留一句进展，
+      // 而他看的是表，不是飞书任务详情页。评论没发成功时不写。
+      ...(comment && !failed.some((f) => f.startsWith('写评论失败')) ? { latest: comment } : {}),
+    };
+    let taskUrl = '';
+    const taskProject =
+      target.table?.project ??
+      (target.row?.project_id ? store.getProjectById(target.row.project_id) : undefined);
+    if (taskProject?.task_base_table_id && Object.keys(rowPatch).length) {
+      try {
+        const { names, missing } = await taskBase.resolveFieldNames(ctx.client, taskProject);
+        const miss = taskBase.describeMissing(missing);
+        if (miss) failed.push(miss);
+        // 目标就是从表里认出来的 → 行号已经在手上，直接改。再按「助理标记」查一遍
+        // 会在用户改过/删过那一列时扑空，回一句「表里没找到那一行」—— 而那一行
+        // 正是刚才列给他挑的那个。
+        const wrote = target.table
+          ? {
+              found: true,
+              warning: await taskBase.writeTaskRow(
+                ctx.client,
+                taskProject,
+                target.table.row.recordId,
+                rowPatch,
+                names
+              ),
+            }
+          : await taskBase.updateTaskRow(
+              ctx.client,
+              taskProject,
+              { messageId: target.row!.message_id, stepIndex: target.row!.step_index },
+              rowPatch,
+              names
+            );
+        if (wrote.warning) failed.push(wrote.warning);
+        if (wrote.found) {
+          taskUrl = taskBase.taskBaseUrl(taskProject);
+          // 状态只在**真写进去了**之后才播报。走表这条路时库里可能没有那一行
+          // （第 5 步整段跳过），而状态确实落进了表里 —— 不认这一处的话回帖里
+          // 就少了「状态改成进行中」，用户会以为这条指令没生效。
+          if (statusLanded) statusWritten = true;
+        } else {
+          failed.push(
+            `⚠️ **任务管理表**里没找到「${target.title}」那一行（可能是这张表启用之前建的任务，` +
+              `或者那一行被删掉了）—— 表里还是旧的，请手动改一下，否则我下次报「在办任务」还会带上它。`
+          );
+        }
+      } catch (e) {
+        failed.push(
+          `⚠️ 飞书那边已改好，但**任务管理表**没跟上（${(e as Error).message}）—— ` +
+            `表里还是旧的，我下次报「在办任务」也会照旧的说。`
+        );
+        console.error('[task] 更新任务管理表失败:', (e as Error).message);
       }
     }
 
@@ -404,7 +595,7 @@ export const updateTaskAction: ActionDef = {
     }
     const url = target.row?.url || (typeof target.data.url === 'string' ? target.data.url : '');
     if (url) parts.push(`[在飞书中打开](${url})`);
-    if (ganttUrl) parts.push(`[项目甘特图](${ganttUrl})`);
+    if (taskUrl) parts.push(`[任务管理表](${taskUrl})（进展直接在表里改，甘特图也在这张表里）`);
 
     return {
       summary: parts.join('\n'),

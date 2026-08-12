@@ -2,6 +2,7 @@ import { type ActionDef, type ActionContext, requireStr, str, posInt } from './t
 import * as store from '../diary/store.js';
 import * as bitable from '../diary/bitable.js';
 import * as taskBase from '../diary/taskBase.js';
+import * as crossLinks from '../diary/crossLinks.js';
 import { resolveRange, RANGE_KEYS } from '../diary/range.js';
 import { summarizeRecords, forReply } from '../diary/summarize.js';
 import { getAppByAppId } from '../appStore.js';
@@ -155,7 +156,27 @@ export const createDiaryProjectAction: ActionDef = {
       console.error('[task] 建任务 base 失败:', (e as Error).message);
     }
 
-    const fresh = store.getProjectById(project.id)!;
+    // 两个 base 之间的互跳入口（074）：日记 base 里一张指向任务表的「🔗 相关链接」，
+    // 任务 base 里一张指向日志表的。群消息一刷走，用户手上有哪张表就只剩哪张。
+    let fresh = store.getProjectById(project.id)!;
+    try {
+      const linked = await crossLinks.ensureLinkTables(ctx.client, fresh);
+      if (linked.warning) warnings.push(linked.warning);
+      fresh = linked.project;
+    } catch (e) {
+      console.error('[diary] 建相关链接表失败:', (e as Error).message);
+    }
+
+    // 总表那一列「任务表」要在 addToIndex **之前**补出来：老总表（074 之前建的）
+    // 没有这一列，而 record.create 遇到不认识的列名是整行失败 ——
+    // 于是新项目压根没进总表，而回帖里只有一句「总表这次没更新」。
+    try {
+      const entry = await crossLinks.ensureIndexTaskEntry(ctx.client, ctx.appId);
+      if (entry) warnings.push(entry);
+    } catch (e) {
+      console.error('[diary] 补总表任务表列失败:', (e as Error).message);
+    }
+
     const idx = await bitable.addToIndex(ctx.client, fresh);
     if (idx.warning) warnings.push(idx.warning);
 
@@ -178,7 +199,7 @@ export const createDiaryProjectAction: ActionDef = {
       '日志表对本群**只读**（日志只能 @ 我来记，这样每条都有记录人和时间，也不会被误删）；\n' +
         '任务表对本群**可编辑** —— 进展、负责人、日期你们直接在表里改就行，我读的就是这张表。',
       // 链接会被刷走，而这两张表没有别的入口，所以必须告诉用户怎么问回来。
-      '（链接找不到了就 @ 我说「有哪些项目」。）',
+      '（两张表的 tab 栏上各有一个「🔗 相关链接」，可以互相跳；链接都找不到了就 @ 我说「有哪些项目」。）',
     ].filter(Boolean);
     if (warnings.length) parts.push(`\n${warnings.join('\n')}`);
 

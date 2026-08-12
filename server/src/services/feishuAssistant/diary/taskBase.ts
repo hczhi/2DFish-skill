@@ -9,6 +9,7 @@ import {
   priorityLabel,
   statusFromLabel,
   priorityFromLabel,
+  normalizeStatus,
   type TaskStatus,
   type TaskPriority,
 } from './taskStatus.js';
@@ -41,9 +42,14 @@ import { withTableParam, type Warning } from './bitable.js';
 /** 任务 base 里那张表的名字。用户会在飞书里看到它。 */
 const TASK_TABLE_NAME = '任务管理表';
 
-/** 两个看板视图。名字是用户在飞书标签页上看到的那几个字。 */
+/** 三个视图。名字是用户在飞书标签页上看到的那几个字。 */
 const BOARD_VIEW_NAME = '进度看板';
 const PERSON_VIEW_NAME = '人员任务分配看板';
+/**
+ * 甘特图。原来在项目日记 base 的那张老「任务」表上（068），这张表接管之后
+ * 必须一起接过来 —— 否则合表的净结果是用户**丢了一个甘特图**。
+ */
+const GANTT_VIEW_NAME = '甘特图';
 
 /**
  * 字段类型编号（同 bitable.ts）：1 文本 / 2 数字 / 3 单选 / 5 日期 / 11 人员 / 15 超链接 / 20 公式
@@ -55,6 +61,7 @@ const F_TEXT = 1;
 const F_SELECT = 3;
 const F_DATE = 5;
 const F_USER = 11;
+const F_URL = 15;
 const F_FORMULA = 20;
 
 /** 建表时的一列。`property` 只有单选/公式那类字段需要。 */
@@ -80,6 +87,7 @@ export const COL = {
   doneAt: '实际完成日期',
   latest: '最新进展记录',
   priority: '重要紧急程度',
+  taskUrl: '飞书任务',
   idem: '助理标记',
 } as const;
 
@@ -119,6 +127,13 @@ const TASK_FIELDS: FieldSpec[] = [
     type: F_SELECT,
     property: { options: TASK_PRIORITY_OPTIONS.map((name) => ({ name })) },
   },
+  // 对应的飞书任务（applink）。
+  //
+  // **这一列是「库里那份将来要砍掉」的前提。** 现在「改哪一个任务」是拿
+  // `feishu_project_tasks` 里的 guid 反查的；那份一删，guid 就只剩这一列里的
+  // 链接了（applink 里带 guid）。没有它的话老任务在库删掉之后就永远改不动了，
+  // 而表面上一切正常 —— 助理只会说「我只能改我自己帮你建的那些」。
+  { field_name: COL.taskUrl, type: F_URL },
   // 幂等键：`<message_id>#<step_index>`。
   //
   // **这一列是纯 bitable 方案的重放防线。** 飞书事件是 at-least-once
@@ -227,6 +242,11 @@ export async function createTaskBase(
   if (board.warning) warnings.push(board.warning);
   if (person.warning) warnings.push(person.warning);
 
+  // ── 甘特视图 ──
+  // 同样只降级成 warning：数据全在，少的是一种画法。
+  const gantt = await createGanttView(client, appToken, tableId);
+  if (gantt.warning) warnings.push(gantt.warning);
+
   const url = withTableParam(baseUrl, tableId);
   store.attachTaskBase(project.id, {
     appToken,
@@ -235,6 +255,7 @@ export async function createTaskBase(
     fieldMap: map,
     boardViewId: board.viewId,
     personViewId: person.viewId,
+    ganttViewId: gantt.viewId,
     linkShareClosed,
   });
 
@@ -259,6 +280,7 @@ export async function createTaskBase(
         `设一次就一直生效。`,
     );
   }
+  if (gantt.viewId) warnings.push(ganttHint());
   if (overdueDropped) {
     // 上面已经报过公式列没建成，这里不重复。
   }
@@ -368,6 +390,48 @@ async function createKanbanView(
 }
 
 /**
+ * 建甘特视图。
+ *
+ * 用哪两列当起止是**飞书自己按字段类型认的**，接口不收这个参数
+ * （`appTableView.create` 只有 view_name / view_type）。而这张表有**三个**日期列
+ * （开始 / 预计完成 / 实际完成），所以它认哪一对说不准 —— 认错了不会报错，
+ * 只是横条画在别的区间上，看起来完全像是正常工作的。所以建成之后必须提醒一句
+ * （见 ganttHint），让用户扫一眼。
+ */
+async function createGanttView(
+  client: Client,
+  appToken: string,
+  tableId: string,
+): Promise<{ viewId: string; warning: Warning }> {
+  if (!tableId) return { viewId: '', warning: null };
+  try {
+    const res = assertOk(
+      await client.bitable.appTableView.create({
+        path: { app_token: appToken, table_id: tableId },
+        data: { view_name: GANTT_VIEW_NAME, view_type: 'gantt' },
+      }),
+      '创建甘特视图',
+    );
+    return { viewId: res.data?.view?.view_id ?? '', warning: null };
+  } catch (e) {
+    return {
+      viewId: '',
+      warning:
+        `「${GANTT_VIEW_NAME}」视图没建成（${describeFeishuError(e)}），任务照样记进表里；` +
+        `想要的话可以在飞书里手动加一个甘特视图。`,
+    };
+  }
+}
+
+function ganttHint(): string {
+  return (
+    `📌 「${GANTT_VIEW_NAME}」视图已建好。表里有三个日期列，飞书会自己挑一对当横条的` +
+    `起止 —— 扫一眼是不是「${COL.start}」到「${COL.due}」，不对的话在视图设置里改一下` +
+    `（接口指定不了）。`
+  );
+}
+
+/**
  * 关掉链接分享。理由和 bitable.ts:closeLinkShare 完全一样（默认是「组织内拿到
  * 链接的人可阅读」，而这个链接是发在群里的）。
  *
@@ -438,11 +502,363 @@ export async function ensureTaskBase(
   client: Client,
   project: DiaryProjectRow,
 ): Promise<{ project: DiaryProjectRow; warning: Warning }> {
-  if (project.task_base_app_token) return { project, warning: null };
-  const created = await createTaskBase(client, project);
+  if (!project.task_base_app_token) {
+    const created = await createTaskBase(client, project);
+    return { project: store.getProjectById(project.id)!, warning: created.warning };
+  }
+  return upgradeTaskBase(client, project);
+}
+
+/**
+ * 给**已经存在**的任务 base 补上后来加的东西（现在是「飞书任务」列和甘特视图）。
+ *
+ * 为什么在这里而不是在迁移里：迁移跑在启动路径上，而这几步要调飞书接口 ——
+ * 一次网络抖动会让整个服务起不来，而它换来的只是一列。所以和 068/070 一样，
+ * 补建挂在**下一次派活**上。
+ *
+ * 因此这段代码会被反复执行，幂等靠的是两个存下来的值，各有各的坑：
+ * - 列：只在**存下来的映射里没有这个键**时才 create。用「表里有没有这一列」
+ *   判断是错的 —— 用户手动删掉那一列之后我们会一直重建，他删一次我们加一次；
+ *   而映射里有键、表里没列，是 resolveFieldNames 的 missing 分支（会明说）。
+ * - 视图：只在 `task_gantt_view_id` 为空时建。见 migration 072 —— 少了这一位
+ *   就是每次派活多一个同名「甘特图」视图，而每次都成功、没有任何报错。
+ *
+ * 全部失败都只是 warning：补不上一列不该让派活失败（任务已经建到人头上了）。
+ */
+async function upgradeTaskBase(
+  client: Client,
+  project: DiaryProjectRow,
+): Promise<{ project: DiaryProjectRow; warning: Warning }> {
+  const warnings: string[] = [];
+  let current = project;
+
+  if (current.task_base_table_id) {
+    // 映射是空的（建表时 list 字段失败过）→ 先补读一次。不补的话下面
+    // 「映射里有没有这个键」永远是「没有」，于是每次派活都试着 create 一次列。
+    let map = parseFieldMap(current.task_field_map);
+    if (!Object.keys(map).length) {
+      const loaded = await loadFieldMap(client, current.task_base_app_token, current.task_base_table_id);
+      if (Object.keys(loaded.map).length) {
+        map = loaded.map;
+        store.setTaskFieldMap(current.id, map);
+        current = store.getProjectById(current.id)!;
+      }
+    }
+
+    // 缺哪列补哪列。现在只有「飞书任务」，写成循环是因为下一次加列还会走这里。
+    //
+    // 公式列（「是否延期」）不在补的范围内：它缺失的唯一原因就是建表时公式被拒过
+    // （createTaskBase 那个降级分支，已经提示用户手动加了）。放进来的话每次派活都
+    // 重试一次、每次都失败、每次都在回帖里挂一句 warning —— 一个永远不会好的提示
+    // 比没有提示更糟。
+    const wanted = TASK_FIELDS.filter((f) => f.type !== F_FORMULA && !(f.field_name in map));
+    if (Object.keys(map).length && wanted.length) {
+      for (const spec of wanted) {
+        try {
+          const res = assertOk(
+            await client.bitable.appTableField.create({
+              path: {
+                app_token: current.task_base_app_token,
+                table_id: current.task_base_table_id,
+              },
+              data: { field_name: spec.field_name, type: spec.type, property: spec.property },
+            }),
+            `给任务表补上「${spec.field_name}」列`,
+          );
+          const fid = res.data?.field?.field_id;
+          if (fid) map[spec.field_name] = fid;
+        } catch (e) {
+          warnings.push(
+            `⚠️ 任务表里少了「${spec.field_name}」这一列，补的时候失败了` +
+              `（${describeFeishuError(e)}），这一项的内容暂时写不进表里。`,
+          );
+        }
+      }
+      store.setTaskFieldMap(current.id, map);
+      current = store.getProjectById(current.id)!;
+    }
+
+    // 补出来的「飞书任务」列对**已经在表里的行**是空的 —— 回填一次。
+    // 挂在补列之后：列还没建出来时下面那个 names[COL.taskUrl] 是空的，会自己跳过。
+    if (!current.task_url_backfilled) {
+      const filled = await backfillTaskUrls(client, current);
+      if (filled) warnings.push(filled);
+      current = store.getProjectById(current.id)!;
+    }
+
+    if (!current.task_gantt_view_id) {
+      const gantt = await createGanttView(
+        client,
+        current.task_base_app_token,
+        current.task_base_table_id,
+      );
+      if (gantt.warning) warnings.push(gantt.warning);
+      if (gantt.viewId) {
+        store.setTaskGanttView(current.id, gantt.viewId);
+        current = store.getProjectById(current.id)!;
+        warnings.push(ganttHint());
+      }
+    }
+  }
+
+  return { project: current, warning: warnings.length ? warnings.join('\n') : null };
+}
+
+// 回填一次最多读这么多行。比 MAX_ROWS（读回用的 300）大：那边截断只是一次回帖里
+// 少几条，这边截断是**永久**少几个链接（下面置了位就不再回来了）。
+const MAX_BACKFILL_ROWS = 1000;
+
+/** 超链接列当前的值 → 链接。空 = 这一格还没填过。 */
+function urlLink(v: unknown): string {
+  if (typeof v === 'string') return v.trim();
+  if (v && typeof v === 'object') {
+    const o = v as { link?: string; text?: string };
+    return (o.link || '').trim();
+  }
+  return '';
+}
+
+/**
+ * 把库里那份任务的 applink 回填进表里老行的「飞书任务」列（073）。
+ *
+ * 为什么非做不可：这一列是 072 之后才有的，而它是**库里那份任务被砍掉之后**唯一
+ * 还能定位到飞书任务的东西（guid 藏在 applink 里）。老行不补的话，砍库那一天
+ * 那些任务就只剩一个标题 —— 不报错，只是从此点不进飞书、也改不动。
+ *
+ * 对齐靠「助理标记」（`<message_id>#<step_index>`），不靠标题：标题会被改（表是
+ * 开放编辑的，`update_task` 自己也改它），按标题对齐会把链接贴到另一个任务上，
+ * 而那一格看着完全正常 —— 点进去是别人的活。
+ *
+ * **已经有值的格子不覆盖。** 那里的链接只可能是我们自己写的或用户手填的，两种都比
+ * 库里那份新（库里那份是派活当时的）。覆盖不会报错，只是把用户的手工修正吃掉。
+ *
+ * 失败**不置位**（下次派活再试），所以这里的 warning 说的是「这次没补上」。
+ */
+async function backfillTaskUrls(client: Client, project: DiaryProjectRow): Promise<Warning> {
+  const { names } = await resolveFieldNames(client, project);
+  const idemCol = names[COL.idem];
+  const urlCol = names[COL.taskUrl];
+  // 列还没建出来（补列那一步失败过）→ 什么都不做也不置位。补列的失败已经报过了，
+  // 这里再说一遍只是重复。
+  if (!idemCol || !urlCol) return null;
+
+  // 库里那份任务：标记 → applink。没有 url 的行（建任务失败过的）跳过。
+  const wanted = new Map<string, string>();
+  for (const row of store.listTasks(project.id)) {
+    if (row.url && row.message_id) wanted.set(idemKey(row.message_id, row.step_index), row.url);
+  }
+  if (!wanted.size) {
+    // 没有可补的东西也要置位，否则这次扫描会挂在**每一条**派活指令上。
+    store.markTaskUrlBackfilled(project.id);
+    return null;
+  }
+
+  const path = {
+    app_token: project.task_base_app_token,
+    table_id: project.task_base_table_id,
+  };
+  const patches: Array<{ record_id: string; fields: Record<string, TaskFieldValue> }> = [];
+  let scanned = 0;
+  let truncated = false;
+  let pageToken: string | undefined;
+
+  try {
+    for (;;) {
+      const res = assertOk(
+        await client.bitable.appTableRecord.search({
+          path,
+          params: {
+            page_size: PAGE_SIZE,
+            user_id_type: 'open_id',
+            ...(pageToken ? { page_token: pageToken } : {}),
+          },
+          data: {},
+        }),
+        '查询任务表',
+      );
+      for (const item of res.data?.items ?? []) {
+        scanned += 1;
+        const fields = (item.fields ?? {}) as Record<string, unknown>;
+        if (urlLink(fields[urlCol])) continue;
+        const url = wanted.get(plainText(fields[idemCol]).trim());
+        if (!url || !item.record_id) continue;
+        patches.push({
+          record_id: item.record_id,
+          fields: { [urlCol]: { text: '打开任务', link: url } },
+        });
+      }
+      pageToken = res.data?.page_token;
+      if (!res.data?.has_more || !pageToken) break;
+      if (scanned >= MAX_BACKFILL_ROWS) {
+        truncated = true;
+        break;
+      }
+    }
+
+    // batch_update 一次最多 1000 行，这里按 100 切 —— 一批失败时重补的量小些。
+    for (let i = 0; i < patches.length; i += 100) {
+      assertOk(
+        await client.bitable.appTableRecord.batchUpdate({
+          path,
+          params: { user_id_type: 'open_id' },
+          data: { records: patches.slice(i, i + 100) },
+        }),
+        '回填任务链接',
+      );
+    }
+  } catch (e) {
+    return (
+      `⚠️ 任务表里老任务的「${COL.taskUrl}」这次没补上（${describeFeishuError(e)}），` +
+      `下次派活时我会再试。表里那几行暂时点不进飞书任务。`
+    );
+  }
+
+  store.markTaskUrlBackfilled(project.id);
+  if (truncated) {
+    return (
+      `⚠️ 任务表超过 ${MAX_BACKFILL_ROWS} 行，我只给前面这些补上了「${COL.taskUrl}」链接，` +
+      `再往后的没补（**不会再自动补**）。需要的话在表里手动加一下。`
+    );
+  }
+  return null;
+}
+
+/** 一次派活最多补几条老任务。超了的下次派活接着补（查重靠「助理标记」，不会重）。 */
+const MAX_IMPORT_PER_RUN = 100;
+
+/**
+ * 把 070 之前派的活补进任务管理表（074，删掉老「任务」表之前的最后一步）。
+ *
+ * 那些任务只在库里和日记 base 那张老「任务」表里。老表一删，它们在飞书里就只剩
+ * 各人任务中心那一条 —— 而 `list_tasks` 只读任务管理表，于是「还有什么没做完」
+ * 从此漏掉它们，一句错都不报。这是这个函数存在的全部理由。
+ *
+ * 顺序上它必须在 `bitable.dropTaskTable` **之前**，而且**补不完就不删**
+ * （返回 `ok:false`）：删了再补的话中间任何一次失败都是永久丢失。
+ *
+ * 查重和 appendTaskRow 用同一个键（「助理标记」列）。所以这段可以被反复执行 ——
+ * 上次补到一半的下次接着补。**读不到那一列就整个放弃**（`ok:false`）：
+ * 没有查重就补的话，每次派活都把同一批老任务再写一遍，而每次都成功。
+ */
+export async function importLegacyTasks(
+  client: Client,
+  project: DiaryProjectRow,
+): Promise<{ ok: boolean; imported: number; warning: Warning }> {
+  if (!project.task_base_table_id) return { ok: false, imported: 0, warning: null };
+  const { names } = await resolveFieldNames(client, project);
+  const idemCol = names[COL.idem];
+  if (!idemCol) {
+    return {
+      ok: false,
+      imported: 0,
+      warning:
+        `任务表里读不到「${COL.idem}」这一列，所以老任务这次没搬过来（搬了会重复）。` +
+        `日志表里那张老「任务」表先留着 —— 里面是派活当天的旧值，别拿它当准。`,
+    };
+  }
+
+  // 没有 message_id 的行进不来（幂等键的一半），也就没法查重 —— 直接跳过。
+  // 已完成/已取消的照样搬：清单里「做完了多少」也是从这张表数的。
+  const pending = store.listTasks(project.id).filter((t) => t.message_id);
+  if (!pending.length) return { ok: true, imported: 0, warning: null };
+
+  // 表里已经有的标记。整张表读一遍 —— 分页上限和回填共用一个（超过就不敢删老表）。
+  const seen = new Set<string>();
+  let scanned = 0;
+  let pageToken: string | undefined;
+  const path = {
+    app_token: project.task_base_app_token,
+    table_id: project.task_base_table_id,
+  };
+  try {
+    for (;;) {
+      const res = assertOk(
+        await client.bitable.appTableRecord.search({
+          path,
+          params: {
+            page_size: PAGE_SIZE,
+            user_id_type: 'open_id',
+            ...(pageToken ? { page_token: pageToken } : {}),
+          },
+          data: {},
+        }),
+        '查询任务表',
+      );
+      for (const item of res.data?.items ?? []) {
+        scanned += 1;
+        const key = plainText((item.fields ?? {})[idemCol]).trim();
+        if (key) seen.add(key);
+      }
+      pageToken = res.data?.page_token;
+      if (!res.data?.has_more || !pageToken) break;
+      if (scanned >= MAX_BACKFILL_ROWS) {
+        return {
+          ok: false,
+          imported: 0,
+          warning:
+            `任务表超过 ${MAX_BACKFILL_ROWS} 行，我没法确认老任务有没有搬过来，所以这次没搬、` +
+            `老「任务」表也先留着。里面是派活当天的旧值，别拿它当准。`,
+        };
+      }
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      imported: 0,
+      warning: `这次没能核对任务表里已有的行（${describeFeishuError(e)}），老任务下次派活时再搬。`,
+    };
+  }
+
+  const todo = pending.filter((t) => !seen.has(idemKey(t.message_id, t.step_index)));
+  if (!todo.length) return { ok: true, imported: 0, warning: null };
+
+  let imported = 0;
+  for (const t of todo.slice(0, MAX_IMPORT_PER_RUN)) {
+    try {
+      const written = await appendTaskRow(
+        client,
+        project,
+        {
+          title: t.title,
+          digest: t.content,
+          ownerOpenId: t.owner_open_id,
+          status: normalizeStatus(t.status),
+          startMs: t.start_ms ?? undefined,
+          dueMs: t.end_ms ?? undefined,
+          taskUrl: t.url,
+          messageId: t.message_id,
+          stepIndex: t.step_index,
+        },
+        names,
+      );
+      if (written.recordId) store.markTaskSynced(t.id, written.recordId);
+      imported += 1;
+    } catch (e) {
+      // 补一半就停：剩下的下次派活接着来（老表这次不删）。
+      return {
+        ok: false,
+        imported,
+        warning:
+          `老任务搬了 ${imported} 条就出错了（${describeFeishuError(e)}），` +
+          `剩下的下次派活时接着搬，日志表里那张老「任务」表先留着。`,
+      };
+    }
+  }
+
+  const left = todo.length - imported;
+  if (left > 0) {
+    return {
+      ok: false,
+      imported,
+      warning: `老任务先搬了 ${imported} 条进任务管理表，还剩 ${left} 条，下次派活时接着搬。`,
+    };
+  }
   return {
-    project: store.getProjectById(project.id)!,
-    warning: created.warning,
+    ok: true,
+    imported,
+    warning: imported
+      ? `📦 顺手把 ${imported} 条老任务搬进了任务管理表（原来在日志表的「任务」tab 里）。`
+      : null,
   };
 }
 
@@ -530,16 +946,18 @@ export interface TaskRowInput {
   startMs?: number;
   dueMs?: number;
   priority?: TaskPriority;
+  /** 对应飞书任务的 applink。空 = 没建出任务（或者是网页侧建的行）。 */
+  taskUrl?: string;
   /** 幂等键的两半，拼成 `<message_id>#<step_index>`。 */
   messageId: string;
   stepIndex: number;
 }
 
 /**
- * 这张表实际会写的几种值：文本 / 单选（也是文本）/ 日期毫秒 / 人员数组。
+ * 这张表实际会写的几种值：文本 / 单选（也是文本）/ 日期毫秒 / 人员数组 / 超链接。
  * 不用飞书那个完整联合类型 —— 写全了就看不出这张表用了什么。
  */
-type TaskFieldValue = string | number | Array<{ id?: string }>;
+type TaskFieldValue = string | number | Array<{ id?: string }> | { text: string; link: string };
 
 /** 幂等键。**格式改了等于所有历史行都失去防线**（重放会各写一行）。 */
 function idemKey(messageId: string, stepIndex: number): string {
@@ -567,6 +985,9 @@ function rowFields(
   if (input.startMs != null) f[names[COL.start]] = input.startMs;
   if (input.dueMs != null) f[names[COL.due]] = input.dueMs;
   if (input.priority) f[names[COL.priority]] = priorityLabel(input.priority);
+  // 超链接字段收的是 {text, link}，给个纯字符串会被当成文本存进去 ——
+  // 不报错，只是表里那一格点不动。
+  if (input.taskUrl) f[names[COL.taskUrl]] = { text: '打开任务', link: input.taskUrl };
   // 列被删掉时 names 里没有它，键就成了 undefined —— 那会让飞书整条报错。
   // 调用方已经拿到 missing 并会说出来，这里只保证不发出一个坏请求。
   delete f['undefined'];
@@ -634,6 +1055,147 @@ export async function appendTaskRow(
   return { recordId, duplicate: false };
 }
 
+/**
+ * 改一行任务时能动的列。`undefined` = 这次不碰它（**不是**清空），
+ * 和 store.updateTask / 飞书 task.patch 的 `update_fields` 是同一条约定。
+ *
+ * `doneAtMs` 是唯一允许显式清空的：任务被重新打开时那个日期必须去掉，
+ * 留着的话表里是「进展=进行中 + 实际完成日期=前天」，而回帖说的是「已重新打开」。
+ */
+export interface TaskRowPatch {
+  title?: string;
+  status?: TaskStatus;
+  startMs?: number;
+  dueMs?: number;
+  /** null = 清掉。 */
+  doneAtMs?: number | null;
+  latest?: string;
+}
+
+function patchFields(
+  patch: TaskRowPatch,
+  names: Record<string, string>,
+): Record<string, TaskFieldValue | null> {
+  const f: Record<string, TaskFieldValue | null> = {};
+  // 列被改名/删掉时 names 里没有它 —— 跳过而不是写一个 `undefined` 键，
+  // 那会让飞书对整条请求报错，于是能改的几列也一起没改成。
+  const put = (col: string, v: TaskFieldValue | null) => {
+    if (names[col]) f[names[col]] = v;
+  };
+  if (patch.title) put(COL.title, patch.title);
+  if (patch.status) put(COL.status, statusLabel(patch.status));
+  if (patch.startMs != null) put(COL.start, patch.startMs);
+  if (patch.dueMs != null) put(COL.due, patch.dueMs);
+  if (patch.doneAtMs !== undefined) put(COL.doneAt, patch.doneAtMs);
+  if (patch.latest) put(COL.latest, patch.latest);
+  return f;
+}
+
+/**
+ * 把一次改动写回表里那一行。行是按「助理标记」列（`<message_id>#<step_index>`，
+ * 建它的时候写进去的）找的 —— 和 appendTaskRow 的查重用同一个键。
+ *
+ * **这条路不跟上就是一次假成功。** `list_tasks` 只读这张表：标记完成没写进去，
+ * 下一句「还有什么没做完」照样把它列出来，而刚才那句回帖是「✅ 已标记完成」。
+ * 两句话都不报错，只是互相打脸。所以：
+ * - 找不到那一行（070 之前建的任务、或者行被人删了）→ 返回 `found: false`，
+ *   由调用方说出来，**不能**当成写成功；
+ * - search / update 失败 → 抛，调用方转成一句明确的 warning。
+ *   降级成静默返回等于「表里还是旧的」没人知道。
+ *
+ * 清空「实际完成日期」用 `null`。万一这个租户/这版接口不吃 null，退一步把这一列
+ * 摘掉重试一次：丢一个日期比丢掉同一条请求里的进展改动小得多（进展才是看板分列
+ * 的依据），而摘掉这件事要说出来。
+ */
+export async function updateTaskRow(
+  client: Client,
+  project: DiaryProjectRow,
+  key: { messageId: string; stepIndex: number },
+  patch: TaskRowPatch,
+  names: Record<string, string>,
+): Promise<{ recordId: string; found: boolean; warning: Warning }> {
+  const path = {
+    app_token: project.task_base_app_token,
+    table_id: project.task_base_table_id,
+  };
+  const idemCol = names[COL.idem];
+  // 没有标记列 / 没有消息 id 就定位不到行。这不是「没改动」，得说出来。
+  if (!idemCol || !key.messageId) return { recordId: '', found: false, warning: null };
+
+  const found = assertOk(
+    await client.bitable.appTableRecord.search({
+      path,
+      params: { page_size: 1, user_id_type: 'open_id' },
+      data: {
+        filter: {
+          conjunction: 'and',
+          conditions: [
+            {
+              field_name: idemCol,
+              operator: 'is',
+              value: [idemKey(key.messageId, key.stepIndex)],
+            },
+          ],
+        },
+      },
+    }),
+    '查询任务表',
+  );
+  const recordId = (found.data?.items ?? [])[0]?.record_id ?? '';
+  if (!recordId) return { recordId: '', found: false, warning: null };
+
+  const warning = await writeTaskRow(client, project, recordId, patch, names);
+  return { recordId, found: true, warning };
+}
+
+/**
+ * 改表里**已经知道行号**的那一行。
+ *
+ * 分出来是因为「改哪一个」现在优先从表里认（updateTask.ts:resolveTarget），
+ * 那条路手上已经有 record_id 了 —— 再按「助理标记」查一遍不只是浪费一次请求：
+ * 用户在表里改标题是常事，而助理标记那一列他也能改/删，查不到就变成一句
+ * 「表里没找到那一行」，而那一行明明就是刚才列给他看的那个。
+ */
+export async function writeTaskRow(
+  client: Client,
+  project: DiaryProjectRow,
+  recordId: string,
+  patch: TaskRowPatch,
+  names: Record<string, string>,
+): Promise<Warning> {
+  const fields = patchFields(patch, names);
+  if (!Object.keys(fields).length) return null;
+
+  const write = (data: Record<string, TaskFieldValue | null>) =>
+    client.bitable.appTableRecord.update({
+      path: {
+        app_token: project.task_base_app_token,
+        table_id: project.task_base_table_id,
+        record_id: recordId,
+      },
+      params: { user_id_type: 'open_id' },
+      // SDK 的字段值类型里没有 null —— 「把字段值设成 null 即清空」是接口支持
+      // 但类型没写进去的用法，所以这里断言掉。
+      data: { fields: data as Record<string, TaskFieldValue> },
+    });
+
+  try {
+    assertOk(await write(fields), '更新任务行');
+  } catch (e) {
+    const nulls = Object.keys(fields).filter((k) => fields[k] === null);
+    if (!nulls.length) throw e;
+    const rest = { ...fields };
+    for (const k of nulls) delete rest[k];
+    if (!Object.keys(rest).length) throw e;
+    assertOk(await write(rest), '更新任务行');
+    return (
+      `⚠️ 任务表里的「${COL.doneAt}」没能清掉（${describeFeishuError(e)}），` +
+      `那一列还留着上次完成的日期，其余都改好了。`
+    );
+  }
+  return null;
+}
+
 // ── 读回 ──
 //
 // 这是「表格就是数据源」真正兑现的地方：群成员在表里改了进展/负责人/日期，
@@ -661,6 +1223,29 @@ export interface TaskRow {
   doneAtMs?: number;
   latest: string;
   priority?: TaskPriority;
+  /** 「飞书任务」那一格的链接。空 = 老行还没回填（073），或者这行是手填的。 */
+  taskUrl: string;
+  /** 「助理标记」原文（`<message_id>#<step_index>`）。空 = 用户自己加的行。 */
+  idem: string;
+}
+
+/**
+ * 从 applink 里取出任务的 guid。
+ *
+ * 这是「表格就是数据源」最后一块拼图：库里那份任务（068）要砍掉，而改飞书任务
+ * 必须有 guid —— 唯一还存着它的地方就是表里那一格链接的 query 参数。
+ *
+ * 取不到时返回空串，**调用方必须把这行从候选里剔掉**：拿空 guid 去 patch 只会
+ * 撞一个莫名的参数错误，而用户看到的是「改任务本身失败」加一串飞书原文。
+ */
+export function guidFromUrl(url: string): string {
+  const m = /[?&]guid=([^&#]+)/.exec(url || '');
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
 }
 
 /** 人员字段的值形状：`[{id, name}]`（search 带 user_id_type=open_id 时就是这个）。 */
@@ -762,6 +1347,8 @@ export async function queryTasks(
       doneAtMs: numOrUndef(f[names[COL.doneAt]]),
       latest: plainText(f[names[COL.latest]]),
       priority: priorityFromLabel(selectText(f[names[COL.priority]])),
+      taskUrl: urlLink(f[names[COL.taskUrl]]),
+      idem: plainText(f[names[COL.idem]]).trim(),
     };
   });
 
@@ -805,10 +1392,8 @@ export function describeMissingOnRead(missing: string[]): Warning {
   );
 }
 
-/** 任务表的可点链接，尽量落在进度看板上。 */
-export function taskBaseUrl(project: DiaryProjectRow): string {
-  if (!project.task_base_url) return '';
-  if (!project.task_board_view_id) return project.task_base_url;
-  const sep = project.task_base_url.includes('?') ? '&' : '?';
-  return `${project.task_base_url}${sep}view=${project.task_board_view_id}`;
-}
+/**
+ * 任务表的可点链接。实现在 bitable.ts —— 项目总表要写这个链接，而那边不能
+ * 反向 import 本模块（会成环）。从这里 re-export，调用方照旧。
+ */
+export { taskBaseUrl } from './bitable.js';

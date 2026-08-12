@@ -14,6 +14,13 @@ export interface DiaryIndexRow {
   table_id: string;
   url: string;
   link_share_closed: number;
+  /**
+   * 1 = 总表已经有「任务表」那一列了（074）。0 = 下次建项目/派活时补建。
+   * 看这一位而不是看表里当前有没有那一列：用户手动删掉之后我们不该一直重建。
+   */
+  task_col_added: number;
+  /** 1 = 老行的「任务表」链接已经补过（074）。补出来的列对已有行是空的。 */
+  task_col_backfilled: number;
   created_at: string;
   updated_at: string;
 }
@@ -28,12 +35,20 @@ export interface DiaryProjectRow {
   record_table_id: string;
   review_table_id: string;
   /**
-   * 项目日记 base 里那张老「任务」表（068）。**已经不再写入** ——
-   * 任务搬到独立 base 了（070）。留着只为了老项目的历史数据还能被打开。
+   * 项目日记 base 里那张老「任务」表（068）。**已经删掉了**（074 那一片）：
+   * 任务搬到独立 base（070）之后两张表各存一半，而它们不同步。
+   * 非空 = 飞书那侧那张表还在，下次派活时删。删成之后这两列都置空串。
    */
   task_table_id: string;
-  /** 老「任务」表的甘特视图 id。同上，只读历史。 */
+  /** 老「任务」表的甘特视图 id。跟着上面那张表一起作废。 */
   task_view_id: string;
+  /**
+   * 日记 base 里那张「🔗 相关链接」表（074，指向任务管理表）。
+   * 空串 = 还没建出来，下次派活/建项目时补建 —— 这一列就是那段代码的幂等依据。
+   */
+  link_table_id: string;
+  /** 任务 base 里那张「🔗 相关链接」表（074，指向项目日志表）。同上。 */
+  task_link_table_id: string;
   /**
    * 独立的任务 base（070）。**空串 = 这个项目还没有任务 base**，第一次派活时补建
    * （taskBase.ensureTaskBase）。判据只看这一列 —— 上面那两列是老表，非空。
@@ -50,6 +65,16 @@ export interface DiaryProjectRow {
   /** 两个看板视图。空串 = 没建成（少两个视图，数据仍在默认表格视图里）。 */
   task_board_view_id: string;
   task_person_view_id: string;
+  /**
+   * 甘特视图（072）。**空串 = 还没建过**，下次派活时补建 —— 这一列就是那段
+   * 补建代码的幂等依据，没有它每次派活都会多一个同名视图而且全都成功。
+   */
+  task_gantt_view_id: string;
+  /**
+   * 1 = 老行的「飞书任务」列已经回填过（073）。0 = 还没跑成，下次派活时再试。
+   * 它挡住的是「每条派活指令都把整张表读一遍」——不报错，只是白慢。
+   */
+  task_url_backfilled: number;
   /** 0 = 收紧链接分享失败，表处于租户默认可见范围。回帖要提醒手动收紧。 */
   task_base_link_share_closed: number;
   url: string;
@@ -118,7 +143,13 @@ export interface FeishuProjectTaskRow {
   created_at: string;
   updated_at: string;
   bitable_synced_at: string | null;
-  /** 多维表格里那一行。任务会被改，所以必须记住行号才能更新而不是追加。 */
+  /**
+   * 任务管理表（070）里那一行的 record_id。
+   *
+   * 074 之前它指的是老「任务」表里那一行；那张表删掉之后这一列改指任务管理表。
+   * 改写那张表时**不靠这一列**（靠「助理标记」列反查，表是开放编辑的、行会被
+   * 删掉重建），所以它现在只是「这条任务进表了没有」的凭据。
+   */
   bitable_record_id: string;
 }
 
@@ -155,14 +186,21 @@ export function saveIndex(input: {
   const now = new Date().toISOString();
   getDatabase()
     .prepare(
+      // 两位「任务表那一列」的状态直接置 1：新建的总表结构里本来就有那一列
+      // （INDEX_FIELDS），而一行都还没有，没有可回填的东西。置 0 的话第一次
+      // 建项目之后会去补一列已经存在的列 —— 飞书拒掉重名列，于是每次建项目都
+      // 挂一句永远不会好的 warning。
       `INSERT INTO feishu_diary_indexes
-         (app_id, base_app_token, table_id, url, link_share_closed, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (app_id, base_app_token, table_id, url, link_share_closed,
+          task_col_added, task_col_backfilled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)
        ON CONFLICT(app_id) DO UPDATE SET
          base_app_token = excluded.base_app_token,
          table_id = excluded.table_id,
          url = excluded.url,
          link_share_closed = excluded.link_share_closed,
+         task_col_added = excluded.task_col_added,
+         task_col_backfilled = excluded.task_col_backfilled,
          updated_at = excluded.updated_at`
     )
     .run(
@@ -174,6 +212,19 @@ export function saveIndex(input: {
       now,
       now
     );
+}
+
+/**
+ * 「总表已经有『任务表』那一列了」/「老行的链接已经补过了」这两位（074）。
+ *
+ * 只在**真写成之后**置位。提前置位（比如先置位再补链接）的后果是那批链接永远是
+ * 空的：置了位就不会再回来，而总表里那一列看着只是「没填」，谁都不会去查。
+ */
+export function markIndexTaskCol(appId: string, part: 'added' | 'backfilled'): void {
+  const col = part === 'added' ? 'task_col_added' : 'task_col_backfilled';
+  getDatabase()
+    .prepare(`UPDATE feishu_diary_indexes SET ${col} = 1, updated_at = ? WHERE app_id = ?`)
+    .run(new Date().toISOString(), appId);
 }
 
 // ── 项目 ──
@@ -254,6 +305,9 @@ export function claimProject(input: {
     review_table_id: '',
     task_table_id: '',
     task_view_id: '',
+    // 新项目的两张「相关链接」表是建项目时就建出来的（074），这里先占空串。
+    link_table_id: '',
+    task_link_table_id: '',
     // 070 的这几列必须一起列进下面那条 INSERT：better-sqlite3 对具名参数是
     // 严格的，`row` 上多一个语句里没有的键会直接抛（不是被忽略）。
     task_base_app_token: '',
@@ -262,6 +316,10 @@ export function claimProject(input: {
     task_field_map: '',
     task_board_view_id: '',
     task_person_view_id: '',
+    task_gantt_view_id: '',
+    // 新项目没有可回填的行：每一行在写入时就带着飞书任务链接。置 1 省掉一次
+    // 「把整张表读出来发现没什么可补」的扫描（那次扫描挂在第一条派活指令上）。
+    task_url_backfilled: 1,
     task_base_link_share_closed: 0,
     url: '',
     link_share_closed: 0,
@@ -275,14 +333,17 @@ export function claimProject(input: {
     db.prepare(
       `INSERT INTO feishu_diary_projects
          (id, app_id, chat_id, chat_name, name, base_app_token, record_table_id, review_table_id,
-          task_table_id, task_view_id,
+          task_table_id, task_view_id, link_table_id, task_link_table_id,
           task_base_app_token, task_base_table_id, task_base_url, task_field_map,
-          task_board_view_id, task_person_view_id, task_base_link_share_closed,
+          task_board_view_id, task_person_view_id, task_gantt_view_id, task_url_backfilled,
+          task_base_link_share_closed,
           url, link_share_closed, index_record_id, created_by, created_by_name, created_at, updated_at)
        VALUES (@id, @app_id, @chat_id, @chat_name, @name, @base_app_token, @record_table_id,
                @review_table_id, @task_table_id, @task_view_id,
+               @link_table_id, @task_link_table_id,
                @task_base_app_token, @task_base_table_id, @task_base_url, @task_field_map,
-               @task_board_view_id, @task_person_view_id, @task_base_link_share_closed,
+               @task_board_view_id, @task_person_view_id, @task_gantt_view_id,
+               @task_url_backfilled, @task_base_link_share_closed,
                @url, @link_share_closed, @index_record_id, @created_by,
                @created_by_name, @created_at, @updated_at)`
     ).run(row);
@@ -342,8 +403,6 @@ export function attachProjectBitable(
     baseAppToken: string;
     recordTableId: string;
     reviewTableId: string;
-    /** 「任务」表。建表那一步跳过/失败时给空串 —— 之后第一次派任务会按需补建。 */
-    taskTableId?: string;
     url: string;
     linkShareClosed: boolean;
   }
@@ -351,7 +410,7 @@ export function attachProjectBitable(
   getDatabase()
     .prepare(
       `UPDATE feishu_diary_projects
-       SET base_app_token = ?, record_table_id = ?, review_table_id = ?, task_table_id = ?,
+       SET base_app_token = ?, record_table_id = ?, review_table_id = ?,
            url = ?, link_share_closed = ?, updated_at = ?
        WHERE id = ?`
     )
@@ -359,7 +418,6 @@ export function attachProjectBitable(
       input.baseAppToken,
       input.recordTableId,
       input.reviewTableId,
-      input.taskTableId ?? '',
       input.url,
       input.linkShareClosed ? 1 : 0,
       new Date().toISOString(),
@@ -368,17 +426,26 @@ export function attachProjectBitable(
 }
 
 /**
- * 回填项目日记 base 里那张老「任务」表（068）。
+ * 老「任务」表（068）已经从飞书那侧删掉了 —— 把这两列清空。
  *
- * **切换到独立任务 base（070）的过渡期还在用**：老项目第一次派活时补建这张表。
- * 等派任务改写进新 base（下一片）之后连同 068 一起删。
+ * 这两列非空 = 「飞书那边还有那张表」，所以只能在 appTable.delete 真的成功之后
+ * 才清（bitable.dropTaskTable）。提前清掉的后果是那张表永远留在用户的日记文档里，
+ * 而我们再也不会去删它：一个和任务管理表内容不一致、还在被人看的僵尸 tab。
  */
-export function setProjectTaskTable(id: string, tableId: string, viewId: string): void {
+export function clearProjectTaskTable(id: string): void {
   getDatabase()
     .prepare(
-      'UPDATE feishu_diary_projects SET task_table_id = ?, task_view_id = ?, updated_at = ? WHERE id = ?'
+      "UPDATE feishu_diary_projects SET task_table_id = '', task_view_id = '', updated_at = ? WHERE id = ?"
     )
-    .run(tableId, viewId, new Date().toISOString(), id);
+    .run(new Date().toISOString(), id);
+}
+
+/** 「🔗 相关链接」表建出来了（074）。两个 base 各一张，所以分两个键。 */
+export function setLinkTable(id: string, which: 'diary' | 'task', tableId: string): void {
+  const col = which === 'diary' ? 'link_table_id' : 'task_link_table_id';
+  getDatabase()
+    .prepare(`UPDATE feishu_diary_projects SET ${col} = ?, updated_at = ? WHERE id = ?`)
+    .run(tableId, new Date().toISOString(), id);
 }
 
 /**
@@ -401,6 +468,7 @@ export function attachTaskBase(
     fieldMap: Record<string, string>;
     boardViewId: string;
     personViewId: string;
+    ganttViewId?: string;
     linkShareClosed: boolean;
   }
 ): void {
@@ -409,7 +477,7 @@ export function attachTaskBase(
       `UPDATE feishu_diary_projects
        SET task_base_app_token = ?, task_base_table_id = ?, task_base_url = ?,
            task_field_map = ?, task_board_view_id = ?, task_person_view_id = ?,
-           task_base_link_share_closed = ?, updated_at = ?
+           task_gantt_view_id = ?, task_base_link_share_closed = ?, updated_at = ?
        WHERE id = ?`
     )
     .run(
@@ -419,10 +487,51 @@ export function attachTaskBase(
       Object.keys(input.fieldMap).length ? JSON.stringify(input.fieldMap) : '',
       input.boardViewId,
       input.personViewId,
+      input.ganttViewId ?? '',
       input.linkShareClosed ? 1 : 0,
       new Date().toISOString(),
       id
     );
+}
+
+/**
+ * 补一列之后把新的 field_id 存回去。
+ *
+ * 单独一个 setter 是必须的：070 之前建的任务表缺后来加的列（现在是「飞书任务」），
+ * 补列的代码在派活路径上会被反复执行，而它是否再调一次飞书接口**只看这个映射里
+ * 有没有那个键**。不存回去的话每次派活都会再 create 一次同名字段 ——
+ * 飞书那边报重名（于是每次派活都带一句莫名的 warning），或者更糟：真加出第二列。
+ */
+export function setTaskFieldMap(id: string, fieldMap: Record<string, string>): void {
+  getDatabase()
+    .prepare('UPDATE feishu_diary_projects SET task_field_map = ?, updated_at = ? WHERE id = ?')
+    .run(
+      Object.keys(fieldMap).length ? JSON.stringify(fieldMap) : '',
+      new Date().toISOString(),
+      id
+    );
+}
+
+/** 甘特视图建好之后回填（072）。空串意味着「还没建过」，见那个迁移的文件头。 */
+export function setTaskGanttView(id: string, viewId: string): void {
+  getDatabase()
+    .prepare('UPDATE feishu_diary_projects SET task_gantt_view_id = ?, updated_at = ? WHERE id = ?')
+    .run(viewId, new Date().toISOString(), id);
+}
+
+/**
+ * 「老行的『飞书任务』列已经回填完了」（073）。
+ *
+ * **只在真的回填成功之后置位。** 失败时留着 0 是刻意的：下一次派活会再试一遍。
+ * 提前置位的后果没有任何声响 —— 那些老行的链接列永远是空的，而库里那份任务
+ * （guid 的另一个来源）将来要砍掉，砍掉之后就再也找不回来了。
+ */
+export function markTaskUrlBackfilled(id: string): void {
+  getDatabase()
+    .prepare(
+      'UPDATE feishu_diary_projects SET task_url_backfilled = 1, updated_at = ? WHERE id = ?'
+    )
+    .run(new Date().toISOString(), id);
 }
 
 export function setProjectIndexRecord(id: string, recordId: string): void {
@@ -837,6 +946,27 @@ export function insertTask(input: {
   return { row, created: true };
 }
 
+/**
+ * 按「哪条消息的第几步建的」找库里那一行。
+ *
+ * 用途只有一个：目标是从**任务管理表**里认出来的（表里那一行带着这个标记），
+ * 而库里那份还要跟着改一次（甘特图从库里推）。用标题回查是错的 —— 表是开放编辑的，
+ * 用户改过标题之后库里还是旧名字，回查不到就静默漏掉库和甘特图那两处，
+ * 而回帖照样是「✅ 已更新」。
+ */
+export function findTaskByMessage(
+  appId: string,
+  messageId: string,
+  stepIndex: number
+): FeishuProjectTaskRow | undefined {
+  if (!messageId) return undefined;
+  return getDatabase()
+    .prepare(
+      'SELECT * FROM feishu_project_tasks WHERE app_id = ? AND message_id = ? AND step_index = ?'
+    )
+    .get(appId, messageId, stepIndex) as FeishuProjectTaskRow | undefined;
+}
+
 export function getTaskById(id: string): FeishuProjectTaskRow | undefined {
   return getDatabase().prepare('SELECT * FROM feishu_project_tasks WHERE id = ?').get(id) as
     | FeishuProjectTaskRow
@@ -919,23 +1049,13 @@ export function listTasks(
   return getDatabase().prepare(sql).all(...params) as FeishuProjectTaskRow[];
 }
 
-/** 还没推进多维表格（或改过之后需要重推）的任务。 */
-export function listUnsyncedTasks(projectId: string, limit = 200): FeishuProjectTaskRow[] {
-  return getDatabase()
-    .prepare(
-      `SELECT * FROM feishu_project_tasks
-       WHERE project_id = ? AND bitable_synced_at IS NULL
-       ORDER BY created_ms ASC LIMIT ?`
-    )
-    .all(projectId, limit) as FeishuProjectTaskRow[];
-}
-
 /**
- * 记下多维表格里那一行，并置同步位。
+ * 记下任务管理表里那一行，并置同步位。
  *
- * record_id 和状态位必须**一起写**：分两次写的话，进程在中间挂掉会留下
- * 「表里有那行、库里不知道行号」的任务，下次同步会再追加一行，
- * 于是甘特图上同一个任务出现两条横条 —— 而两条的进度还会各自更新。
+ * 没有「补推」这条路了（老「任务」表删掉之后写表失败是整条指令失败），所以这一位
+ * 现在只有一个用处：**统计里那个「N 个任务未同步」**。它必须诚实 ——
+ * 派活时写表失败会抛错，库里那行留着而表里没有，而用户已经看到一句红字之后
+ * 大概不会去数；这个计数是他事后唯一能看见的缺口。
  */
 export function markTaskSynced(id: string, recordId: string): void {
   getDatabase()

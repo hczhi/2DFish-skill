@@ -5,6 +5,7 @@ import { ACTIONS, getAction, allRequiredScopes } from './index.js';
 import { strList, type ActionContext } from './types.js';
 import { toTaskTimestamp, parseIso, fmtForHuman, fmtDate } from './time.js';
 import { replaceDirectory } from '../directory/store.js';
+import * as store from '../diary/store.js';
 
 // 动作层测两类东西：
 //   1. 时间戳单位 —— 任务要毫秒、日程要秒，写反了不会报错，只会把日程排到 1970 年；
@@ -649,6 +650,160 @@ describe('update_task', () => {
     await expect(
       getAction('update_task')!.run({ task: '季度报告' }, makeCtx({ client: taskClient({ patch }) }))
     ).rejects.toThrow(/没说清/);
+    expect(patch).not.toHaveBeenCalled();
+  });
+});
+
+// 助理读「在办任务」只读任务管理表（listTasks → taskBase.queryTasks），
+// 而这个动作以前只写飞书 + 库 + 甘特图。于是「把 X 标记完成」回一句
+// 「✅ 已标记完成」，紧接着「还有什么没做完」照样列出 X —— 两句都不报错。
+describe('update_task 写回任务管理表', () => {
+  function client(parts: {
+    search?: ReturnType<typeof vi.fn>;
+    update?: ReturnType<typeof vi.fn>;
+    patch?: ReturnType<typeof vi.fn>;
+  }) {
+    return {
+      task: {
+        v2: {
+          task: {
+            patch: parts.patch ?? vi.fn().mockResolvedValue({ code: 0 }),
+            addMembers: vi.fn().mockResolvedValue({ code: 0 }),
+            addReminders: vi.fn().mockResolvedValue({ code: 0 }),
+          },
+          comment: { create: vi.fn().mockResolvedValue({ code: 0 }) },
+        },
+      },
+      bitable: {
+        appTableRecord: {
+          search: parts.search ?? vi.fn().mockResolvedValue({ code: 0, data: { items: [] } }),
+          update: parts.update ?? vi.fn().mockResolvedValue({ code: 0 }),
+        },
+      },
+    } as unknown as Client;
+  }
+
+  /** 一个建好了任务 base 的项目 + 一条助理派过的任务。 */
+  function seedTask() {
+    const project = store.claimProject({
+      appId: APP_ID,
+      chatId: 'oc_chat',
+      name: '甲项目',
+      createdBy: 'ou_sender',
+      createdByName: '张三',
+    });
+    store.attachTaskBase(project.id, {
+      appToken: 'bascn_task',
+      tableId: 'tbl_task',
+      url: 'https://base/task',
+      // 空映射 = 按中文列名写（建表时 list 字段失败过的项目就是这样）。
+      fieldMap: {},
+      boardViewId: '',
+      personViewId: '',
+      linkShareClosed: true,
+    });
+    store.insertTask({
+      appId: APP_ID,
+      projectId: project.id,
+      title: '写季度报告',
+      status: 'doing',
+      guid: 'g_row',
+      createdBy: 'ou_sender',
+      createdByName: '张三',
+      messageId: 'om_created',
+      stepIndex: 0,
+    });
+  }
+
+  it('标记完成要落到表里那一行的「进展」上', async () => {
+    seedTask();
+    const search = vi.fn().mockResolvedValue({ code: 0, data: { items: [{ record_id: 'rec1' }] } });
+    const update = vi.fn().mockResolvedValue({ code: 0 });
+
+    const res = await getAction('update_task')!.run(
+      { task: '季度报告', completed: true },
+      makeCtx({ client: client({ search, update }) })
+    );
+
+    // 定位靠建它时写进「助理标记」列的那个键，不是标题 —— 标题是会被改的。
+    // （第一次 search 是「改哪一个」那步的全表扫描，那批行没有飞书任务链接、
+    // 认不出 guid，所以这里走的是库反查 + 按标记定位那条路。）
+    const byIdem = search.mock.calls.map((c) => c[0]).find((a) => a.data?.filter);
+    expect(byIdem.data.filter.conditions[0].value).toEqual(['om_created#0']);
+    expect(update.mock.calls[0][0].path.record_id).toBe('rec1');
+    expect(update.mock.calls[0][0].data.fields['进展']).toBe('已完成');
+    expect(res.summary).toContain('已标记完成');
+  });
+
+  it('表里找不到那一行时必须说出来，不能只回一句 ✅', async () => {
+    // 静默的后果：表是「在办任务」的唯一来源，用户以为改好了，
+    // 而助理下次仍然把这条列成没做完 —— 他会认定助理记不住事。
+    seedTask();
+    const update = vi.fn();
+    const res = await getAction('update_task')!.run(
+      { task: '季度报告', completed: true },
+      makeCtx({ client: client({ update }) }) // search 默认返回空
+    );
+
+    expect(update).not.toHaveBeenCalled();
+    expect(res.summary).toMatch(/任务管理表/);
+    expect(res.summary).toMatch(/没找到/);
+  });
+
+  /** 表里那一行：链接里带 guid，标记对得上库里那条，但标题已经被人改过。 */
+  function tableRow(over: Partial<{ recordId: string; title: string; idem: string; owner: string; guid: string }> = {}) {
+    return {
+      record_id: over.recordId ?? 'recQ3',
+      fields: {
+        任务描述: over.title ?? 'Q3 报告',
+        助理标记: over.idem ?? 'om_created#0',
+        飞书任务: {
+          text: '打开任务',
+          link: `https://applink.feishu.cn/client/todo/detail?guid=${over.guid ?? 'g_row'}&suite_entity_num=1`,
+        },
+        ...(over.owner ? { 任务执行人: [{ id: over.owner, name: '别人' }] } : {}),
+      },
+    };
+  }
+
+  it('表里改过标题之后，按新名字也能改（库里还是旧名字）', async () => {
+    // 这张表是开放编辑的，改标题是一次点击的事。只按库反查的话，用户按他眼前
+    // 看到的新名字说一句「Q3 报告做完了」，得到的是「我只能改我自己帮你建的那些」——
+    // 而那一行就在他打开的表里。guid 也因此只能从表里那格链接的参数里取。
+    seedTask();
+    const search = vi.fn().mockResolvedValue({ code: 0, data: { items: [tableRow()] } });
+    const update = vi.fn().mockResolvedValue({ code: 0 });
+    const patch = vi.fn().mockResolvedValue({ code: 0 });
+
+    await getAction('update_task')!.run(
+      { task: 'Q3 报告', completed: true },
+      makeCtx({ client: client({ search, update, patch }) })
+    );
+
+    expect(patch.mock.calls[0][0].path.task_guid).toBe('g_row');
+    // 行号已经在手上，直接改那一行 —— 不再按标记查一次（那一列用户也能改）。
+    expect(update.mock.calls[0][0].path.record_id).toBe('recQ3');
+    expect(update.mock.calls[0][0].data.fields['进展']).toBe('已完成');
+  });
+
+  it('别人的活不给改（表里那一行整个群都看得见）', async () => {
+    // 不筛的话「周报做完了」会撞上同名的、别人那一行：改掉它，回一句
+    // 「✅ 已标记完成」，两个人都要过几天才发现。
+    seedTask();
+    const search = vi.fn().mockResolvedValue({
+      code: 0,
+      data: {
+        items: [tableRow({ recordId: 'recOther', title: '别人的周报', idem: 'om_other#0', owner: 'ou_other', guid: 'g_other' })],
+      },
+    });
+    const patch = vi.fn();
+
+    await expect(
+      getAction('update_task')!.run(
+        { task: '周报', completed: true },
+        makeCtx({ client: client({ search, patch }) })
+      )
+    ).rejects.toThrow(/只能改我自己帮你建的/);
     expect(patch).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,7 @@ import { resolvePerson } from './people.js';
 import * as store from '../diary/store.js';
 import * as bitable from '../diary/bitable.js';
 import * as taskBase from '../diary/taskBase.js';
+import * as crossLinks from '../diary/crossLinks.js';
 import {
   normalizeStatus,
   statusLabel,
@@ -14,7 +15,7 @@ import {
 } from '../diary/taskStatus.js';
 
 /**
- * 创建飞书任务，并把它记进本群项目的「任务」表（甘特图那张）。
+ * 创建飞书任务，并把它记进本群项目的**任务管理表**（070，甘特图也在那张表里）。
  *
  * 身份模型（这是本模块最值得记住的一条）：任务系统视角下 tenant_access_token
  * 「没有任何特权，就是另一个普通用户」。所以机器人以自己身份建任务，再把真人
@@ -33,7 +34,8 @@ import {
  * 反过来（先落库再建任务）会在建任务失败时留下一条「库里有、飞书里没有」的任务：
  * 甘特图上有横条，负责人的任务中心里什么都没有，而回帖是失败的 ——
  * 用户重说一遍就变成两条。现在的顺序下建任务失败就整条失败，什么都没留下。
- * 而落库/同步失败只降级成 warning：任务已经派到人头上了，说「失败」会让他重派。
+ * 落库失败只降级成 warning（库里那份只用来判授权和统计），但**写不进任务管理表
+ * 要整条失败** —— 那张表是用户唯一看得见的地方，也是 `list_tasks` 唯一读的地方。
  */
 export const createTaskAction: ActionDef = {
   name: 'create_task',
@@ -137,15 +139,15 @@ export const createTaskAction: ActionDef = {
     // 直接透传，不要自己拼——applink 的域名在飞书/Lark 下不一样。
     const url = task?.url || '';
 
-    // ── 落库 + 同步到「任务」表 ──
-    // 这一整段的失败都只是 warning：任务已经建好并派到人头上了。
+    // ── 落库 ──
+    // 只是本地那份影子记录，失败只报 warning：任务已经建好并派到人头上了。
     const project =
       ctx.chatType === 'group' ? store.getProjectByChat(ctx.appId, ctx.chatId) : undefined;
     const warnings: string[] = [];
-    let ganttUrl = '';
     let duplicate = false;
+    let taskRowId = '';
     try {
-      const { created } = store.insertTask({
+      const { row, created } = store.insertTask({
         appId: ctx.appId,
         // 没绑项目的群里也照样记（project_id 为 NULL）：不记的话这条任务就只存在于
         // 飞书任务中心，而那里我们读不回来。等这个群以后建了项目，它至少还能被查到。
@@ -165,38 +167,30 @@ export const createTaskAction: ActionDef = {
         stepIndex: ctx.stepIndex ?? 0,
       });
       duplicate = !created;
-
-      if (project) {
-        // 068 之前建的项目还没有「任务」表，第一次派活时补建。
-        const ensured = await bitable.ensureTaskTable(ctx.client, project);
-        if (ensured.warning) warnings.push(ensured.warning);
-        if (ensured.tableId) {
-          const fresh = store.getProjectById(project.id)!;
-          const push = await bitable.pushTasks(ctx.client, fresh);
-          if (push.warning) warnings.push(push.warning);
-          else ganttUrl = bitable.taskTableUrl(fresh);
-        }
-      }
+      taskRowId = row.id;
     } catch (e) {
       // 库写失败也不让整条失败：飞书任务已经建出来了，回「失败」会让用户重派。
+      // 库里那份现在只用来判「这活是我派出去的」（update_task 的授权）和统计，
+      // 用户在飞书里看到的东西全在任务管理表里 —— 那一步失败才是致命的（见下）。
       warnings.push(
-        `⚠️ 任务已在飞书建好，但没能记进项目的任务表（${(e as Error).message}），甘特图上暂时看不到它。`
+        `⚠️ 任务已在飞书建好，但没能记进本地的任务清单（${(e as Error).message}）。`
       );
       console.error('[diary] 任务落库失败:', (e as Error).message);
     }
 
-    // ── 写进任务 base（070，这是**将来唯一**的那份数据）──
+    // ── 写进任务 base（070，这是**唯一**的那份数据）──
     //
-    // 现在它和上面那条老路并存：`update_task` 还靠库里的 guid 反查「改哪一个」，
-    // 这一片砍掉要和读回/改写一起动（否则派得出去、改不动）。
+    // 这一步失败**抛错**（老「任务」表砍掉之后就该这样）：用户在飞书里看到的任务
+    // 只有这张表，`list_tasks` 读的也只有这张表。回一句「✅ 已创建」而表里没有那行，
+    // 下一句「还有什么没做完」就不会提它 —— 两句都不报错，只是互相打脸。
     //
-    // 所以这一步**现在**失败只报 warning：库里还有一份，说「失败」会让用户重派，
-    // 而重派会在飞书任务中心里留下两条。等老路砍掉之后这里要改成抛错 ——
-    // 那时候表就是唯一的数据源，回一句「已创建」而表里没有那行是最坏的失败。
+    // 抛错的话回帖是红字的失败，但飞书任务**已经建好了**，所以话术里必须带上链接
+    // 并明说「别重派」：重派会在任务中心里留下第二条一样的任务（client_token 是
+    // 按 message_id 算的，新消息就是新 token，挡不住）。
     let taskUrl = '';
     if (project) {
       try {
-        // 070 之前建的项目还没有任务 base，第一次派活时补建。
+        // 070 之前建的项目还没有任务 base，第一次派活时补建（顺带补列/补视图/回填）。
         const ensured = await taskBase.ensureTaskBase(ctx.client, project);
         if (ensured.warning) warnings.push(ensured.warning);
         const fresh = ensured.project;
@@ -216,20 +210,61 @@ export const createTaskAction: ActionDef = {
               startMs: beginMs,
               dueMs: endMs,
               priority,
+              // 表里存一份可点的飞书任务链接。这不只是方便：guid 就藏在这个 applink
+              // 里，而它是改这条任务的唯一凭据（见 COL.taskUrl 的注释）。
+              taskUrl: url,
               messageId: ctx.messageId,
               stepIndex: ctx.stepIndex ?? 0,
             },
             names
           );
           if (written.duplicate) duplicate = true;
+          // 统计里那个「N 个任务未同步」就是这一位。它必须诚实：写表失败的那些
+          // （上面会抛）留在库里不置位，那个计数是用户事后唯一看得见的缺口。
+          if (written.recordId && taskRowId) store.markTaskSynced(taskRowId, written.recordId);
           taskUrl = taskBase.taskBaseUrl(fresh);
         }
       } catch (e) {
-        warnings.push(
-          `⚠️ 任务已建好，但没能写进**任务管理表**（${(e as Error).message}），` +
-            `表里暂时看不到它，需要的话在表里手动补一行。`
-        );
         console.error('[task] 写任务管理表失败:', (e as Error).message);
+        throw new Error(
+          `⚠️ 飞书任务已经建好了${url ? `（[打开任务](${url})）` : ''}，` +
+            `但**没能写进任务管理表**（${(e as Error).message}）—— 表里和「还有什么没做完」都看不到它。\n` +
+            `**别重说一遍**（会在飞书里多出一条一样的任务）。请在任务管理表里手动补一行，` +
+            `或者过一会儿再派下一个活时告诉我，我会再试。`
+        );
+      }
+
+      // ── 老「任务」表（068）的收尾：先把老任务搬过来，再删那张表 ──
+      // 顺序不能反，而且搬不完就不删（`ok:false`）—— 见 importLegacyTasks。
+      // 整段失败都只是 warning：任务已经派出去了，下次派活会再试。
+      const latest = store.getProjectById(project.id)!;
+      if (latest.task_table_id) {
+        try {
+          const moved = await taskBase.importLegacyTasks(ctx.client, latest);
+          if (moved.warning) warnings.push(moved.warning);
+          if (moved.ok) {
+            const dropped = await bitable.dropTaskTable(ctx.client, latest);
+            if (dropped) warnings.push(dropped);
+          }
+        } catch (e) {
+          warnings.push(
+            `日志表里那张老「任务」表这次没收拾干净（${(e as Error).message}），下次派活时会再试。`
+          );
+          console.error('[task] 收拾老任务表失败:', (e as Error).message);
+        }
+      }
+
+      // 两个 base 之间的互跳入口 + 总表那一列（074）。纯导航，失败只报 warning。
+      try {
+        const linked = await crossLinks.ensureLinkTables(
+          ctx.client,
+          store.getProjectById(project.id)!
+        );
+        if (linked.warning) warnings.push(linked.warning);
+        const entry = await crossLinks.ensureIndexTaskEntry(ctx.client, ctx.appId);
+        if (entry) warnings.push(entry);
+      } catch (e) {
+        console.error('[task] 补互跳入口失败:', (e as Error).message);
       }
     }
 
@@ -252,8 +287,7 @@ export const createTaskAction: ActionDef = {
     }
     if (url) parts.push(`[在飞书中打开](${url})`);
     // 任务管理表放在甘特图**前面**：它是可编辑的那张，进展/负责人/日期都在这儿改。
-    if (taskUrl) parts.push(`[任务管理表](${taskUrl})（进展直接在表里改）`);
-    if (ganttUrl) parts.push(`[项目甘特图](${ganttUrl})`);
+    if (taskUrl) parts.push(`[任务管理表](${taskUrl})（进展直接在表里改，甘特图也在这张表里）`);
     if (warnings.length) parts.push(warnings.join('\n'));
 
     return {
