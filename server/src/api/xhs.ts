@@ -7,6 +7,7 @@ import { parseFirstJson, jsonGateway as jsonGatewayWithRetry } from '../core/llm
 import { getSkillForSlot } from '../services/skillRegistryService.js';
 import * as uws from '../services/userWritingSkillService.js';
 import * as struct from '../services/xhsStructureService.js';
+import { SKILL_TEMPLATES, getSkillTemplate } from '../services/xhs/skillTemplates.js';
 import { webSearch, isSearchEnabled } from '../services/webSearchService.js';
 import { requireAdmin } from '../auth/guards.js';
 import { initSSE } from '../core/http.js';
@@ -30,7 +31,8 @@ function handleXhsError(res: Response, e: any, op: string, streamed = false): vo
  * 统一 SSE 流转发：把 gateway 的流逐 delta 写成 `data:{delta}` 事件，末尾 [DONE]，
  * 并把最终文本交给 onDone（用于成本记账、拿全文等）。三个流式路由共用，避免样板重复。
  */
-async function streamToSSE(
+// 导出仅为可测：截断事件是「看起来完全成功」的那一类，手测测不出来。
+export async function streamToSSE(
   res: Response,
   stream: AsyncIterable<any>,
   onComplete: (promptTokens: number, completionTokens: number, durationMs: number, outputText?: string) => void
@@ -38,11 +40,13 @@ async function streamToSSE(
   initSSE(res);
   let output = '';
   let chunks = 0;
+  let finish = '';
   const start = Date.now();
   try {
     for await (const chunk of stream) {
       chunks++;
       const delta = chunk.choices[0]?.delta?.content || '';
+      if (chunk.choices[0]?.finish_reason) finish = String(chunk.choices[0].finish_reason);
       if (delta) {
         output += delta;
         res.write(`data: ${JSON.stringify({ delta })}\n\n`);
@@ -64,6 +68,13 @@ async function streamToSSE(
   if (!output) {
     console.error(`[xhs] stream produced no content. chunks=${chunks} duration=${Date.now() - start}ms`);
     res.write(`data: ${JSON.stringify({ error: 'AI 返回为空，请重试或检查模型配置' })}\n\n`);
+  }
+  // 撞上模型输出上限 = 结尾是**断在半句话上**的。这不是错误（前面的内容都是好的），
+  // 但也绝不能不说：一篇结尾被截掉的稿子和写完的稿子长得一样，用户会直接采纳/发布。
+  // 前端读 `truncated` 自己决定怎么提示（成文那边流着看得见，改写那边会挡在采纳前面）。
+  if (finish === 'length') {
+    console.warn(`[xhs] stream truncated by max_tokens. chars=${output.length}`);
+    res.write(`data: ${JSON.stringify({ truncated: true })}\n\n`);
   }
   res.write('data: [DONE]\n\n');
   res.end();
@@ -571,6 +582,45 @@ xhsRouter.post('/write', async (req, res) => {
     await streamToSSE(res, stream, onComplete);
   } catch (e: any) {
     handleXhsError(res, e, 'write', true);
+  }
+});
+
+// POST /api/xhs/rewrite  整篇正文 + 诉求（+ 风格 skill）→ 重写后的整篇正文（流式）
+//
+// 流式而不是像 revise 那样返回 JSON：全文动辄两三千字，非流式就是干等一分钟的白屏。
+// 代价是拿不到结构化的「我改了什么」，所以那句说明由前端自己写死。
+xhsRouter.post('/rewrite', async (req, res) => {
+  const b = req.body || {};
+  const fullBody = String(b.body || '').trim();
+  const message = String(b.message || '').trim();
+  if (!fullBody) return res.status(400).json({ error: 'body is required' });
+  if (!message) return res.status(400).json({ error: 'message is required' });
+  const systemPrompt = struct.buildRewritePrompt(fullBody, message, {
+    styleSkill: resolveStyleSkill(b.skillId, req.user!.id),
+    persona: b.persona ? String(b.persona) : undefined,
+    niche: b.niche ? String(b.niche) : undefined,
+    blocklist: resolveBlocklistTerms(req.user!.id),
+  });
+  try {
+    const { stream, onComplete } = await aiGatewayStream(
+      {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: '请按上面的要求重写这篇正文，直接输出正文全文。' },
+        ],
+        // 温度比成文低一档：这是重写，不是重新创作，跑太开就变成另一篇文章了。
+        temperature: 0.8,
+        // 输出长度的**下限就是原文长度**（重写不该缩水）。给小了就是结尾被截，
+        // 而截断的稿子和写完的稿子长得一样 —— 所以这里给足，并且 streamToSSE
+        // 还会在真撞上限时补一个 truncated 事件。
+        max_tokens: 10000,
+        stream_options: { include_usage: true },
+      },
+      { userId: req.user!.id, source: 'xhs', operation: 'rewrite', tier: 'fast' }
+    );
+    await streamToSSE(res, stream, onComplete);
+  } catch (e: any) {
+    handleXhsError(res, e, 'rewrite', true);
   }
 });
 
@@ -1151,6 +1201,37 @@ xhsRouter.post('/skills/scaffold', async (req, res) => {
   } catch (e: any) {
     handleXhsError(res, e, 'skill-scaffold');
   }
+});
+
+// 内置模板：列出 + 一键导入。
+// **必须注册在 `/skills/:id` 之前** —— Express 按注册顺序匹配，放在后面的话
+// `GET /skills/templates` 会被 `:id` 接走，回一句 404 not found，
+// 读起来像「这个模板不存在」而不是「路由写错了」。
+xhsRouter.get('/skills/templates', (_req, res) => {
+  res.json({
+    templates: SKILL_TEMPLATES.map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description,
+      origin: t.origin,
+      chars: t.mainBody.length,
+    })),
+  });
+});
+
+// POST /api/xhs/skills/import-template  { templateId }
+// 每次导入都新建一份（不查重）：模板是给人改的，导第二份通常就是想拿一份干净的重来。
+xhsRouter.post('/skills/import-template', (req, res) => {
+  const tpl = getSkillTemplate(String(req.body?.templateId || ''));
+  if (!tpl) return res.status(404).json({ error: '模板不存在' });
+  const skill = uws.createSkill(req.user!.id, { name: tpl.name, description: tpl.description });
+  // 主文件写失败就把空壳删掉：留着一个空 skill 在列表里，用户选它去写作台生成，
+  // 出来的东西和没挂 skill 一模一样，没有任何一处会报错。
+  if (!uws.setMainBody(skill.id, req.user!.id, tpl.mainBody)) {
+    uws.deleteSkill(skill.id, req.user!.id);
+    return res.status(500).json({ error: '模板正文写入失败，请重试' });
+  }
+  res.status(201).json({ skill });
 });
 
 // 详情

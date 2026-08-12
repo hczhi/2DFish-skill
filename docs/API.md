@@ -635,6 +635,59 @@ Query：`status` (`pending`/`running`/`done`/`failed`/`ignored`) · `app_id` · 
 
 ---
 
+## 小红书写作台 (xhs)
+
+### POST /api/xhs/rewrite `PROTECTED`
+整篇正文改写（流式 SSE）。和 `/api/xhs/revise`（改选中片段、返回 JSON）是两件事。
+
+```json
+{
+  "body": "要重写的整篇正文（纯文本，必填）",
+  "message": "作者的诉求（必填）",
+  "skillId": "写作风格 skill id（可选，不传/无权访问则不加风格）",
+  "persona": "作者人设（可选）",
+  "niche": "赛道/人群（可选）"
+}
+```
+
+响应是 `text/event-stream`，逐条 `data: {"delta":"…"}`，以 `data: [DONE]` 结束。
+两个必须处理的非 delta 事件（xhs 下所有流式接口同一套）：
+
+- `{"error":"…"}` —— 上游报错/空返回，前端要抛出去，不能当流结束。
+- `{"truncated":true}` —— 撞上模型输出上限，**前面的内容都是好的，但结尾断在半句话上**。
+  不读这个事件的话，被截断的稿子和写完的稿子长得一模一样，用户会直接采纳/发布。
+
+输出是**纯正文、不含标题**（标题在前端是单独的输入框；混进流里前端就得猜第一行是不是标题，
+猜错的表现是标题被塞进正文第一段而原标题还留在框里）。
+
+### GET /api/xhs/skills/templates `PROTECTED`
+内置写作 skill 模板列表（写死在代码里，不查库，和用户自己的 skill 无关）。
+
+```json
+{
+  "templates": [
+    {
+      "id": "human-writing",
+      "name": "活人感写作",
+      "description": "一句话说明这份规范管什么",
+      "origin": "出处说明（字段叫 origin 不叫 source）",
+      "chars": 3000
+    }
+  ]
+}
+```
+
+### POST /api/xhs/skills/import-template `PROTECTED`
+把某个模板复制成当前用户的一个 skill，返回 `201 { skill }`（结构同
+`POST /api/xhs/skills`）。模板不存在回 404。**每次调用都新建一份，不查重** ——
+导第二份通常就是想拿一份干净的重来。
+
+```json
+{ "templateId": "human-writing" }
+```
+
+---
+
 ## Error Responses
 
 ### 标准错误

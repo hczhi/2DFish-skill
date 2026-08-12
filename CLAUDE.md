@@ -535,6 +535,30 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   清完会继续往 `tender_recommendations` 写已不存在的 `tender_id`（没有外键约束，
   写得进去），刚清干净的库立刻又有孤儿，而两边的日志都显示成功。
 
+## 小红书写作台的改写路径
+
+- **风格下拉只出现在真的会把它传给接口的地方。** `SelectionChat` 的
+  `skills`/`skillId` 是可选 prop，结构阶段**故意不传**（`/structure/node-chat` 只吃
+  `xhs-structure` 底座，读不到 styleSkill）。摆一个没人读的下拉出来，用户换了风格、
+  AI 照旧改法，返回的东西看着完全正常 —— 他只会以为这个 skill 没什么效果。
+  浮层里选的风格存在 `reviseSkillId`，空值 = 跟随①，且**从不回写①的 `skillId`**：
+  改一段用了别的风格不该悄悄换掉下次「重新成文」的风格。
+- **全文改写走流式，所以必须自己接住两件事。** 一是**截断**：`streamToSSE` 在
+  `finish_reason === 'length'` 时补一个 `{"truncated":true}` 事件，成文和改写两处都要
+  提示 —— 结尾断在半句话上的稿子和写完的长得一模一样，用户会直接采纳/发布。
+  二是**回滚**：改写结果先进预览等采纳（流式 `setContent` 会冲掉 TipTap 的撤销栈），
+  采纳时把旧正文存进 `preRewriteBody` 供「↩ 撤销改写」还原，而**换稿/新建/重新成文
+  时必须清掉它**，否则那个按钮会把上一篇的正文贴进这一篇，两边都不报错。
+- **内置 skill 模板（`services/xhs/skillTemplates.ts`）只能是一个主文件。**
+  `uws.assembleSkillBody` 把**没被 `{{ref}}` 引用的引用文件也全部拼在末尾**，
+  所以在这个平台上拆多文件不是懒加载，只是让人误以为省了 token。导入时
+  `setMainBody` 失败要把空壳 `deleteSkill` 掉：列表里留一个空 skill，用户选它去生成，
+  出来的东西和没挂 skill 一模一样，没有任何一处会报错。`GET /skills/templates`
+  必须注册在 `/skills/:id` **之前**（Express 按注册顺序匹配，否则回一句
+  「模板不存在」，读起来像模板没了而不是路由写错了）。模板里那个出处字段叫
+  `origin` 不叫 `source` —— `aiAppRegistry.test.ts` 全仓扫 `source: '…'` 字面量核
+  AI 应用白名单，占这个键名会让那个守卫报假失败。
+
 ## Environment Variables
 
 ```

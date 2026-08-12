@@ -17,26 +17,41 @@ const props = defineProps<{
   open: boolean
   title: string          // 顶部标题，如"讨论这个论点"或"修改选中片段"
   context: string        // 选中的内容原文，展示给用户确认改的是哪段
-  runner: (message: string) => Promise<ChatResult>
+  // onDelta 是给**流式**调用方的（全文改写）：边生成边把已收到的文本喂回来，
+  // 显示在预览框里。不传也能用（非流式的调用方就是这么用的）。
+  runner: (message: string, onDelta?: (text: string) => void) => Promise<ChatResult>
   autoSend?: string      // 有值时：打开即预填该诉求并自动发送（禁用词一键重写等快捷入口）
+  prefill?: string       // 预填诉求但**不**自动发（全文改写：得让用户先挑风格再发）
+  // 写作风格选择。**只在调用方真的会把它传给接口时才传** ——
+  // 传了却没人读，用户换一个风格、AI 照旧改法，回来的东西看着很正常，
+  // 他只会以为这个 skill 没什么效果（结构阶段的 node-chat 就不吃 styleSkill，
+  // 所以那边不传这两个 prop，下拉根本不出现）。
+  skills?: Array<{ id: string; name: string }>
+  skillId?: string
+  followLabel?: string   // 空值那一项的文案（如"跟随①：口语化"）
 }>()
 
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'update:skillId', v: string): void
+}>()
 
 const message = ref('')
 const busy = ref(false)
 const result = ref<ChatResult | null>(null)
 const errMsg = ref('')
+const streamText = ref('')   // 流式生成中的部分文本（只用于展示）
 
 // 每次重新打开（或切换选中对象）都清空上一轮；若传了 autoSend 则预填并自动发。
 watch(() => [props.open, props.context], () => {
   result.value = null
   errMsg.value = ''
+  streamText.value = ''
   if (props.open && props.autoSend) {
     message.value = props.autoSend
     send()
   } else {
-    message.value = ''
+    message.value = props.open ? (props.prefill || '') : ''
   }
 })
 
@@ -46,12 +61,16 @@ async function send() {
   busy.value = true
   result.value = null
   errMsg.value = ''
+  streamText.value = ''
   try {
-    result.value = await props.runner(m)
+    result.value = await props.runner(m, (t) => { streamText.value = t })
   } catch (e: any) {
     errMsg.value = e?.message || '出错了，再试一次'
   } finally {
     busy.value = false
+    // 生成失败时那半截文本必须清掉：留着它、上面又飘一句红字，
+    // 用户很容易把它当成"改完了"往回抄。
+    if (!result.value) streamText.value = ''
   }
 }
 
@@ -72,6 +91,17 @@ function adopt() {
       <div class="sc-context" v-if="context">{{ context }}</div>
 
       <div class="sc-body">
+        <div v-if="skills && skills.length" class="sc-skill">
+          <span>写作风格</span>
+          <select
+            :value="skillId || ''"
+            @change="emit('update:skillId', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ followLabel || '默认' }}</option>
+            <option v-for="s in skills" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
+        </div>
+
         <textarea
           v-model="message"
           class="sc-input"
@@ -85,6 +115,12 @@ function adopt() {
         </button>
 
         <p v-if="errMsg" class="sc-err">{{ errMsg }}</p>
+
+        <!-- 流式生成中：边写边看。没有采纳按钮 —— 还没写完的东西不能采纳。 -->
+        <div v-if="busy && streamText" class="sc-result">
+          <p class="sc-reply">AI 正在写…（写完才会出现「采纳」）</p>
+          <div class="sc-preview">{{ streamText }}</div>
+        </div>
 
         <div v-if="result" class="sc-result">
           <p class="sc-reply">{{ result.reply }}</p>
@@ -120,6 +156,10 @@ function adopt() {
   font-size: 13px; color: #555; white-space: pre-wrap; max-height: 120px; overflow: auto;
 }
 .sc-body { padding: 12px 16px 16px; }
+.sc-skill { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: #555; }
+.sc-skill select {
+  flex: 1; border: 1px solid #ddd; border-radius: 8px; padding: 6px 8px; font: inherit; background: #fff;
+}
 .sc-input {
   width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 8px;
   padding: 8px 10px; font: inherit; resize: vertical;

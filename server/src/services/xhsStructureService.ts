@@ -168,6 +168,37 @@ export function buildWriteFromStructurePrompt(
 }
 
 /**
+ * 全文改写：整篇正文 + 诉求（+ 一个风格 skill）→ 重写后的整篇正文。
+ *
+ * 和 buildRevisePrompt 的区别不只是范围：这个是**流式**的，所以输出必须是纯正文，
+ * 不能包 JSON（流式下 JSON 只有收完才能解析，等于白费流式）。也因此**不要标题** ——
+ * 标题在编辑器里是单独一个输入框，混进流里前端就得猜第一行是不是标题，猜错的表现是
+ * 标题被塞进正文第一段、而原标题还在框里，看着像"AI 多写了一句"。
+ */
+export function buildRewritePrompt(
+  fullBody: string,
+  message: string,
+  opts: { styleSkill?: string | null; persona?: string; niche?: string; blocklist?: string[] } = {}
+): string {
+  const parts: string[] = [
+    `你是一个文字功底极强的资深写作者，正在帮作者重写一篇小红书笔记的**整篇正文**。
+产出要求：
+- 直接输出重写后的正文全文，不要解释、不要"以下是"、不要 markdown 代码块、**不要写标题**。
+- 段落之间用空行分隔，保持原文的段落节奏。
+- **不许编造作者没提供的事实**（数字、案例、对话都不能新造）。原文里的真实素材要全部保留下来，只改表达。
+- 论点、结论、立场不许换，篇幅不要明显缩水 —— 作者要的是同一篇文章的另一种写法。`,
+  ];
+  parts.push(`## 原文（要重写的就是这篇）\n${fullBody}`);
+  parts.push(`## 作者的诉求\n${message}`);
+  if (opts.persona) parts.push(`## 作者人设\n${opts.persona}`);
+  if (opts.niche) parts.push(`## 赛道/人群\n${opts.niche}`);
+  if (opts.styleSkill) parts.push(`## 作者的写作风格规范（冲突以本节为准）\n${opts.styleSkill}`);
+  const bl = blocklistBlock(opts.blocklist);
+  if (bl) parts.push(bl.trim());
+  return parts.join('\n\n');
+}
+
+/**
  * 选中正文片段 + 用户消息 → 给这段的修改建议（成文阶段的"选中→对话→采纳"）。
  * 只改选中片段，返回可直接替换的新文本。
  */

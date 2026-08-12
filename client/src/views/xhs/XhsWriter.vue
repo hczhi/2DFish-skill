@@ -101,8 +101,16 @@ const blKind = ref<'word' | 'phrase'>('word')
 const chatOpen = ref(false)
 const chatTitle = ref('')
 const chatContext = ref('')
-const chatRunner = ref<(message: string) => Promise<ChatResult>>(async () => ({ reply: '', preview: '', apply: () => {} }))
+const chatRunner = ref<(message: string, onDelta?: (text: string) => void) => Promise<ChatResult>>(async () => ({ reply: '', preview: '', apply: () => {} }))
+const chatPrefill = ref<string | undefined>(undefined)
 const chatAutoSend = ref<string | undefined>(undefined)  // 有值时 SelectionChat 打开即自动发（禁用词一键重写）
+// 浮层里那个风格下拉。只在「改正文」时给（结构阶段的 node-chat 不吃 styleSkill）。
+const chatSkills = ref<Array<{ id: string; name: string }>>([])
+// 空 = 跟随①里选的那个。**不回写 skillId**：改一段用了别的风格，不该悄悄把
+// 下次「重新成文」的风格也换掉。它是粘的（连改几段不用每次重选），而当前值
+// 每次打开都摆在下拉里，所以粘着也看得见。
+const reviseSkillId = ref('')
+const briefSkillName = computed(() => skills.value.find(s => s.id === skillId.value)?.name || '默认')
 
 // ---------- ① 头脑风暴 / 用户洞察（AI 抛初稿，作者挑改）----------
 const bsOpen = ref(false)          // 面板折叠
@@ -159,6 +167,9 @@ async function openDraft(id: string) {
   body.value = d.body || ''
   title.value = d.title || ''
   stage.value = (d.stage as Stage) || 'brief'
+  // 换稿子了，上一篇的改写快照必须扔掉：留着的话「↩ 撤销改写」会把 A 稿的正文
+  // 贴进 B 稿，而两边都不报错。
+  preRewriteBody.value = null
   if (editor.value) {
     editor.value.commands.setContent(body.value)
   }
@@ -175,6 +186,7 @@ function newDraft() {
   Object.assign(brief, { topic: '', judgment: '', materials: '', audience: '', goal: '' })
   nodes.value = []; body.value = ''; title.value = ''; issues.value = []; validated.value = false
   pendingQuestions.value = []; stage.value = 'brief'
+  preRewriteBody.value = null
   if (editor.value) editor.value.commands.setContent('')
 }
 
@@ -301,6 +313,11 @@ function chatWithNode() {
   if (!node) return
   chatTitle.value = '和 AI 讨论这个节点'
   chatContext.value = node.text || '(空节点)'
+  // 结构阶段不给风格下拉：/structure/node-chat 只吃 xhs-structure 那个底层 skill，
+  // 摆一个它读不到的选项出来，用户换了没反应，而返回的结构看着完全正常。
+  chatSkills.value = []
+  chatAutoSend.value = undefined
+  chatPrefill.value = undefined
   chatRunner.value = async (message: string): Promise<ChatResult> => {
     const r = await apiPost<{ reply: string; updateNode: { id: string; text: string } | null; addNodes: MindNode[] }>(
       '/api/xhs/structure/node-chat', { node, nodes: nodes.value, message }
@@ -359,10 +376,12 @@ async function write() {
   title.value = ''
   body.value = ''
   blockHits.value = []
+  preRewriteBody.value = null   // 重新成文了，旧快照回滚回去只会是另一篇
   if (editor.value) editor.value.commands.setContent('')
   abortController = new AbortController()
   let acc = ''
-  
+  let truncated = false
+
   try {
     const res = await apiStream('/api/xhs/write', {
       brief,
@@ -375,6 +394,7 @@ async function write() {
     for await (const parsed of streamSSEData(res)) {
       // 后端在流里推的错误事件（上游报错/空返回）：抛出去让外层 catch 弹提示、停转圈。
       if (parsed.error) throw new Error(parsed.error)
+      if (parsed.truncated) truncated = true
       const delta = parsed.delta
       if (delta) {
         acc += delta
@@ -395,6 +415,8 @@ async function write() {
     }
     await saveDraft()
     scanBlocklist()
+    // 撞上模型输出上限的稿子结尾是断在半句话上的，和写完的长得一样 —— 必须说出来。
+    if (truncated) alert('⚠️ 这篇撞到了模型的输出长度上限，结尾是断的。建议把结构拆短一点重新成文，或者手动续写结尾。')
   } catch (e: any) {
     if (e.name === 'AbortError') {
       console.log('生成已手动停止')
@@ -420,11 +442,16 @@ function openReviseChat(sel: string, title: string, autoSend?: string) {
   chatTitle.value = title
   chatContext.value = sel
   chatAutoSend.value = autoSend
+  chatPrefill.value = undefined   // 别把「全文改写」那句诉求带进改片段的框里
+  chatSkills.value = skills.value
   chatRunner.value = async (message: string): Promise<ChatResult> => {
     const plainBody = editor.value?.getText() || ''
     const r = await apiPost<{ reply: string; revised: string }>('/api/xhs/revise', {
       body: plainBody, selection: sel, message,
-      skillId: skillId.value || undefined, persona: persona.value || undefined, niche: niche.value || undefined,
+      // 浮层里选了就用它，没选（空）才跟随①。读的是 ref 而不是打开时的快照，
+      // 所以用户可以先改下拉再点「发给 AI」。
+      skillId: reviseSkillId.value || skillId.value || undefined,
+      persona: persona.value || undefined, niche: niche.value || undefined,
     })
     return {
       reply: r.reply || '',
@@ -460,6 +487,64 @@ function reviseAvoidBlocked() {
   if (!terms.length) { alert('这段里没有命中禁用词'); return }
   const msg = `请把这段里的这些禁用词/表达换成自然、贴合语境的说法，改完不要再出现它们：${terms.join('、')}。其余内容尽量保持原样、别改动。`
   openReviseChat(sel, '避开禁用词重写', msg)
+}
+
+// ===== ③ 全文改写 =====
+// 默认诉求。预填而**不自动发**：全文改写一次就是一整篇的 token，
+// 得让用户先把风格挑好再点发送。
+const REWRITE_PREFILL = '按所选的写作风格重写全文：保留原文的论点、真实素材和事实，只换表达方式，篇幅别缩水。'
+// 采纳前的正文。改写是唯一一个「一下子换掉整篇」的操作，而流式 setContent 会把
+// 编辑器的撤销栈冲掉 —— 没有这一份快照，用户手改过的那些内容就真的没了，
+// 而界面上只显示「改写成功」。
+const preRewriteBody = ref<string | null>(null)
+
+function rewriteAll() {
+  const plain = editor.value?.getText().trim() || ''
+  if (!plain) { alert('正文还是空的，没什么可改写的'); return }
+  chatTitle.value = '全文改写'
+  chatContext.value = plain
+  chatAutoSend.value = undefined
+  chatPrefill.value = REWRITE_PREFILL
+  chatSkills.value = skills.value
+  chatRunner.value = async (message, onDelta): Promise<ChatResult> => {
+    const res = await apiStream('/api/xhs/rewrite', {
+      body: plain, message,
+      skillId: reviseSkillId.value || skillId.value || undefined,
+      persona: persona.value || undefined, niche: niche.value || undefined,
+    }, { failMessage: '改写失败' })
+    let acc = ''
+    let truncated = false
+    for await (const parsed of streamSSEData(res)) {
+      if (parsed.error) throw new Error(parsed.error)
+      if (parsed.truncated) truncated = true
+      if (parsed.delta) { acc += parsed.delta; onDelta?.(acc) }
+    }
+    const text = acc.trim()
+    if (!text) throw new Error('AI 没有返回内容，请重试')
+    return {
+      // 截断必须挡在采纳前面说：结尾断在半句话上的稿子和写完的稿子长得一模一样。
+      reply: truncated
+        ? '⚠️ 这次撞到了模型的输出长度上限，下面这版**结尾是断的**。采纳前先看一眼结尾，或者把正文分两段分别改写。'
+        : '已按所选风格重写全文。采纳会替换整篇正文（标题不动），之后可以点「↩ 撤销改写」还原。',
+      preview: text,
+      apply: () => {
+        preRewriteBody.value = body.value
+        const html = text.split('\n').map(p => p.trim() ? `<p>${p}</p>` : '<p><br></p>').join('')
+        body.value = html
+        if (editor.value) editor.value.commands.setContent(html)
+        scanBlocklist()
+      },
+    }
+  }
+  chatOpen.value = true
+}
+
+function undoRewrite() {
+  if (preRewriteBody.value === null) return
+  body.value = preRewriteBody.value
+  if (editor.value) editor.value.commands.setContent(preRewriteBody.value)
+  preRewriteBody.value = null
+  scanBlocklist()
 }
 
 // ===== 禁用库 =====
@@ -777,6 +862,8 @@ const hitTerms = computed(() => {
 
             <div class="xw-actions mt-6">
               <button class="xw-btn-secondary" @click="stage = 'structure'" :disabled="writing">← 修改结构</button>
+              <button class="xw-btn-secondary" @click="rewriteAll" :disabled="writing || !body">🔄 全文改写</button>
+              <button v-if="preRewriteBody !== null" class="xw-btn-secondary" @click="undoRewrite">↩ 撤销改写</button>
               <button v-if="writing" class="xw-btn-primary danger" @click="stopGeneration">
                 <span class="icon">⏹</span> 停止生成
               </button>
@@ -840,7 +927,12 @@ const hitTerms = computed(() => {
     </div>
 
     <!-- 统一选中对话浮层 -->
-    <SelectionChat :open="chatOpen" :title="chatTitle" :context="chatContext" :runner="chatRunner" :auto-send="chatAutoSend" @close="chatOpen = false; chatAutoSend = undefined" />
+    <SelectionChat
+      :open="chatOpen" :title="chatTitle" :context="chatContext" :runner="chatRunner" :auto-send="chatAutoSend"
+      :prefill="chatPrefill"
+      :skills="chatSkills" v-model:skillId="reviseSkillId" :follow-label="'跟随①：' + briefSkillName"
+      @close="chatOpen = false; chatAutoSend = undefined; chatPrefill = undefined"
+    />
   </div>
 </template>
 

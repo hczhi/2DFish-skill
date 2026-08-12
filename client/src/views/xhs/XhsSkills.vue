@@ -16,6 +16,7 @@
           <div class="left-head">
             <span>我的写作 Skill</span>
             <div class="head-btns">
+              <button class="mini" @click="openTemplates">📥 内置模板</button>
               <button class="mini accent" @click="openScaffold">✨ AI 搭建</button>
               <button class="mini" @click="createSkill">+ 新建</button>
             </div>
@@ -102,6 +103,26 @@
       </div>
     </div>
 
+    <!-- 内置模板弹窗 -->
+    <div v-if="tplOpen" class="modal-overlay" @click.self="tplOpen = false">
+      <div class="modal">
+        <h2>📥 内置写作模板</h2>
+        <p class="tpl-hint">导入后就是你自己的一份 skill，随便改随便删，不会跟着平台更新。</p>
+        <div v-for="t in templates" :key="t.id" class="tpl-card">
+          <div class="tpl-name">{{ t.name }}<span class="tpl-chars">{{ t.chars }} 字</span></div>
+          <div class="tpl-desc">{{ t.description }}</div>
+          <div class="tpl-src">{{ t.origin }}</div>
+          <button class="primary" :disabled="importing" @click="importTemplate(t.id)">
+            {{ importing ? '导入中…' : '导入为我的 skill' }}
+          </button>
+        </div>
+        <p v-if="!templates.length" class="tpl-hint">暂时没有内置模板。</p>
+        <div class="modal-actions">
+          <button class="ghost" @click="tplOpen = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- AI 搭建第一版 skill 弹窗 -->
     <div v-if="scaffoldOpen" class="modal-overlay" @click.self="scaffoldOpen = false">
       <div class="modal">
@@ -178,6 +199,39 @@ const scaffoldDesc = ref('')
 const scaffoldSamples = ref('')
 const scaffolding = ref(false)
 const scaffoldDraft = ref<ScaffoldDraft | null>(null)
+
+// 内置模板
+interface SkillTemplate { id: string; name: string; description: string; origin: string; chars: number }
+const tplOpen = ref(false)
+const templates = ref<SkillTemplate[]>([])
+const importing = ref(false)
+
+async function openTemplates() {
+  tplOpen.value = true
+  error.value = ''
+  try {
+    const r = await apiGet<{ templates: SkillTemplate[] }>('/api/xhs/skills/templates')
+    templates.value = r.templates
+  } catch (e: any) {
+    error.value = e?.message || '模板加载失败'
+    tplOpen.value = false
+  }
+}
+
+async function importTemplate(templateId: string) {
+  importing.value = true
+  error.value = ''
+  try {
+    const r = await apiPost<{ skill: Skill }>('/api/xhs/skills/import-template', { templateId })
+    tplOpen.value = false
+    await loadSkills()
+    await selectSkill(r.skill.id)
+  } catch (e: any) {
+    error.value = e?.message || '导入失败'
+  } finally {
+    importing.value = false
+  }
+}
 
 function openScaffold() {
   scaffoldOpen.value = true
@@ -418,6 +472,14 @@ onMounted(loadSkills)
 .head-btns { display: flex; gap: 8px; }
 .mini.accent { border-color: #E24A29; color: #E24A29; }
 .mini.accent:hover { background: #fef0eb; }
+
+/* 内置模板卡片 */
+.tpl-hint { color: #6b7280; font-size: 13px; line-height: 1.7; margin: 0 0 16px; }
+.tpl-card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+.tpl-name { font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; align-items: baseline; }
+.tpl-chars { font-weight: 400; font-size: 12px; color: #9ca3af; }
+.tpl-desc { color: #4b5563; font-size: 13px; line-height: 1.7; margin: 8px 0; }
+.tpl-src { color: #9ca3af; font-size: 12px; line-height: 1.6; margin-bottom: 12px; }
 
 /* 弹窗 */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 24px; }
