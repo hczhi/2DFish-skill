@@ -60,7 +60,8 @@ interface SzexgrpListItem {
   purchaseMethod: string;    // 公开招标 / 询价 / 竞价 / 单一来源 / 邀请招标 / 竞争性谈判…
   purchaseType: string;      // 工程 / 货物 / 服务
   proxyComName: string;      // 代理机构，约 1/5 有值
-  bidSectionNumber: string;  // 标段编号 YG26QG0044883-01-C1，当项目编号用
+  bidSectionNumber: string;  // 标段编号 YG26QG0044883-01-C1，当项目编号用；也是详情页必需的参数（见 detailPageUrl）
+  linkTo: string;            // CMS 里可填的外链，实测 200 条全为空；有值时站内直接跳它
   releaseTime: string;       // 2026-08-11 16:27:56
   noticeEndTime: string | null;   // 公告结束 = 报名截止，实测白名单内 0 条为空
   noticeCloseTime: string | null; // 实测与 noticeEndTime 100% 相同
@@ -264,9 +265,39 @@ function isOpenForRegistration(rawEnd: string | null | undefined, nowMs: number)
   return Number.isNaN(t) ? true : t > nowMs;
 }
 
-/** 详情页 URL（给用户点的）。CMS 页面参数就是 contentId。 */
-function detailPageUrl(contentId: number | string): string {
-  return `${BASE_URL}/jyxxDetails.htm?contentId=${contentId}`;
+/**
+ * 详情页 URL（给用户点的）。
+ *
+ * **`contentId` 一个参数是不够的** —— `jyxxDetails.js` 读的是
+ * `bidSectionNumber`，拿它当 `sectionCode` 调
+ * `/api/v1/rhgw/szjy/detail?sectionCode=..&contentId=..`；缺了就
+ * `if (!contentCode) return;` —— 而这一行在 `$("#loading").show()` **之后**，
+ * 所以页面卡在转圈上，永远不报错、不出 404、标题栏还是正常的。
+ * 后台一路显示「✅ 已处理」，用户点卡片只看到一个转圈的空页。
+ * 就算硬调那个接口，缺 sectionCode 也是 `code:200` + `bid:null`。
+ *
+ * 参数拼法照抄站内 `home.js` 的那一行（三个分支都一样），别自己发明：
+ *   linkTo ? linkTo
+ *          : bidSectionNumber ? /jyxxDetails.htm?bidSectionNumber=..&contentId=..&code=<code>
+ *                             : /details.htm?contentId=..
+ * - `code` = `noticeTypeCode.split('_')[1]`，**取一段**（`ygcg_cgzb_xjgg` → `cgzb`，
+ *   不是 `cgzb_xjgg`）。它只用来选中地铁图上的默认节点，且 contentId 命中时会被
+ *   正文里的中文 noticeType 覆盖，所以给错也不炸 —— 但既然站里这么拼就照拼，
+ *   免得下次有人以为这里漏了什么。
+ * - `bidSectionNumber` 会为空：200 条抽样里 5 条（3 条是白名单内的
+ *   `ygcg_cgzb_xjgg` 意向征集）。这时候必须换 `/details.htm?contentId=`，
+ *   它走的是 `/api/v1/trade/content/detail?contentId=`（就是本文件抓正文那个接口），
+ *   只认 contentId。仍然拼 jyxxDetails 的话这几条又是转圈页。
+ */
+function detailPageUrl(item: Pick<SzexgrpListItem, 'contentId'> & Partial<Pick<SzexgrpListItem, 'bidSectionNumber' | 'noticeTypeCode' | 'linkTo'>>): string {
+  const linkTo = String(item.linkTo || '').trim();
+  if (linkTo) return /^https?:\/\//i.test(linkTo) ? linkTo : `${BASE_URL}${linkTo.startsWith('/') ? '' : '/'}${linkTo}`;
+
+  const section = String(item.bidSectionNumber || '').trim();
+  if (!section) return `${BASE_URL}/details.htm?contentId=${item.contentId}`;
+
+  const code = String(item.noticeTypeCode || '').split('_')[1] || '';
+  return `${BASE_URL}/jyxxDetails.htm?bidSectionNumber=${encodeURIComponent(section)}&contentId=${item.contentId}&code=${encodeURIComponent(code)}`;
 }
 
 async function fetchList(
@@ -358,7 +389,7 @@ function buildTenderItem(
     noticeType: [item.noticeType, item.purchaseType, item.purchaseMethod].filter(Boolean).join(' · '),
     contentText: contentText.slice(0, 5000),
     contentHtml: (bodyHtml || '').slice(0, 50000),
-    url: detailPageUrl(item.contentId),
+    url: detailPageUrl(item),
     // 附件不在接口里：正文给的是「登录平台下载采购文件」，需要供应商账号。
     attachments: [],
     contactName: extracted.contactName,

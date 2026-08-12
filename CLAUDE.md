@@ -432,6 +432,45 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   按发布日期排的话今天新抓的一批散落在中间，管理员翻第一页看不到本次爬取的结果，
   只会以为爬虫没抓到东西。
 
+## 标讯详情链接（各平台的参数不止 id）
+
+- **szexgrp 的详情页要三个参数，少一个是「永远转圈」而不是报错。**
+  `jyxxDetails.js` 用 `bidSectionNumber` 当 `sectionCode` 去调
+  `/api/v1/rhgw/szjy/detail`，缺了就 `if (!contentCode) return;` ——
+  而这行在 `$("#loading").show()` **之后**，所以页面标题正常、无 404、无报错，
+  只是空白转圈；后台一路显示「✅ 已处理」。拼法照抄站内 `home.js`：
+  `linkTo` 优先，否则 `jyxxDetails.htm?bidSectionNumber=..&contentId=..&code=<noticeTypeCode.split('_')[1]>`，
+  `bidSectionNumber` 为空（实测 200 条里 5 条，含 3 条白名单内的意向征集）时换
+  `details.htm?contentId=`（那个页面只认 contentId）。存进 `tenders.url` 的链接
+  再没有第二次机会 —— 表是 append-only，多维表格的清空重灌也是从这一列读的，
+  所以拼错了要靠迁移洗（见 071）。
+- **验链接不能只看 HTTP 200。** 这三个平台的详情页都是 CMS 空壳 + JS 取数，
+  参数错了返回的 HTML 和正确的**逐字节一样**（只差个缓存戳），
+  `curl` 对比不出来。要判对错只能看它背后那个 XHR：参数缺了接口回
+  `code:200` + `data.bid:null`。
+
+## 标讯清空（按平台 / 全部）
+
+- **「一条标讯」是四张表**：`tenders` + `tender_recommendations` + `tender_user_feedback`
+  + `tender_bitable_sync`。`services/tender/purge.ts` 一个事务删完，子表先删、本体后删
+  （反了的话子表的 `IN (SELECT id FROM tenders …)` 匹配不到任何行，孤儿全留）。
+  留孤儿不会报错：用户侧三处的「总数」查询不带 JOIN、「明细」查询带 INNER JOIN，
+  于是 `/recommendations`、`/feedback` 会显示「共 40 条」却渲染不出行、翻出空白页，
+  而 `recommendService` 的 `feedbackCount`（<5 放宽预筛阈值）把孤儿反馈也算进去，
+  于是用严格阈值配空的历史反馈段。按平台删时**子表条件也要带 platform**，
+  漏了就是全表删而返回值只报本平台的条数 —— 后台一句「已清空 gdgpo 2 条」，
+  别的平台的用户从此推荐列表是空的。`purge.test.ts` 守这两条。
+- **确认框的条数只能来自 `GET /admin/tenders/stats`，不能用列表的 total。**
+  后台列表过了 14 天闸门又叠着搜索/关键词筛选 —— 拿它当确认数就是写着
+  「确认清空 12 条」然后删掉 3000 条，而用户是照那个数字点确认的。
+- **清库不清多维表格**（表是 append-only，Web 侧删不掉已推送的行），也不清
+  关键词/评分配置/爬取日志。而候选为 0 时手动推送**不重灌也不发卡片**，
+  所以全清之后飞书表会停在旧数据上直到下一轮评分出来 —— 这句必须写在返回里，
+  否则「✅ 已清空」和用户在飞书里看到的满表旧数据直接矛盾。
+- 有爬取/提取/评分任务在跑时清空返回 **409**：那些任务攥着一批内存里的 id，
+  清完会继续往 `tender_recommendations` 写已不存在的 `tender_id`（没有外键约束，
+  写得进去），刚清干净的库立刻又有孤儿，而两边的日志都显示成功。
+
 ## Environment Variables
 
 ```

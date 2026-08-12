@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { __testables } from './szexgrpCrawlerService.js';
 
-const { extractBudget, extractRegion, isOpenForRegistration, WANTED_NOTICE_CODES } = __testables;
+const { extractBudget, extractRegion, isOpenForRegistration, detailPageUrl, WANTED_NOTICE_CODES } = __testables;
 
 // 这个站的正文是模板渲染的「标签 值」对，单位写在标签括号里。
 // 下面几条都是「解析错了不会报错，只会让标讯带着错的数字进推荐池」的路径。
@@ -61,6 +61,31 @@ describe('szexgrp 报名截止过滤', () => {
     const now = Date.parse('2026-08-11T12:00:00');
     expect(isOpenForRegistration('2026-08-10 18:00:00', now)).toBe(false);
     expect(isOpenForRegistration('2026-08-19 10:30:00', now)).toBe(true);
+  });
+});
+
+// 链接坏掉的表现是「页面卡在 loading」——不报错、不 404、后台写「已处理」。
+// 三条都是「拼错了看起来像成功」的路径。
+describe('szexgrp 详情链接', () => {
+  it('必须带 bidSectionNumber（缺了详情页 JS 直接 return，永远转圈）', () => {
+    const url = detailPageUrl({
+      contentId: 20564530,
+      bidSectionNumber: 'YG26QG0047043-01',
+      noticeTypeCode: 'ygcg_cggg',
+    } as any);
+    expect(url).toBe('https://ygcg.szexgrp.com/jyxxDetails.htm?bidSectionNumber=YG26QG0047043-01&contentId=20564530&code=cggg');
+  });
+
+  it('bidSectionNumber 为空时换 details.htm（意向征集有 3/200 是空的）', () => {
+    // 仍拼 jyxxDetails 的话这几条稳定是转圈页；details.htm 只认 contentId。
+    expect(detailPageUrl({ contentId: 20571616, bidSectionNumber: '', noticeTypeCode: 'ygcg_cgzb_xjgg' } as any))
+      .toBe('https://ygcg.szexgrp.com/details.htm?contentId=20571616');
+  });
+
+  it('code 只取 noticeTypeCode 的第二段', () => {
+    // 站内 home.js 就是 split('_')[1]，`ygcg_cgzb_xjgg` → `cgzb`。
+    expect(detailPageUrl({ contentId: 1, bidSectionNumber: 'X-01', noticeTypeCode: 'ygcg_cgzb_xjgg' } as any))
+      .toContain('&code=cgzb');
   });
 });
 

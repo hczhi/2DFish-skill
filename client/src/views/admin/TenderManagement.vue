@@ -258,6 +258,59 @@ async function deleteTender(id: string) {
   await apiDelete(`/api/tender/admin/tenders/${id}`)
   tenders.value = tenders.value.filter(t => t.id !== id)
   total.value--
+  loadPurgeStats()
+}
+
+// ==================== 清空标讯数据 ====================
+
+// 确认框里的条数必须来自这个接口，**不能**用列表的 total：那个数过了 14 天闸门
+// 又叠着搜索/关键词筛选，写「确认清空 12 条」而实际删掉 3000 条 ——
+// 用户是照着那个数字点确认的。
+const purgeStats = ref<any[]>([])
+const purgeOpen = ref(false)
+const purging = ref('')
+const purgeResult = ref('')
+
+async function loadPurgeStats() {
+  try {
+    const r: any = await apiGet('/api/tender/admin/tenders/stats')
+    purgeStats.value = r.platforms || []
+  } catch {}
+}
+
+const purgeTotal = computed(() =>
+  purgeStats.value.reduce((s: number, p: any) => s + (p.tenders || 0), 0))
+
+function platformLabel(id: string): string {
+  return platforms.value.find(p => p.id === id)?.name || id
+}
+
+async function doPurge(target: string) {
+  const row = purgeStats.value.find((p: any) => p.platform === target)
+  const count = target ? (row?.tenders || 0) : purgeTotal.value
+  if (count === 0) { purgeResult.value = '没有数据可清。'; return }
+
+  const scope = target ? `平台「${platformLabel(target)}」` : '全部平台'
+  if (!confirm(`确认清空${scope}的 ${count} 条标讯？\n\n同时删掉它们的打分、用户反馈、推送记录，含草稿和已超期的行。不可恢复。\n（关键词、评分配置、爬取日志保留）`)) return
+  // 全平台是真正回不去的那一下，多问一次。
+  if (!target && !confirm(`再确认一次：这会清空所有平台共 ${count} 条标讯。`)) return
+
+  purging.value = target || 'all'
+  purgeResult.value = ''
+  try {
+    const r: any = await apiPost('/api/tender/admin/tenders/purge', target ? { platform: target } : {})
+    purgeResult.value =
+      `✅ 已清空${scope}：标讯 ${r.tenders} 条、打分 ${r.recommendations} 条、` +
+      `用户反馈 ${r.feedback} 条、推送记录 ${r.bitableSync} 条。` +
+      `\n⚠️ 飞书多维表格里的旧行不会自动消失（表是只追加的）——` +
+      `要清掉得去「飞书推送」里手动推送一次做清空重灌；但候选为 0 时手动推送不会执行，` +
+      `所以全清之后表会一直停在旧数据上，等下一轮爬取评分出来再推。`
+    await Promise.all([loadPurgeStats(), loadTenders(), loadStats()])
+  } catch (e: any) {
+    purgeResult.value = `❌ ${e.message}`
+  } finally {
+    purging.value = ''
+  }
 }
 
 function formatBudget(amount: number): string {
@@ -411,6 +464,7 @@ function switchAdminTab(tab: 'list' | 'drafts' | 'crawl' | 'keywords' | 'logs' |
     loadTenders()
     loadStats()
     loadUsers()
+    loadPurgeStats()
   }
   if (tab === 'drafts') {
     loadDrafts()
@@ -853,6 +907,36 @@ function copyText(text: string) {
         超期的不再展示、不再评分、不再推送给用户，但数据仍在库里。
         <span v-if="hiddenExpired > 0">当前有 <b>{{ hiddenExpired }}</b> 条已超期未显示。</span>
       </p>
+
+      <!-- 清空数据。折叠着放，展开后每个平台一行，条数是库里的真实行数
+           （不是上面列表的 total —— 那个过了闸门和筛选）。 -->
+      <div class="purge-box">
+        <button class="purge-toggle" @click="purgeOpen = !purgeOpen; purgeOpen && loadPurgeStats()">
+          {{ purgeOpen ? '▼' : '▶' }} 清空标讯数据（危险操作）
+        </button>
+        <div v-if="purgeOpen" class="purge-panel">
+          <p class="purge-note">
+            清掉标讯本体 + 打分 + 用户反馈 + 推送记录，<b>含草稿和已超期的行</b>，不可恢复。
+            关键词、评分配置、爬取日志、飞书配置都保留。下面的条数是库里的真实行数，不受上面的筛选影响。
+          </p>
+          <table class="purge-table">
+            <tr v-for="p in purgeStats" :key="p.platform">
+              <td>{{ platformLabel(p.platform) }}</td>
+              <td>{{ p.tenders }} 条标讯 / {{ p.recommendations }} 条打分</td>
+              <td>
+                <button class="btn-sm btn-danger" :disabled="!!purging" @click="doPurge(p.platform)">
+                  {{ purging === p.platform ? '清理中...' : '清空这个平台' }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="!purgeStats.length"><td colspan="3">库里没有标讯数据。</td></tr>
+          </table>
+          <button v-if="purgeStats.length" class="btn-purge-all" :disabled="!!purging" @click="doPurge('')">
+            {{ purging === 'all' ? '清理中...' : `清空全部平台（共 ${purgeTotal} 条）` }}
+          </button>
+          <pre v-if="purgeResult" class="purge-result">{{ purgeResult }}</pre>
+        </div>
+      </div>
 
       <div v-if="loading" class="loading">加载中...</div>
       <table v-else class="tender-table">
@@ -1579,6 +1663,16 @@ function copyText(text: string) {
 .list-note { margin:0 0 12px; font-size:13px; color:#64748b; }
 .list-note b { color:#334155; }
 .td-created { font-size:12px; color:#64748b; white-space:nowrap; }
+
+.purge-box { margin:0 0 16px; }
+.purge-toggle { background:none; border:none; padding:0; font-size:13px; color:#b91c1c; cursor:pointer; }
+.purge-panel { margin-top:10px; padding:12px 14px; border:1px solid #fecaca; border-radius:6px; background:#fef2f2; }
+.purge-note { margin:0 0 10px; font-size:13px; color:#7f1d1d; line-height:1.6; }
+.purge-table { font-size:13px; border-collapse:collapse; }
+.purge-table td { padding:4px 14px 4px 0; color:#334155; }
+.btn-purge-all { margin-top:10px; padding:5px 12px; font-size:13px; color:#fff; background:#dc2626; border:none; border-radius:4px; cursor:pointer; }
+.btn-purge-all:disabled { opacity:.5; cursor:default; }
+.purge-result { margin:10px 0 0; padding:8px 10px; background:#fff; border-radius:4px; font-size:12px; color:#334155; white-space:pre-wrap; }
 .bitable-steps { margin:0 0 16px; padding-left:20px; font-size:13px; color:#475569; }
 .bitable-steps li { margin:5px 0; }
 .bitable-steps code { background:#f1f5f9; padding:1px 5px; border-radius:3px; font-size:12px; }

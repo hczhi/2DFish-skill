@@ -7,6 +7,7 @@ import { runRecommendationsForAllUsers } from '../services/tender/recommendServi
 import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
 import { pushToChats, parseChatIds, listBotChats } from '../services/tender/feishuNotify.js';
 import { visibleSql, expiredSql, TENDER_VISIBLE_DAYS } from '../services/tender/retention.js';
+import { purgeTenders, tenderCountsByPlatform } from '../services/tender/purge.js';
 import {
   createBitable, createAllTendersTable, grantPermission,
   syncUserRecommendations, syncAllTenders, getBitableUrl,
@@ -716,9 +717,43 @@ tenderRouter.patch('/admin/tenders/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// 清空前的确认数据：每个平台**真实**有多少行（不过时效闸门、不过搜索筛选）。
+// 前端拿它渲染确认框 —— 拿列表的 total 会写出「确认清空 12 条」然后删掉 3000 条。
+tenderRouter.get('/admin/tenders/stats', (req, res) => {
+  res.json({ platforms: tenderCountsByPlatform(getDatabase()) });
+});
+
+// 一键清空（可按平台）。四张表一起删，见 services/tender/purge.ts。
+// 用 POST 而不是 DELETE：`/admin/tenders/:id` 上已经挂了 DELETE，
+// `DELETE /admin/tenders/purge` 会被它当成「删 id 为 purge 的那一条」——
+// 0 行受影响，照样回 200 `{success:true}`，页面上什么都没发生。
+// 同理，往后要加 `GET /admin/tenders/:id` 的话必须排在 stats 之后。
+tenderRouter.post('/admin/tenders/purge', (req, res) => {
+  // 爬取/提取/评分在跑时不许清：那些任务在内存里攥着一批 id 和去重集合，
+  // 清完之后它们会继续往 tender_recommendations 写已经不存在的 tender_id
+  // （没有外键约束，写得进去），于是刚清干净的库立刻又有孤儿，
+  // 而两边的任务日志都显示成功。
+  if (runningTenderJob()) {
+    return res.status(409).json({ error: '有爬取/评分任务在运行中，请先等它结束或终止它' });
+  }
+
+  const platform = String(req.body?.platform || '').trim();
+  if (platform && !getCrawler(platform)) {
+    // 平台名打错时不能当成「全部」—— 那是把手滑变成清库。
+    return res.status(400).json({ error: `未知平台 ${platform}` });
+  }
+
+  const result = purgeTenders(getDatabase(), platform);
+  res.json({ success: true, ...result });
+});
+
 tenderRouter.delete('/admin/tenders/:id', (req, res) => {
   const db = getDatabase();
+  // 单条删除也走同一套四表清理（原来只删 tenders + recommendations，
+  // 留下的 feedback / bitable_sync 孤儿会让用户侧的「共 N 条」多算）。
   db.prepare('DELETE FROM tender_recommendations WHERE tender_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM tender_user_feedback WHERE tender_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM tender_bitable_sync WHERE tender_id = ?').run(req.params.id);
   db.prepare('DELETE FROM tenders WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
