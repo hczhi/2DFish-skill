@@ -74,6 +74,7 @@ import { migration_071 } from './071_fix_szexgrp_detail_url.js';
 import { migration_072 } from './072_task_base_gantt.js';
 import { migration_073 } from './073_task_url_backfill.js';
 import { migration_074 } from './074_cross_links.js';
+import { migration_075 } from './075_tender_reject_reason.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -149,4 +150,5 @@ export const allMigrations: Migration[] = [
   migration_072,
   migration_073,
   migration_074,
+  migration_075,
 ];

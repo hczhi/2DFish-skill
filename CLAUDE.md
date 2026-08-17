@@ -513,6 +513,34 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   `curl` 对比不出来。要判对错只能看它背后那个 XHR：参数缺了接口回
   `code:200` + `data.bid:null`。
 
+## 标讯 AI 提取与相关性闸门
+
+- **提取的失败形态就是「0 条已处理 + ✅ 已完成」，所以 0 条必须 `job.fail`。**
+  一批 3 条的完整 JSON 要 1300+ 输出 token，`max_tokens` 原来是 2000 —— 顶格截断的
+  数组括号配不平，`parseFirstJsonArray` 返回 null，整批静默变成 0 条结果，而草稿
+  一条不少地留在原地（用户唯一能看出不对的地方就是草稿数没变）。现在：4000 token、
+  走 `jsonGateway`（解析失败重试一次 + 带回 `finish_reason`），截断 / 解析失败 /
+  「模型没原样回 id 于是按顺序对齐」三种情况各说一句话进运行日志，部分失败也要
+  分开报数（只报成功数的话，剩下几条会被当成「本来就不该提取」）。
+- **相关性闸门判 false 的代价不对称，所以缺省是放行。** `relevant=false` 的标讯置
+  `status='rejected'`（作废）：不进标讯列表、不参与评分。误放一条无关的用户划过去
+  就完了；误杀一条相关的，它从此不在任何列表里，用户根本不知道有这条 —— 所以
+  「字段缺失/拼错/拿不准」全按 true，`prompt` 里也明写这一条，关键词库为空时干脆
+  不拼这段规则（否则「和全部关键词都无关」对每条都成立，整批作废）。
+- **相关性规则写在代码里（`relevanceRule()` 拼在模板后面），不写进
+  `DEFAULT_EXTRACT_PROMPT`。** `system_config.tender_extract_prompt` 里有一份用户可编
+  辑的副本且**优先级更高**，只改默认值的话装着旧副本的部署里模型压根不返回
+  `relevant`，而缺省放行 = 闸门形同不存在，全程零报错，用户只会以为「AI 判得不准」。
+- **状态过滤一律写白名单 `status IN ('extracted','scored')`，不写 `!= 'draft'`。**
+  后者会让任何新状态默认可见/默认参与评分：`/list` 会把作废的摆回用户面前；
+  `loadUnscoredForUser` 会花 token 评它，而评完那行就进了 `tender_recommendations`
+  —— 推荐列表和飞书卡片从那张表取数、不看 status，作废的于是绕过闸门重新出现。
+- **作废可复查、可恢复，否则误杀是永久静默丢失。** 草稿库分「待提取 / 已作废」两个
+  视图（两个数字都常显 —— 「已作废 37」这种异常值是发现闸门太狠的唯一线索），
+  `reject_reason`（迁移 075）存一句理由。恢复走 `POST /admin/drafts/:id/restore`，
+  必须连 `ai_extracted` 一起清掉：留着的话服务层按「已经提取过了」跳过它，那条标讯
+  从此卡在草稿库进不了列表，而两次点击都显示成功。
+
 ## 标讯清空（按平台 / 全部）
 
 - **「一条标讯」是四张表**：`tenders` + `tender_recommendations` + `tender_user_feedback`

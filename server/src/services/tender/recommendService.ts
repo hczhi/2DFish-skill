@@ -460,6 +460,11 @@ export const MAX_SCORE_PER_USER_RUN = 200;
  *
  * 平台过滤也放进 SQL：如果先取 200 条再在内存里按平台丢掉，
  * 只关注一个平台的用户可能 200 条里只剩几条，上限就被无关平台吃掉了。
+ *
+ * status 是白名单（不是 `!= 'draft'`）：作废的（'rejected'，AI 判为与关键词库无关）
+ * 不该再花评分 token，而且评了就会进 tender_recommendations —— 那张表是推荐列表和
+ * 飞书卡片的取数源（candidates.ts 只 JOIN 回 tenders 拿字段、不看 status），
+ * 于是作废的标讯会绕过闸门重新出现在用户面前，一路上没有任何报错。
  */
 export function loadUnscoredForUser(userId: string, platforms: string[], limit: number): TenderRow[] {
   const db = getDatabase();
@@ -468,7 +473,7 @@ export function loadUnscoredForUser(userId: string, platforms: string[], limit: 
     .prepare(
       `SELECT ${COLS.split(', ').map((c) => `t.${c}`).join(', ')}
        FROM tenders t
-       WHERE t.status != 'draft'
+       WHERE t.status IN ('extracted', 'scored')
          AND ${visibleSql('t')}${platformFilter}
          AND NOT EXISTS (
            SELECT 1 FROM tender_recommendations r
@@ -488,7 +493,7 @@ export function countUnscoredForUser(userId: string, platforms: string[]): numbe
     db
       .prepare(
         `SELECT COUNT(*) AS c FROM tenders t
-         WHERE t.status != 'draft'
+         WHERE t.status IN ('extracted', 'scored')
            AND ${visibleSql('t')}${platformFilter}
            AND NOT EXISTS (
              SELECT 1 FROM tender_recommendations r

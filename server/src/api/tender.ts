@@ -133,7 +133,10 @@ tenderRouter.get('/list', (req, res) => {
   const keyword = (req.query.keyword as string) || '';
 
   // 14 天时效闸门（入库和发布都算）：过期标讯从列表里消失，但数据不删（见 retention.ts）。
-  let where = `status != 'draft' AND ${visibleSql()}`;
+  // 白名单式写 status IN (...) 而不是 `!= 'draft'`：后者会让新加的任何状态默认可见，
+  // 'rejected'（AI 判为与关键词库无关、已作废）一进来就会出现在用户列表里，
+  // 而作废这件事的全部意义就是别让它出现 —— 且这个失败不报错，只是列表里多出垃圾。
+  let where = `status IN ('extracted', 'scored') AND ${visibleSql()}`;
   const params: any[] = [];
 
   if (search) {
@@ -791,15 +794,47 @@ tenderRouter.post('/admin/extract', async (req, res) => {
       job.log(`强制模式：已清除 ${tenderIds.length} 条标讯的提取数据`);
     }
 
-    const extracted = await runAIExtractForTenders(tenderIds, adminUserId, (msg, detail) => job.log(msg, detail));
-    job.log(`AI 提取完成: ${extracted} 条已处理`);
+    const { processed, failed, rejected, problems } = await runAIExtractForTenders(
+      tenderIds, adminUserId, (msg, detail) => job.log(msg, detail)
+    );
 
     // Update status to 'extracted' for successfully extracted tenders
     const placeholders = tenderIds.map(() => '?').join(',');
-    db.prepare(`UPDATE tenders SET status = 'extracted' WHERE id IN (${placeholders}) AND ai_extracted IS NOT NULL AND ai_extracted != ''`).run(...tenderIds);
+    // reject_reason 一并清掉：强制重提取时这条可能上一轮被判过不相关，
+    // 留着旧理由的话它在标讯列表里带着一句「与关键词库无关」，读起来像是又被判掉了。
+    db.prepare(`UPDATE tenders SET status = 'extracted', reject_reason = '' WHERE id IN (${placeholders}) AND ai_extracted IS NOT NULL AND ai_extracted != ''`).run(...tenderIds);
 
-    job.done({ extracted }, `AI 提取完成：${extracted} 条已处理`);
-    job.log(`全部完成：${extracted} 条标讯已提取`);
+    // 判为「和关键词库无关」的置成 rejected（作废）—— 必须在上面那条之后，
+    // 它要覆盖掉刚写上的 extracted。作废的既不进标讯列表、也不参与评分
+    // （loadUnscoredForUser 排除它），但行还在，草稿库「已作废」里能复查、能恢复。
+    if (rejected.length > 0) {
+      const mark = db.prepare(`UPDATE tenders SET status = 'rejected', reject_reason = ? WHERE id = ?`);
+      db.transaction(() => { for (const r of rejected) mark.run(r.reason, r.id); })();
+      job.log(`🗑 已作废 ${rejected.length} 条（判为与关键词库无关，可在草稿库 > 已作废 里复查/恢复）`);
+    }
+    const kept = processed - rejected.length;
+
+    // 一条都没提取出来时必须 fail。原来无论如何都 job.done，于是模型返回被截断
+    // （JSON 配不平、解析出 0 条）时页面上是「✅ 已完成 / AI 提取完成：0 条已处理」，
+    // 而那 6 条标讯还躺在草稿库里 —— 用户唯一能看出不对的地方是草稿没少。
+    // 部分失败同理：只报成功数的话，剩下那几条会被当成「本来就不该提取」。
+    const summary = problems.length ? `${problems.join('；')}` : '';
+    if (processed === 0) {
+      job.log(`AI 提取失败：0 条成功，${failed} 条仍留在草稿库`);
+      job.fail(
+        new Error(summary || '模型没有返回可用结果'),
+        `AI 提取失败：0 条成功（${failed} 条仍在草稿库）${summary ? ' — ' + summary : ''}`
+      );
+      return;
+    }
+    // 三个数分开报。合成一句「N 条已处理」的话，作废掉的那些看起来也「处理成功」了，
+    // 而用户去标讯列表里数只有 kept 条 —— 两个数字对不上，也不知道差的那几条去哪了。
+    const parts = [`${kept} 条进入标讯列表`];
+    if (rejected.length > 0) parts.push(`${rejected.length} 条判为不相关已作废`);
+    if (failed > 0) parts.push(`${failed} 条提取失败（仍在草稿库）`);
+    const msg = `AI 提取完成：${parts.join('，')}${failed > 0 && summary ? ' — ' + summary : ''}`;
+    job.done({ extracted: processed, kept, rejected: rejected.length, failed }, msg);
+    job.log(failed > 0 ? `${msg}（展开上面的「详情」看模型返回）` : msg);
   } catch (e: any) {
     job.log(`错误: ${e.message}`);
     job.fail(e);
@@ -877,12 +912,16 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
 tenderRouter.get('/admin/drafts', (req, res) => {
   const db = getDatabase();
   const { page, pageSize, offset } = parsePagination(req);
-  const status = (req.query.status as string) || '';
+  // status 只认这两个值。原来这个变量取了却没用（永远查 draft）——
+  // 现在 rejected（AI 判为与关键词库无关、已作废）也要能查，
+  // 而作废的行必须**只在**显式要它时出现：混进默认视图会被再点一次「批量AI提取」，
+  // 而它们的 ai_extracted 已经有值，服务层直接跳过 → 日志一句「0 条已处理」。
+  const draftStatus = (req.query.status as string) === 'rejected' ? 'rejected' : 'draft';
   const draftPlatform = (req.query.platform as string) || '';
   const draftKeyword = (req.query.keyword as string) || '';
 
-  let where = "status = 'draft'";
-  const params: any[] = [];
+  let where = 'status = ?';
+  const params: any[] = [draftStatus];
 
   if (draftPlatform) {
     where += ' AND platform = ?';
@@ -895,13 +934,40 @@ tenderRouter.get('/admin/drafts', (req, res) => {
 
   const total = (db.prepare(`SELECT COUNT(*) as count FROM tenders WHERE ${where}`).get(...params) as any).count;
   const items = db.prepare(`
-    SELECT id, platform, title, publish_date, budget_amount, purchaser_name, region_name, notice_type, url, keyword, status, content_text, contact_name, contact_phone, created_at
+    SELECT id, platform, title, publish_date, budget_amount, purchaser_name, region_name, notice_type, url, keyword, status, reject_reason, content_text, contact_name, contact_phone, created_at
     FROM tenders WHERE ${where}
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, offset);
 
-  res.json({ items, total, page, page_size: pageSize });
+  // 两个状态的条数都回：只回当前视图的 total 的话，「已作废」里堆了多少条
+  // 在默认视图上完全看不出来 —— 而误杀恰恰只能从这个数字异常大看出来。
+  const counts = db.prepare(
+    `SELECT status, COUNT(*) as count FROM tenders WHERE status IN ('draft','rejected') GROUP BY status`
+  ).all() as Array<{ status: string; count: number }>;
+
+  res.json({
+    items, total, page, page_size: pageSize, status: draftStatus,
+    draftCount: counts.find((c) => c.status === 'draft')?.count || 0,
+    rejectedCount: counts.find((c) => c.status === 'rejected')?.count || 0,
+  });
+});
+
+// 恢复误杀：作废 → 草稿，重新排队等提取。
+// 必须连 ai_extracted 一起清掉，否则再点「批量AI提取」时服务层会因为
+// 「已经提取过了」直接跳过它 —— 那条标讯从此卡在草稿库，永远进不了标讯列表，
+// 而两次点击都显示成功。reject_reason 同理：留着的话恢复后仍挂着一条陈旧理由。
+tenderRouter.post('/admin/drafts/:id/restore', (req, res) => {
+  const db = getDatabase();
+  const row = db.prepare(`SELECT status FROM tenders WHERE id = ?`).get(req.params.id) as any;
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.status !== 'rejected') {
+    return res.status(400).json({ error: `这条标讯不是作废状态（当前 ${row.status}），无需恢复` });
+  }
+  db.prepare(
+    `UPDATE tenders SET status = 'draft', reject_reason = '', ai_extracted = NULL WHERE id = ?`
+  ).run(req.params.id);
+  res.json({ success: true });
 });
 
 // ==================== Admin: Users List (for scoring selector) ====================
