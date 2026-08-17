@@ -145,8 +145,10 @@ async function handleSend() {
         data.layout || { type: 'wisdom', keyword_color: [107, 44, 37], sentence_color: [44, 40, 38] },
       )
     } else {
+      // 这里**不能**回落到 message：把用户刚问的那句话翻上看板，看起来像「答案就是问题」，
+      // 而真相是模型什么都没给（思维链吃光 max_tokens 时就是这样）。宁可显示一句人话。
       boardRef.value?.stopWaiting()
-      boardRef.value?.displayText(data.key_sentence || data.interpretation || message)
+      boardRef.value?.displayText(data.key_sentence || data.interpretation || '此问无解 请再问一次')
     }
   } catch (err: any) {
     boardRef.value?.stopWaiting()
@@ -237,7 +239,8 @@ async function handleSend() {
 @keyframes breathe { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }
 
 .expand-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 40; pointer-events: none; }
-.expand-text { font-size: 28px; color: rgba(44, 40, 38, 0.7); letter-spacing: 8px; writing-mode: vertical-rl; }
+/* 横排：竖排放大时长句会顶到屏幕上下边、还要用户转头读 */
+.expand-text { font-size: 28px; color: rgba(44, 40, 38, 0.7); letter-spacing: 8px; max-width: 70vw; text-align: center; line-height: 1.8; }
 .expand-enter-active { transition: all 1s cubic-bezier(0.23, 1, 0.32, 1); }
 .expand-leave-active { transition: all 0.8s cubic-bezier(0.55, 0, 1, 0.45); }
 .expand-enter-from { opacity: 0; transform: scale(0.8); }

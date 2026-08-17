@@ -146,6 +146,8 @@ export interface JsonGatewayResult<T> {
    * （换模型 / 关思维链）。
    */
   reasoningTokens?: number;
+  /** 最后一次尝试的 token 用量（前端「记」面板这类地方要显示）。 */
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
 /**
@@ -169,32 +171,43 @@ export async function jsonGateway<T = any>(
   let lastRaw = '';
   let lastFinish: string | undefined;
   let lastReasoning: number | undefined;
+  let lastUsage: JsonGatewayResult<T>['usage'];
 
   for (let i = 0; i < attempts; i++) {
     const { response } = await aiGateway(buildBody(), ctx);
     lastRaw = response.choices[0]?.message?.content || '';
     lastFinish = response.choices[0]?.finish_reason;
     lastReasoning = (response.usage as any)?.completion_tokens_details?.reasoning_tokens;
+    lastUsage = response.usage
+      ? {
+          prompt_tokens: response.usage.prompt_tokens,
+          completion_tokens: response.usage.completion_tokens,
+          total_tokens: response.usage.total_tokens,
+        }
+      : undefined;
 
     if (lastRaw.trim()) {
       const parsed = pick(lastRaw) as T | null;
-      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning };
+      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage };
       console.error(
         `[${ctx.source}] ${ctx.operation} JSON parse fail (try ${i + 1}/${attempts}). raw=`,
         lastRaw.slice(0, 300)
       );
-      // 截断不重试：同样的请求、同样的 max_tokens，第二次会断在同一个地方，
-      // 重发只是把 token 和时间花两遍（标讯提取一批 3 条曾因此单批耗时 85 秒）。
-      // 要么调用方把这批拆小，要么拿这段半截的 raw 去救已经写完的那几条 ——
-      // 两件事都得先拿到 finish=length 才能做。
-      if (lastFinish === 'length') break;
     } else {
       console.error(
         `[${ctx.source}] ${ctx.operation} empty content (try ${i + 1}/${attempts}). finish=${lastFinish} usage=`,
         response.usage
       );
     }
+
+    // 截断不重试：同样的请求、同样的 max_tokens，第二次会断在同一个地方，
+    // 重发只是把 token 和配额花两遍（标讯提取一批 3 条曾因此单批耗时 85 秒；
+    // 智慧看板的匿名访客一天只有 3 次，白花一次就是三分之一天）。
+    // 要么调用方把这批拆小，要么拿这段半截的 raw 去救已经写完的那几条 ——
+    // 两件事都得先拿到 finish=length 才能做。content 为空时同理：
+    // 那正是思维链吃光了额度，重发只会再吃一次。
+    if (lastFinish === 'length') break;
   }
 
-  return { parsed: null, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning };
+  return { parsed: null, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage };
 }

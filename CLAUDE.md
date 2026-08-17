@@ -573,6 +573,16 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   清完会继续往 `tender_recommendations` 写已不存在的 `tender_id`（没有外键约束，
   写得进去），刚清干净的库立刻又有孤儿，而两边的日志都显示成功。
 
+## 智慧看板（/board）拿不到答案时
+
+- **`/ai/board/chat` 空手而归必须回 502，前端也绝不回落显示用户的问题。**
+  看板只能显示它收到的东西：字段全空的 200 在屏幕上和「模型没回答」无法区分，而前端
+  旧代码 `displayText(... || message)` 会把刚问的那句话翻上看板 —— 用户看到的是
+  「今天下雨」四个大字，像是「答案就是问题」，没有一处报错。空返回的成因是思维链
+  （`max_tokens` 原来 1000，reasoning_tokens 算进额度却不进 `content`），所以报错里
+  要带上思维链 token 数，否则用户只会觉得「AI 变傻了」。
+  这个端点也**不准**再用 `/\{[\s\S]*\}/`：走 `jsonGateway`（平台唯一实现）。
+
 ## 小红书写作台的改写路径
 
 - **风格下拉只出现在真的会把它传给接口的地方。** `SelectionChat` 的

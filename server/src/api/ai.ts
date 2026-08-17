@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { aiGateway, QuotaExceededError } from '../core/llm/gateway.js';
+import { jsonGateway } from '../core/llm/parseJson.js';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -248,38 +249,51 @@ aiRouter.post('/board/chat', async (req, res) => {
       systemPrompt += `\n\n---\n\n## 暗黑智慧参考资料\n\n${darkSkillContent}`;
     }
 
-    const { response, usage } = await aiGateway(
-      {
+    // jsonGateway 而不是裸 aiGateway + /\{[\s\S]*\}/：那个贪婪正则是平台明令禁止的
+    // （模型多说一句解释就把 JSON 和解释一起匹配走，JSON.parse 必抛）。
+    //
+    // max_tokens 从 1000 提到 3000：带思维链的模型把 reasoning_tokens 也算进这个
+    // 额度却不放进 content，1000 会整段被吃光 —— content 为空 → 下面的 keyword /
+    // key_sentence 全空 → 前端拿不到答案。这条路径过去是 200 + 全空字段，
+    // 看板于是把用户自己的问题翻出来（前端旧代码 `|| message`），像是「答案就是问题」。
+    const { parsed, raw, finish, reasoningTokens, usage } = await jsonGateway<any>(
+      () => ({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message },
         ],
         temperature: 0.7,
-        max_tokens: 1000,
-      },
+        max_tokens: 3000,
+      }),
       { userId, source: 'board', operation: mode === 'dark' ? 'dark-wisdom' : 'wisdom', requestSummary: message.slice(0, 50) }
     );
 
-    const content = response.choices[0]?.message?.content || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      res.json({
-        keyword: null,
-        key_sentence: content.slice(0, 15),
-        interpretation: content,
-        domain: null,
-        layout: { type: 'wisdom', keyword_color: [180, 170, 140], sentence_color: [160, 150, 130] },
-        usage,
-      });
+    // 空返回/解析不出来**必须报错**，不能回一个字段全空的 200：
+    // 看板只能显示它收到的东西，空对象在屏幕上和「模型没回答」无法区分。
+    if (!parsed) {
+      const cot = reasoningTokens ? `，思维链占 ${reasoningTokens} token` : '';
+      const why = !raw.trim()
+        ? `模型没有返回内容（finish_reason=${finish || '未知'}${cot}）`
+        : finish === 'length'
+          ? `模型返回被截断（finish_reason=length${cot}）`
+          : '模型没有按格式返回 JSON';
+      res.status(502).json({ error: `${why}，请再问一次或换个模型` });
       return;
     }
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    // key_sentence 是看板的主体。模型给了 JSON 但这一格是空的时候，用 interpretation
+    // 的开头顶上 —— 否则又回到「字段全空的 200」。
+    const interpretation = String(parsed.interpretation || '');
+    const keySentence = String(parsed.key_sentence || '') || interpretation.slice(0, 15);
+    if (!keySentence && !parsed.keyword) {
+      res.status(502).json({ error: '模型返回的内容是空的，请再问一次' });
+      return;
+    }
+
     res.json({
       keyword: parsed.keyword || null,
-      key_sentence: parsed.key_sentence || null,
-      interpretation: parsed.interpretation || '',
+      key_sentence: keySentence || null,
+      interpretation,
       domain: parsed.domain || null,
       layout: parsed.layout || { type: 'wisdom', keyword_color: [180, 170, 140], sentence_color: [160, 150, 130] },
       usage,
