@@ -522,6 +522,16 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   走 `jsonGateway`（解析失败重试一次 + 带回 `finish_reason`），截断 / 解析失败 /
   「模型没原样回 id 于是按顺序对齐」三种情况各说一句话进运行日志，部分失败也要
   分开报数（只报成功数的话，剩下几条会被当成「本来就不该提取」）。
+- **吃掉 `max_tokens` 的是思维链，不是 JSON，所以解法是拆批而不是调大那个数。**
+  ai_logs 里有 `output_tokens=2001` 而 `content` 只有 476 字符、断在半个字段上的记录
+  —— 差额全在 `reasoning_content`，它算进 `max_tokens` 却不出现在 `content` 里。
+  三件事必须都在：截断的 raw 里救回断点前写完的对象（`parseJsonArrayItems`，只在
+  `finish_reason=length` 时用 —— 正常路径下接受半截数组等于把模型胡说也当结果）；
+  没救回来的逐条重试，**并且这一轮后面所有批次直接改成单条**（不改的话每批都要先
+  白花一次调用才发现装不下，实测 7 批全中）；报错里带上思维链 token 数，
+  不带的话用户只会一路调高 `max_tokens`，而那个数字永远调不完。
+  `jsonGateway` 遇到 `finish_reason=length` **不再重试**：同样的请求会断在同一个
+  地方，重发只是把 token 和时间花两遍（单批曾因此耗时 85 秒）。
 - **相关性闸门判 false 的代价不对称，所以缺省是放行。** `relevant=false` 的标讯置
   `status='rejected'`（作废）：不进标讯列表、不参与评分。误放一条无关的用户划过去
   就完了；误杀一条相关的，它从此不在任何列表里，用户根本不知道有这条 —— 所以

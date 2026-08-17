@@ -81,6 +81,37 @@ export function parseFirstJsonArray<T = any>(text: string): T[] | null {
 }
 
 /**
+ * 从**可能被截断**的数组文本里，逐个抠出已经闭合的顶层对象（拿不到就空数组）。
+ *
+ * parseFirstJsonArray 要求整个数组配平：模型被 max_tokens 断在半个对象上时它返回
+ * null，于是前面已经完整写好的那几条也一起丢掉 —— 表现成「提取到 0 条」+ ✅ 已完成。
+ * 这个函数只在那一种情况下当兜底（救回 N-1 条，剩下的由调用方拆开重试），
+ * **不要**拿它替换 parseFirstJsonArray：正常路径下静默接受半截数组，等于把
+ * 「模型胡说」也当成结果。
+ */
+export function parseJsonArrayItems<T = any>(text: string): T[] {
+  if (!text) return [];
+  const src = stripFence(text);
+  const start = src.indexOf('[');
+  if (start === -1) return [];
+  const out: T[] = [];
+  let i = start + 1;
+  while (i < src.length) {
+    const objAt = src.indexOf('{', i);
+    if (objAt === -1) break;
+    const end = findBalanced(src, objAt, '{', '}');
+    if (end === -1) break; // 最后一个对象没写完 —— 到此为止
+    try {
+      out.push(JSON.parse(src.slice(objAt, end + 1)) as T);
+    } catch {
+      break;
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
+/**
  * 对象或数组都接受：取先出现的那个。适合"不确定模型会吐哪种"的场景。
  */
 export function parseFirstJsonAny<T = any>(text: string): T | null {
@@ -107,6 +138,14 @@ export interface JsonGatewayResult<T> {
   parsed: T | null;
   raw: string;
   finish?: string;
+  /**
+   * 这次调用花在思维链上的 token（`usage.completion_tokens_details.reasoning_tokens`）。
+   * 带思维链的模型把它算进 completion_tokens、也算进 max_tokens，但**不放在
+   * message.content 里** —— 所以「max_tokens=4000 却断在第一条」看起来毫无道理，
+   * 用户只会一路调高 max_tokens。截断的报错必须带上这个数，它才指向真正的解法
+   * （换模型 / 关思维链）。
+   */
+  reasoningTokens?: number;
 }
 
 /**
@@ -129,19 +168,26 @@ export async function jsonGateway<T = any>(
 
   let lastRaw = '';
   let lastFinish: string | undefined;
+  let lastReasoning: number | undefined;
 
   for (let i = 0; i < attempts; i++) {
     const { response } = await aiGateway(buildBody(), ctx);
     lastRaw = response.choices[0]?.message?.content || '';
     lastFinish = response.choices[0]?.finish_reason;
+    lastReasoning = (response.usage as any)?.completion_tokens_details?.reasoning_tokens;
 
     if (lastRaw.trim()) {
       const parsed = pick(lastRaw) as T | null;
-      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish };
+      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning };
       console.error(
         `[${ctx.source}] ${ctx.operation} JSON parse fail (try ${i + 1}/${attempts}). raw=`,
         lastRaw.slice(0, 300)
       );
+      // 截断不重试：同样的请求、同样的 max_tokens，第二次会断在同一个地方，
+      // 重发只是把 token 和时间花两遍（标讯提取一批 3 条曾因此单批耗时 85 秒）。
+      // 要么调用方把这批拆小，要么拿这段半截的 raw 去救已经写完的那几条 ——
+      // 两件事都得先拿到 finish=length 才能做。
+      if (lastFinish === 'length') break;
     } else {
       console.error(
         `[${ctx.source}] ${ctx.operation} empty content (try ${i + 1}/${attempts}). finish=${lastFinish} usage=`,
@@ -150,5 +196,5 @@ export async function jsonGateway<T = any>(
     }
   }
 
-  return { parsed: null, raw: lastRaw, finish: lastFinish };
+  return { parsed: null, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning };
 }

@@ -1,5 +1,5 @@
 import { getDatabase } from '../../db/index.js';
-import { jsonGateway } from '../../core/llm/parseJson.js';
+import { jsonGateway, parseJsonArrayItems } from '../../core/llm/parseJson.js';
 
 export interface ExtractedTenderData {
   projectName: string;
@@ -26,7 +26,16 @@ const BATCH_SIZE = 3;
 // 正文长一点、资质条目多几条就顶到上限 —— 而截断的 JSON 数组括号配不平，
 // parseFirstJsonArray 返回 null，整批 0 条结果，日志却是一句
 // 「LLM 调用完成，提取到 0 条结果」+ ✅ 已完成。这是这个模块最典型的假成功。
-const MAX_OUTPUT_TOKENS = 4000;
+//
+// 提到 4000 之后仍然每批都断，因为**真正吃掉额度的是思维链**：ai_logs 里躺着
+// output_tokens=2001 而 content 只有 476 字符、断在 "qualificationRequi 的记录 ——
+// 1800 token 花在 reasoning_content 上，而它不出现在 content 里。所以光靠这个数字
+// 永远调不完，光靠调大它也不解决问题；下面三件事才是解法：
+//   1. 数字给够（8000，容得下思维链 + 一批 JSON）；
+//   2. 断了先救回已经写完的那几条（parseJsonArrayItems）；
+//   3. 剩下的拆成单条重试，并且**这一轮后面所有批次都改成单条**（见 runAIExtractForTenders）。
+// 报错里必须带上思维链 token 数，否则用户只会一路调高 max_tokens。
+const MAX_OUTPUT_TOKENS = 8000;
 
 interface BatchResult {
   data: Map<string, ExtractedTenderData>;
@@ -34,6 +43,17 @@ interface BatchResult {
   response: string;
   /** 这一批为什么没出结果（解析失败 / 被截断 / 报错）。空 = 正常。 */
   problem: string;
+  /** 模型被 max_tokens 截断（finish_reason=length）。调用方据此拆批重试。 */
+  truncated: boolean;
+}
+
+/** 截断的说法：条数、思维链占用、以及「单条也装不下」时该去改什么。 */
+function truncationProblem(count: number, got: number, reasoningTokens?: number): string {
+  const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
+  const base = `模型返回被截断（finish_reason=length，max_tokens=${MAX_OUTPUT_TOKENS}${cot}），只救回 ${got}/${count} 条`;
+  return count === 1 && got === 0
+    ? `${base} —— 单条也装不下，请在 AI 配置里换一个不输出思维链的模型`
+    : base;
 }
 
 function getExtractPromptTemplate(): string | null {
@@ -137,22 +157,27 @@ async function extractBatch(
 
   let responseContent = '';
   let problem = '';
+  let truncated = false;
   try {
     // jsonGateway 而不是裸 aiGateway：解析失败会自动重试一次，并且把
     // finish_reason 带回来 —— 「被截断」和「模型胡说」得说成两句不同的话，
     // 否则用户只能看到一句「提取到 0 条」，无从下手。
-    const { parsed, raw, finish } = await jsonGateway<any>(
+    const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
       () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_tokens: MAX_OUTPUT_TOKENS }),
       { userId, source: 'tender', operation: 'extract-batch' },
       { mode: 'array', attempts: 2 }
     );
     responseContent = raw;
+    truncated = finish === 'length';
 
-    if (!parsed) {
-      problem = finish === 'length'
-        ? `模型返回被截断（finish_reason=length，max_tokens=${MAX_OUTPUT_TOKENS}），JSON 不完整`
+    // 被截断时数组虽然没闭合，但断点之前那几个对象是完整的 —— 救回来，
+    // 剩下的交给调用方拆批重试。整批丢掉的话表现是「提取到 0 条」+ ✅ 已完成。
+    const list: any[] = parsed ?? (truncated ? parseJsonArrayItems(raw) : []);
+    if (list.length === 0) {
+      problem = truncated
+        ? truncationProblem(items.length, 0, reasoningTokens)
         : `模型返回无法解析成 JSON 数组（finish_reason=${finish || '未知'}）`;
-      return { data: results, prompt, response: responseContent, problem };
+      return { data: results, prompt, response: responseContent, problem, truncated };
     }
 
     const norm = (item: any): ExtractedTenderData => ({
@@ -176,7 +201,7 @@ async function extractBatch(
     });
 
     const inputIds = new Set(items.map((it) => it.id));
-    for (const item of parsed) {
+    for (const item of list) {
       if (item?.id && inputIds.has(String(item.id))) results.set(String(item.id), norm(item));
     }
 
@@ -184,11 +209,14 @@ async function extractBatch(
     // prompt 里写死了「顺序与输入一致」，条数又刚好对得上，这时候丢掉整批
     // 只会表现成「提取到 0 条」。但必须**说出来** —— 顺序对齐一旦是错的，
     // 就是把 A 的预算写到 B 那一行，而回帖是「✅ 已提取」。
-    if (results.size === 0 && parsed.length === items.length) {
-      items.forEach((it, i) => results.set(it.id, norm(parsed[i])));
+    if (results.size === 0 && list.length === items.length) {
+      items.forEach((it, i) => results.set(it.id, norm(list[i])));
       problem = '模型没有原样返回 id，已按输入顺序对齐（请抽查一条的采购人/预算是否张冠李戴）';
     } else if (results.size < items.length) {
-      problem = `模型只返回了 ${results.size}/${items.length} 条可用结果`;
+      // 截断和「模型少写了几条」是两回事：前者拆批重试就能补齐，后者重试也一样。
+      problem = truncated
+        ? truncationProblem(items.length, results.size, reasoningTokens)
+        : `模型只返回了 ${results.size}/${items.length} 条可用结果`;
     }
   } catch (e: any) {
     console.error(`[tender] Batch AI extract failed:`, e.message);
@@ -196,7 +224,13 @@ async function extractBatch(
     problem = `调用失败：${e.message}`;
   }
 
-  return { data: results, prompt, response: responseContent, problem };
+  return { data: results, prompt, response: responseContent, problem, truncated };
+}
+
+/** 运行日志「▶ 详情」里的那段：截断时用户唯一能看到模型到底吐了什么的地方。 */
+function fmtDetail(r: BatchResult): string {
+  const resp = r.response.slice(0, 2000) + (r.response.length > 2000 ? '...' : '');
+  return `📤 Prompt:\n${r.prompt.slice(0, 800)}...\n\n📥 Response:\n${resp}`;
 }
 
 export interface ExtractRunResult {
@@ -232,15 +266,18 @@ export async function runAIExtractForTenders(
     return { processed: 0, failed: 0, rejected: [], problems: ['选中的标讯都已经提取过了（要重跑请用强制模式）'] };
   }
 
-  onLog?.(`待提取 ${tenders.length} 条，分 ${Math.ceil(tenders.length / BATCH_SIZE)} 批处理（每批 ${BATCH_SIZE} 条）`);
+  onLog?.(`待提取 ${tenders.length} 条，每批最多 ${BATCH_SIZE} 条`);
 
-  // Process in batches
-  for (let i = 0; i < tenders.length; i += BATCH_SIZE) {
-    const batch = tenders.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(tenders.length / BATCH_SIZE);
+  // 批大小会在跑的过程中缩小：见下面截断分支。所以不预告总批数（预告了就会说谎）。
+  let batchSize = BATCH_SIZE;
+  let batchNum = 0;
 
-    onLog?.(`第 ${batchNum}/${totalBatches} 批：${batch.map(t => t.title.slice(0, 15)).join(', ')}`);
+  for (let i = 0; i < tenders.length; ) {
+    const batch = tenders.slice(i, i + batchSize);
+    i += batch.length;
+    batchNum++;
+
+    onLog?.(`第 ${batchNum} 批（${batch.length} 条）：${batch.map(t => t.title.slice(0, 15)).join(', ')}`);
 
     const batchItems = batch.map(t => ({
       id: t.id,
@@ -250,17 +287,42 @@ export async function runAIExtractForTenders(
     }));
 
     const batchResult = await extractBatch(batchItems, userId);
+    const data = new Map(batchResult.data);
+    const batchProblems = batchResult.problem ? [batchResult.problem] : [];
+    let detail = fmtDetail(batchResult);
 
-    const detail = `📤 Prompt:\n${batchResult.prompt.slice(0, 800)}...\n\n📥 Response:\n${batchResult.response.slice(0, 2000)}${batchResult.response.length > 2000 ? '...' : ''}`;
-    if (batchResult.problem) {
-      problems.push(batchResult.problem);
-      onLog?.(`⚠️ 第 ${batchNum} 批：${batchResult.problem}（提取到 ${batchResult.data.size}/${batch.length} 条）`, detail);
+    // 截断 = 这一批的输出装不进 max_tokens，重发同样的请求会断在同一个地方
+    // （jsonGateway 因此也不再重试）。唯一能装下的办法是把批拆开：
+    //   1. 没救回来的那几条逐条重试 —— 不然它们只是「17 条提取失败，仍在草稿库」，
+    //      而用户点一次提取要等十分钟，不会再点第二次；
+    //   2. **后面所有批次直接改成单条** —— 不改的话每一批都要先白花一次调用
+    //      （加上 1500 字正文的输入 token）才发现装不下，实测 7 批全中。
+    if (batchResult.truncated) {
+      const missing = batchItems.filter((it) => !data.has(it.id));
+      if (missing.length > 0 && batch.length > 1) {
+        onLog?.(`↪️ 第 ${batchNum} 批被截断，剩下 ${missing.length} 条改成逐条重试`);
+        for (const one of missing) {
+          const single = await extractBatch([one], userId);
+          for (const [k, v] of single.data) data.set(k, v);
+          if (single.problem) batchProblems.push(single.problem);
+          detail += `\n\n===== 逐条重试：${one.title.slice(0, 20)} =====\n${fmtDetail(single)}`;
+        }
+      }
+      if (batchSize > 1) {
+        batchSize = 1;
+        onLog?.(`⚙️ 这个模型的输出装不下 ${BATCH_SIZE} 条，后续批次改为每批 1 条`);
+      }
+    }
+
+    if (batchProblems.length > 0) {
+      problems.push(...batchProblems);
+      onLog?.(`⚠️ 第 ${batchNum} 批：${batchProblems.join('；')}（最终提取到 ${data.size}/${batch.length} 条）`, detail);
     } else {
-      onLog?.(`第 ${batchNum} 批 LLM 调用完成，提取到 ${batchResult.data.size} 条结果`, detail);
+      onLog?.(`第 ${batchNum} 批 LLM 调用完成，提取到 ${data.size} 条结果`, detail);
     }
 
     for (const tender of batch) {
-      const result = batchResult.data.get(tender.id);
+      const result = data.get(tender.id);
       if (result) {
         // deadline 和 budget_amount / purchaser_name 一样只在空时才写。
         //
@@ -305,7 +367,7 @@ export async function runAIExtractForTenders(
       }
     }
 
-    onLog?.(`第 ${batchNum}/${totalBatches} 批完成，已处理 ${processed}/${tenders.length}`);
+    onLog?.(`第 ${batchNum} 批完成，已处理 ${processed}/${tenders.length}`);
   }
 
   return { processed, failed: tenders.length - processed, rejected, problems: [...new Set(problems)] };
