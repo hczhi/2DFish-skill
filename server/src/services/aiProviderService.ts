@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
 import { encryptSecret, tryDecryptSecret, maskSecret } from '../core/secrets.js';
 import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
+import { revokeRelayKeysByProvider } from './relayKeyService.js';
 
 export type ProviderKind = 'llm' | 'image';
 export type LLMTier = 'default' | 'strong' | 'fast';
@@ -239,9 +240,19 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
   return merged;
 }
 
-export function deleteProvider(id: string): void {
+/**
+ * 删除接入点，并把绑在它上面的对外中转 key 一起标废（返回标废了几把）。
+ *
+ * 两件事必须在一起做：provider 的 id 是可以被重建成同一个的（种子那条就叫
+ * `default-llm`），只靠调用时「查不到那条 provider 就拒」的话，删掉再建一条同 id 的
+ * 之后，那把早该失效的 key 会连着新接入点继续工作 —— 下游一切正常，
+ * 管理员以为自己已经把接口断掉了。
+ */
+export function deleteProvider(id: string): { revokedRelayKeys: number } {
   const db = getDatabase();
+  const revokedRelayKeys = revokeRelayKeysByProvider(id, '接入点已删除');
   db.prepare('DELETE FROM ai_providers WHERE id = ?').run(id);
+  return { revokedRelayKeys };
 }
 
 /**

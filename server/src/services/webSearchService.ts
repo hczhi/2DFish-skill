@@ -12,6 +12,12 @@ export interface WebSearchResult {
   content: string;
   /** 相关度 0-1（Tavily 提供），用于排序/过滤 */
   score: number;
+  /**
+   * 发布日期（Tavily 只在部分结果上给，常常是空串）。
+   * 空的时候调用方必须显示「未标日期」而不是省略这一栏 ——
+   * 三年前的旧数字和今年的读起来一模一样。
+   */
+  published: string;
 }
 
 /** 读取搜索 key，没配置返回 null（调用方据此降级）。 */
@@ -71,5 +77,6 @@ export async function webSearch(
     url: String(r.url || ''),
     content: String(r.content || ''),
     score: typeof r.score === 'number' ? r.score : 0,
+    published: String(r.published_date || ''),
   }));
 }

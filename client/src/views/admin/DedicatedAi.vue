@@ -81,6 +81,14 @@
               <button class="hc-btn hc-btn-secondary" @click="testDed(p)" :disabled="testingId === p.id">
                 {{ testingId === p.id ? '测试中…' : '测试' }}
               </button>
+              <button
+                v-if="p.kind === 'llm'"
+                class="hc-btn hc-btn-secondary"
+                @click="makeRelayKey(p)"
+                :disabled="relayBusyId === p.id"
+              >
+                {{ relayBusyId === p.id ? '生成中…' : '生成对外接口' }}
+              </button>
               <button class="hc-btn hc-btn-danger" @click="removeDed(p)">删除</button>
             </div>
             <p v-if="testResults[p.id]" class="test-result" :class="testResults[p.id].ok ? 'ok' : 'err'">
@@ -140,6 +148,121 @@
           <button v-if="dedForm.id" class="hc-btn hc-btn-secondary" @click="resetDedForm">取消编辑</button>
           <span class="ok-text" v-if="savedNotice">{{ savedNotice }}</span>
         </div>
+      </section>
+
+      <!-- 对外中转接口（migration 082） -->
+      <section class="block" ref="relayEl">
+        <h2>对外中转接口</h2>
+        <p class="ded-intro">
+          给上面某条 <b>llm</b> 接入点生成一把 key，下游用 OpenAI 协议调<b>我们的域名</b>，
+          我们拿那条接入点的 key 转发。调用记在 <b>{{ user.username }}</b> 头上（用量、限流都按人算）。
+          <br />
+          · <b>模型由接入点决定</b>，下游 body 里的 <code>model</code> 传什么都没用，也不支持流式。
+          <br />
+          · <b>接入点停用或删除后这把 key 立刻不能用</b>，下游会收到「接口已关闭，请联系管理员」。
+        </p>
+
+        <!-- 明文 key 只有这一次。库里只有 sha256，关掉这块就再也看不到了 —— 所以这里
+             既要显眼、又必须把「复制失败」说出来：静默失败的话管理员以为已经复制走了。 -->
+        <div class="relay-new" v-if="newRelay">
+          <div class="relay-new-head">
+            <b>接口已生成 —— 下面这把 key 只显示这一次</b>
+            <button class="hc-btn hc-btn-secondary" @click="newRelay = null">我已复制，关闭</button>
+          </div>
+          <dl class="relay-fields">
+            <div>
+              <dt>Base URL</dt>
+              <dd class="mono break">{{ relayBaseUrl }}</dd>
+              <button class="hc-btn hc-btn-secondary" @click="copy(relayBaseUrl)">复制</button>
+            </div>
+            <div>
+              <dt>API Key</dt>
+              <dd class="mono break key">{{ newRelay.key }}</dd>
+              <button class="hc-btn hc-btn-primary" @click="copy(newRelay.key)">复制</button>
+            </div>
+            <div>
+              <dt>模型</dt>
+              <dd class="mono">{{ newRelay.model || '（接入点没填模型名）' }}</dd>
+              <span class="ded-sub">下游填什么都会被换成这个</span>
+            </div>
+          </dl>
+          <p class="copy-note" :class="copyState.ok ? 'ok' : 'err'" v-if="copyState.msg">{{ copyState.msg }}</p>
+          <p class="ded-sub">
+            走的是这条接入点：<b>{{ newRelay.providerLabel }}</b>。
+            下游把 base_url 填成上面那个地址即可用任何 OpenAI 客户端调用，
+            端点是 <code>POST {{ relayBaseUrl }}/chat/completions</code>（不支持流式）。
+          </p>
+          <div class="relay-curl">
+            <code class="mono break">{{ curlSample }}</code>
+            <button class="hc-btn hc-btn-secondary" @click="copy(curlSample)">复制 curl</button>
+          </div>
+        </div>
+
+        <!-- 用量 + 限流。两件事放一起：看到「今天已经 800 次」才会想到去填那个上限。 -->
+        <div class="relay-usage">
+          <div class="usage-nums">
+            <div><b>{{ relayUsage.today_calls }}</b><span>今日调用</span></div>
+            <div><b>{{ relayUsage.week_calls }}</b><span>近 7 天调用</span></div>
+            <div><b>{{ fmtTokens(relayUsage.week_tokens) }}</b><span>近 7 天 tokens</span></div>
+          </div>
+          <div class="usage-quota">
+            <label>每日调用上限
+              <input v-model="relayQuotaInput" placeholder="留空 = 不限" style="width: 110px;" />
+            </label>
+            <button class="btn-primary" @click="saveRelayQuota">保存上限</button>
+            <span class="ded-sub" v-if="relayQuota">
+              今日已用 {{ relayQuota.used }} / {{ relayQuota.limit }}，剩 {{ relayQuota.remaining }}
+            </span>
+            <span class="ded-sub" v-else>当前不限</span>
+          </div>
+        </div>
+        <p class="ded-sub">
+          <!-- 合计数摆到某一行 key 旁边的话，管理员会照着它判「哪个下游在烧」，
+               而那个数字里混着另外几把 key 的调用。所以这里必须写明口径。 -->
+          以上是这个用户<b>所有对外 key 的合计</b>（日志里没有单把 key 的维度，每把 key 只有「最近调用」）。
+          上限 = 对外接口每天最多调多少次，撞了下游收到 429；填 <b>0</b> = 立刻掐停，留空 = 不限。
+          它和「按应用单独配置」里的<b>「对外中转接口」是同一个数</b>，改哪边都一样。
+        </p>
+        <p class="error" v-if="relayQuotaError">{{ relayQuotaError }}</p>
+
+        <div class="hc-table-container" v-if="relayKeys.length">
+          <table class="hc-table relay-table">
+            <thead>
+              <tr><th>Key</th><th>用途</th><th>走哪条接入点</th><th>状态</th><th>最近调用</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="k in relayKeys" :key="k.id" :class="{ dead: !!k.revoked_at }">
+                <td class="mono">{{ k.key_prefix }}</td>
+                <td>{{ k.label || '—' }}</td>
+                <td>
+                  <!-- 接入点被删之后这一格必须说清楚，否则下游收到「接口已关闭」而这边
+                       只看到一行 key，看不出是被什么牵连废掉的。 -->
+                  <span v-if="relayProvider(k)">
+                    {{ relayProvider(k)!.label || relayProvider(k)!.id }}
+                    <span class="mono ded-sub">{{ relayProvider(k)!.model }}</span>
+                    <span class="warn-text" v-if="!relayProvider(k)!.enabled"> · 接入点已停用</span>
+                  </span>
+                  <span class="err-text" v-else>接入点已删除</span>
+                </td>
+                <td>
+                  <span class="ok-text" v-if="!k.revoked_at">有效</span>
+                  <span class="err-text" v-else>已失效 · {{ k.revoke_reason || '未记录原因' }}</span>
+                </td>
+                <td class="ded-sub">{{ k.last_used_at ? fmtTime(k.last_used_at) : '还没被调用过' }}</td>
+                <td>
+                  <button
+                    v-if="!k.revoked_at"
+                    class="hc-btn hc-btn-danger"
+                    @click="revokeRelay(k)"
+                  >吊销</button>
+                  <span v-else class="ded-sub">{{ fmtTime(k.revoked_at) }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="empty-hint">还没有对外接口。在上面某条 llm 接入点上点「生成对外接口」。</p>
+        <p class="error" v-if="relayError">{{ relayError }}</p>
       </section>
 
       <!-- 按应用：单独指定 token + 单独限额 -->
@@ -246,6 +369,13 @@ interface AppTierResolution {
 
 interface AppQuota { app: string; used: number; limit: number; remaining: number }
 
+/** 对外中转接口的一把 key（migration 082）。明文只在生成那一次拿到，这里只有前缀。 */
+interface RelayKey {
+  id: string; user_id: string; provider_id: string; key_prefix: string; label: string;
+  enabled: number; revoked_at: string | null; revoke_reason: string;
+  last_used_at: string | null; created_at: string;
+}
+
 const route = useRoute()
 const router = useRouter()
 const userId = route.params.id as string
@@ -269,6 +399,37 @@ const appQuotas = ref<AppQuota[]>([])
 const focusApp = ref('')
 const quotaInput = ref<string>('')
 const quotaError = ref('')
+
+// --- 对外中转接口（migrations/082）---
+const relayKeys = ref<RelayKey[]>([])
+const relayError = ref('')
+const relayBusyId = ref('')
+const relayEl = ref<HTMLElement | null>(null)
+/** 刚生成的那把：明文 key 只在这里存在，刷新一次就没了。 */
+const newRelay = ref<{ key: string; model: string; providerLabel: string } | null>(null)
+const copyState = ref<{ ok: boolean; msg: string }>({ ok: true, msg: '' })
+
+// 下游要填的地址。写死域名的话，换个部署环境（本机 / 测试 / 线上）复制出去的地址
+// 就是错的，而下游那边的报错是「连不上」，读起来像我们的服务挂了。
+const relayBaseUrl = computed(() => `${window.location.origin}/api/v1`)
+
+/** 对外接口的 app id（= core/llm/apps.ts 里的那一行，额度也按它记）。 */
+const RELAY_APP = 'relay'
+const relayUsage = ref({ today_calls: 0, today_tokens: 0, week_calls: 0, week_tokens: 0 })
+const relayQuotaInput = ref('')
+const relayQuotaError = ref('')
+const relayQuota = computed(() => appQuotas.value.find(q => q.app === RELAY_APP) || null)
+const fmtTokens = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)} 万` : String(n))
+
+/** 一条能直接粘到终端里跑的验证命令 —— key 只显示这一次，顺手把它验掉最省事。 */
+const curlSample = computed(() =>
+  newRelay.value
+    ? `curl ${relayBaseUrl.value}/chat/completions -H "Authorization: Bearer ${newRelay.value.key}" -H "Content-Type: application/json" -d '{"messages":[{"role":"user","content":"你好"}]}'`
+    : ''
+)
+
+const relayProvider = (k: RelayKey) => dedProviders.value.find(p => p.id === k.provider_id) || null
+const fmtTime = (s: string) => new Date(s).toLocaleString('zh-CN', { hour12: false })
 
 const appName = (id: string) => dedApps.value.find(a => a.id === id)?.name || id
 const focusResolutions = computed(() => (focusApp.value ? appResolutions.value[focusApp.value] || [] : []))
@@ -313,16 +474,21 @@ async function loadDedicated() {
       user: { id: string; username: string };
       providers: Provider[]; status: DedStatus; apps: AppDef[];
       app_resolutions: Record<string, AppTierResolution[]>; app_quotas: AppQuota[];
+      relay_keys: RelayKey[];
+      relay_usage: { today_calls: number; today_tokens: number; week_calls: number; week_tokens: number };
     }>(`/api/admin/users/${userId}/dedicated-ai`)
     user.value = r.user
     dedProviders.value = r.providers
     dedStatus.value = r.status
+    relayKeys.value = r.relay_keys || []
+    relayUsage.value = r.relay_usage || { today_calls: 0, today_tokens: 0, week_calls: 0, week_tokens: 0 }
     // 应用清单由后端给（= core/llm/apps.ts 的白名单）。前端硬编码一份的话，
     // 加了新模块只改一边，漏掉的那个应用配了也永远不生效。
     dedApps.value = r.apps || []
     appResolutions.value = r.app_resolutions || {}
     appQuotas.value = r.app_quotas || []
     syncQuotaInput()
+    relayQuotaInput.value = relayQuota.value ? String(relayQuota.value.limit) : ''
   } catch (e: any) {
     loadError.value = e.message || '加载失败'
   }
@@ -335,23 +501,36 @@ function syncQuotaInput() {
 
 watch(focusApp, () => { quotaError.value = ''; syncQuotaInput() })
 
-/** 保存该应用的每日额度。留空 = 取消限制（后端删行）。 */
-async function saveAppQuota() {
-  if (!focusApp.value) return
-  quotaError.value = ''
-  const raw = quotaInput.value.trim()
+/**
+ * 保存某应用的每日额度。留空 = 取消限制（后端删行）。返回错误文案，空串 = 成功。
+ *
+ * 两个输入框（按应用那块、对外接口那块）共用这一份校验：各写一遍的话，一边接受 0
+ * 一边把 0 当空值，而 0 的含义是「一次都不许调」—— 从哪个框保存的看不出来。
+ */
+async function putAppQuota(app: string, raw: string): Promise<string> {
   let daily_limit: number | null = null
-  if (raw !== '') {
-    const n = Number(raw)
-    if (!Number.isInteger(n) || n < 0) { quotaError.value = '请填非负整数，或留空表示不限制'; return }
+  const s = raw.trim()
+  if (s !== '') {
+    const n = Number(s)
+    if (!Number.isInteger(n) || n < 0) return '请填非负整数，或留空表示不限制'
     daily_limit = n
   }
   try {
-    await apiPut(`/api/admin/users/${userId}/app-quota`, { app: focusApp.value, daily_limit })
+    await apiPut(`/api/admin/users/${userId}/app-quota`, { app, daily_limit })
     await loadDedicated()
+    return ''
   } catch (e: any) {
-    quotaError.value = e.message || '保存失败'
+    return e.message || '保存失败'
   }
+}
+
+async function saveAppQuota() {
+  if (!focusApp.value) return
+  quotaError.value = await putAppQuota(focusApp.value, quotaInput.value)
+}
+
+async function saveRelayQuota() {
+  relayQuotaError.value = await putAppQuota(RELAY_APP, relayQuotaInput.value)
 }
 
 /** 在编辑器里直接为当前应用新增一条接入点（省掉「新增后还要记得选应用」这一步）。 */
@@ -403,15 +582,68 @@ function editDed(p: Provider) {
 }
 
 async function removeDed(p: Provider) {
-  if (!confirm(`确定删除接入点「${p.label || p.model || p.id}」？`)) return
+  // 先把「有几把对外 key 绑在它上面」摆到确认框里：不说的话，删完那几个下游明天
+  // 开始收到「接口已关闭」，而这边只看到一句「已删除接入点」。
+  const bound = relayKeys.value.filter(k => k.provider_id === p.id && !k.revoked_at).length
+  const extra = bound ? `\n\n注意：有 ${bound} 把对外接口 key 绑在它上面，会一起失效，下游立刻调不通。` : ''
+  if (!confirm(`确定删除接入点「${p.label || p.model || p.id}」？${extra}`)) return
   dedError.value = ''
   try {
-    await apiDelete(`/api/admin/providers/${p.id}`)
+    const r = await apiDelete<{ revoked_relay_keys?: number }>(`/api/admin/providers/${p.id}`)
     if (dedForm.value.id === p.id) resetDedForm()
-    savedNotice.value = '已删除接入点'
+    savedNotice.value = r?.revoked_relay_keys
+      ? `已删除接入点，顺带吊销了 ${r.revoked_relay_keys} 把对外接口 key`
+      : '已删除接入点'
     await loadDedicated()
   } catch (e: any) {
     dedError.value = e.message || '删除失败'
+  }
+}
+
+/** 给这条接入点生成一把对外 key。明文只在返回值里出现一次。 */
+async function makeRelayKey(p: Provider) {
+  relayError.value = ''
+  copyState.value = { ok: true, msg: '' }
+  const label = prompt(`这把 key 给谁用？（记个用途，方便以后吊销对的那一把）`, p.label || '')
+  if (label === null) return
+  relayBusyId.value = p.id
+  try {
+    const r = await apiPost<{ key: string; relay_key: RelayKey }>(`/api/admin/users/${userId}/relay-keys`, {
+      provider_id: p.id,
+      label,
+    })
+    newRelay.value = { key: r.key, model: p.model, providerLabel: p.label || p.model || p.id }
+    await loadDedicated()
+    await nextTick()
+    relayEl.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  } catch (e: any) {
+    relayError.value = e.message || '生成失败'
+  } finally {
+    relayBusyId.value = ''
+  }
+}
+
+async function revokeRelay(k: RelayKey) {
+  if (!confirm(`吊销 ${k.key_prefix}${k.label ? `（${k.label}）` : ''}？下游会立刻调不通，且不能恢复。`)) return
+  relayError.value = ''
+  try {
+    await apiDelete(`/api/admin/relay-keys/${k.id}`)
+    await loadDedicated()
+  } catch (e: any) {
+    relayError.value = e.message || '吊销失败'
+  }
+}
+
+/**
+ * 复制。失败必须出声 —— 明文 key 只显示这一次，静默失败的话管理员以为已经复制走了，
+ * 关掉这块之后那把 key 就只能重新生成。
+ */
+async function copy(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    copyState.value = { ok: true, msg: '已复制到剪贴板' }
+  } catch {
+    copyState.value = { ok: false, msg: '复制失败（浏览器不允许），请手动选中上面那串文字复制' }
   }
 }
 
@@ -526,6 +758,44 @@ onMounted(loadDedicated)
 .test-result { font-size: 12px; margin: 12px 0 0; line-height: 1.4; font-weight: 500; }
 .test-result.ok { color: #16a34a; }
 .test-result.err { color: #dc2626; }
+
+/* 对外中转接口 */
+.relay-new {
+  border: 1px solid rgba(59, 91, 219, 0.35); background: rgba(59, 91, 219, 0.04);
+  border-radius: 12px; padding: 20px; margin-bottom: 24px;
+}
+.relay-new-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.relay-new-head b { color: #3B5BDB; font-size: 14px; }
+.relay-fields { margin: 16px 0 0; display: flex; flex-direction: column; gap: 12px; }
+.relay-fields > div { display: flex; align-items: center; gap: 12px; }
+.relay-fields dt { flex-shrink: 0; width: 72px; font-size: 12px; color: #9ca3af; font-weight: 600; }
+.relay-fields dd { margin: 0; color: #111827; min-width: 0; flex: 1; }
+.relay-fields dd.key { user-select: all; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+.relay-curl {
+  display: flex; align-items: center; gap: 12px; margin-top: 12px;
+  background: #111827; color: #e5e7eb; border-radius: 8px; padding: 12px 14px;
+}
+.relay-curl code { flex: 1; min-width: 0; font-size: 11px; line-height: 1.5; user-select: all; }
+.copy-note { font-size: 12px; margin: 12px 0 0; font-weight: 500; }
+.copy-note.ok { color: #16a34a; }
+.copy-note.err { color: #dc2626; }
+.relay-usage {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  padding: 16px 20px; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 12px; background: #fafafa;
+}
+.usage-nums { display: flex; gap: 32px; }
+.usage-nums > div { display: flex; flex-direction: column; gap: 4px; }
+.usage-nums b { font-size: 20px; font-weight: 700; color: #111827; letter-spacing: -0.5px; }
+.usage-nums span { font-size: 12px; color: #6b7280; }
+.usage-quota { display: flex; align-items: center; gap: 12px; font-size: 13px; flex-wrap: wrap; }
+.usage-quota label { display: flex; align-items: center; gap: 8px; font-weight: 600; color: #4b5563; }
+.usage-quota input {
+  padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 14px;
+  background: #fff; color: #111827;
+}
+.usage-quota input:focus { outline: none; border-color: #3B5BDB; box-shadow: 0 0 0 4px rgba(59, 91, 219, 0.15); }
+.relay-table { font-size: 13px; }
+.relay-table tr.dead { background: #fafafa; color: #9ca3af; }
 
 /* 按应用配置 */
 .app-picker { display: flex; align-items: flex-end; gap: 16px; margin: 16px 0 20px; font-size: 13px; }

@@ -169,6 +169,31 @@ const router = createRouter({
       path: '/en/xhs/:pathMatch(.*)*',
       redirect: (to) => '/xhs' + (to.params.pathMatch ? '/' + (to.params.pathMatch as string[]).join('/') : ''),
     },
+    // 品牌咨询：/consult 是封面（不要求登录，可以直接发出去），
+    // 项目列表和工作台在 /consult/projects 下。列表段落写死成 projects
+    // 而不是让 /consult/:id 兜住 —— 参数路由会把 /consult/projects 当成一个项目 id，
+    // 打开是「项目不存在」而不是 404，读起来像项目丢了。不做 /en 版本。
+    {
+      path: '/consult',
+      name: 'consult-cover',
+      component: () => import('../views/consult/ConsultCover.vue'),
+    },
+    {
+      path: '/consult/projects',
+      name: 'consult-home',
+      component: () => import('../views/consult/ConsultHome.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/consult/projects/:id',
+      name: 'consult-project',
+      component: () => import('../views/consult/ConsultProject.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/en/consult/:pathMatch(.*)*',
+      redirect: (to) => '/consult' + (to.params.pathMatch ? '/' + (to.params.pathMatch as string[]).join('/') : ''),
+    },
     {
       // 飞书助理是登录后的配置台，没有对外展示页，所以不做 /en 版本。
       path: '/feishu',

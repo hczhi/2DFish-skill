@@ -28,6 +28,8 @@ export const AI_APPS: AIAppDef[] = [
   { id: 'consultant', name: 'AI 顾问' },
   { id: 'fish', name: '摸鱼缸' },
   { id: 'board', name: '智慧看板' },
+  { id: 'consult', name: '品牌咨询工作台' },
+  { id: 'relay', name: '对外中转接口' },
 ];
 
 const APP_IDS = new Set(AI_APPS.map((a) => a.id));

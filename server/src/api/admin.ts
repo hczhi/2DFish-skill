@@ -9,6 +9,10 @@ import {
   listProviders, upsertProvider, deleteProvider, maskProvider, getProvider,
   dedicatedChannelStatus, appChannelStatus, REQUIRED_LLM_TIERS,
 } from '../services/aiProviderService.js';
+import {
+  createRelayKey, listRelayKeys, getRelayKeyById, revokeRelayKey,
+} from '../services/relayKeyService.js';
+import { relayUsage } from '../services/relayService.js';
 import { AI_APPS, isValidAppScope } from '../core/llm/apps.js';
 import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
 import { getAppQuotaStatus } from '../core/llm/gateway.js';
@@ -321,8 +325,44 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
 });
 
 adminRouter.delete('/providers/:id', (req: Request, res: Response) => {
-  deleteProvider(req.params.id);
-  res.json({ success: true });
+  // 顺带吊销的对外 key 数量必须回出去并显示：删接入点的人不一定知道有下游在用它，
+  // 不说的话那几个下游明天开始收到「接口已关闭」，而这边只看到一句「已删除」。
+  const { revokedRelayKeys } = deleteProvider(req.params.id);
+  res.json({ success: true, revoked_relay_keys: revokedRelayKeys });
+});
+
+// --- 对外中转接口的 key（migration 082）---
+// 挂在「某个用户的某条专属接入点」上：调用记在这个用户头上（ai_logs → 用量/限流按人算），
+// 转发用绑定的那条接入点。接入点停用或删除后这把 key 立刻不可用（见 relayKeyService）。
+
+adminRouter.post('/users/:id/relay-keys', (req: Request, res: Response) => {
+  const db = getDatabase();
+  const user = db.prepare('SELECT id FROM user WHERE id = ?').get(req.params.id);
+  if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+  const providerId = String(req.body?.provider_id || '').trim();
+  const provider = providerId ? getProvider(providerId) : undefined;
+  // 必须是这个用户自己的接入点：挂到平台级或别人的接入点上，这把 key 花的就是别人的
+  // key，而后台那一页看着是「这个用户的对外接口」，用量也记在他头上。
+  if (!provider || provider.owner_user_id !== req.params.id) {
+    res.status(400).json({ error: '请选择该用户自己的接入点（provider_id 不存在或不属于这个用户）' });
+    return;
+  }
+  if (provider.kind !== 'llm') {
+    res.status(400).json({ error: '只有文本模型（kind=llm）能生成对外接口 —— 生图接入点转出来的 /chat/completions 永远调不通' });
+    return;
+  }
+
+  const { key, row } = createRelayKey(req.params.id, providerId, String(req.body?.label || ''));
+  // key 明文只有这一次 —— 前端必须当场让管理员复制走，库里只有 sha256
+  res.json({ key, relay_key: row, provider: maskProvider(provider) });
+});
+
+adminRouter.delete('/relay-keys/:keyId', (req: Request, res: Response) => {
+  const row = getRelayKeyById(req.params.keyId);
+  if (!row) { res.status(404).json({ error: '这把 key 不存在' }); return; }
+  revokeRelayKey(req.params.keyId, '管理员手动吊销');
+  res.json({ success: true, relay_key: getRelayKeyById(req.params.keyId) });
 });
 
 // --- 用户专属 AI 渠道 ---
@@ -349,6 +389,13 @@ adminRouter.get('/users/:id/dedicated-ai', (req: Request, res: Response) => {
       AI_APPS.map((a) => [a.id, appChannelStatus(req.params.id, a.id)])
     ),
     app_quotas: getAppQuotaStatus(req.params.id),
+    // 对外中转 key。已吊销的也回：下游收到「接口已关闭」时管理员要能在这里
+    // 看到是哪一把、什么时候废的、为什么废（手动吊销 / 接入点被删）——
+    // 界面上找不到那把 key 的话，只能怀疑接口坏了。
+    relay_keys: listRelayKeys(req.params.id),
+    // 合计用量（这个人所有 key 加起来）。ai_logs 没有 key 维度，界面上不能把它
+    // 摆到某一行 key 旁边 —— 见 relayUsage 的注释。
+    relay_usage: relayUsage(req.params.id),
   });
 });
 

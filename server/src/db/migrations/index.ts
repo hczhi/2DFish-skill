@@ -75,6 +75,13 @@ import { migration_072 } from './072_task_base_gantt.js';
 import { migration_073 } from './073_task_url_backfill.js';
 import { migration_074 } from './074_cross_links.js';
 import { migration_075 } from './075_tender_reject_reason.js';
+import { migration_076 } from './076_consult_projects.js';
+import { migration_077 } from './077_consult_messages.js';
+import { migration_078 } from './078_consult_entry_body.js';
+import { migration_079 } from './079_consult_sources.js';
+import { migration_080 } from './080_consult_intake.js';
+import { migration_081 } from './081_consult_ai_opportunities.js';
+import { migration_082 } from './082_llm_relay_keys.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -151,4 +158,11 @@ export const allMigrations: Migration[] = [
   migration_073,
   migration_074,
   migration_075,
+  migration_076,
+  migration_077,
+  migration_078,
+  migration_079,
+  migration_080,
+  migration_081,
+  migration_082,
 ];

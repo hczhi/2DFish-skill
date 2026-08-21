@@ -97,6 +97,85 @@ SSE 流式端点，消耗额度。
 
 ---
 
+## 品牌咨询工作台 (/consult)
+
+一个品牌 = 一个项目，14 步（四看 / 四问 / 四大成 / 第二层内容营销 / 第三层数字化营销）。全部 `PROTECTED`。
+`lane` 有三个值，决定这一步走哪条接口：`fast` 和 `plan` 都走 `/draft`，`slow` 走 `/directions`。
+前端分组顺序**按 `GET /stages` 返回的顺序推**，不写死分组名清单 —— 写死的话新增的分组
+在左栏里完全不存在，而进度数和解锁全是对的，界面上看不出少了几步。
+
+### GET /api/consult/stages
+阶段清单（key / label / group / lane / question / requires / **method** / deliverables）。前端不写第二份。
+`method` 是这一步的**分析操法**（方法论规定的推导顺序与判断标准）—— 和进 prompt 的是同一份，
+界面上要照原样显示：正文对不上它的顺序就是没照方法论推，而那种正文和推出来的长得一样。
+
+### GET /api/consult/projects
+### POST /api/consult/projects
+`{ brandName, brief }`。超长直接 400，**不截断**。
+
+### GET /api/consult/projects/:id
+`{ project, stages, entries, sources, intake, intakeRounds, searchEnabled }`。
+`intake` 是**还没补进资料的那一轮问卷**（含已填答案），刷新页面靠它恢复。`searchEnabled=false` 表示这个部署
+没配搜索 key，前端必须显示出来（否则用户以为 AI 会上网）。
+
+### PUT /api/consult/projects/:id/brief
+### PUT /api/consult/projects/:id/name
+### DELETE /api/consult/projects/:id
+
+### POST /api/consult/projects/:id/stages/:key/draft
+快车道（`fast`）和执行层（`plan`）出草稿，两者 system prompt 不同（找事实 vs 承接结论出方案），
+`slow` 的阶段走这里返回 400。`plan` 不要求客户资料非空（它的依据是上游定稿），`fast` 要求。
+**不落库**，返回 `{ draft, truncated, message, stages }`。
+`draft.body` 固定以 `## 0. 方法论速览` 开头、以 `## 写作建议` 结尾（两节不在输出物清单里，
+但每次都有）；`draft.aiOpportunities` 是 1–2 条 AI 赋能机会，**独立字段不在正文里** ——
+报告最后那一章「AI 转型机会清单」按它取数。
+
+### POST /api/consult/projects/:id/stages/:key/directions
+慢车道出 2–4 个互斥方向，每个带 `markdown`（三件套整段，选中后即定稿正文）+ `writingTip`
++ `aiOpportunities`，外层带 `verdict` 和 `methodBrief`（方法论速览，已拼进每个方向的 markdown
+开头；模型没给时那一节写明「没给」而不是消失）。
+
+### GET /api/consult/projects/:id/stages/:key/messages
+### POST /api/consult/projects/:id/stages/:key/chat
+
+### PUT /api/consult/projects/:id/stages/:key/entry
+定稿进知识库。返回 `{ entry, staled, stages, entries }` —— `staled` 是被标成「待重跑」
+的下游步骤，前端必须显示。`source_level` **由服务端按实际依据算**（有联网资料 → L1，
+只有客户资料 → L2，都没有 → L3），请求体里传的会被忽略。
+请求体可带 `aiOpportunities: string[]`（每步最多 2 条、每条 200 字，超了 **400 只拒不截**），
+落在 `entry.ai_opportunities`（JSON 数组字符串，老定稿是 `'[]'`）。老定稿前端要显示成
+「没标 AI 机会」而不是留空 —— 留空和「这一步确实没有」长得一样。
+
+### POST /api/consult/projects/:id/intake
+让 AI 读客户资料出一份补料问卷 → `{ gaps, questions: [{ id, section, question, why, placeholder }], truncated, round, rounds }`。
+落库（migration 080，一轮一行），**会删掉这个项目里上一轮没提交的问卷** —— 前端在
+已经填了答案时要先确认。题数太少（模型没按格式回）时 502 + 说明 —— 绝不回空问卷
+（空问卷读作「资料已经够了」）；出的题全是之前问过并且答过的时候 409 + 说明。
+
+### PUT /api/consult/projects/:id/intake/answers
+`{ roundId, answers: { <questionId>: text } }` 暂存填了一半的答案（前端逐题失焦时调）。
+那一轮不在了 / 已提交时 **409**，不静默 200 —— 一路显示「已暂存」而其实没存，
+用户关掉页面才发现是空的。
+
+### POST /api/consult/projects/:id/intake/apply
+`{ roundId, answers: [{ id, question, answer, section }] }` → `{ applied, brief, briefChars, rounds }`。
+服务端**追加**到客户资料末尾并落库（不收整份 brief —— 整段替换会覆盖用户在别处的编辑）。
+空答案的题连题目一起丢掉；超过 20000 字直接 400，不截断；同一 `roundId` 补第二遍 **409**
+（补两遍 = 同一批答案在资料里两份，AI 会当成两处独立印证）。
+
+### POST /api/consult/projects/:id/stages/:key/search
+`{ query }` → `{ query, results: [{ title, url, content, published }] }`。**不落库**。
+没配搜索 key 时 503 + 说明，检索失败 502 + 原文 —— 都不回空列表（空列表读成「网上没这家公司的资料」）。
+
+### POST /api/consult/projects/:id/stages/:key/sources
+采纳勾选的结果：`{ query, items: [{ title, url, snippet, published }] }` →
+`{ added, skipped, sources }`。同一 url 重复采纳被挡掉并计入 `skipped`；
+超过 40 条上限直接 400，**不只存前几条**。
+
+### DELETE /api/consult/projects/:id/sources/:sid
+
+---
+
 ## Module Tokens (用户只读)
 
 ### GET /api/tokens `PROTECTED`
@@ -182,6 +261,49 @@ Query: `?locale=zh`
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | /api/admin/ai-usage?days=7 | 按用户/模块/日期维度的调用统计 |
+
+### 对外中转接口（专属 AI 渠道下发的 key）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/admin/users/:id/relay-keys | 为该用户的某条接入点生成一把对外 key |
+| DELETE | /api/admin/relay-keys/:keyId | 吊销（软删，行保留） |
+
+```json
+// POST — provider 必须是这个用户自己的、kind=llm 的接入点，否则 400
+{ "provider_id": "...", "label": "给某个下游用" }
+// Response — key 明文只在这里出现一次，库里只有 sha256
+{ "key": "sk-mmpla-...", "relay_key": { "id": "...", "key_prefix": "sk-mmpla-ab12…cd34", "provider_id": "...", "enabled": 1, "revoked_at": null, "revoke_reason": "", "last_used_at": null }, "provider": { "...": "已脱敏" } }
+```
+
+下游调用的是 `/api/v1/*`（OpenAI 兼容，**无需平台 JWT**，用上面那把 key）：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/v1/chat/completions | 非流式对话补全 |
+| GET | /api/v1/models | 只列绑定的那一个模型 |
+
+```bash
+curl https://<域名>/api/v1/chat/completions \
+  -H "Authorization: Bearer sk-mmpla-..." -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"你好"}]}'
+```
+
+- `model` 由接入点决定，body 里传什么都忽略；返回里的 `model` 是**真实**用到的那个。
+- `stream: true` / `tools` / `functions` 一律 400（无声忽略会让客户端等一个永不到来的 SSE）。
+- 只转发 `messages` + `temperature`/`top_p`/`max_tokens`/`presence_penalty`/`frequency_penalty`/`stop`/`response_format`/`seed`/`n`。
+- 错误体是 OpenAI 形状 `{ "error": { "message", "type", "code" } }`：
+  `401 invalid_api_key`（key 对不上）、`403 endpoint_closed`（吊销/接入点停用或删除/专属开关关了，
+  对外只这一句）、`429 quota_exceeded`（撞的是该用户的 `relay` 应用额度）、`502 upstream_error`（带上游原文）。
+- 用量记在绑 key 的那个用户头上，`ai_logs.source = 'relay'`；限流用
+  `PUT /api/admin/users/:id/app-quota` 的 `app: "relay"`。
+
+`GET /api/admin/users/:id/dedicated-ai` 的返回里多两个字段：`relay_keys: RelayKeyPublic[]`
+（含已失效的：下游收到「接口已关闭」时，管理员要能看出是哪一把、为什么废）和
+`relay_usage: { today_calls, today_tokens, week_calls, week_tokens }`
+—— 这是该用户**所有 key 的合计**（`ai_logs` 没有 key 维度），界面上不能摆到某一行 key 旁边。
+`DELETE /api/admin/providers/:id` 返回 `{ success, revoked_relay_keys }` —— 删接入点会把
+绑在它上面的 key 一起标废，这个数必须显示出来。
 
 ### 系统配置
 

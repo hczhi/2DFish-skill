@@ -17,6 +17,7 @@ import { chatRouter } from './api/chat.js';
 import { filesRouter } from './api/files.js';
 import { skillsRouter } from './api/skills.js';
 import { consultantRouter } from './api/consultant.js';
+import { consultRouter } from './api/consult.js';
 import { settingsRouter } from './api/settings.js';
 import { tokensRouter } from './api/tokens.js';
 import { quotaRouter } from './api/quota.js';
@@ -34,6 +35,7 @@ import { xhsRouter } from './api/xhs.js';
 import { feishuAssistantRouter } from './api/feishuAssistant.js';
 import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
+import { relayRouter } from './api/relay.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import {
@@ -198,6 +200,10 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', version: '0.3.0' });
 });
 
+// 对外中转接口（OpenAI 兼容，非流式）。自带 key 校验，不走平台 JWT ——
+// 见 api/relay.ts 与 auth/middleware.ts 里那条 public 规则。
+app.use('/api/v1', relayRouter);
+
 // Protected routes
 app.use('/api/ai', aiRouter);
 app.use('/api/ai/logs', logsRouter);
@@ -243,6 +249,10 @@ app.use('/api/tender', tenderRouter);
 // XHS (小红书爆款诊断 + AI 陪写)
 app.use('/api/xhs', rateLimit(60, 60_000));
 app.use('/api/xhs', xhsRouter);
+
+// 品牌咨询工作台（四看/四问/四大成，一步一步聊出结论）
+app.use('/api/consult', rateLimit(60, 60_000));
+app.use('/api/consult', consultRouter);
 
 // 飞书助理（在飞书里 @ 机器人下达自然语言指令）。
 // 只有管理接口，事件走长连接进来，没有对外的回调端点。

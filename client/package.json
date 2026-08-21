@@ -16,6 +16,7 @@
     "@tiptap/starter-kit": "^3.29.1",
     "@tiptap/vue-3": "^3.29.1",
     "dompurify": "^3.4.11",
+    "marked": "^18.0.10",
     "vue": "^3.4.0",
     "vue-router": "^4.3.0"
   },

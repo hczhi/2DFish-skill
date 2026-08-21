@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { getDatabase } from '../../db/index.js';
 import { logAIUsage } from './client.js';
-import { resolveLLMProvider, usesDedicatedChannel, type LLMTier } from '../../services/aiProviderService.js';
+import { resolveLLMProvider, getProvider, usesDedicatedChannel, type LLMTier } from '../../services/aiProviderService.js';
 import { decryptSecret } from '../secrets.js';
 import { appName } from './apps.js';
 import { normalizeBaseUrl } from './baseUrl.js';
@@ -26,6 +26,15 @@ export interface GatewayOptions {
    * 应该留够时间，短超时会把一次本来会成功的生成变成失败。
    */
   timeoutMs?: number;
+  /**
+   * 绑死用哪条接入点，跳过「按档位解析」（对外中转接口用，见 migration 082）。
+   *
+   * 存在的理由是「接入点关了就必须调不通」：按档位解析在同一档有第二条配置时会挑
+   * 「最近更新的那条」，于是管理员停用第一条之后下游照样通，只是换了模型、换了付钱
+   * 的那把 key，返回读起来完全正常。给了这个值就只认这一行，不可用直接抛
+   * {@link PinnedProviderError}，绝不回落平台。
+   */
+  providerId?: string;
 }
 
 /**
@@ -137,6 +146,32 @@ export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string, app
   return { client, model: sysModel?.value || 'gpt-4o', providerId: null, providerOwner: 'platform' };
 }
 
+/** 绑定的接入点不可用（不存在 / 已停用 / 没有可用 key / 不是文本模型）。 */
+export class PinnedProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PinnedProviderError';
+  }
+}
+
+/**
+ * 按 id 取一条接入点当连接信息用。任何一项不满足都抛错，**不回落**任何其它配置 ——
+ * 回落的后果是「接口应该已经关了，实际却在花平台（或另一条接入点）的钱」，
+ * 而调用方那边一切正常。
+ */
+export function resolveLLMConfigForProvider(providerId: string): ResolvedLLM {
+  const p = getProvider(providerId);
+  if (!p || p.kind !== 'llm' || !p.enabled || !p.api_key) {
+    throw new PinnedProviderError(`接入点 ${providerId} 不可用（不存在 / 已停用 / 无可用 key / 不是文本模型）`);
+  }
+  return {
+    client: new OpenAI({ apiKey: p.api_key, baseURL: p.base_url || 'https://api.openai.com/v1' }),
+    model: p.model || 'gpt-4o',
+    providerId: p.id,
+    providerOwner: p.owner_user_id ? 'dedicated' : 'platform',
+  };
+}
+
 export function checkAndDeductQuota(userId: string): void {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
@@ -235,7 +270,12 @@ export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
 ): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
-  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId, options.source);
+  // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
+  // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
+  // 那条接入点 —— 花的是另一把 key，而返回完全正常。
+  const { client, model, providerId, providerOwner } = options.providerId
+    ? resolveLLMConfigForProvider(options.providerId)
+    : resolveLLMConfig(options.tier, options.userId, options.source);
 
   // 应用级额度先扣：它对专属渠道也生效，且要在总额之前判，
   // 否则应用额度撞墙时总额已经白扣了一次。见 checkAndDeductAppQuota 的注释。
@@ -287,7 +327,12 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  const { client, model, providerId, providerOwner } = resolveLLMConfig(options.tier, options.userId, options.source);
+  // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
+  // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
+  // 那条接入点 —— 花的是另一把 key，而返回完全正常。
+  const { client, model, providerId, providerOwner } = options.providerId
+    ? resolveLLMConfigForProvider(options.providerId)
+    : resolveLLMConfig(options.tier, options.userId, options.source);
 
   // 顺序同 aiGateway：应用级额度先扣（对专属渠道也生效），再扣平台总额。
   checkAndDeductAppQuota(options.userId, options.source);
