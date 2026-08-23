@@ -86,6 +86,7 @@ async function loadRecommendations() {
     const data = await apiGet('/api/tender/recommendations', { tier: tierFilter.value, page: recPage.value, page_size: 20 })
     recommendations.value = data.items
     recTotal.value = data.total
+    if (data.visibleDays) visibleDays.value = data.visibleDays
   } catch (e: any) {
     console.error(e)
   } finally {
@@ -243,7 +244,15 @@ async function submitFeedback() {
             <p>{{ locale === 'en' ? 'No recommendations yet. Configure your preferences first.' : '暂无推荐，请先配置个人偏好。' }}</p>
             <button class="empty-cta" @click="goSettings">{{ locale === 'en' ? 'Go to Configuration' : '去配置设定' }}</button>
           </div>
-          <div v-else class="rec-list-v2">
+          <!-- 推荐列表和「全部标讯」是同一道时效闸门。这句话得在：过期的推荐现在会
+               直接消失，而卡片上写的是评分时间、看不出标讯本身多久了 —— 不说的话
+               「昨天那条 92 分的不见了」只会被当成数据丢了。 -->
+          <p v-else-if="recommendations.length" class="list-note">
+            {{ locale === 'en'
+              ? `Showing recommendations for tenders published and collected within the last ${visibleDays} days.`
+              : `仅显示近 ${visibleDays} 天内发布且入库的标讯，更早的已过时效不再推荐。` }}
+          </p>
+          <div v-if="!recLoading && recommendations.length" class="rec-list-v2">
             <div v-for="rec in recommendations" :key="rec.id" :class="['rec-card-v2', rec.tier]" @click="viewDetail(rec.tender_id)">
               <div class="tier-accent"></div>
 

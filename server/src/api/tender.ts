@@ -8,6 +8,7 @@ import { runAIExtractForTenders } from '../services/tender/aiExtractService.js';
 import { pushToChats, parseChatIds, listBotChats } from '../services/tender/feishuNotify.js';
 import { visibleSql, expiredSql, TENDER_VISIBLE_DAYS } from '../services/tender/retention.js';
 import { purgeTenders, tenderCountsByPlatform } from '../services/tender/purge.js';
+import { listRecommendations, staleRecommendations } from '../services/tender/recommendList.js';
 import {
   createBitable, createAllTendersTable, grantPermission,
   syncUserRecommendations, syncAllTenders, getBitableUrl,
@@ -43,33 +44,16 @@ registerSdkAdminRoutes(tenderRouter);
 
 tenderRouter.get('/recommendations', (req, res) => {
   const userId = req.user!.id;
-  const db = getDatabase();
   const tier = req.query.tier as string;
   const { page, pageSize, offset } = parsePagination(req, { defaultSize: 20, maxSize: 50 });
 
-  let where = "r.user_id = ? AND r.created_at >= datetime('now', '-20 days')";
-  const params: any[] = [userId];
+  // 取数在 recommendList.ts —— 它必须和时效闸门一致（见那里的注释：这条路径曾经是
+  // 唯一「过不了闸门也照样显示」的消费者，旧的高分标讯永远钉在列表最前面）。
+  const { items, total } = listRecommendations({ userId, tier, pageSize, offset });
 
-  if (tier && tier !== 'all') {
-    where += ' AND r.tier = ?';
-    params.push(tier);
-  } else {
-    where += " AND r.tier != 'filter'";
-  }
-
-  const total = (db.prepare(`SELECT COUNT(*) as count FROM tender_recommendations r WHERE ${where}`).get(...params) as any).count;
-  const items = db.prepare(`
-    SELECT r.*, t.title, t.purchaser_name, t.budget, t.budget_amount, t.region_name, t.publish_date, t.url, t.notice_type, t.project_type, t.project_location, t.project_summary,
-      f.feedback as user_feedback, f.reason as feedback_reason
-    FROM tender_recommendations r
-    JOIN tenders t ON r.tender_id = t.id
-    LEFT JOIN tender_user_feedback f ON f.tender_id = r.tender_id AND f.user_id = r.user_id
-    WHERE ${where}
-    ORDER BY r.total_score DESC
-    LIMIT ? OFFSET ?
-  `).all(...params, pageSize, offset);
-
-  res.json({ items, total, page, page_size: pageSize });
+  // visibleDays 一律由接口回，前端不写死：写死那份在改窗口天数之后会稳定说谎，
+  // 而「上周看到的那条不见了」恰恰只靠这句话解释。
+  res.json({ items, total, page, page_size: pageSize, visibleDays: TENDER_VISIBLE_DAYS });
 });
 
 tenderRouter.patch('/recommendations/:id/read', (req, res) => {
@@ -432,20 +416,17 @@ tenderRouter.post('/recommendations/rescore', async (req, res) => {
 
   // IS NOT 而不是 !=：SQLite 里 NULL != 'x' 求值为 NULL（假），
   // 用 != 会把"简介上线前的历史评分"（scored_profile_at IS NULL）漏掉。
-  const stale = db.prepare(`
-    SELECT r.tender_id FROM tender_recommendations r
-    WHERE r.user_id = ?
-      AND r.created_at >= datetime('now', '-20 days')
-      AND r.tier != 'filter'
-      AND r.scored_profile_at IS NOT ?
-    ORDER BY r.created_at DESC
-  `).all(userId, profileAt) as any[];
+  // 同样过时效闸门：已过时效的标讯压根不显示，却照样会被选进重评名单 ——
+  // 而下面是「先删旧记录再评」，闸门在 runRecommendationsForAllUsers 里挡住它、
+  // 一条都评不出来，于是那几行被静默删掉、接口回 rescored:0，用户接着点，
+  // 每点一次再删 8 行。两次点击都显示成功。
+  const stale = staleRecommendations(userId, profileAt);
 
   if (stale.length === 0) {
     return res.json({ rescored: 0, remaining: 0 });
   }
 
-  const tenderIds = stale.slice(0, MAX_RESCORE_PER_CALL).map(r => r.tender_id);
+  const tenderIds = stale.slice(0, MAX_RESCORE_PER_CALL);
   const remainingBefore = stale.length - tenderIds.length;
 
   // 先删旧记录，否则 runRecommendationsForAllUsers 里的 existing 判断会全部跳过。

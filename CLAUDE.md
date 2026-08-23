@@ -542,6 +542,19 @@ See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` fo
   读起来像口径问题而不是漏了一批。`retention.test.ts` 用真 sqlite 断言两者互补。
 - **`visibleSql(alias)` 收的是表别名不是列名**（各处查询都是 `FROM tenders t`）。
   传错不报错，只是 SQL 里少了一半条件。
+- **推荐列表也过闸门 —— 它曾是唯一漏掉的那个消费者。** `GET /recommendations`
+  （网页推荐页 + SDK 挂在外站的「投标资讯」，取数收在 `services/tender/recommendList.ts`）
+  原来筛的是 `r.created_at >= datetime('now','-20 days')`，那是**评分时间**、不是标讯的时效：
+  一条入库很久的标讯只要最近 20 天内被评过分就一直挂着，而排序是 `total_score DESC`，
+  所以旧的高分条目永远钉在最前面，卡片和今天新评出来的长得一模一样。`/list`、飞书卡片、
+  多维表格重灌全都过闸门（`candidates.ts`），于是同一个人在网页和飞书里看到的不是一批
+  东西，两边都不报错。那个 20 天的条件**删掉**而不是和闸门叠着：闸门更严，留着等于在一个
+  查询里写两个窗口，改天数的人只会改到其中一个。总数和明细共用同一段 `where` 和同一个
+  `JOIN tenders`（历史上明细带 JOIN、总数不带 → 「共 40 条」配一张空白页）。
+  `POST /recommendations/rescore` 的重评名单（`staleRecommendations`）也必须过闸门：
+  它是「先删旧记录再评」，而评分那边过闸门，于是过期那几行被静默删掉、评不回来，
+  接口回 `rescored: 0`，用户接着点，每点一次再删一批，两次点击都显示成功。
+
 - **后台列表也过闸门，并且要显示挡掉了多少条。** 只挡用户侧的话，后台看到 3000 条、
   用户侧 200 条，两边都写「全部标讯」，谁都不会想到是两套过滤条件；而后台突然从
   3000 变 200 又会读成数据丢了，所以 `/admin/tenders` 回 `hiddenExpired` +
