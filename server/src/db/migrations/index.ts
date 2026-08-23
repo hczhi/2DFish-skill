@@ -82,6 +82,7 @@ import { migration_079 } from './079_consult_sources.js';
 import { migration_080 } from './080_consult_intake.js';
 import { migration_081 } from './081_consult_ai_opportunities.js';
 import { migration_082 } from './082_llm_relay_keys.js';
+import { migration_083 } from './083_drop_failed_recommendations.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -165,4 +166,5 @@ export const allMigrations: Migration[] = [
   migration_080,
   migration_081,
   migration_082,
+  migration_083,
 ];

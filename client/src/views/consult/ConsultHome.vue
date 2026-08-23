@@ -17,6 +17,19 @@ interface ProjectRow {
   decided_count: number
   stale_count: number
   total_stages: number
+  intake_pending: number
+  intake_rounds: number
+}
+
+/**
+ * 有一份问卷没提交时，点这一行直接去问卷页而不是工作台。
+ * 工作台在第一轮没提交时本来也会把人送回问卷页（`ConsultProject.vue:load`），
+ * 这里先跳只是少闪一下；badge 才是关键 —— 不显示的话这一行和资料齐全的项目
+ * 长得一模一样，而后面每一步的结论都从那段缺料的资料出。
+ */
+function openProject(p: ProjectRow) {
+  if (p.intake_pending) router.push(`/consult/projects/${p.id}/intake`)
+  else router.push(`/consult/projects/${p.id}`)
 }
 
 const route = useRoute()
@@ -61,10 +74,11 @@ async function create() {
       brandName: form.value.brandName.trim(),
       brief: form.value.brief,
     })
-    // 带 ?intake=1 进工作台：进去先让 AI 读一遍这段资料，列出还得问客户什么。
-    // 不自动出的话这一步全靠用户自己想起右栏那个按钮，而资料缺了不会报错 ——
-    // 后面十二步照样出结论，只是那些结论是 AI 按常识补的。
-    router.push(`/consult/projects/${res.project.id}?intake=1`)
+    // 新建项目先去补料问卷页，不直接进工作台：资料缺了不会报错 —— 后面十二步照样
+    // 出结论，只是那些结论是 AI 按常识补的，读起来和真按资料推的一模一样。
+    // `?auto=1` 让那一页自己出第一轮（它会先把这个 query replace 掉再发请求，
+    // 否则刷新一次就又出一轮、又扣一次额度，而两次都显示成功）。
+    router.push(`/consult/projects/${res.project.id}/intake?auto=1`)
   } catch (e: any) {
     err.value = e?.message || '创建失败'
   } finally {
@@ -154,7 +168,10 @@ function fmt(ts: string) {
             </button>
             <button class="btn-ghost" @click="showCreate = false">取消</button>
             <!-- 说清楚会花一次 AI 额度：不说的话用户以为「创建」是纯本地操作 -->
-            <span class="muted">进去先出一份补料问卷（消耗 1 次 AI 额度），填好的答案会补进这段资料</span>
+            <span class="muted">
+              创建后先进补料问卷（消耗 1 次 AI 额度）：全部答完才进工作台，答案会追加进这段资料。
+              填不完可以先离开，已填的都存着。
+            </span>
           </div>
         </div>
 
@@ -168,7 +185,7 @@ function fmt(ts: string) {
             v-for="(p, i) in projects"
             :key="p.id"
             class="project-card"
-            @click="router.push(`/consult/projects/${p.id}`)"
+            @click="openProject(p)"
           >
             <div class="pc-no">{{ String(i + 1).padStart(2, '0') }}</div>
             <div class="pc-main">
@@ -176,10 +193,13 @@ function fmt(ts: string) {
               <div class="pc-meta">
                 <span>进度 {{ p.decided_count }} / {{ p.total_stages }}</span>
                 <span>资料 {{ p.brief_chars }} 字</span>
+                <span v-if="p.intake_rounds">已补 {{ p.intake_rounds }} 轮</span>
                 <span>更新 {{ fmt(p.updated_at) }}</span>
               </div>
             </div>
             <div class="pc-right">
+              <!-- 问卷没提交要留在列表上：那意味着客户资料还缺一块，而这一行的进度数照样在涨 -->
+              <span v-if="p.intake_pending" class="badge-intake">📋 问卷没提交</span>
               <!-- 待重跑的条数必须留在列表上：进项目才看到的话，一份互相矛盾的方案已经在手上了 -->
               <span v-if="p.stale_count" class="badge-stale">⚠ {{ p.stale_count }} 条待重跑</span>
               <div class="progress">
@@ -350,6 +370,10 @@ function fmt(ts: string) {
 .badge-stale {
   font-size: 11px; padding: 4px 10px; border-radius: 999px;
   background: #FFFAEB; border: 1px solid #FEDF89; color: #B54708; font-weight: 600;
+}
+.badge-intake {
+  font-size: 11px; padding: 4px 10px; border-radius: 999px;
+  background: var(--brand-soft); border: 1px solid rgba(11, 74, 111, .3); color: var(--brand-ink); font-weight: 600;
 }
 .progress { width: 120px; height: 5px; border-radius: 999px; background: rgba(0, 0, 0, .07); overflow: hidden; }
 .progress .bar { height: 100%; background: var(--brand); }

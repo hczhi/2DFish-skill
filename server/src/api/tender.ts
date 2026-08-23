@@ -132,7 +132,8 @@ tenderRouter.get('/list', (req, res) => {
   const platform = (req.query.platform as string) || '';
   const keyword = (req.query.keyword as string) || '';
 
-  // 14 天时效闸门（入库和发布都算）：过期标讯从列表里消失，但数据不删（见 retention.ts）。
+  // 时效闸门（入库和发布都算，TENDER_VISIBLE_DAYS 天）：过期标讯从列表里消失，
+  // 但数据不删（见 retention.ts）。
   // 白名单式写 status IN (...) 而不是 `!= 'draft'`：后者会让新加的任何状态默认可见，
   // 'rejected'（AI 判为与关键词库无关、已作废）一进来就会出现在用户列表里，
   // 而作废这件事的全部意义就是别让它出现 —— 且这个失败不报错，只是列表里多出垃圾。
@@ -160,7 +161,9 @@ tenderRouter.get('/list', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, offset);
 
-  res.json({ items, total, page, page_size: pageSize });
+  // visibleDays 回给前端拼「仅显示近 N 天」那句话：写死在页面里的话，
+  // 改窗口天数之后那句话会稳定说谎，而「上周看到的那条不见了」正是靠它解释的。
+  res.json({ items, total, page, page_size: pageSize, visibleDays: TENDER_VISIBLE_DAYS });
 });
 
 tenderRouter.get('/detail/:id', (req, res) => {
@@ -698,8 +701,13 @@ tenderRouter.get('/admin/tenders', (req, res) => {
 
   // 被闸门挡掉的条数要报出来。加上闸门之后这个列表会「凭空少一批」，
   // 不说的话看起来像爬虫的数据丢了或者数据库被清过 —— 而它们其实都还在库里。
+  //
+  // `'expired'` 必须算进来：巡检（`expireOverdueTenders`）把过期的行从 scored 改成
+  // expired 之后，只数前两个状态的话这个数会掉到 0，而同一页顶上的
+  // 「已过时效: N」（/admin/tenders/stats，不看 status）还挂着一个大数字 ——
+  // 一页上两个数互相矛盾，读起来像哪边算错了。
   const hiddenExpired = (db.prepare(
-    `SELECT COUNT(*) as count FROM tenders WHERE status IN ('extracted', 'scored') AND ${expiredSql()}`
+    `SELECT COUNT(*) as count FROM tenders WHERE status IN ('extracted', 'scored', 'expired') AND ${expiredSql()}`
   ).get() as any).count;
 
   res.json({ items, total, page, page_size: pageSize, hiddenExpired, visibleDays: TENDER_VISIBLE_DAYS });
@@ -912,11 +920,20 @@ tenderRouter.post('/admin/recommend', async (req, res) => {
 tenderRouter.get('/admin/drafts', (req, res) => {
   const db = getDatabase();
   const { page, pageSize, offset } = parsePagination(req);
-  // status 只认这两个值。原来这个变量取了却没用（永远查 draft）——
-  // 现在 rejected（AI 判为与关键词库无关、已作废）也要能查，
-  // 而作废的行必须**只在**显式要它时出现：混进默认视图会被再点一次「批量AI提取」，
-  // 而它们的 ai_extracted 已经有值，服务层直接跳过 → 日志一句「0 条已处理」。
-  const draftStatus = (req.query.status as string) === 'rejected' ? 'rejected' : 'draft';
+  // status 只认这三个值。原来这个变量取了却没用（永远查 draft）——
+  // 现在 rejected（AI 判为与关键词库无关）和 expired（入库满 TENDER_VISIBLE_DAYS 天
+  // 被巡检自动作废）也要能查，而它们必须**只在**显式要它时出现：混进默认视图会被
+  // 再点一次「批量AI提取」，而它们的 ai_extracted 已经有值，服务层直接跳过 →
+  // 日志一句「0 条已处理」。
+  //
+  // `expired` 单独一个视图而不是并进「已作废」：两种作废的解法完全不同（一个是
+  // 闸门误杀、点恢复就行；一个是时效到了、只能改 TENDER_VISIBLE_DAYS），而且
+  // 「已作废 N」那个数字是发现相关性闸门太狠的唯一线索，混进几百条过期的就没用了。
+  // 有这个视图也是为了让自动作废别是静默的：巡检一趟能把上百条草稿扫走，
+  // 「待提取」第二天少了一大批，没有一个地方列出它们的话看起来像数据丢了。
+  const requestedStatus = String(req.query.status || '');
+  const draftStatus =
+    requestedStatus === 'rejected' || requestedStatus === 'expired' ? requestedStatus : 'draft';
   const draftPlatform = (req.query.platform as string) || '';
   const draftKeyword = (req.query.keyword as string) || '';
 
@@ -940,16 +957,19 @@ tenderRouter.get('/admin/drafts', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, pageSize, offset);
 
-  // 两个状态的条数都回：只回当前视图的 total 的话，「已作废」里堆了多少条
-  // 在默认视图上完全看不出来 —— 而误杀恰恰只能从这个数字异常大看出来。
+  // 三个状态的条数都回：只回当前视图的 total 的话，另外两个视图里堆了多少条
+  // 在默认视图上完全看不出来 —— 而误杀恰恰只能从「已作废」这个数字异常大看出来，
+  // 「已过时效」那个数字则是唯一能解释「待提取怎么少了一大批」的地方。
   const counts = db.prepare(
-    `SELECT status, COUNT(*) as count FROM tenders WHERE status IN ('draft','rejected') GROUP BY status`
+    `SELECT status, COUNT(*) as count FROM tenders WHERE status IN ('draft','rejected','expired') GROUP BY status`
   ).all() as Array<{ status: string; count: number }>;
 
   res.json({
     items, total, page, page_size: pageSize, status: draftStatus,
     draftCount: counts.find((c) => c.status === 'draft')?.count || 0,
     rejectedCount: counts.find((c) => c.status === 'rejected')?.count || 0,
+    expiredCount: counts.find((c) => c.status === 'expired')?.count || 0,
+    visibleDays: TENDER_VISIBLE_DAYS,
   });
 });
 
@@ -961,6 +981,14 @@ tenderRouter.post('/admin/drafts/:id/restore', (req, res) => {
   const db = getDatabase();
   const row = db.prepare(`SELECT status FROM tenders WHERE id = ?`).get(req.params.id) as any;
   if (!row) return res.status(404).json({ error: 'Not found' });
+  // 过期的那些**不能**走恢复：放回 draft 也只是下一次巡检再作废一遍，而这一步会把
+  // ai_extracted 清掉（花过的 token 白扔），两次点击全都显示成功。所以这里直接说
+  // 真正的解法在哪 —— 只回一句「无需恢复」的话，管理员会一条一条点下去。
+  if (row.status === 'expired') {
+    return res.status(400).json({
+      error: `这条标讯入库已超过 ${TENDER_VISIBLE_DAYS} 天（已过时效），恢复了也会立刻再被作废。要放宽时效请改 TENDER_VISIBLE_DAYS。`,
+    });
+  }
   if (row.status !== 'rejected') {
     return res.status(400).json({ error: `这条标讯不是作废状态（当前 ${row.status}），无需恢复` });
   }

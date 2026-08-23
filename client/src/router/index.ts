@@ -185,6 +185,14 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // 补料问卷单独一页（新建项目后必过一轮）。放在工作台前面登记，
+      // 但两者不冲突：段数不同，`/consult/projects/:id` 兜不住三段的路径。
+      path: '/consult/projects/:id/intake',
+      name: 'consult-intake',
+      component: () => import('../views/consult/ConsultIntake.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/consult/projects/:id',
       name: 'consult-project',
       component: () => import('../views/consult/ConsultProject.vue'),

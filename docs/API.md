@@ -110,8 +110,15 @@ SSE 流式端点，消耗额度。
 界面上要照原样显示：正文对不上它的顺序就是没照方法论推，而那种正文和推出来的长得一样。
 
 ### GET /api/consult/projects
+每行带 `decided_count / stale_count / total_stages / brief_chars` 和
+`intake_pending`（还没提交的问卷轮数）+ `intake_rounds`（已补进资料的轮数）。
+`intake_pending` 前端必须显示出来 —— 那一轮没提交就意味着客户资料还缺一块，
+而这一行的进度数照样在涨，和资料齐全的项目长得一模一样。
+
 ### POST /api/consult/projects
 `{ brandName, brief }`。超长直接 400，**不截断**。
+新建后前端**先去 `/consult/projects/:id/intake`**（补料问卷页）而不是工作台，
+第一轮提交前进工作台会被送回那一页（只挡第一轮）。
 
 ### GET /api/consult/projects/:id
 `{ project, stages, entries, sources, intake, intakeRounds, searchEnabled }`。
@@ -125,7 +132,9 @@ SSE 流式端点，消耗额度。
 ### POST /api/consult/projects/:id/stages/:key/draft
 快车道（`fast`）和执行层（`plan`）出草稿，两者 system prompt 不同（找事实 vs 承接结论出方案），
 `slow` 的阶段走这里返回 400。`plan` 不要求客户资料非空（它的依据是上游定稿），`fast` 要求。
-**不落库**，返回 `{ draft, truncated, message, stages }`。
+**不落库**，返回 `{ draft, truncated, discussion, message, stages }`。
+`discussion: { used, dropped }` 是这一版带进 prompt 的本步对话条数（只算 `kind='text'` 的），
+前端必须显示 —— 带上和没带上出来的草稿读起来一模一样。
 `draft.body` 固定以 `## 0. 方法论速览` 开头、以 `## 写作建议` 结尾（两节不在输出物清单里，
 但每次都有）；`draft.aiOpportunities` 是 1–2 条 AI 赋能机会，**独立字段不在正文里** ——
 报告最后那一章「AI 转型机会清单」按它取数。
@@ -133,18 +142,32 @@ SSE 流式端点，消耗额度。
 ### POST /api/consult/projects/:id/stages/:key/directions
 慢车道出 2–4 个互斥方向，每个带 `markdown`（三件套整段，选中后即定稿正文）+ `writingTip`
 + `aiOpportunities`，外层带 `verdict` 和 `methodBrief`（方法论速览，已拼进每个方向的 markdown
-开头；模型没给时那一节写明「没给」而不是消失）。
+开头；模型没给时那一节写明「没给」而不是消失），以及和 `/draft` 同义的 `discussion: { used, dropped }`。
+
+### POST /api/consult/projects/:id/stages/:key/draft/discard
+丢弃这一版草稿 / 候选方向。请求体 `{ kind?: 'draft' | 'directions' }`（默认 `draft`），
+返回 `{ message }`（`kind='discard'`，前端追加到对话末尾）。草稿本身不落库，所以这个接口
+只做「留一条痕」这一件事 —— 但它是必需的：那一版存在对话里 `kind='draft'` 那条消息的
+`payload` 里，前端光把本地状态清掉的话，切走再切回来会从那条消息恢复出来，用户点过的
+「丢弃」等于没生效，而两次操作都显示成功。前端还要靠这条记录把它之前那张产出卡片置灰
+（留着「查看 →」的话点了什么都不发生）。同 `entry`，它**不会**进下一次 prompt。
 
 ### GET /api/consult/projects/:id/stages/:key/messages
 ### POST /api/consult/projects/:id/stages/:key/chat
+阶段内对话，只写 `consult_messages`（**改不了草稿也改不了定稿**）。它影响的是下一次
+`/draft` / `/directions` —— 那两个接口会把本步最近 16 条 `kind='text'` 的对话带进 prompt。
 
 ### PUT /api/consult/projects/:id/stages/:key/entry
-定稿进知识库。返回 `{ entry, staled, stages, entries }` —— `staled` 是被标成「待重跑」
+定稿进知识库。返回 `{ entry, message, staled, stages, entries }` —— `staled` 是被标成「待重跑」
 的下游步骤，前端必须显示。`source_level` **由服务端按实际依据算**（有联网资料 → L1，
 只有客户资料 → L2，都没有 → L3），请求体里传的会被忽略。
 请求体可带 `aiOpportunities: string[]`（每步最多 2 条、每条 200 字，超了 **400 只拒不截**），
 落在 `entry.ai_opportunities`（JSON 数组字符串，老定稿是 `'[]'`）。老定稿前端要显示成
 「没标 AI 机会」而不是留空 —— 留空和「这一步确实没有」长得一样。
+`message` 是同时写进这一步对话记录的那条定稿留痕（`kind='entry'`，前端直接追加到对话末尾）：
+不留的话对话永远以「已生成草稿」那张卡片收尾，回头看不出最终定的是哪一版。
+它**不会**进下一次 prompt（`discussionBlock` 只取 `kind='text'`）—— 定稿本来就以定稿身份
+进下游 prompt，同一段出现两遍会被模型当成两处独立印证。
 
 ### POST /api/consult/projects/:id/intake
 让 AI 读客户资料出一份补料问卷 → `{ gaps, questions: [{ id, section, question, why, placeholder }], truncated, round, rounds }`。

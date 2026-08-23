@@ -1,7 +1,7 @@
-import { jsonGateway } from '../../core/llm/parseJson.js';
+import { jsonGateway, jsonFailMessage } from '../../core/llm/parseJson.js';
 import { SAMPLING } from '../../core/llm/gateway.js';
 import { STAGES, stageByKey, unlockState, LANE_LABEL, type StageDef } from './stages.js';
-import { listEntries, type ConsultProject, type ConsultEntry } from './projectStore.js';
+import { listEntries, listMessages, type ConsultProject, type ConsultEntry } from './projectStore.js';
 import { listSources, sourcesBlock } from './sourceStore.js';
 
 // 快车道（四看）的结论草稿。慢车道（四问/四大成）的候选方向是另一条路径，
@@ -103,29 +103,11 @@ export function requireStage(
 }
 
 /**
- * 模型没给出能用的 JSON 时的报错文案。
- *
- * 思维链 token 数**必须**带上：额度全花在 reasoning 上时 content 是空的，
- * 表面症状是「AI 什么都没回」，用户会去怀疑自己的资料写得不好，
- * 或者一路调高 max_tokens —— 而真正的解法是换一个不带思维链的模型。
+ * 模型没给出能用的 JSON 时的报错文案。实现在 `core/llm/parseJson.ts`（xhs 那几个
+ * JSON 端点用的是同一份）—— 各模块各写一份的话，改了这边的措辞另一边照旧，
+ * 而两边的症状（空返回 / 截断 / 格式坏）是同一个模型的同一个毛病。
  */
-function gateFailMessage(
-  what: string,
-  info: { raw: string; finish?: string; reasoningTokens?: number; budget: number }
-): string {
-  const { raw, finish, reasoningTokens, budget } = info;
-  const burnedByThinking = reasoningTokens && reasoningTokens >= budget * 0.9;
-  const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
-  const why = !raw.trim()
-    ? `模型没有返回内容（finish_reason=${finish || '未知'}${cot}）`
-    : finish === 'length'
-      ? `模型返回被截断（finish_reason=length${cot}）`
-      : '模型没有按 JSON 格式返回';
-  const how = burnedByThinking
-    ? `这次 ${budget} token 的额度基本全花在思维链上了，正文没写出来。再点一次通常就好；老是这样就去「专属 AI / 系统配置」把 strong 档换成不带思维链的模型`
-    : '再试一次或换个模型';
-  return `${why}，${what}没生成。${how}（这次的 AI 额度已经扣了）`;
-}
+const gateFailMessage = jsonFailMessage;
 
 /**
  * 知识库块：按阶段顺序拼已定稿结论，作为这一步的依据。
@@ -166,6 +148,70 @@ function deliverablesBlock(stage: StageDef): string {
  */
 function methodBlock(stage: StageDef): string {
   return stage.method.map((m, i) => `${i + 1}) ${m}`).join('\n');
+}
+
+/**
+ * 进 prompt 的对话条数上限。和 chatService 那个是两个数：聊天每句都要重发一遍历史，
+ * 这里一次调用只发一次，但正文要输出的那几张表已经占了大半上下文。
+ */
+const MAX_DISCUSSION_MESSAGES = 16;
+
+export interface Discussion {
+  text: string;
+  used: number;
+  dropped: number;
+}
+
+/**
+ * 本步已经聊过的东西。**这是「重出一版」和「上一版」之间唯一的差别。**
+ *
+ * 不带它的话，用户在这一步聊了二十句再点「让 AI 重出一版 / 都不满意，重出一批」，
+ * 出来的东西和没聊过时是同一个分布 —— 而它读起来完全正常，一句错都不报，
+ * 界面上还写着「聊定了再去上面出草稿」。用户于是以为自己在调教 AI。
+ *
+ * **只带 kind='text' 的那些。** 方向卡 / 上一版草稿的气泡是模型自己的输出：
+ * 带回去它会照抄上一版（用户以为聊天没生效，而两版都读得通），
+ * 而且那几条是整段正文，带上就把客户资料挤到上下文末尾 —— 那时候模型开始照常识写。
+ */
+export function discussionBlock(projectId: string, stageKey: string): Discussion {
+  const all = listMessages(projectId, stageKey).filter((m) => m.kind === 'text' && m.content.trim());
+  const kept = all.slice(-MAX_DISCUSSION_MESSAGES);
+  if (!kept.length) return { text: '', used: 0, dropped: 0 };
+  const text = kept
+    .map((m) => `${m.role === 'user' ? '客户说' : '你上次答'}：${m.content.trim()}`)
+    .join('\n\n');
+  return { text, used: kept.length, dropped: all.length - kept.length };
+}
+
+/**
+ * 对话块对应的硬规则。**没聊过就整段不拼**（同 tender 那条 relevanceRule 的道理）——
+ * 空着的「参考已经聊过的」会让模型顺着规则编一段共识出来，而那段读起来完全正常。
+ *
+ * 优先级必须写死在这里：不写的话模型会把客户随口一句「简单点」执行成少写两节，
+ * 而少一节的正文照样完整；也会把它自己上次的猜测当成客户确认过的事实写进 body，
+ * 那一句和有依据的一模一样。
+ */
+function discussionRule(d: Discussion): string {
+  if (!d.used) return '';
+  return `
+
+最后一条硬规则（关于「写什么」，优先级高于上面任何一条关于「怎么写」的偏好）：
+**【本步已经聊过的】里客户提的要求优先于你自己上一版的写法** —— 他已经排除掉的方向不要再提，
+他要求换的角度就按他说的换，他指名要补的那一节要真的补上。但两件事不许因此松掉：
+一是**操法和输出物清单照旧走完**（他说「简单点」不等于可以少一节，少一节的正文读起来一样完整）；
+二是**他在对话里给的事实按【客户资料】同级采信，你自己在对话里推测过的东西仍然是推测** ——
+把上次的猜测当成客户确认过的事实写进去，读起来和有依据的一模一样。`;
+}
+
+/** 对话块进 user prompt 的那一段。丢掉的条数要写给模型：不写它会以为手上是全部上下文。 */
+function discussionSection(d: Discussion): string {
+  if (!d.used) return '';
+  return `
+
+【本步已经聊过的（客户和你在这一步的对话，最近 ${d.used} 条${
+    d.dropped ? `，更早的 ${d.dropped} 条这次没带上，别假设你知道全部经过` : ''
+  }）】
+${d.text}`;
 }
 
 /** 一条 AI 机会最长这么多字。它是「只标不展开」的一句话，长了就是把整节写进来了。 */
@@ -282,8 +328,13 @@ function planSystem(stage: StageDef): string {
 ${DRAFT_JSON_FORMAT}`;
 }
 
-function buildMessages(project: ConsultProject, stage: StageDef, entries: ConsultEntry[]) {
-  const system = stage.lane === 'plan' ? planSystem(stage) : fastSystem();
+function buildMessages(
+  project: ConsultProject,
+  stage: StageDef,
+  entries: ConsultEntry[],
+  disc: Discussion
+) {
+  const system = (stage.lane === 'plan' ? planSystem(stage) : fastSystem()) + discussionRule(disc);
 
   const user = `【品牌 / 客户】${project.brand_name}
 
@@ -303,7 +354,7 @@ ${knowledgeBlock(entries, stage.requires)}
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】
-${project.brief || '（客户还没贴任何资料）'}`;
+${project.brief || '（客户还没贴任何资料）'}${discussionSection(disc)}`;
 
   return [
     { role: 'system' as const, content: system },
@@ -322,7 +373,7 @@ export async function draftFastStage(
   userId: string,
   project: ConsultProject,
   stageKey: string
-): Promise<{ draft: StageDraft; truncated: boolean }> {
+): Promise<{ draft: StageDraft; truncated: boolean; discussion: Discussion }> {
   // fast 和 plan 共用这条接口（都是「出一份草稿 → 用户改 → 定稿」），system prompt 按车道分。
   const { stage, entries } = requireStage(project.id, stageKey, { lanes: ['fast', 'plan'] });
   // plan 不拦空资料：它的依据是上游那十二条定稿，而那些已经解锁校验过了。
@@ -331,9 +382,10 @@ export async function draftFastStage(
     throw new StageError('先在下面贴一段客户资料 —— 快车道的结论全部来自这段资料，空着的话 AI 只能靠编', 400);
   }
 
+  const discussion = discussionBlock(project.id, stageKey);
   const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
     () => ({
-      messages: buildMessages(project, stage, entries),
+      messages: buildMessages(project, stage, entries, discussion),
       ...SAMPLING.analytic,
       max_tokens: MAX_TOKENS_DRAFT,
       response_format: { type: 'json_object' },
@@ -390,6 +442,9 @@ export async function draftFastStage(
     // 截断了照样把救回来的那部分给用户看，但必须说出来 ——
     // 断在半句话上的结论和写完的长得一样，他会直接定稿。
     truncated: finish === 'length',
+    // 这一版到底带没带上他刚聊的那几句，必须回给界面：带上和没带上的草稿
+    // 读起来一模一样，不说的话「聊天有没有用」永远只能靠感觉。
+    discussion,
   };
 }
 
@@ -445,7 +500,12 @@ const MAX_DIRECTIONS = 4;
 const MIN_REASONS = 2;
 const MIN_SOLUTIONS = 2;
 
-function directionMessages(project: ConsultProject, stage: StageDef, entries: ConsultEntry[]) {
+function directionMessages(
+  project: ConsultProject,
+  stage: StageDef,
+  entries: ConsultEntry[],
+  disc: Discussion
+) {
   const system = `你是品牌占位系统的资深咨询顾问，正在做「${stage.group}」阶段。
 这一步是**做判断**，不是找事实 —— 判断取决于人的取舍，所以你的任务不是给一个答案，
 而是给客户 ${MIN_DIRECTIONS}-${MAX_DIRECTIONS} 个**互斥的**候选方向，让他来选。
@@ -505,10 +565,10 @@ ${knowledgeBlock(entries, stage.requires)}
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】
-${project.brief || '（客户还没贴任何资料）'}`;
+${project.brief || '（客户还没贴任何资料）'}${discussionSection(disc)}`;
 
   return [
-    { role: 'system' as const, content: system },
+    { role: 'system' as const, content: system + discussionRule(disc) },
     { role: 'user' as const, content: user },
   ];
 }
@@ -589,12 +649,19 @@ export async function draftDirections(
   userId: string,
   project: ConsultProject,
   stageKey: string
-): Promise<{ directions: StageDirection[]; verdict: string; methodBrief: string; truncated: boolean }> {
+): Promise<{
+  directions: StageDirection[];
+  verdict: string;
+  methodBrief: string;
+  truncated: boolean;
+  discussion: Discussion;
+}> {
   const { stage, entries } = requireStage(project.id, stageKey, { lanes: ['slow'] });
 
+  const discussion = discussionBlock(project.id, stageKey);
   const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
     () => ({
-      messages: directionMessages(project, stage, entries),
+      messages: directionMessages(project, stage, entries, discussion),
       ...SAMPLING.analytic,
       max_tokens: MAX_TOKENS_DIRECTIONS,
       response_format: { type: 'json_object' },
@@ -679,5 +746,7 @@ export async function draftDirections(
     verdict: str(parsed.verdict),
     methodBrief,
     truncated: finish === 'length',
+    // 这一批方向带没带上他刚聊的那几句 —— 带上和没带上出来的卡片读起来一模一样
+    discussion,
   };
 }

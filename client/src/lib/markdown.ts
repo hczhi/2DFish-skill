@@ -17,8 +17,32 @@ marked.setOptions({
 
 /** markdown → 安全 HTML。空输入回空串（调用方据此显示「这条是旧版定稿」）。 */
 export function renderMarkdown(src: string): string {
-  const text = (src || '').trim();
+  // 把模型/后端返回的字面量 `\n` 替换为真实的换行符，确保能被 marked 正确解析
+  // 同时修复 AI 常见错误：标题符号 # 后面缺少空格导致无法被识别为标题
+  const text = (src || '')
+    .trim()
+    .replace(/\\n/g, '\n')
+    .replace(/(#{1,6})(?=[^\s#])/g, '$1 ');
+  
   if (!text) return '';
-  const html = marked.parse(text, { async: false }) as string;
+  const html = wrapTables(marked.parse(text, { async: false }) as string);
   return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+}
+
+/**
+ * 每张表外面套一层 `.md-table`，由 CSS 给它横向滚动。
+ *
+ * 不套这层的话溢出的是**容器**：正文渲染在右侧抽屉（`overflow-y:auto`，另一轴按
+ * CSS 规则跟着变成 auto）和左栏聊天气泡里，一张六列的表会让整块内容横着滚 ——
+ * 连按钮和标题一起挪出可视区，读起来像布局坏了。而表格本身宽度收不住时，
+ * 列会被挤成一字一行的竖排文字：页面不报错、表格也在，只是没人读得下去，
+ * 也就没人去核对里面的数字（竞品对照、痛点优先级矩阵、数据置信度表全是表格）。
+ *
+ * 用字符串替换而不是 renderer 覆盖：GFM 表格不可能嵌套，而 renderer 的入参形态
+ * 在 marked 各大版本之间改过几次（改一次就静默回到没有 wrapper 的老样子）。
+ */
+function wrapTables(html: string): string {
+  return html
+    .replace(/<table>/g, '<div class="md-table"><table>')
+    .replace(/<\/table>/g, '</table></div>');
 }

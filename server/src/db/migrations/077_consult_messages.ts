@@ -25,7 +25,7 @@ export const migration_077: Migration = {
         project_id TEXT NOT NULL REFERENCES consult_projects(id),
         stage_key TEXT NOT NULL,
         role TEXT NOT NULL,                    -- 'user' | 'assistant'
-        kind TEXT NOT NULL DEFAULT 'text',     -- 'text' | 'directions' | 'draft'
+        kind TEXT NOT NULL DEFAULT 'text',     -- 'text' | 'directions' | 'draft' | 'entry' | 'discard'
         content TEXT NOT NULL DEFAULT '',      -- 进 prompt 的那一段（方向卡也要有可读的文字版）
         payload TEXT NOT NULL DEFAULT '',      -- kind != 'text' 时的结构化原文（JSON），前端照它渲染卡片
         created_at TEXT NOT NULL

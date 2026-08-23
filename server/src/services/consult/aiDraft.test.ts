@@ -22,7 +22,7 @@ vi.mock('../../core/llm/gateway.js', () => ({
 }));
 
 const { initDatabase, getDatabase } = await import('../../db/index.js');
-const { createProject, saveEntry } = await import('./projectStore.js');
+const { createProject, saveEntry, appendMessage } = await import('./projectStore.js');
 const { adoptSources } = await import('./sourceStore.js');
 const { draftFastStage, draftDirections } = await import('./draftService.js');
 
@@ -37,7 +37,7 @@ describe('consult AI 出草稿 / 出方向', () => {
   beforeEach(() => {
     const db = getDatabase();
     db.exec(
-      'DELETE FROM consult_sources; DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;'
+      'DELETE FROM consult_messages; DELETE FROM consult_sources; DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;'
     );
     project = createProject('u1', '捷停车', '停车场 SaaS，覆盖 2000+ 车场，客单价偏低');
     replies.length = 0;
@@ -146,6 +146,39 @@ describe('consult AI 出草稿 / 出方向', () => {
     prompt = JSON.stringify(sent[0].messages);
     expect(prompt).toContain('还没有采纳任何联网资料');
     expect(prompt).toContain('据公开数据');
+  });
+
+  it('本步聊过的话要进重出的 prompt，而上一版草稿的气泡不进', async () => {
+    // 不带对话的话，用户在这一步聊了二十句再点「重出一版」，出来的东西和没聊过时
+    // 是同一个分布 —— 而它读起来完全正常，界面上还写着「聊完再点重出」。
+    // 反过来把 kind='draft' 那条气泡（上一版正文全文）也带回去的话，模型会照抄上一版：
+    // 两版都读得通，用户只会以为自己没说清楚。
+    appendMessage(project.id, 'self', { role: 'user', content: '别写团队规模，客户不让提' });
+    appendMessage(project.id, 'self', { role: 'assistant', content: '好，那一节改成业务口径' });
+    appendMessage(project.id, 'self', {
+      role: 'assistant',
+      kind: 'draft',
+      content: '我出了一版草稿。正文：上一版那张现状卡',
+      payload: {},
+    });
+    // 定稿留痕（kind='entry'）同理不能带回去：那段内容本来就以定稿身份进 prompt，
+    // 再以「本步聊过的话」的身份出现一遍，模型会当成两处独立印证（「多处都指向…」）。
+    appendMessage(project.id, 'self', {
+      role: 'assistant',
+      kind: 'entry',
+      content: '✅ 已定稿。结论：定稿那句留痕',
+      payload: {},
+    });
+
+    replies.push({ text: JSON.stringify({ conclusion: 'c', body: FULL_BODY, confidence: 'mid', gaps: [] }) });
+    const out = await draftFastStage('u1', project, 'self');
+
+    const prompt = JSON.stringify(sent[0].messages);
+    expect(prompt).toContain('别写团队规模，客户不让提');
+    expect(prompt).not.toContain('上一版那张现状卡');
+    expect(prompt).not.toContain('定稿那句留痕');
+    // 界面靠这个数显示「这一版带上了 N 条对话」：带上和没带上出来的草稿一模一样
+    expect(out.discussion.used).toBe(2);
   });
 
   it('下游 prompt 只带直接依赖的正文，其余只带一句话总结', async () => {

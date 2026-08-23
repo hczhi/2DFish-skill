@@ -88,7 +88,14 @@ export function listProjects(userId: string) {
       `SELECT p.id, p.brand_name, p.status, p.created_at, p.updated_at,
               LENGTH(p.brief) AS brief_chars,
               (SELECT COUNT(*) FROM consult_entries e WHERE e.project_id = p.id) AS decided_count,
-              (SELECT COUNT(*) FROM consult_entries e WHERE e.project_id = p.id AND e.stale = 1) AS stale_count
+              (SELECT COUNT(*) FROM consult_entries e WHERE e.project_id = p.id AND e.stale = 1) AS stale_count,
+              -- 「有一份问卷没提交」必须在列表这一行上看得见：那一轮没提交就意味着
+              -- 客户资料还缺一块，而后面每一步的结论都从那段资料出。不显示的话
+              -- 这一行和一个资料齐全的项目长得一模一样（进度、字数都照常涨）。
+              (SELECT COUNT(*) FROM consult_intake i
+                WHERE i.project_id = p.id AND i.applied_at IS NULL) AS intake_pending,
+              (SELECT COUNT(*) FROM consult_intake i
+                WHERE i.project_id = p.id AND i.applied_at IS NOT NULL) AS intake_rounds
          FROM consult_projects p
         WHERE p.user_id = ?
         ORDER BY p.updated_at DESC`
@@ -102,6 +109,8 @@ export function listProjects(userId: string) {
     brief_chars: number;
     decided_count: number;
     stale_count: number;
+    intake_pending: number;
+    intake_rounds: number;
   }>;
   // total_stages 一并返回：前端不该自己写死 12，改了阶段清单之后
   // 「3/12」会变成一个永远对不上的分母。
@@ -180,7 +189,8 @@ export interface ConsultMessage {
   project_id: string;
   stage_key: string;
   role: 'user' | 'assistant';
-  kind: 'text' | 'directions' | 'draft';
+  /** 'entry' = 定稿留下的那条记录。**只有 'text' 会进下一次 prompt**（discussionBlock） */
+  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard';
   content: string;
   /** kind != 'text' 时的结构化原文（JSON 字符串，前端照它渲染卡片） */
   payload: string;

@@ -13,7 +13,7 @@ const usedKeywords = ref<string[]>([])
 // 被时效闸门挡掉的条数。列表加上闸门之后会「凭空少一批」，
 // 不显示的话看起来像数据丢了 —— 它们其实都还在库里，只是不再展示和推送。
 const hiddenExpired = ref(0)
-const visibleDays = ref(14)
+const visibleDays = ref(7)
 
 // Keyword pool
 const keywordPool = ref<any[]>([])
@@ -50,11 +50,14 @@ const drafts = ref<any[]>([])
 const draftsTotal = ref(0)
 const draftsPage = ref(1)
 const draftsLoading = ref(false)
-// 'draft' | 'rejected'。作废的（AI 判为与关键词库无关）只在显式切过去时才显示，
-// 两个视图的条数都要一直看得见 —— 「已作废 37」这种异常数字是发现闸门误杀的唯一线索。
-const draftsStatusFilter = ref<'draft' | 'rejected'>('draft')
+// 'draft' | 'rejected' | 'expired'。两种作废都只在显式切过去时才显示，三个视图的
+// 条数都要一直看得见：「已作废 37」这种异常数字是发现相关性闸门误杀的唯一线索，
+// 「已过时效 N」则是唯一能解释「待提取怎么突然少了一大批」的地方（入库满
+// visibleDays 天的行由服务端每天巡检一次自动作废）。
+const draftsStatusFilter = ref<'draft' | 'rejected' | 'expired'>('draft')
 const draftCount = ref(0)
 const rejectedCount = ref(0)
+const expiredCount = ref(0)
 const draftsPlatformFilter = ref('')
 const draftsKeywordFilter = ref('')
 const selectedDraftIds = ref<string[]>([])
@@ -109,7 +112,7 @@ async function loadTenders() {
     tenders.value = data.items
     total.value = data.total
     hiddenExpired.value = data.hiddenExpired || 0
-    visibleDays.value = data.visibleDays || 14
+    visibleDays.value = data.visibleDays || 7
   } catch (e: any) {
     console.error(e)
   } finally {
@@ -152,6 +155,8 @@ async function loadDrafts() {
     draftsTotal.value = data.total
     draftCount.value = data.draftCount ?? 0
     rejectedCount.value = data.rejectedCount ?? 0
+    expiredCount.value = data.expiredCount ?? 0
+    if (data.visibleDays) visibleDays.value = data.visibleDays
     // 切视图后残留的勾选会跨视图带过去：在「已作废」里勾两条、切回草稿再点提取，
     // 提交的是那两条作废的 id（服务层因为 ai_extracted 有值直接跳过 → 「0 条已处理」）。
     selectedDraftIds.value = selectedDraftIds.value.filter(id => drafts.value.some(d => d.id === id))
@@ -390,11 +395,12 @@ function getStatusLabel(status: string): string {
     case 'extracted': return '已提取'
     case 'scored': return '已评分'
     case 'rejected': return '已作废'
+    case 'expired': return '已过时效'
     default: return status || '草稿'
   }
 }
 
-function switchDraftStatus(status: 'draft' | 'rejected') {
+function switchDraftStatus(status: 'draft' | 'rejected' | 'expired') {
   draftsStatusFilter.value = status
   draftsPage.value = 1
   loadDrafts()
@@ -1018,6 +1024,9 @@ function copyText(text: string) {
             <button :class="{ active: draftsStatusFilter === 'rejected' }" @click="switchDraftStatus('rejected')">
               已作废 ({{ rejectedCount }})
             </button>
+            <button :class="{ active: draftsStatusFilter === 'expired' }" @click="switchDraftStatus('expired')">
+              已过时效 ({{ expiredCount }})
+            </button>
           </div>
           <button v-if="draftsStatusFilter === 'draft'" class="btn-primary" :disabled="selectedDraftIds.length === 0 || crawling" @click="batchExtract()">
             批量AI提取 ({{ selectedDraftIds.length }})
@@ -1039,6 +1048,11 @@ function copyText(text: string) {
         AI 提取时判定「和关键词库（爬管理 &gt; 关键词库里启用的那些）完全无关」的标讯会落在这里：
         不进标讯列表、不参与评分。判错了点「恢复」放回待提取。
       </p>
+      <p v-else-if="draftsStatusFilter === 'expired'" class="drafts-hint">
+        入库超过 <b>{{ visibleDays }}</b> 天的标讯每天自动作废，落在这里 ——
+        它们本来就已经被时效闸门挡在标讯列表之外了，作废只是别再占着「待提取」等人去花额度提取。
+        数据仍在库里，<b>不能恢复</b>（放回去下次巡检还是会作废）；要放宽时效得改 TENDER_VISIBLE_DAYS。
+      </p>
 
       <div v-if="draftsLoading" class="loading">加载中...</div>
       <table v-else class="tender-table">
@@ -1046,7 +1060,7 @@ function copyText(text: string) {
           <tr>
             <th v-if="draftsStatusFilter === 'draft'" class="th-checkbox"><input type="checkbox" v-model="allDraftsSelected" /></th>
             <th>标题</th>
-            <th v-if="draftsStatusFilter === 'rejected'">作废原因</th>
+            <th v-if="draftsStatusFilter !== 'draft'">作废原因</th>
             <th>类型</th>
             <th>采购人</th>
             <th>地区</th>
@@ -1061,7 +1075,7 @@ function copyText(text: string) {
               <a v-if="t.url" :href="t.url" target="_blank">{{ t.title }}</a>
               <span v-else>{{ t.title }}</span>
             </td>
-            <td v-if="draftsStatusFilter === 'rejected'" class="td-reject-reason">{{ t.reject_reason || '-' }}</td>
+            <td v-if="draftsStatusFilter !== 'draft'" class="td-reject-reason">{{ t.reject_reason || '-' }}</td>
             <td class="td-type">{{ t.notice_type || '-' }}</td>
             <td>{{ t.purchaser_name || '-' }}</td>
             <td>{{ t.region_name || '-' }}</td>
@@ -1071,14 +1085,16 @@ function copyText(text: string) {
               <template v-if="draftsStatusFilter === 'draft'">
                 <button class="btn-sm" :disabled="crawling" @click="batchExtract([t.id])">提取</button>
               </template>
-              <button v-else class="btn-sm" @click="restoreDraft(t.id)">恢复</button>
+              <!-- 恢复只对「相关性误杀」有意义：过期的放回 draft 也会被下次巡检再作废，
+                   后端会 400。留个点了必然报错的按钮，读起来像界面坏了。 -->
+              <button v-else-if="draftsStatusFilter === 'rejected'" class="btn-sm" @click="restoreDraft(t.id)">恢复</button>
             </td>
           </tr>
         </tbody>
       </table>
 
       <div v-if="drafts.length === 0 && !draftsLoading" class="empty-hint">
-        {{ draftsStatusFilter === 'rejected' ? '没有被作废的标讯' : '暂无草稿标讯' }}
+        {{ draftsStatusFilter === 'rejected' ? '没有被作废的标讯' : draftsStatusFilter === 'expired' ? '没有已过时效的标讯' : '暂无草稿标讯' }}
       </div>
 
       <div v-if="draftsTotal > 20" class="pagination">
@@ -1608,7 +1624,7 @@ function copyText(text: string) {
             </select>
           </div>
           <p class="scoring-hint">
-            将对该用户<b>尚未评分</b>的标讯逐条评分（入库和发布都在 14 天内、且属于他关注的平台）。
+            将对该用户<b>尚未评分</b>的标讯逐条评分（入库和发布都在 {{ visibleDays }} 天内、且属于他关注的平台）。
             已经评过的不会再评，也不会再花 AI 额度。达到推送阈值的会同步进多维表格。
           </p>
           <p class="scoring-hint scoring-hint-warn">

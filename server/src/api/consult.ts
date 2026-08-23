@@ -27,7 +27,7 @@ import {
   MAX_AI_OPPORTUNITIES,
   MAX_AI_OPPORTUNITY_CHARS,
 } from '../services/consult/draftService.js';
-import { chatInStage, directionsToText, draftToText } from '../services/consult/chatService.js';
+import { chatInStage, directionsToText, draftToText, entryToText } from '../services/consult/chatService.js';
 import { buildIntake, applyAnswers } from '../services/consult/intakeService.js';
 import {
   saveRound,
@@ -158,7 +158,7 @@ consultRouter.post('/projects/:id/stages/:key/draft', async (req, res, next) => 
   try {
     const project = getProject(req.params.id, req.user!.id);
     if (!project) return res.status(404).json({ error: '项目不存在' });
-    const { draft, truncated } = await draftFastStage(req.user!.id, project, req.params.key);
+    const { draft, truncated, discussion } = await draftFastStage(req.user!.id, project, req.params.key);
     // 出过一轮就记一轮：界面上「第 N 轮」是他唯一能看出草稿重出过的地方
     touchStage(project.id, req.params.key, 'exploring', { incRound: true });
     // 草稿进对话：他下一句往往是「把结论里那句改成…」，指的就是这一版
@@ -168,7 +168,45 @@ consultRouter.post('/projects/:id/stages/:key/draft', async (req, res, next) => 
       content: draftToText(draft),
       payload: draft,
     });
-    res.json({ draft, truncated, message, stages: buildStageRail(project.id) });
+    // discussion 只回条数，不回原文（原文就在他眼前的对话里）：带上和没带上
+    // 这一版读起来一模一样，不回这个数的话「聊天到底有没有用」只能靠感觉。
+    res.json({
+      draft,
+      truncated,
+      discussion: { used: discussion.used, dropped: discussion.dropped },
+      message,
+      stages: buildStageRail(project.id),
+    });
+  } catch (err) {
+    fail(err, res, next);
+  }
+});
+
+/**
+ * 丢弃这一版草稿 / 这几个候选方向。草稿本身不落库，所以这里只做一件事：
+ * 在这一步的对话里留一条 `kind='discard'`。
+ *
+ * 缺了这条记录，前端那句 `draft = null` 只是本地清空：对话里那张「已生成草稿」的卡片
+ * 还在，而它的 payload 里存着整份草稿 —— 切走再切回来 `restoreArtifact` 会把它原样
+ * 恢复到右栏，用户明明点过「丢弃」那一版又回来了，两次操作都不报错。
+ * 所以前端那次调用失败必须出声，不能当成「反正本地已经清了」。
+ */
+consultRouter.post('/projects/:id/stages/:key/draft/discard', (req, res, next) => {
+  try {
+    const project = getProject(req.params.id, req.user!.id);
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+    requireStage(project.id, req.params.key);
+    const isDirections = String(req.body?.kind || '') === 'directions';
+    const message = appendMessage(project.id, req.params.key, {
+      role: 'assistant',
+      kind: 'discard',
+      // 「没有进知识库」这半句是重点：用户分不清「丢弃草稿」和「删掉这一步的结论」，
+      // 不说的话他会以为刚才定稿的东西也一起没了。
+      content: isDirections
+        ? '🗑 这几个候选方向已丢弃，没有进知识库。要继续这一步就点「生成新方向」再出一版（会再花 1 次 AI 额度）。'
+        : '🗑 这一版草稿已丢弃，没有进知识库。要继续这一步就点「重新生成草稿」再出一版（会再花 1 次 AI 额度）。',
+    });
+    res.json({ message });
   } catch (err) {
     fail(err, res, next);
   }
@@ -191,7 +229,13 @@ consultRouter.post('/projects/:id/stages/:key/directions', async (req, res, next
       content: directionsToText(out),
       payload: out,
     });
-    res.json({ ...out, message, stages: buildStageRail(project.id) });
+    // 同 /draft：只回条数，不把对话原文再回一遍（它就在下面的对话里）
+    res.json({
+      ...out,
+      discussion: { used: out.discussion.used, dropped: out.discussion.dropped },
+      message,
+      stages: buildStageRail(project.id),
+    });
   } catch (err) {
     fail(err, res, next);
   }
@@ -278,11 +322,22 @@ consultRouter.put('/projects/:id/stages/:key/entry', (req, res, next) => {
     }
 
     const { entry, staled } = saveEntry(project.id, req.params.key, { ...fields, body, aiOpportunities });
+    const staledLabels = staled.map((k) => stageByKey(k)?.label || k);
+    // 定稿也进对话记录：不进的话这一步的对话永远以「已生成草稿」那张卡片收尾，
+    // 回头看不出最终定的是哪一版（那张卡片打开的是当时那版草稿）。
+    // kind='entry' 不是 'text' —— 见 chatService.entryToText 的注释。
+    const message = appendMessage(project.id, req.params.key, {
+      role: 'assistant',
+      kind: 'entry',
+      content: entryToText({ ...entry, ai_opportunities: aiOpportunities }, staledLabels),
+      payload: { version: entry.version, confidence: entry.confidence, sourceLevel: entry.source_level },
+    });
     res.json({
       entry,
+      message,
       // 被标成待重跑的下游，前端必须显示出来：不说的话用户以为「改一句结论」
       // 只影响这一句，最后拿到的是一份自相矛盾的方案，中途一句错都不报。
-      staled: staled.map((k) => stageByKey(k)?.label || k),
+      staled: staledLabels,
       stages: buildStageRail(project.id),
       entries: listEntries(project.id),
     });

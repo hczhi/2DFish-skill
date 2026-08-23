@@ -1,0 +1,485 @@
+<script setup lang="ts">
+/**
+ * 补料问卷页（/consult/projects/:id/intake）。
+ *
+ * 独立成页而不是留在工作台右侧抽屉里，是因为这份问卷决定整个项目的天花板：
+ * 快车道四步的结论**全部**来自客户资料那一段，缺料不会报错 —— 十二步照样跑完，
+ * 只是那些结论是 AI 照常识补的，读起来和真按资料推的一模一样。抽屉会被
+ * `select()` 在窄屏关掉、也能被用户点 ×，关掉之后主区没有任何痕迹说明
+ * 「有一份十几题的问卷没填」。
+ *
+ * 两条硬规矩：
+ * - **自动出题只认 `?auto=1`，而且发请求之前先把它 replace 掉。** 留着的话刷新一次
+ *   就再出一轮，扣一次额度、把这一轮连已填的答案一起替换掉，而两次都显示成功。
+ * - **失败必须有出口。** 出题会 502（模型没按格式回）/ 429（额度用完），做成没出口的
+ *   硬闸门就等于额度用完那天用户进不了自己的项目。正常状态下不给绕过入口（他选的是
+ *   「新建一律先过一轮」），只有失败态给。
+ */
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { apiGet, apiPost, apiPut } from '../../lib/api'
+import { getToken } from '../../lib/auth'
+import { openLoginModal } from '../../lib/loginModal'
+import SiteHeader from '../../components/common/SiteHeader.vue'
+
+interface IntakeQuestion {
+  id: string
+  section: string
+  question: string
+  why: string
+  placeholder: string
+}
+
+const route = useRoute()
+const router = useRouter()
+const projectId = String(route.params.id)
+
+const brandName = ref('')
+const briefChars = ref(0)
+const rounds = ref(0)
+const gaps = ref<string[]>([])
+const questions = ref<IntakeQuestion[]>([])
+const truncated = ref(false)
+const roundId = ref('')
+const answers = ref<Record<string, string>>({})
+
+const loading = ref(true)
+const generating = ref(false)
+const applying = ref(false)
+const err = ref('')
+const saveErr = ref('')
+const workbench = `/consult/projects/${projectId}`
+
+/**
+ * 「先绕过这一轮」的标记。工作台在第一轮没提交时会把人送回这一页（新建一律先过一轮），
+ * 所以出口必须留一个记号，否则点了跳过又被弹回来，两页之间来回跳。
+ * sessionStorage 而不是库：这是「这次先进去看看」，不是「这个项目不用填了」——
+ * 落库的话那份问卷从此没人再提。key 和 ConsultProject.vue 里那份必须一致。
+ */
+const INTAKE_SKIP_KEY = `consult-intake-skip:${projectId}`
+function skipToWorkbench() {
+  sessionStorage.setItem(INTAKE_SKIP_KEY, '1')
+  router.push(workbench)
+}
+
+const filled = computed(() => questions.value.filter(q => (answers.value[q.id] || '').trim()).length)
+/** 全部必填（作者拍板）：一题没填就不让提交。 */
+const unfilled = computed(() => questions.value.length - filled.value)
+
+onMounted(async () => {
+  if (!getToken()) {
+    // loading 必须落下来：留着「加载中…」的话，用户把登录框关掉之后
+    // 看到的是一个永远在转的页面，而真实原因是他没登录。
+    loading.value = false
+    openLoginModal(window.location.pathname, '品牌咨询工作台需要登录')
+    return
+  }
+  // 先把 ?auto=1 拿到手再 replace 掉：读完之后 route.query 就没有它了
+  const auto = !!route.query.auto
+  if (auto) await router.replace({ path: route.path })
+  await load()
+  if (auto && !questions.value.length) await generate()
+})
+
+async function load() {
+  loading.value = true
+  err.value = ''
+  try {
+    const res = await apiGet(`/api/consult/projects/${projectId}`)
+    brandName.value = res.project.brand_name
+    briefChars.value = (res.project.brief || '').length
+    rounds.value = res.intakeRounds || 0
+    if (res.intake) {
+      gaps.value = res.intake.gaps || []
+      questions.value = res.intake.questions || []
+      truncated.value = !!res.intake.truncated
+      roundId.value = res.intake.id
+      answers.value = { ...(res.intake.answers || {}) }
+    }
+  } catch (e: any) {
+    err.value = e?.message || '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function generate() {
+  if (questions.value.length && filled.value) {
+    if (!confirm(`重出一份问卷会丢掉这一轮已经填的 ${filled.value} 条答案（还没补进客户资料）。继续？`)) return
+  }
+  generating.value = true
+  err.value = ''
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/intake`, {})
+    gaps.value = res.gaps || []
+    questions.value = res.questions || []
+    truncated.value = !!res.truncated
+    roundId.value = res.round?.id || ''
+    rounds.value = res.rounds ?? rounds.value
+    answers.value = {}
+  } catch (e: any) {
+    err.value = e?.message || '生成问卷失败'
+  } finally {
+    generating.value = false
+  }
+}
+
+/**
+ * 逐题暂存（失焦时调）。一份十几题的问卷是拿去逐条问客户的，不存的话切个页面就全空了。
+ * 存不上必须出声：静默 200 的话用户一路以为存住了，关掉页面回来一个字都没有。
+ */
+async function saveAnswerDraft() {
+  if (!roundId.value) return
+  try {
+    await apiPut(`/api/consult/projects/${projectId}/intake/answers`, {
+      roundId: roundId.value,
+      answers: answers.value,
+    })
+    saveErr.value = ''
+  } catch (e: any) {
+    saveErr.value = `答案暂存失败（${e?.message || '未知原因'}）—— 别关页面，先把这一轮提交掉。`
+  }
+}
+
+async function submit() {
+  if (unfilled.value > 0) return
+  applying.value = true
+  err.value = ''
+  try {
+    const payload = questions.value.map(q => ({
+      id: q.id,
+      question: q.question,
+      answer: (answers.value[q.id] || '').trim(),
+      section: q.section,
+    }))
+    await apiPost(`/api/consult/projects/${projectId}/intake/apply`, {
+      answers: payload,
+      roundId: roundId.value,
+    })
+    // replace 而不是 push：返回键回到这一页时那一轮已经提交掉了，
+    // 页面只会显示「已补过 N 轮」，读起来像答案没存上。
+    await router.replace(workbench)
+  } catch (e: any) {
+    err.value = e?.message || '补进资料失败'
+  } finally {
+    applying.value = false
+  }
+}
+
+const sections = computed(() => {
+  const out: { name: string; items: Array<IntakeQuestion & { no: number }> }[] = []
+  questions.value.forEach((q, i) => {
+    const name = q.section || '其他'
+    const last = out.find(s => s.name === name)
+    const item = { ...q, no: i + 1 }
+    if (last) last.items.push(item)
+    else out.push({ name, items: [item] })
+  })
+  return out
+})
+</script>
+
+<template>
+  <div class="page-wrapper">
+    <SiteHeader />
+
+    <header class="hero">
+      <div class="hero-main">
+        <div class="hero-kicker">INTAKE · 补料问卷</div>
+        <h1>{{ brandName || '…' }}</h1>
+        <div class="hero-rule"></div>
+        <p class="hero-sub">
+          四看（看自己 / 行业 / 竞品 / 用户）的结论<strong>全部</strong>出自客户资料那一段。
+          资料缺了不会报错 —— 十二步照样跑完，只是那些结论是 AI 照常识补的。
+          所以先把这几题问清楚，再进工作台。
+        </p>
+        <div class="hero-meta">
+          <span>资料 {{ briefChars }} 字</span>
+          <span v-if="rounds">已补过 {{ rounds }} 轮</span>
+          <span v-if="questions.length">{{ filled }} / {{ questions.length }} 题已填</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="page">
+      <div class="container">
+        <div v-if="saveErr" class="alert">{{ saveErr }}</div>
+
+        <!-- 出题失败：这里是唯一给绕过入口的地方（额度用完 / 模型没按格式回） -->
+        <div v-if="err" class="alert">
+          {{ err }}
+          <div class="alert-actions">
+            <button class="btn-primary" :disabled="generating" @click="generate">
+              {{ generating ? '生成中…' : '再出一次（会再花 1 次 AI 额度）' }}
+            </button>
+            <button class="btn-ghost" @click="skipToWorkbench">
+              跳过，直接进工作台
+            </button>
+          </div>
+          <div class="alert-why">
+            跳过之后四看照样出得来，但那些结论会是 AI 按行业常识补的 ——
+            正文里带的表格和置信度标记和真按资料推的长得一模一样，所以自己要记住这一步没填。
+          </div>
+        </div>
+
+        <div v-if="loading" class="empty">加载中…</div>
+
+        <!-- 出题中：这一步要 20-40 秒，界面上不说的话用户会以为已经加载完了，
+             直接去点左栏的阶段，而额度这时候已经在扣了 -->
+        <div v-else-if="generating" class="waiting">
+          <div class="spinner"></div>
+          <div class="waiting-title">正在读你贴的资料，列出还得问客户什么…</div>
+          <div class="waiting-sub">
+            通常 20–40 秒。这一步消耗 1 次 AI 额度，<strong>别刷新页面</strong> —— 刷新会让这次的额度白花。
+          </div>
+        </div>
+
+        <!-- 问卷 -->
+        <template v-else-if="questions.length">
+          <div v-if="truncated" class="alert warn">
+            这份问卷是被截断的（模型输出到上限了），后面可能还漏了几题。填完这一轮再出一份，
+            AI 会接着问下一层。
+          </div>
+
+          <div v-if="gaps.length" class="gaps">
+            <div class="gaps-title">AI 读完这份资料，认为最要紧的缺口：</div>
+            <ul><li v-for="(g, i) in gaps" :key="i">{{ g }}</li></ul>
+          </div>
+
+          <div class="tip">
+            答案就写客户说的原话。<strong>填不完可以直接离开</strong> ——
+            每题失焦就存一次，回来接着填。
+          </div>
+
+          <div v-for="sec in sections" :key="sec.name" class="section">
+            <div class="sec-head">
+              <span class="sec-kicker">{{ sec.name }}</span>
+              <span class="muted">这几题答不清，这一步的结论就是编的</span>
+            </div>
+            <div v-for="q in sec.items" :key="q.id" class="qa">
+              <div class="qa-q">
+                <span class="qa-no">{{ String(q.no).padStart(2, '0') }}</span>
+                <div class="qa-body">
+                  <div class="qa-text">
+                    {{ q.question }}
+                    <em v-if="!(answers[q.id] || '').trim()" class="req">必填</em>
+                  </div>
+                  <div class="qa-why">{{ q.why }}</div>
+                </div>
+              </div>
+              <textarea
+                v-model="answers[q.id]"
+                rows="3"
+                :placeholder="q.placeholder || '客户答什么就写什么'"
+                @change="saveAnswerDraft"
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="submit-bar">
+            <button class="btn-primary" :disabled="applying || unfilled > 0" @click="submit">
+              {{ applying ? '补充中…' : '提交并进入工作台' }}
+            </button>
+            <span v-if="unfilled > 0" class="muted">
+              还有 {{ unfilled }} 题没填 —— 全部填完才能提交
+            </span>
+            <span v-else class="muted">
+              这 {{ questions.length }} 条答案会追加进客户资料，后面每一步分析都读得到
+            </span>
+            <button class="btn-ghost leave" @click="router.push('/consult/projects')">
+              先离开（已填的都存着）
+            </button>
+          </div>
+        </template>
+
+        <!-- 没有待填的问卷：刷新过（auto 已经被 replace 掉）或者上一轮已经提交了 -->
+        <div v-else class="empty">
+          <p v-if="rounds">这个项目已经补过 {{ rounds }} 轮，当前没有待填的问卷。</p>
+          <p v-else>当前没有待填的问卷。</p>
+          <div class="alert-actions">
+            <button class="btn-primary" :disabled="generating" @click="generate">
+              {{ rounds ? '出下一轮问卷' : '出一份问卷' }}（花 1 次 AI 额度）
+            </button>
+            <button class="btn-ghost" @click="skipToWorkbench">进工作台</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* kimi3 设计系统，和 ConsultHome.vue / ConsultProject.vue 同一套变量与同一条规矩：
+   悬停只改阴影和边框，绝不 translateY —— 正在填的那一题跳一下，光标位置就跑了。 */
+.page-wrapper {
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
+  --brand: #0B4A6F;
+  --brand-ink: #063553;
+  --navy: #0B1424;
+  --navy-2: #16233C;
+  --color-text: #1D1D1F;
+  --color-muted: #434344;
+  --color-soft: #86868B;
+  --color-bg-elevated: rgba(255, 255, 255, 0.75);
+  --color-border: rgba(0, 0, 0, 0.07);
+  --color-border-strong: rgba(0, 0, 0, 0.16);
+  --shadow: 0 12px 32px -12px rgba(0, 0, 0, .06), 0 2px 8px rgba(0, 0, 0, .02);
+
+  display: flex; flex-direction: column; min-height: 100vh;
+  background: #F5F5F7;
+  background-image: linear-gradient(rgba(0,0,0,.03) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(0,0,0,.03) 1px, transparent 1px);
+  background-size: 24px 24px; background-attachment: fixed;
+  color: var(--color-text); font-family: var(--font-sans);
+}
+
+.hero {
+  position: relative; overflow: hidden;
+  padding: 40px 48px 34px; color: #F2F6FC;
+  background: linear-gradient(135deg, #080F1D 0%, var(--navy) 38%, var(--navy-2) 68%, #1E3A5C 105%);
+}
+.hero::before {
+  content: ""; position: absolute; top: -200px; right: -60px; width: 460px; height: 460px;
+  background: radial-gradient(circle, rgba(11, 74, 111, .55) 0%, transparent 65%); pointer-events: none;
+}
+.hero-main { position: relative; z-index: 1; max-width: 760px; }
+.hero-kicker {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 5px;
+  color: rgba(242, 246, 252, .5); text-transform: uppercase;
+}
+/* 每个标题都要显式写 font-family：App.vue 有一条全局 h1..h6 用衬线体，
+   不写的话中文标题落到 Georgia 的中文回退上 —— 整页突然换了一种字 */
+.hero h1 {
+  margin: 10px 0 0; font-size: 32px; font-weight: 800; letter-spacing: .5px;
+  font-family: var(--font-sans); color: #fff;
+}
+.hero-rule { width: 56px; height: 3px; border-radius: 2px; background: #4C9CC9; margin: 16px 0; }
+.hero-sub { margin: 0; font-size: 14px; line-height: 1.9; color: rgba(242, 246, 252, .82); }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.hero-meta span {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .5px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(242, 246, 252, .08); border: 1px solid rgba(242, 246, 252, .14);
+  color: rgba(242, 246, 252, .9);
+}
+
+.page { flex: 1; padding: 32px 48px 80px; }
+.container { max-width: 880px; margin: 0 auto; width: 100%; }
+
+.alert {
+  margin-bottom: 20px; padding: 14px 16px; border-radius: 10px;
+  background: #FEF3F2; border: 1px solid #FDA29B; color: #B42318; font-size: 13px; line-height: 1.8;
+}
+.alert.warn { background: #FFFAEB; border-color: #FEDF89; color: #B54708; }
+.alert-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.alert-why { margin-top: 10px; font-size: 12px; line-height: 1.8; color: #7A271A; }
+
+.empty {
+  padding: 44px; text-align: center; color: var(--color-soft); font-size: 13px; line-height: 1.9;
+  background: var(--color-bg-elevated);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px dashed var(--color-border-strong); border-radius: 14px;
+}
+.empty .alert-actions { justify-content: center; }
+
+.waiting {
+  padding: 56px 32px; text-align: center;
+  background: var(--color-bg-elevated);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--color-border); border-top: 4px solid var(--brand);
+  border-radius: 14px; box-shadow: var(--shadow);
+}
+.spinner {
+  width: 26px; height: 26px; margin: 0 auto 18px;
+  border: 3px solid rgba(11, 74, 111, .18); border-top-color: var(--brand);
+  border-radius: 50%; animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.waiting-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.waiting-sub { font-size: 12px; line-height: 1.9; color: var(--color-soft); }
+
+.gaps {
+  padding: 16px 20px; margin-bottom: 18px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border); border-left: 3px solid var(--brand);
+  border-radius: 12px; box-shadow: var(--shadow);
+}
+.gaps-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.gaps ul { margin: 0; padding-left: 20px; }
+.gaps li { font-size: 13px; line-height: 1.9; color: var(--color-muted); }
+
+.tip {
+  font-size: 12px; line-height: 1.9; color: var(--color-muted);
+  padding: 11px 14px; margin-bottom: 22px;
+  background: rgba(11, 74, 111, .05); border-radius: 10px;
+}
+
+.section { margin-bottom: 26px; }
+.sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.sec-kicker {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 4px;
+  color: var(--brand); text-transform: uppercase; font-weight: 700;
+}
+.muted { font-size: 12px; color: var(--color-soft); }
+
+.qa {
+  padding: 16px 20px; margin-bottom: 10px;
+  background: var(--color-bg-elevated);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--color-border); border-radius: 14px; box-shadow: var(--shadow);
+  transition: border-color .3s, box-shadow .3s;
+}
+.qa:focus-within { border-color: rgba(11, 74, 111, .3); }
+.qa-q { display: flex; gap: 14px; margin-bottom: 10px; }
+.qa-no {
+  flex: 0 0 auto; font-family: var(--font-mono); font-size: 22px; font-weight: 800;
+  line-height: 1.2; color: transparent; -webkit-text-stroke: 1.1px var(--brand);
+}
+.qa-body { min-width: 0; }
+.qa-text { font-size: 14px; font-weight: 700; line-height: 1.7; }
+.qa-text .req {
+  font-style: normal; font-family: var(--font-mono); font-size: 10px;
+  margin-left: 8px; padding: 2px 7px; border-radius: 999px;
+  background: #FEF3F2; border: 1px solid #FDA29B; color: #B42318; font-weight: 700;
+}
+.qa-why { margin-top: 5px; font-size: 12px; line-height: 1.8; color: var(--color-soft); }
+.qa textarea {
+  width: 100%; box-sizing: border-box; padding: 10px 12px;
+  border: 1px solid var(--color-border-strong); border-radius: 10px;
+  font-size: 13px; font-family: var(--font-sans); color: var(--color-text);
+  background: #fff; resize: vertical; line-height: 1.8;
+}
+.qa textarea:focus { outline: none; border-color: var(--brand); }
+
+.submit-bar {
+  position: sticky; bottom: 0; z-index: 2;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 16px 20px; margin-top: 24px;
+  background: rgba(255, 255, 255, .9);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--color-border); border-radius: 14px; box-shadow: var(--shadow);
+}
+.submit-bar .leave { margin-left: auto; }
+
+.btn-primary {
+  padding: 10px 20px; border: 1px solid var(--brand); border-radius: 10px;
+  background: var(--brand); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: var(--font-sans);
+}
+.btn-primary:hover { background: var(--brand-ink); }
+.btn-primary:disabled { opacity: .5; cursor: default; }
+.btn-ghost {
+  padding: 10px 18px; border: 1px solid var(--color-border-strong); border-radius: 10px;
+  background: transparent; color: var(--color-muted); font-size: 13px; cursor: pointer;
+  font-family: var(--font-sans);
+}
+.btn-ghost:hover { border-color: var(--brand); color: var(--brand); }
+
+@media (max-width: 820px) {
+  .hero { padding: 32px 24px 28px; }
+  .hero h1 { font-size: 24px; }
+  .page { padding: 24px 20px 64px; }
+  .submit-bar .leave { margin-left: 0; }
+}
+</style>

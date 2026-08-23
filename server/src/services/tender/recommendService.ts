@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
-import { aiGateway, QuotaExceededError } from '../../core/llm/gateway.js';
+import { QuotaExceededError } from '../../core/llm/gateway.js';
 import { syncUserRecommendations, syncAllTenders, getBitableUrl } from './feishuBitable.js';
-import { parseFirstJson } from '../../core/llm/parseJson.js';
+import { jsonGateway, jsonFailMessage } from '../../core/llm/parseJson.js';
 import { visibleSql, TENDER_VISIBLE_DAYS } from './retention.js';
 
 interface UserConfig {
@@ -55,6 +55,33 @@ interface ScoreResult {
   scoredProfileAt: string | null;
   _prompt: string;
   _response: string;
+}
+
+/**
+ * 一条标讯评分的输出上限。**这不是正文长度，是「留给思维链跑的空间」**：
+ * 带思维链的模型把 reasoning_tokens 算进 max_tokens 却不放进 message.content。
+ * 库里 deepseek-v4-pro 的实测是 4-12 token/字（547 字的回复花了 3116 token），
+ * 而这里要的 JSON 含 analysis 2-3 句 + strategy 3-4 句，正文本身就 300-500 字 ——
+ * 原来给 1000，于是经常在写完 JSON 之前顶格截断，括号配不平。
+ * 思维链长短随机，所以症状是「有些条解析失败、有些条正常」，完全指不到额度上。
+ * 调低不省钱（计费按实际用量），只是把偶发的思维链长跑换成一次白扣额度的失败。
+ */
+const MAX_SCORE_TOKENS = 4000;
+
+/**
+ * 这条标讯的 AI 评分没拿到。**必须抛而不是兜底成 50 分**：
+ * `loadUnscoredForUser` 用 `NOT EXISTS(tender_recommendations)` 判「评过了」，
+ * 所以只要落了行，这条标讯就**永远不会再被评**，那份编出来的分数还会跟着
+ * 增量同步进多维表格、进飞书卡片。抛出去 = 不落行 = 下次点评分自动重试。
+ * `detail` 是给运行日志的原文（prompt/response 摘要），排障只能靠它。
+ */
+class ScoreParseError extends Error {
+  name = 'ScoreParseError';
+  detail?: string;
+  constructor(message: string, detail?: string) {
+    super(message);
+    this.detail = detail;
+  }
 }
 
 const DEFAULT_WEIGHTS = {
@@ -312,32 +339,36 @@ ${feedbackSection}
 - 简介已说明能力时，不要再以"未配置案例/资质"为理由扣分或搪塞` : ''}`;
   }
 
-  try {
-    const { response } = await aiGateway(
-      { messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 1000 },
-      { userId, source: 'tender', operation: 'score-business' }
+  // 走 jsonGateway 而不是裸 aiGateway：偶发的空返回/未转义引号会自动重试一次，
+  // 而截断（finish=length）它故意不重试 —— 同样的 body 断在同一个地方。
+  // 额度不足、上游报错一律**往外抛**（原来这里 catch 成 reason='每日AI额度已用完'
+  // 的 50 分行，于是外层那句「⚠️ AI额度已用完，评分中止」是死代码，
+  // 而额度打满的那一刻起，剩下几百条标讯会被逐条写成编出来的 50 分且永不重评）。
+  const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+    () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: MAX_SCORE_TOKENS }),
+    { userId, source: 'tender', operation: 'score-business' }
+  );
+
+  if (!parsed) {
+    // 三种成因分开说（空返回 / 截断 / 没按 JSON 回），解法完全不同：
+    // 合成一句「解析失败」的话，看到的人只会去改评分 prompt 或反复重评，
+    // 而真凶是这个模型带思维链、把额度花在了没人看得见的地方。
+    throw new ScoreParseError(
+      jsonFailMessage('这条标讯的 AI 评分', { raw, finish, reasoningTokens, budget: MAX_SCORE_TOKENS }),
+      `📤 Prompt:\n${prompt.slice(0, 600)}...\n\n📥 Response(${raw.length} 字, finish=${finish || '未知'}${reasoningTokens ? `, 思维链 ${reasoningTokens} token` : ''}):\n${raw.slice(0, 600)}`
     );
-    const content = response.choices[0]?.message?.content || '';
-    const parsed = parseFirstJson<any>(content);
-    if (parsed) {
-      return {
-        score: parsed.businessScore ?? 50,
-        qualificationScore: parsed.qualificationScore ?? 50,
-        reason: parsed.reason || '',
-        risk: parsed.risk || '',
-        analysis: parsed.analysis || '',
-        strategy: parsed.strategy || '',
-        _prompt: prompt,
-        _response: content,
-      };
-    }
-    return { score: 50, qualificationScore: 50, reason: '解析失败', risk: '', analysis: '', strategy: '', _prompt: prompt, _response: content };
-  } catch (e: any) {
-    console.error('[tender] LLM scoring failed:', e.message);
-    const reason = e.name === 'QuotaExceededError' ? '每日AI额度已用完' : `评分服务暂时不可用: ${e.message}`;
-    return { score: 50, qualificationScore: 50, reason, risk: '', analysis: '', strategy: '', _prompt: prompt, _response: e.message };
   }
-  return { score: 50, qualificationScore: 50, reason: '评分服务暂时不可用', risk: '', analysis: '', strategy: '', _prompt: prompt, _response: '' };
+
+  return {
+    score: parsed.businessScore ?? 50,
+    qualificationScore: parsed.qualificationScore ?? 50,
+    reason: parsed.reason || '',
+    risk: parsed.risk || '',
+    analysis: parsed.analysis || '',
+    strategy: parsed.strategy || '',
+    _prompt: prompt,
+    _response: raw,
+  };
 }
 
 function loadUserConfig(userId: string): UserConfig {
@@ -580,6 +611,10 @@ export async function runRecommendationsForAllUsers(
     let userProcessed = 0;
     let userSkipped = 0;
     let userSkippedByPlatform = 0;
+    // 评分失败（拿不到 JSON / 上游报错）的条数。这些标讯**没有落行**，
+    // 所以下次点评分还会被 loadUnscoredForUser 取到 —— 必须报出来并说清这一点，
+    // 否则「LLM评分 12 条」和用户预期的 20 条差在哪里，日志里看不出来。
+    let userFailed = 0;
 
     // 用户勾选的关注平台。空数组 = 不限平台（老用户与未配置过的用户保持全量）。
     const wantedPlatforms = new Set(config.preferences.platforms);
@@ -680,11 +715,19 @@ export async function runRecommendationsForAllUsers(
           break;
         }
         console.error(`[tender] Score failed for user=${user.id} tender=${tender.id}:`, e.message);
-        onLog?.(`  [错误] ${tender.title.slice(0, 25)}: ${e.message}`);
+        userFailed++;
+        // detail 里是 prompt/返回原文摘要（含 finish_reason 和思维链 token 数）。
+        // 「解析失败」这种事只有原文能说清是空返回、截断，还是模型没按 JSON 回。
+        onLog?.(`  [失败] ${tender.title.slice(0, 25)}: ${e.message}`, e.detail);
       }
     }
 
     onLog?.(`用户 ${user.id.slice(0, 8)} 完成：LLM评分 ${userProcessed} 条${userSkippedByPlatform > 0 ? `，跳过 ${userSkippedByPlatform} 条未关注平台` : ''}`);
+    if (userFailed > 0) {
+      // 失败的那些一行都没写进库，所以它们仍算「未评分」：再点一次会重试。
+      // 不说这句的话，管理员看到「完成」就走了，那几条标讯从此不在任何列表里。
+      onLog?.(`  ⚠️ ${userFailed} 条评分失败（未写入，仍算未评分）—— 再点一次「开始评分」会重试这些`);
+    }
 
     // 多维表格增量同步（失败不影响评分主流程）。这一步保留而推送去掉了：
     // 表里有数据是「用户随时能自己打开看」的前提，而卡片是一次性通知，

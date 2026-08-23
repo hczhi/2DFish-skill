@@ -82,6 +82,46 @@ export function draftToText(draft: {
 }
 
 /**
+ * 定稿的文字版，作为一条 `kind='entry'` 的消息进这一步的对话记录。
+ *
+ * 定稿以前在对话里没有任何痕迹：右栏换成只读的「已定稿」视图，而对话最后一条还是
+ * 「已生成草稿」那张卡片 —— 过两天回到这一步，从对话上完全看不出自己定的是哪一版
+ * （点那张卡片打开的是当时那版草稿，和最终定稿可能已经不是一回事）。
+ *
+ * **kind 故意不是 'text'。** 'text' 会被 `discussionBlock` 当成「客户/顾问在这一步说过的话」
+ * 带进下一次 prompt，而这段内容本来就以定稿的身份进下游 prompt（`knowledgeBlock`）——
+ * 同一段东西在上下文里出现两遍，模型会把它当成两处独立印证（「多处资料都指向…」），
+ * 而那句话读起来完全正常。
+ *
+ * 正文不写进这段文字：正文在 `consult_entries.body` 里，右栏显示的是那一份。
+ * 抄一份到消息里的话，重新定稿之后两份就不一样了，而对话里那份看起来才像「最终版」。
+ */
+export function entryToText(entry: {
+  conclusion: string;
+  rationale: string;
+  evidence: string;
+  confidence: string;
+  source_level: string;
+  version: number;
+  ai_opportunities?: string[];
+}, staledLabels: string[] = []): string {
+  const head =
+    `✅ **已定稿**（第 ${entry.version} 版 · 置信度 ${entry.confidence} · 证据级别 ${entry.source_level}）`;
+  const parts = [head, `**结论**：${entry.conclusion}`];
+  if (entry.rationale) parts.push(`**取舍理由**：${entry.rationale}`);
+  if (entry.evidence) parts.push(`**依据**：${entry.evidence}`);
+  if (entry.ai_opportunities?.length) {
+    parts.push(`**AI 赋能机会**：${entry.ai_opportunities.join('；')}`);
+  }
+  // 被标成待重跑的下游也写进这条记录：接口返回的那句提示是一次性的（切个阶段就没了），
+  // 而「这一步的改动动了哪几步」是后面回头看时唯一能对上的线索。
+  if (staledLabels.length) {
+    parts.push(`⚠ 这次定稿把下游 ${staledLabels.length} 条标成待重跑：${staledLabels.join('、')}`);
+  }
+  return parts.join('\n\n');
+}
+
+/**
  * 知识库块。和 draftService 里那份同格式 —— 对话里的判断也只能依据已定稿结论。
  *
  * 只有**本阶段自己**那条带正文：用户在这一步聊的十句里有八句是指着正文里某张表说的

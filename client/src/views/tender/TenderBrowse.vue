@@ -25,6 +25,9 @@ const recLoading = ref(false)
 // Browse
 const tenders = ref<any[]>([])
 const browseTotal = ref(0)
+// 时效窗口天数，由 /list 回。默认值只在接口还没回来时用一下，界面上那句
+// 「仅显示近 N 天」永远取接口的值 —— 写死一份的话改窗口之后它会稳定说谎。
+const visibleDays = ref(7)
 const browsePage = ref(1)
 const browseSearch = ref('')
 const browseKeyword = ref('')
@@ -104,6 +107,7 @@ async function loadTenders() {
     const data = await apiGet('/api/tender/list', params)
     tenders.value = data.items
     browseTotal.value = data.total
+    if (data.visibleDays) visibleDays.value = data.visibleDays
   } catch (e: any) {
     console.error(e)
   } finally {
@@ -324,11 +328,12 @@ async function submitFeedback() {
           <div v-else-if="tenders.length === 0" class="empty-state">
             <p>{{ locale === 'en' ? 'No tenders found.' : '暂无标讯数据。' }}</p>
           </div>
-          <!-- 说明列表为什么只到 14 天：不写的话「上周看到的那条不见了」会被当成 bug 报。 -->
+          <!-- 说明列表为什么只到 N 天：不写的话「上周看到的那条不见了」会被当成 bug 报。
+               天数取接口回的 visibleDays，不写死 —— 写死的那份改窗口之后会稳定说谎。 -->
           <p v-else class="list-note">
             {{ locale === 'en'
-              ? 'Showing tenders published and collected within the last 14 days.'
-              : '仅显示近 14 天内发布且入库的标讯，更早的已过时效不再展示。' }}
+              ? `Showing tenders published and collected within the last ${visibleDays} days.`
+              : `仅显示近 ${visibleDays} 天内发布且入库的标讯，更早的已过时效不再展示。` }}
           </p>
           <div v-if="tenders.length" class="tender-list">
             <div v-for="tender in tenders" :key="tender.id" class="tender-card" @click="viewDetail(tender.id)">

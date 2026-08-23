@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/index.js';
 import { scoreNote, getWeights, setWeight, DIM_KEYS, ScoringParseError, type XhsNoteInput, type XhsGenre } from '../services/xhs/scoringService.js';
 import { aiGateway, aiGatewayStream, SAMPLING } from '../core/llm/gateway.js';
-import { parseFirstJson, jsonGateway as jsonGatewayWithRetry } from '../core/llm/parseJson.js';
+import { parseFirstJson, jsonGateway as jsonGatewayWithRetry, jsonFailMessage } from '../core/llm/parseJson.js';
 import { getSkillForSlot } from '../services/skillRegistryService.js';
 import * as uws from '../services/userWritingSkillService.js';
 import * as struct from '../services/xhsStructureService.js';
@@ -82,6 +82,34 @@ export async function streamToSSE(
   onComplete(0, Math.ceil(output.length / 4), Date.now() - start, output);
   return output;
 }
+
+/**
+ * 吐 JSON 的那几个端点各给多少 `max_tokens`。
+ *
+ * **这个数是留给思维链跑的空间，不是「正文能有多长」。** 带思维链的模型把 reasoning
+ * 算进 max_tokens、却不放进 `message.content`：库里同一个 deepseek-v4-flash 的
+ * ai_logs，revise 那次 `output_tokens=1501` 而 content 只有 57 字（≈1460 全在思维链），
+ * consult 的 draft:audience 是 `11757` 对 3024 字（≈9700）—— 同一个模型，这个差额
+ * 在 0 到 9700 之间乱跳。
+ *
+ * 所以「发散观点」原来那 2000 经常在写出第一个 `}` 之前就顶格：JSON 配平不上，
+ * `parseFirstJson` 回 null，用户看到「AI 返回格式异常」，而正文压根没开始写 ——
+ * 思维链短的那几次又正常出来了，于是表现成「有时会格式错误」，看不出是额度问题。
+ * `jsonGateway` 在 `finish=length` 时故意不重试（同样的 body 会断在同一处），
+ * 所以这里给不够就是确定性失败，只能靠用户手点重试去赌下一次思维链短一点。
+ *
+ * 调低这些数**不省钱**（计费按实际用量），只是把偶发的思维链长跑变成一次白扣额度的
+ * 报错。取值口径同 consult 的 `MAX_TOKENS_DRAFT`（那边 24000）。
+ */
+const JSON_BUDGET = {
+  structure: 16000,
+  nodeChat: 12000,
+  validate: 12000,
+  brainstorm: 12000,
+  research: 16000,
+  diagnose: 16000,
+  revise: 10000,
+} as const;
 
 export const xhsRouter = Router();
 
@@ -417,18 +445,31 @@ xhsRouter.post('/structure', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish } = await jsonGatewayWithRetry(
-      () => ({ messages: [{ role: 'user', content: struct.buildStructurePrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 3000 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildStructurePrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.structure }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure', tier: 'strong' }
     );
     if (!parsed) {
-      if (!raw.trim()) return res.status(502).json({ error: 'AI 返回为空，请重试或换用更强的平台模型', finish_reason: finish });
-      return res.status(502).json({ error: 'AI 返回格式异常，请重试或换用更强的平台模型', raw });
+      return res.status(502).json({
+        error: jsonFailMessage('结构', { raw, finish, reasoningTokens, budget: JSON_BUDGET.structure }),
+        finish_reason: finish,
+        raw,
+      });
     }
     if (parsed.needsInput) {
       return res.json({ needsInput: true, questions: Array.isArray(parsed.questions) ? parsed.questions : [] });
     }
-    res.json({ needsInput: false, nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [] });
+    // 一个节点都没有时报错，不回 `nodes: []`：前端照样切到结构页，画布是空的，
+    // 而空画布和「自己从零搭」长得一模一样（那边就有个「加个主题」按钮），
+    // 用户不会知道刚才那次调用失败了、额度已经扣了。
+    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+    if (!nodes.length) {
+      return res.status(502).json({
+        error: '模型没有给出任何结构节点（既没提问也没搭出结构），结构没生成。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
+    res.json({ needsInput: false, nodes });
   } catch (e: any) {
     handleXhsError(res, e, 'structure');
   }
@@ -444,16 +485,27 @@ xhsRouter.post('/structure/node-chat', async (req, res) => {
   if (!message) return res.status(400).json({ error: 'message is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw } = await jsonGatewayWithRetry(
-      () => ({ messages: [{ role: 'user', content: struct.buildNodeChatPrompt(node, nodes, message, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 2000 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildNodeChatPrompt(node, nodes, message, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.nodeChat }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure-node-chat', tier: 'strong' }
     );
-    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
-    res.json({
-      reply: parsed.reply || '',
-      updateNode: parsed.updateNode || null,
-      addNodes: Array.isArray(parsed.addNodes) ? parsed.addNodes : [],
-    });
+    if (!parsed) {
+      return res.status(502).json({
+        error: jsonFailMessage('这次修改建议', { raw, finish, reasoningTokens, budget: JSON_BUDGET.nodeChat }),
+        raw,
+      });
+    }
+    const reply = String(parsed.reply || '').trim();
+    const addNodes = Array.isArray(parsed.addNodes) ? parsed.addNodes : [];
+    // 三样全空 = 这次返回里什么都没有。前端会显示「(AI 未提出修改)」——
+    // 那句话读起来是「AI 看过了，觉得这个节点没问题」，而实际是这次调用没拿到东西。
+    if (!reply && !parsed.updateNode && !addNodes.length) {
+      return res.status(502).json({
+        error: '模型这次既没回话也没给修改建议，没拿到结果。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
+    res.json({ reply, updateNode: parsed.updateNode || null, addNodes });
   } catch (e: any) {
     handleXhsError(res, e, 'structure-node-chat');
   }
@@ -465,11 +517,25 @@ xhsRouter.post('/structure/validate', async (req, res) => {
   if (!nodes.length) return res.status(400).json({ error: 'nodes is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw } = await jsonGatewayWithRetry(
-      () => ({ messages: [{ role: 'user', content: struct.buildValidatePrompt(nodes, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 1500 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildValidatePrompt(nodes, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.validate }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure-validate', tier: 'strong' }
     );
-    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
+    if (!parsed) {
+      return res.status(502).json({
+        error: jsonFailMessage('自检结果', { raw, finish, reasoningTokens, budget: JSON_BUDGET.validate }),
+        raw,
+      });
+    }
+    // 「没有问题」是自检的合法结果，所以这里判的是**形状**而不是空不空：
+    // 两个字段都不认识时 `{ok:false, issues:[]}` 会让前端置 `validated=true`、
+    // 一条问题都不列 —— 屏幕上就是「结构没问题，可以成文了」，而这次自检压根没做。
+    if (typeof parsed.ok !== 'boolean' && !Array.isArray(parsed.issues)) {
+      return res.status(502).json({
+        error: '模型返回里既没有 ok 也没有问题清单，自检没做成。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
     res.json({ ok: !!parsed.ok, issues: Array.isArray(parsed.issues) ? parsed.issues : [] });
   } catch (e: any) {
     handleXhsError(res, e, 'structure-validate');
@@ -491,13 +557,31 @@ xhsRouter.post('/brainstorm', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw } = await jsonGatewayWithRetry(
-      // 要发散但仍需合法 JSON：中高温、不带 penalty（DashScope 流式/JSON 下 penalty 不稳）
-      () => ({ messages: [{ role: 'user', content: struct.buildBrainstormPrompt(brief, baseSkill) }], temperature: 0.95, response_format: { type: 'json_object' }, max_tokens: 2000 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      // 要发散但仍需合法 JSON：中高温、不带 penalty（DashScope 流式/JSON 下 penalty 不稳）。
+      // 高温也是这个端点比别处更容易撞额度的原因之一：发散任务本身就让模型想得更久。
+      () => ({ messages: [{ role: 'user', content: struct.buildBrainstormPrompt(brief, baseSkill) }], temperature: 0.95, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.brainstorm }),
       { userId: req.user!.id, source: 'xhs', operation: 'brainstorm', tier: 'strong' }
     );
-    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
-    res.json({ ideas: Array.isArray(parsed.ideas) ? parsed.ideas : [] });
+    if (!parsed) {
+      return res.status(502).json({
+        error: jsonFailMessage('观点', { raw, finish, reasoningTokens, budget: JSON_BUDGET.brainstorm }),
+        raw,
+      });
+    }
+    // 合法 JSON 但一条观点都没有（键名不是 ideas / 给了个空数组）时也要报错：
+    // 回 `ideas: []` 的话面板显示的是「还没有结果，点上面「帮我发散观点」」——
+    // 读起来像没点过，而额度已经扣了，用户只会再点一次。
+    const ideas = (Array.isArray(parsed.ideas) ? parsed.ideas : []).filter(
+      (x: any) => x && String(x.point || '').trim()
+    );
+    if (!ideas.length) {
+      return res.status(502).json({
+        error: '模型没有给出任何观点（返回里没有 ideas 那一栏），发散没生成。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
+    res.json({ ideas });
   } catch (e: any) {
     handleXhsError(res, e, 'brainstorm');
   }
@@ -518,18 +602,32 @@ xhsRouter.post('/research', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw } = await jsonGatewayWithRetry(
-      () => ({ messages: [{ role: 'user', content: struct.buildResearchPrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 3000 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildResearchPrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.research }),
       { userId: req.user!.id, source: 'xhs', operation: 'research', tier: 'strong' }
     );
-    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
-    res.json({
+    if (!parsed) {
+      return res.status(502).json({
+        error: jsonFailMessage('用户洞察', { raw, finish, reasoningTokens, budget: JSON_BUDGET.research }),
+        raw,
+      });
+    }
+    const out = {
       personas: Array.isArray(parsed.personas) ? parsed.personas : [],
       painPoints: Array.isArray(parsed.painPoints) ? parsed.painPoints : [],
       blindSpots: Array.isArray(parsed.blindSpots) ? parsed.blindSpots : [],
       desires: Array.isArray(parsed.desires) ? parsed.desires : [],
       problems: Array.isArray(parsed.problems) ? parsed.problems : [],
-    });
+    };
+    // 五栏全空 = 这次洞察什么都没拿到。回 200 的话面板是空的，而空面板和
+    // 「这个选题 AI 分析不出东西」长得一样 —— 额度已经扣了，用户不会知道。
+    if (!Object.values(out).some((v) => v.length)) {
+      return res.status(502).json({
+        error: '模型返回里五栏洞察都是空的，这次调研没生成。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
+    res.json(out);
   } catch (e: any) {
     handleXhsError(res, e, 'research');
   }
@@ -541,12 +639,26 @@ xhsRouter.post('/diagnose', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'body is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw } = await jsonGatewayWithRetry(
-      () => ({ messages: [{ role: 'user', content: struct.buildDiagnosePrompt(text, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: 2500 }),
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+      () => ({ messages: [{ role: 'user', content: struct.buildDiagnosePrompt(text, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.diagnose }),
       { userId: req.user!.id, source: 'xhs', operation: 'diagnose', tier: 'strong' }
     );
-    if (!parsed) return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
-    res.json({ diagnostics: Array.isArray(parsed.diagnostics) ? parsed.diagnostics : [] });
+    if (!parsed) {
+      return res.status(502).json({
+        error: jsonFailMessage('诊断', { raw, finish, reasoningTokens, budget: JSON_BUDGET.diagnose }),
+        raw,
+      });
+    }
+    // 六条是 prompt 里写死的要求，一条都没有就是这次没做成。回空数组的话
+    // 前端会把上一次的结果换成空的，屏幕上读起来是「这篇没什么可挑的」。
+    const diagnostics = Array.isArray(parsed.diagnostics) ? parsed.diagnostics : [];
+    if (!diagnostics.length) {
+      return res.status(502).json({
+        error: '模型没有给出任何诊断条目，这次诊断没生成。再试一次（这次的 AI 额度已经扣了）',
+        raw,
+      });
+    }
+    res.json({ diagnostics });
   } catch (e: any) {
     handleXhsError(res, e, 'diagnose');
   }
@@ -633,7 +745,7 @@ xhsRouter.post('/revise', async (req, res) => {
   if (!selection) return res.status(400).json({ error: 'selection is required' });
   if (!message) return res.status(400).json({ error: 'message is required' });
   try {
-    const { parsed, raw } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
       () => ({
         messages: [{
           role: 'user',
@@ -653,12 +765,15 @@ xhsRouter.post('/revise', async (req, res) => {
         // 撞到 finish_reason=length，JSON 被截在半句话上没有收尾的 `"}`，
         // parseFirstJson 配平不上返回 null，用户看到「AI 返回格式异常，请重试」，
         // 而重试用的是同一个 body，截断是确定性的，第二次一样断（白烧一倍 token）。
-        max_tokens: 10000,
+        max_tokens: JSON_BUDGET.revise,
       }),
       { userId: req.user!.id, source: 'xhs', operation: 'revise', tier: 'strong' }
     );
     if (!parsed || typeof parsed.revised !== 'string') {
-      return res.status(502).json({ error: 'AI 返回格式异常，请重试', raw });
+      return res.status(502).json({
+        error: jsonFailMessage('改写', { raw, finish, reasoningTokens, budget: JSON_BUDGET.revise }),
+        raw,
+      });
     }
     res.json({ reply: parsed.reply || '', revised: parsed.revised });
   } catch (e: any) {

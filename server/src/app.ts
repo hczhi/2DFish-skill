@@ -38,6 +38,7 @@ import { skillRegistryRouter } from './api/skillRegistry.js';
 import { relayRouter } from './api/relay.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
+import { expireOverdueTenders, startTenderExpiryScheduler } from './services/tender/retention.js';
 import {
   startAllConnections,
   startConnectionWatchdog,
@@ -359,6 +360,16 @@ if (!IS_TEST) {
   // 「启动时清理」实际等于「永不清理」。
   startLogCleanupScheduler();
   cleanupOldLogs();
+
+  // 标讯的时效闸门是读侧的，所以这一趟不影响任何人看到什么；它只是把「入库满
+  // TENDER_VISIBLE_DAYS 天」这件事写进 status。启动时先补一趟：改窗口天数
+  // （14 → 7）之后新落进窗口外的那一批，不补的话要等到明天 02:10 才从草稿库消失，
+  // 而这期间它们照样可以被勾选去做 AI 提取 —— 提完就被闸门挡住，白花额度。
+  startTenderExpiryScheduler();
+  {
+    const n = expireOverdueTenders();
+    if (n > 0) console.log(`[tender] 启动巡检：自动作废 ${n} 条已过时效的标讯`);
+  }
 
   // 飞书助理的长连接。是我们主动连出去的，所以不占端口、不需要公网回调地址。
   // 失败只记日志：某个应用凭证过期不该拖住整个服务启动。

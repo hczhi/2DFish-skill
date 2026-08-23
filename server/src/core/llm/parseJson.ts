@@ -126,6 +126,38 @@ export function parseFirstJsonAny<T = any>(text: string): T | null {
     : ((parseFirstJsonArray<any>(text) as T | null) ?? parseFirstJson<T>(text));
 }
 
+/**
+ * 拿不到合法 JSON 时给用户的那句话。**三种成因必须分开说**，因为解法完全不同：
+ *
+ * - content 为空 → 额度全花在思维链上了，正文一个字都没开始写；
+ * - finish=length → 写到一半被 max_tokens 截断（JSON 配平不上，前面写好的也一起丢）；
+ * - 其余 → 模型真的没按 JSON 格式回。
+ *
+ * 合成一句「AI 返回格式异常，请重试」的后果不是少了点信息，是**指错了方向**：
+ * 用户会一路怀疑 prompt、一路重试（每次都扣额度），而真凶是那个模型带思维链、
+ * 这个端点的 max_tokens 给小了 —— 这件事只有 `reasoningTokens` 说得出来。
+ * 所以调用方必须把 `finish` / `reasoningTokens` / 自己那个 budget 一起传进来。
+ */
+export function jsonFailMessage(
+  what: string,
+  info: { raw: string; finish?: string; reasoningTokens?: number; budget: number }
+): string {
+  const { raw, finish, reasoningTokens, budget } = info;
+  const burnedByThinking = reasoningTokens && reasoningTokens >= budget * 0.9;
+  const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
+  const why = !raw.trim()
+    ? `模型没有返回内容（finish_reason=${finish || '未知'}${cot}）`
+    : finish === 'length'
+      ? `模型返回被截断（finish_reason=length${cot}）`
+      : '模型没有按 JSON 格式返回';
+  const how = burnedByThinking
+    // 不写死是哪个档位：调这个函数的地方 default / strong / fast 都有（评分走 default），
+    // 说错档位比不说更糟 —— 用户会去改一个跟这次调用无关的配置，然后发现还是这样。
+    ? `这次 ${budget} token 的额度基本全花在思维链上了，正文没写出来。再点一次通常就好；老是这样就去「专属 AI / 系统配置」换一个不带思维链的模型`
+    : '再试一次或换个模型';
+  return `${why}，${what}没生成。${how}（这次的 AI 额度已经扣了）`;
+}
+
 export interface JsonGatewayCtx {
   userId: string;
   source: string;
