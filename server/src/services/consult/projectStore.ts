@@ -81,7 +81,32 @@ export const MAX_ENTRY_FIELD_CHARS = 4000;
  */
 export const MAX_ENTRY_BODY_CHARS = 20000;
 
-export function listProjects(userId: string) {
+/**
+ * 项目的归属键。**三个字段一起才是一个租户**（见 migration 085）：
+ * 平台自己的用户 `sdkPk`/`externalUid` 都是 null，第三方 iframe 里的每个终端用户
+ * 是 `(绑定账号, 那把 pk, 他那边的 uid)`。
+ *
+ * 故意做成一个**对象类型**而不是给 `userId` 后面加两个可选参数：可选参数漏传的地方
+ * 编译得过，而那正是这条链路唯一的失败形态 —— 漏传的那个端点会读到/改到另一个租户
+ * 的定稿，返回的是一个正常的项目对象，界面上一句错都没有。
+ */
+export interface ProjectOwner {
+  userId: string;
+  sdkPk: string | null;
+  externalUid: string | null;
+}
+
+/** 平台账号自己（网页登录）的归属键。 */
+export function platformOwner(userId: string): ProjectOwner {
+  return { userId, sdkPk: null, externalUid: null };
+}
+
+// NULL 安全比较：平台账号那两列是 NULL，`= ?` 对 NULL 永远为假，
+// 用它的话所有老项目一条都读不出来（界面上是「项目全不见了」）。
+const OWNER_SQL = 'user_id IS ? AND sdk_pk IS ? AND external_uid IS ?';
+const ownerArgs = (o: ProjectOwner) => [o.userId, o.sdkPk, o.externalUid] as const;
+
+export function listProjects(owner: ProjectOwner) {
   const db = getDatabase();
   const rows = db
     .prepare(
@@ -97,10 +122,10 @@ export function listProjects(userId: string) {
               (SELECT COUNT(*) FROM consult_intake i
                 WHERE i.project_id = p.id AND i.applied_at IS NOT NULL) AS intake_rounds
          FROM consult_projects p
-        WHERE p.user_id = ?
+        WHERE p.user_id IS ? AND p.sdk_pk IS ? AND p.external_uid IS ?
         ORDER BY p.updated_at DESC`
     )
-    .all(userId) as Array<{
+    .all(...ownerArgs(owner)) as Array<{
     id: string;
     brand_name: string;
     status: string;
@@ -117,41 +142,42 @@ export function listProjects(userId: string) {
   return rows.map((r) => ({ ...r, total_stages: STAGES.length }));
 }
 
-export function createProject(userId: string, brandName: string, brief: string): ConsultProject {
+export function createProject(owner: ProjectOwner, brandName: string, brief: string): ConsultProject {
   const db = getDatabase();
   const now = new Date().toISOString();
   const id = uuidv4();
   db.prepare(
-    `INSERT INTO consult_projects (id, user_id, brand_name, brief, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?)`
-  ).run(id, userId, brandName, brief, now, now);
-  return getProject(id, userId)!;
+    `INSERT INTO consult_projects
+       (id, user_id, sdk_pk, external_uid, brand_name, brief, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`
+  ).run(id, owner.userId, owner.sdkPk, owner.externalUid, brandName, brief, now, now);
+  return getProject(id, owner)!;
 }
 
-export function getProject(id: string, userId: string): ConsultProject | null {
+export function getProject(id: string, owner: ProjectOwner): ConsultProject | null {
   const db = getDatabase();
   return (
     (db
-      .prepare('SELECT * FROM consult_projects WHERE id = ? AND user_id = ?')
-      .get(id, userId) as ConsultProject | undefined) || null
+      .prepare(`SELECT * FROM consult_projects WHERE id = ? AND ${OWNER_SQL}`)
+      .get(id, ...ownerArgs(owner)) as ConsultProject | undefined) || null
   );
 }
 
-export function updateBrief(id: string, userId: string, brief: string): boolean {
+export function updateBrief(id: string, owner: ProjectOwner, brief: string): boolean {
   const db = getDatabase();
   const now = new Date().toISOString();
   const r = db
-    .prepare('UPDATE consult_projects SET brief = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(brief, now, id, userId);
+    .prepare(`UPDATE consult_projects SET brief = ?, updated_at = ? WHERE id = ? AND ${OWNER_SQL}`)
+    .run(brief, now, id, ...ownerArgs(owner));
   return r.changes > 0;
 }
 
-export function renameProject(id: string, userId: string, brandName: string): boolean {
+export function renameProject(id: string, owner: ProjectOwner, brandName: string): boolean {
   const db = getDatabase();
   const now = new Date().toISOString();
   const r = db
-    .prepare('UPDATE consult_projects SET brand_name = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(brandName, now, id, userId);
+    .prepare(`UPDATE consult_projects SET brand_name = ?, updated_at = ? WHERE id = ? AND ${OWNER_SQL}`)
+    .run(brandName, now, id, ...ownerArgs(owner));
   return r.changes > 0;
 }
 
@@ -159,9 +185,9 @@ export function renameProject(id: string, userId: string, brandName: string): bo
  * 删项目。子表要自己清 —— db/index.ts 没开 PRAGMA foreign_keys，
  * REFERENCES 只是注释，级联不会发生，留下的孤儿行不报错但会一直被计数查询算进去。
  */
-export function deleteProject(id: string, userId: string): boolean {
+export function deleteProject(id: string, owner: ProjectOwner): boolean {
   const db = getDatabase();
-  const owned = getProject(id, userId);
+  const owned = getProject(id, owner);
   if (!owned) return false;
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM consult_intake WHERE project_id = ?').run(id);
@@ -189,8 +215,16 @@ export interface ConsultMessage {
   project_id: string;
   stage_key: string;
   role: 'user' | 'assistant';
-  /** 'entry' = 定稿留下的那条记录。**只有 'text' 会进下一次 prompt**（discussionBlock） */
-  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard';
+  /**
+   * 'entry' = 定稿留下的那条记录；'decisions' = 慢车道动笔前的岔路口清单；
+   * 'decided' = 顾问在那几处岔路口上拍的板（**它是出正文时的地基**，见 decisionService）。
+   * **只有 'text' 会进下一次 prompt**（discussionBlock）。
+   *
+   * 加一种 kind 必须同时在前端那个 `v-if` 链上加一条分支：认不出的 kind 落到
+   * 最后那个 `v-else`，会被渲染成一张写着「已生成候选方向」的卡片，
+   * 点开右栏是空的 —— 界面上读起来像那一版丢了。
+   */
+  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided';
   content: string;
   /** kind != 'text' 时的结构化原文（JSON 字符串，前端照它渲染卡片） */
   payload: string;

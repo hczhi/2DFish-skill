@@ -318,6 +318,7 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
     model: b.model,
     extra_json: b.extra_json,
     enabled: b.enabled,
+    no_thinking: b.no_thinking,
     ...('owner_user_id' in b ? { owner_user_id: b.owner_user_id || null } : {}),
     ...('scope_app' in b ? { scope_app: b.scope_app || '' } : {}),
   });

@@ -35,6 +35,77 @@ export interface GatewayOptions {
    * {@link PinnedProviderError}，绝不回落平台。
    */
   providerId?: string;
+  /**
+   * 单次请求的重试次数。缺省 {@link DEFAULT_MAX_RETRIES}。
+   *
+   * **给 0 的场景是「慢但确定」**：一次要写几千 token 正文、模型还带思维链的调用
+   * （consult 出草稿 / 出方向），超时不是抖动，第二次会在同一个地方再超一次 ——
+   * 重试只是把等待时间翻倍（120s 的超时变成 240s 才报错），而这段时间里前端那个
+   * 「AI 正在分析」的圈一直在转，用户看不出它其实已经废了一次。
+   * 同 `finish_reason=length` 不重试的道理：把 timeout 调大一次跑完，比跑两遍半截的好。
+   */
+  maxRetries?: number;
+  /**
+   * 关掉思维链（reasoning / thinking）。**缺省不关。**
+   *
+   * 实测同一条专属接入点（deepseek-v4-pro）、同一个问题：不关 36.6 秒，输出的 1592
+   * token 里 1495 是思维链；关掉之后 3.5 秒，而正文还长了一点（200 字 → 301 字）。
+   * 也就是说这类调用的耗时几乎全部花在**没人看得到的那一段思考**上，
+   * 而「上下文太长」不是原因 —— 固定输出长度时把输入从 1439 拉到 22568 token（16 倍），
+   * 耗时只从 11.3 秒变到 13.2 秒。所以想让某条路径快起来，动的是这个开关，不是砍 prompt。
+   *
+   * 连带一件事：`max_tokens` 那笔额度这时候才真的全给正文（见硬规则 2）。
+   * consult 出草稿原来老是 `finish_reason=length`，真凶就是思维链吃掉了 24000 里的两万多。
+   *
+   * 判据不是「这个任务要不要动脑」，而是**思维链在这条路上换回了什么**：
+   * 有人在屏幕前等（consult 对话/草稿、tender 的 AI 提炼），或者输出是一份定死形状的
+   * JSON 而 `max_tokens` 给得不宽（tender 的抽取/评分 —— 那边关掉它治的其实是截断，
+   * 不是慢），这两类一律开。标讯整个模块都是开的。
+   * 剩下真正靠长链推理、又没人等的批量任务才留着不开。
+   */
+  noThinking?: boolean;
+}
+
+/**
+ * 关思维链的请求参数。**四个键一起发**，因为各家网关认的不是同一个
+ * （实测这条接入点四个一起发和单发效果一样：3.5s / reasoning 为空，不互相顶）。
+ */
+const NO_THINKING_BODY: Record<string, unknown> = {
+  enable_thinking: false, // DeepSeek / vLLM / SGLang 这一系
+  thinking: { type: 'disabled' }, // Claude / 通义那套
+  chat_template_kwargs: { enable_thinking: false }, // 自己套 chat template 的网关
+  reasoning_effort: 'minimal', // OpenAI 官方唯一认的那个（也是唯一的标准字段）
+};
+const NO_THINKING_KEYS = Object.keys(NO_THINKING_BODY);
+
+/**
+ * 带上关思维链的参数发一次；**上游因为这几个键回 400 就摘掉重发，并且喊一句。**
+ *
+ * 四个键里三个不是 OpenAI 官方字段：宽松的网关直接忽略（实测这条接入点连乱造的键
+ * 都照样正常返回），严格的（OpenAI 官方就是）会回 400 «Unrecognized request argument»。
+ * 不摘掉重发的话，换一条接入点之后 consult 每次分析都是一句 400 —— 这个开关是为了
+ * 「快」加的，不该让它变成「压根用不了」。而摘掉之后跑的就是慢那一版，所以必须喊出来：
+ * 不喊的话现象只是「怎么又变回四分钟了」，日志里一切正常。
+ */
+async function withNoThinking<T>(
+  noThinking: boolean | undefined,
+  operation: string,
+  run: (extra: Record<string, unknown>) => Promise<T>
+): Promise<T> {
+  if (!noThinking) return run({});
+  try {
+    return await run(NO_THINKING_BODY);
+  } catch (err) {
+    const msg = err instanceof OpenAI.APIError ? String(err.message || '') : '';
+    if (err instanceof OpenAI.APIError && err.status === 400 && NO_THINKING_KEYS.some((k) => msg.includes(k))) {
+      console.warn(
+        `[llm] ${operation}: 这条接入点不认「关思维链」的参数（${msg.slice(0, 140)}），已摘掉重发一次 —— ` +
+          `这一次会慢很多（思维链照旧算进 max_tokens，可能因此截断）。要治本得换一个不带思维链的模型。`
+      );
+      return run({});
+    }
+    throw err;
+  }
 }
 
 /**
@@ -50,7 +121,7 @@ export interface GatewayOptions {
  * 只设 timeout 的话最坏耗时仍然是它的 (maxRetries + 1) 倍。
  */
 export const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_RETRIES = 1;
+export const DEFAULT_MAX_RETRIES = 1;
 
 /**
  * 采样预设：把"温度/惩罚重复"按任务性质集中成几档，避免各路由各写一套、参数漂移。
@@ -97,6 +168,11 @@ export interface ResolvedLLM {
   model: string;
   providerId: string | null;
   providerOwner: 'platform' | 'dedicated';
+  /**
+   * 这条接入点在后台勾了「不使用深度思考」（`ai_providers.no_thinking`，migration 087）。
+   * 和调用方传的 {@link GatewayOptions.noThinking} 取**或** —— 只能强制关，不能强制开。
+   */
+  noThinking: boolean;
 }
 
 /**
@@ -123,6 +199,7 @@ export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string, app
       model: provider.model || 'gpt-4o',
       providerId: provider.id,
       providerOwner: provider.owner_user_id ? 'dedicated' : 'platform',
+      noThinking: !!provider.no_thinking,
     };
   }
 
@@ -143,7 +220,10 @@ export function resolveLLMConfig(tier: LLMTier = 'default', userId?: string, app
     // .../chat/completions（SDK 会再拼一次 → 404 «Invalid URL»）。
     baseURL: normalizeBaseUrl(sysBase?.value) || 'https://api.openai.com/v1',
   });
-  return { client, model: sysModel?.value || 'gpt-4o', providerId: null, providerOwner: 'platform' };
+  // 旧 system_config 那条回落没有这个开关（表里压根没有这一列）。要用它就去
+  // 「AI 接入点」里建一条 —— 这里凭空给 true 的话，那些没配接入点的部署会在升级之后
+  // 悄悄全站不思考了。
+  return { client, model: sysModel?.value || 'gpt-4o', providerId: null, providerOwner: 'platform', noThinking: false };
 }
 
 /** 绑定的接入点不可用（不存在 / 已停用 / 没有可用 key / 不是文本模型）。 */
@@ -169,6 +249,7 @@ export function resolveLLMConfigForProvider(providerId: string): ResolvedLLM {
     model: p.model || 'gpt-4o',
     providerId: p.id,
     providerOwner: p.owner_user_id ? 'dedicated' : 'platform',
+    noThinking: !!p.no_thinking,
   };
 }
 
@@ -273,9 +354,15 @@ export async function aiGateway(
   // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
   // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
   // 那条接入点 —— 花的是另一把 key，而返回完全正常。
-  const { client, model, providerId, providerOwner } = options.providerId
+  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = options.providerId
     ? resolveLLMConfigForProvider(options.providerId)
     : resolveLLMConfig(options.tier, options.userId, options.source);
+
+  // 后台那个开关和调用方传的值取**或**：接入点勾了就一律不思考，但它反过来**开不回来**。
+  // 能强制开的话，标讯抽取/评分、consult 出草稿那几条写死 `noThinking: true` 的路径
+  // 会被一个勾选框悄悄换回慢的那一版 —— 那几处关它治的是「截断」和「等四分钟」，
+  // 退回去之后现象只是「怎么又解析失败了」，而后台那一行看起来配得好好的。
+  const noThinking = options.noThinking || providerNoThinking;
 
   // 应用级额度先扣：它对专属渠道也生效，且要在总额之前判，
   // 否则应用额度撞墙时总额已经白扣了一次。见 checkAndDeductAppQuota 的注释。
@@ -284,15 +371,34 @@ export async function aiGateway(
   if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
-  const response = await client.chat.completions.create(
-    { ...params, model },
-    // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
-    { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+  const response = await withNoThinking<OpenAI.Chat.Completions.ChatCompletion>(
+    noThinking,
+    options.operation,
+    (extra) =>
+      client.chat.completions.create(
+        { ...params, ...extra, model } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+        // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
+        {
+          timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+        }
+      )
   );
   const duration = Date.now() - startTime;
 
   const inputTokens = response.usage?.prompt_tokens || 0;
   const outputTokens = response.usage?.completion_tokens || 0;
+
+  // 参数发出去了不等于生效：宽松的网关对不认识的键**既不报错也不照办**
+  // （实测这条接入点连乱造的键都回 200）。那种情况下唯一的现象是「还是很慢」，
+  // 日志里一切正常 —— 所以这里对着 usage 核一眼，没关掉就喊出来。
+  const reasoningTokens = (response.usage as any)?.completion_tokens_details?.reasoning_tokens || 0;
+  if (noThinking && reasoningTokens > 0) {
+    console.warn(
+      `[llm] ${options.operation}: 要求关思维链，但 ${model} 这次还是想了 ${reasoningTokens} token（共 ${outputTokens} 输出 / ${(duration / 1000).toFixed(1)} 秒）——` +
+        `这条接入点或这个模型不支持关，得换模型才快得起来。`
+    );
+  }
 
   logAIUsage(
     options.source, options.operation, model, inputTokens, outputTokens, duration,
@@ -330,9 +436,12 @@ export async function aiGatewayStream(
   // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
   // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
   // 那条接入点 —— 花的是另一把 key，而返回完全正常。
-  const { client, model, providerId, providerOwner } = options.providerId
+  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = options.providerId
     ? resolveLLMConfigForProvider(options.providerId)
     : resolveLLMConfig(options.tier, options.userId, options.source);
+  // 取或，同 aiGateway。这里漏掉后台那个开关的话，勾了它之后流式路径照旧带思维链跑，
+  // 而流式的现象只是「首字来得慢」—— 看起来像网络，日志里一切正常。
+  const noThinking = options.noThinking || providerNoThinking;
 
   // 顺序同 aiGateway：应用级额度先扣（对专属渠道也生效），再扣平台总额。
   checkAndDeductAppQuota(options.userId, options.source);
@@ -342,9 +451,16 @@ export async function aiGatewayStream(
   // 流式这里的超时只约束**首字节**：SDK 的计时器在 fetch 的 promise
   // （也就是响应头到达）时就清掉了，之后读 body 不受它限制。这正是想要的 ——
   // 长文生成本身可以很久，卡死的形态是"连响应头都不来"。
-  const stream = await client.chat.completions.create(
-    { ...params, model, stream: true },
-    { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+  // noThinking 两个入口都要认（同 providerId 那条）：只在 aiGateway 认的话，
+  // 流式那条路径会静默照旧带思维链跑 —— 而流式的现象恰好是「首字来得很慢」，
+  // 看起来像网络慢，没有任何一处说得出真实成因。
+  const stream = await withNoThinking<
+    Awaited<ReturnType<typeof client.chat.completions.create>> & AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
+  >(noThinking, options.operation, (extra) =>
+    client.chat.completions.create(
+      { ...params, ...extra, model, stream: true } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+      { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+    ) as any
   );
 
   const onComplete = (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => {

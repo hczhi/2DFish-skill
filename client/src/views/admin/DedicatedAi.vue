@@ -68,6 +68,9 @@
               <span class="scope-tag" v-if="p.scope_app">{{ appName(p.scope_app) }}</span>
               <span class="tag tag-plain" v-else>通用</span>
               <span class="tag tag-off" v-if="!p.enabled">已停用</span>
+              <!-- 卡片上要看得见：只在编辑表单里的话，「这条为什么答得浅」
+                   得逐条点开才看得出来 -->
+              <span class="tag tag-plain" v-if="p.kind === 'llm' && p.no_thinking">不深度思考</span>
               <span class="tag tag-editing" v-if="dedForm.id === p.id">正在编辑</span>
             </div>
             <div class="prov-name">{{ p.label || '（未命名）' }}</div>
@@ -140,6 +143,14 @@
             <input v-model="dedForm.extra_json" placeholder='{"protocol":"dashscope"}' />
           </label>
           <label class="inline"><input type="checkbox" v-model="dedForm.enabled" /> 启用</label>
+          <label class="inline" v-if="dedForm.kind === 'llm'">
+            <input type="checkbox" v-model="dedForm.no_thinking" /> 不使用深度思考
+          </label>
+          <p class="ded-intro wide" v-if="dedForm.kind === 'llm'">
+            勾上 = 走这条接入点的<b>所有</b>模块都不带思维链（快十倍，max_tokens 也全给正文，
+            不再莫名截断）。代价是靠长链推理的任务结论会变浅，<b>而它不报错</b>。
+            标讯和咨询那几步已在代码里写死关掉，不受这里影响 —— 这个开关只能强制关，开不回来。
+          </p>
         </div>
         <div class="create-row" style="margin-top: 24px;">
           <button class="btn-primary" @click="saveDed" :disabled="saving">
@@ -353,6 +364,7 @@ import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '../../lib/api'
 interface Provider {
   id: string; kind: string; tier: string; label: string; base_url: string;
   api_key: string; model: string; extra_json: string; enabled: number;
+  no_thinking: number;
   scope_app: string;
 }
 
@@ -449,7 +461,7 @@ const editingLabel = computed(() => {
 })
 
 function emptyDedForm() {
-  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true, scope_app: '' }
+  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true, no_thinking: false, scope_app: '' }
 }
 const dedForm = ref(emptyDedForm())
 function resetDedForm() { dedForm.value = emptyDedForm(); dedError.value = '' }
@@ -552,6 +564,7 @@ async function saveDed() {
       ...dedForm.value,
       id: dedForm.value.id || undefined,
       enabled: dedForm.value.enabled ? 1 : 0,
+      no_thinking: dedForm.value.no_thinking ? 1 : 0,
       extra_json: dedForm.value.extra_json || '{}',
       owner_user_id: userId,
       // 生图没有应用维度，别把上次选的应用带过去
@@ -574,6 +587,9 @@ function editDed(p: Provider) {
     id: p.id, kind: p.kind, tier: p.tier || 'default', label: p.label,
     base_url: p.base_url, api_key: '', model: p.model,
     extra_json: p.extra_json === '{}' ? '' : p.extra_json, enabled: !!p.enabled,
+    // 同 scope_app，漏回填的话「改个模型名」就把这个开关悄悄关掉了，
+    // 而现象只是「怎么又变慢了」
+    no_thinking: !!p.no_thinking,
     scope_app: p.scope_app || '',
   }
   dedError.value = ''

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initDatabase, getDatabase } from '../../db/index.js';
-import { createProject, saveEntry, listEntries, parseEntryAiOpportunities } from './projectStore.js';
+import { createProject, saveEntry, listEntries, parseEntryAiOpportunities, platformOwner } from './projectStore.js';
 import { requireStage, StageError } from './draftService.js';
 
 initDatabase();
@@ -15,7 +15,7 @@ describe('consult 定稿与闸门', () => {
   beforeEach(() => {
     const db = getDatabase();
     db.exec('DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;');
-    projectId = createProject('u1', '捷停车', '停车场 SaaS，覆盖 2000+ 车场').id;
+    projectId = createProject(platformOwner('u1'), '捷停车', '停车场 SaaS，覆盖 2000+ 车场').id;
   });
 
   it('改上游结论要把全部下游标成待重跑，自己那条清掉 stale 并涨版本', () => {
@@ -83,7 +83,11 @@ describe('consult 定稿与闸门', () => {
     for (const k of ['industry', 'competitor', 'audience']) {
       saveEntry(projectId, k, { conclusion: k, confidence: 'mid' });
     }
-    expect(() => requireStage(projectId, 'positioning', { lanes: ['fast', 'plan'] })).toThrow(/慢车道/);
+    // 断言按 LANE_LABEL 那份中文来（现在 slow 叫「分析」）：车道名是界面文案，
+    // 改名时这条会红 —— 那正是要它红的时候，闸门本身不许跟着松掉。
+    expect(() => requireStage(projectId, 'positioning', { lanes: ['fast', 'plan'] })).toThrow(
+      /是分析的阶段/
+    );
 
     // 不认识的 key：写进去的定稿谁也读不到（阶段栏按代码清单渲染），进度还是 0/14
     expect(() => requireStage(projectId, 'no_such_stage')).toThrow(/没有这个阶段/);

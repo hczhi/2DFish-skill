@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { getToken, fetchMe } from '../lib/auth';
 import { openLoginModal } from '../lib/loginModal';
+import { isEmbedMode, requestEmbedToken, embedHostOrigin } from '../lib/embed';
 
 function getSessionId(): string {
   let sid = sessionStorage.getItem('_sid');
@@ -116,6 +117,7 @@ const router = createRouter({
         { path: 'ui-style-skills/create', name: 'admin-ui-style-skill-create', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'ui-style-skills/:id/edit', name: 'admin-ui-style-skill-edit', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'tender', name: 'admin-tender', component: () => import('../views/admin/TenderManagement.vue') },
+        { path: 'consult', name: 'admin-consult', component: () => import('../views/admin/ConsultManagement.vue') },
         { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
@@ -179,9 +181,22 @@ const router = createRouter({
       component: () => import('../views/consult/ConsultCover.vue'),
     },
     {
+      // 第三方 iframe 的入口（084）。**不能带 requiresAuth** —— 它此刻正是来换凭证的，
+      // 挂上守卫就会在别人的页面里弹出我们的登录框。
+      path: '/consult/embed',
+      name: 'consult-embed',
+      component: () => import('../views/consult/ConsultEmbed.vue'),
+    },
+    {
       path: '/consult/projects',
       name: 'consult-home',
       component: () => import('../views/consult/ConsultHome.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/consult/projects/new',
+      name: 'consult-create',
+      component: () => import('../views/consult/ConsultCreate.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -326,7 +341,17 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to, from) => {
-  const token = getToken();
+  let token = getToken();
+
+  // 嵌入模式（084）下刷新 iframe：内存里那把短 token 没了，而当前地址已经是
+  // /consult/projects/xxx。不在这里补一次握手的话，下一行就会在第三方页面里弹出我们的
+  // 登录框 —— 用户既没有我们的账号，也看不出是凭证掉了。
+  if (!token && to.meta.requiresAuth && isEmbedMode()) {
+    token = await requestEmbedToken();
+    if (!token) {
+      return { name: 'consult-embed', query: { host: embedHostOrigin() || '', next: to.fullPath } };
+    }
+  }
 
   if (to.meta.requiresAuth && !token) {
     if (from.name) {

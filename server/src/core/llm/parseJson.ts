@@ -164,6 +164,21 @@ export interface JsonGatewayCtx {
   operation: string;
   tier?: LLMTier;
   requestSummary?: string;
+  /**
+   * 超时 / 重试，原样转给 aiGateway（见 GatewayOptions 上同名字段的注释）。
+   * 这两项必须在这里声明出来：ctx 是整个对象传下去的，不声明的话调用方写了
+   * TS 会拦，而「吐 JSON 的端点」恰好是最容易顶到超时的那一类（正文长 + 思维链）。
+   */
+  timeoutMs?: number;
+  maxRetries?: number;
+  /**
+   * 关思维链，原样转给 aiGateway（见 GatewayOptions.noThinking）。
+   *
+   * 对吐 JSON 的端点它是**双份好处**：快十倍，而且 `max_tokens` 那笔额度这时候
+   * 才真的全给 JSON —— 这一整个文件下面那句 `jsonFailMessage`「额度全花在思维链上了」
+   * 说的就是没开它的那种失败。
+   */
+  noThinking?: boolean;
 }
 
 export interface JsonGatewayResult<T> {

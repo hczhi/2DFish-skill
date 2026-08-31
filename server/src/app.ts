@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { initDatabase, getDatabase } from './db/index.js';
 import { authMiddleware } from './auth/middleware.js';
 import { moduleGuard } from './auth/moduleGuard.js';
+import { scopeGuard } from './auth/scopeGuard.js';
 import { rateLimit } from './auth/rateLimit.js';
 import { authRouter } from './api/auth.js';
 import { aiRouter } from './api/ai.js';
@@ -18,6 +19,7 @@ import { filesRouter } from './api/files.js';
 import { skillsRouter } from './api/skills.js';
 import { consultantRouter } from './api/consultant.js';
 import { consultRouter } from './api/consult.js';
+import { consultFrameAncestors } from './services/consult/sdkLimits.js';
 import { settingsRouter } from './api/settings.js';
 import { tokensRouter } from './api/tokens.js';
 import { quotaRouter } from './api/quota.js';
@@ -105,6 +107,25 @@ app.use('/api/tender/sdk/token', (req, res, next) => {
   next();
 });
 
+// 品牌咨询 iframe 嵌入（084）：只有换 token 这一下是跨域的 —— 之后工作台跑在我们自己的
+// iframe 里，它发的请求是同源的，不需要 CORS。反过来说这一下**必须**由第三方页面自己发：
+// 让 iframe 里的页面去换的话，Origin 是我们自己的域名，那道白名单对每个 pk 都成立。
+app.use('/api/consult/sdk/token', (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 // SDK 数据接口（带 scope 短 token 的只读 GET）同样需要跨域放行。
 // 注意：浏览器发的预检 OPTIONS 不带 Authorization 头，所以不能靠 Bearer 判断，
 // 只要有 Origin 就回显 CORS 头。真正的准入靠 JWT 签名 + scope 白名单闸门（tenderSdkGuard）：
@@ -131,13 +152,34 @@ app.use(cors({
 }));
 // Security headers
 app.disable('x-powered-by');
+const BASE_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://pagead2.googlesyndication.com; frame-src 'self' https://googleads.g.doubleclick.net";
+// frame-src 里的 `'self'` 是给 iframe 接入的示例页用的（`/sdk/consult-demo.html` 把
+// `/consult/embed` 套在自己里面）。**`frame-src` 一旦显式写出来就不再回落到 default-src**，
+// 少了 `'self'` 的后果是那个 iframe 被我们**自己的** CSP 拦掉：页面上一块白 + 控制台一行
+// 警告，而 pk、白名单、frame-ancestors 全都是配对的，只会让人以为嵌入功能没做好。
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://pagead2.googlesyndication.com; frame-src https://googleads.g.doubleclick.net");
+
+  // 品牌咨询的 iframe 嵌入（084）：只有 /consult* 这几条路径放行，而且只放行**启用中的
+  // pk 配的那些域名**。两条都要说清楚：
+  //
+  // ① 这里必须**不发** `X-Frame-Options` —— 它只有 DENY / SAMEORIGIN 两个值可用
+  //    （`ALLOW-FROM` 早就废弃，Chrome 从来没实现），留着 DENY 的话浏览器直接拦掉
+  //    整个 frame，第三方页面上是一块白，而我们这边每个接口都返回 200。多域名只有
+  //    CSP 的 frame-ancestors 做得到。
+  // ② 名单为空（没有任何启用的 key）时**照旧 DENY**：这不是「顺便开着」的能力。
+  const embeddable = req.path === '/consult' || req.path.startsWith('/consult/');
+  const ancestors = embeddable ? consultFrameAncestors() : [];
+  if (ancestors.length) {
+    res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors ${ancestors.join(' ')}`);
+  } else {
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', BASE_CSP);
+  }
   next();
 });
 
@@ -177,7 +219,19 @@ if (fs.existsSync(sdkDistPath)) {
   app.use('/sdk', (_req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     next();
-  }, express.static(sdkDistPath, { maxAge: '1h' }));
+  }, express.static(sdkDistPath, {
+    maxAge: '1h',
+    // UMD 产物的后缀是 `.cjs`，express.static 认不出来、回 application/octet-stream，
+    // 而我们全局发着 `X-Content-Type-Options: nosniff` —— 浏览器于是**拒绝执行**它
+    // （控制台一句 «not executable, and strict MIME type checking is enabled»，
+    // 紧接着是 `ConsultSDK is not defined`）。这两条 `<script src>` 是所有接入方的第一步，
+    // 而请求本身是 200，看起来像 SDK 没发出去。
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.cjs')) {
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      }
+    },
+  }));
 }
 
 // Auth middleware — applied globally, determines public/optional/protected per route
@@ -185,6 +239,10 @@ app.use(authMiddleware);
 
 // Module guard — enforces API path whitelist for module tokens
 app.use(moduleGuard);
+
+// Scope guard — 前端 SDK 短 token 的端点白名单，默认拒绝（见 auth/scopeGuard.ts：
+// 这道闸门原来只挂在 tenderRouter 里，于是那把 token 在 /api/tender 之外畅通无阻）。
+app.use(scopeGuard);
 
 // Rate limiting for API endpoints
 app.use('/api/auth/login', rateLimit(5, 60_000));

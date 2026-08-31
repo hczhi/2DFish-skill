@@ -83,6 +83,10 @@ import { migration_080 } from './080_consult_intake.js';
 import { migration_081 } from './081_consult_ai_opportunities.js';
 import { migration_082 } from './082_llm_relay_keys.js';
 import { migration_083 } from './083_drop_failed_recommendations.js';
+import { migration_084 } from './084_consult_sdk_keys.js';
+import { migration_085 } from './085_consult_project_tenant.js';
+import { migration_086 } from './086_consult_sdk_limits.js';
+import { migration_087 } from './087_provider_no_thinking.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -167,4 +171,8 @@ export const allMigrations: Migration[] = [
   migration_081,
   migration_082,
   migration_083,
+  migration_084,
+  migration_085,
+  migration_086,
+  migration_087,
 ];

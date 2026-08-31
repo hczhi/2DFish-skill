@@ -22,8 +22,8 @@ vi.mock('../../core/llm/gateway.js', () => ({
 }));
 
 const { initDatabase, getDatabase } = await import('../../db/index.js');
-const { createProject, appendMessage, listMessages } = await import('./projectStore.js');
-const { chatInStage, directionsToText } = await import('./chatService.js');
+const { createProject, appendMessage, listMessages, platformOwner } = await import('./projectStore.js');
+const { chatInStage, directionsToText, entryToText } = await import('./chatService.js');
 
 initDatabase();
 
@@ -35,7 +35,7 @@ describe('consult 阶段内对话', () => {
     db.exec(
       'DELETE FROM consult_messages; DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;'
     );
-    project = createProject('u1', '捷停车', '停车场 SaaS，覆盖 2000+ 车场');
+    project = createProject(platformOwner('u1'), '捷停车', '停车场 SaaS，覆盖 2000+ 车场');
     replies.length = 0;
     sent.length = 0;
   });
@@ -72,5 +72,44 @@ describe('consult 阶段内对话', () => {
     // 三件套整段要在进 prompt 的那段文字里：只带标题的话「第 2 个方向的第 3 条动作
     // 换掉」这种话模型看不到那张表，只能顺着话自己编一条，读起来完全正常。
     expect(text).toContain('| b |');
+  });
+
+  // 定稿气泡摊的那一节按标题关键词认。取错一节不会报错：气泡里挂着一张表，
+  // 标题、格式、数字全在，只是它是隔壁那一节的 —— 顾问照着它去讲。
+  it('定稿气泡只摊本步那一节，摊到下一个小节就停', () => {
+    const body = [
+      '## 0. 方法论速览',
+      '照操法五维推的。',
+      '## 1. 企业现状卡（表格：维度 | 事实 | 判读）',
+      '| 维度 | 事实 |',
+      '| --- | --- |',
+      '| 现金跑道 | 半年 |',
+      '## 2. 核心基因与优势清单',
+      '这一节不该出现在气泡里',
+    ].join('\n');
+    const text = entryToText({
+      stage_key: 'self',
+      conclusion: '一句话总结',
+      body,
+      confidence: 'mid',
+      source_level: 'L2',
+      version: 1,
+    });
+    expect(text).toContain('| 现金跑道 | 半年 |');
+    expect(text).not.toContain('这一节不该出现在气泡里');
+    expect(text).not.toContain('方法论速览');
+  });
+
+  it('正文里没有那一节时要说出来，不能静默省掉', () => {
+    const text = entryToText({
+      stage_key: 'self',
+      conclusion: '一句话总结',
+      body: '## 1. 现状概述\n模型没按清单命名这一节',
+      confidence: 'mid',
+      source_level: 'L2',
+      version: 1,
+    });
+    // 省掉的话气泡读起来是「这一版没有这张表」，而真实原因是那一节名字对不上
+    expect(text).toMatch(/企业现状卡.*没找到/s);
   });
 });

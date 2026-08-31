@@ -17,6 +17,10 @@ declare global {
       moduleId?: string;
       tokenId?: string;
       tokenScope?: string;
+      /** scope 短 token 是拿哪把 pk 换来的（consult SDK 用它做归属键）。 */
+      sdkPk?: string;
+      /** 第三方那边的终端用户 id。**由第三方页面传入、签进 token**，只做展示隔离。 */
+      externalUid?: string;
     }
   }
 }
@@ -44,6 +48,9 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   // SDK token exchange — pk + Origin whitelist validated inside the handler
   { path: '/api/tender/sdk/token', method: 'POST', level: 'public' },
   { path: '/api/tender/sdk/token', method: 'OPTIONS', level: 'public' },
+  // 品牌咨询 iframe 嵌入（084）：同上，pk + Origin 白名单在 consultSdk 的 handler 里校验。
+  { path: '/api/consult/sdk/token', method: 'POST', level: 'public' },
+  { path: '/api/consult/sdk/token', method: 'OPTIONS', level: 'public' },
   // 对外中转接口（migration 082）：带的是 sk-mmpla- 那把 key，不是平台 JWT。
   // 走 protected 的话 authMiddleware 会先回一句 401 «Invalid or expired token»，
   // 下游只会以为自己那把 key 废了，而真正的校验（relayService）压根没跑到。
@@ -61,6 +68,13 @@ function getAuthLevel(req: Request): AuthLevel {
     if (typeof config.path === 'string' && req.path === config.path) return config.level;
     if (config.path instanceof RegExp && config.path.test(req.path)) return config.level;
   }
+  // 不是 /api/ 的路径就是前端本身（client/dist 里的静态文件 + SPA fallback，见 app.ts 末尾）。
+  // 这些**必须**匿名可取：浏览器的文档请求从不带 Authorization 头，判成 protected 的话
+  // 整站在 Express 上是一句 `{"error":"Authentication required"}`（RELEASE.md 的方案 A
+  // 就是全部转发给 Node），而 iframe 嵌入死得更隐蔽 —— 第一个文档请求就 401，第三方页面上
+  // 是一块白，而 pk / 域名白名单 / frame-ancestors 全都是配好的、每个接口都 200。
+  // 页面级的权限本来就在前端路由守卫（`meta.requiresAuth`）+ 各 API 端点上，不在这里。
+  if (!req.path.startsWith('/api/')) return 'optional';
   return 'protected';
 }
 
@@ -121,7 +135,9 @@ function tryParseAuth(req: Request, token: string): boolean {
   }
 
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as AuthUser & { tv?: number; scope?: string };
+    const payload = jwt.verify(token, getJwtSecret()) as AuthUser & {
+      tv?: number; scope?: string; pk?: string; euid?: string;
+    };
     // Verify token version if present in JWT
     if (payload.tv !== undefined) {
       const db = getDatabase();
@@ -137,6 +153,10 @@ function tryParseAuth(req: Request, token: string): boolean {
       req.user.role = 'user';
       req.tokenScope = payload.scope;
       req.authMethod = 'sdk';
+      // 归属键只从**签过名的** token 里取，不从请求参数取：收请求参数的话第三方页面
+      // 改一个 query 就能读到同一把 key 下别人的项目，而返回的是一列正常的项目。
+      req.sdkPk = payload.pk;
+      req.externalUid = payload.euid;
     } else {
       req.authMethod = 'jwt';
     }

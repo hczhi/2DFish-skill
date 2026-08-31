@@ -100,7 +100,10 @@ SSE 流式端点，消耗额度。
 ## 品牌咨询工作台 (/consult)
 
 一个品牌 = 一个项目，14 步（四看 / 四问 / 四大成 / 第二层内容营销 / 第三层数字化营销）。全部 `PROTECTED`。
-`lane` 有三个值，决定这一步走哪条接口：`fast` 和 `plan` 都走 `/draft`，`slow` 走 `/directions`。
+`lane` 有三个值，决定这一步走哪条接口：`fast` 和 `plan` 都走 `/draft`，`slow` 走
+`/decisions` → `/decisions/apply` → `/draft`（先拍板方向，再照它出**一份**正文）。
+`slow` 的老路 `/directions`（AI 出 2–4 份完整方案给他挑）接口还在，但**界面上已经没有入口** ——
+只用来恢复老项目里已经出过的方向卡。
 前端分组顺序**按 `GET /stages` 返回的顺序推**，不写死分组名清单 —— 写死的话新增的分组
 在左栏里完全不存在，而进度数和解锁全是对的，界面上看不出少了几步。
 
@@ -130,8 +133,12 @@ SSE 流式端点，消耗额度。
 ### DELETE /api/consult/projects/:id
 
 ### POST /api/consult/projects/:id/stages/:key/draft
-快车道（`fast`）和执行层（`plan`）出草稿，两者 system prompt 不同（找事实 vs 承接结论出方案），
-`slow` 的阶段走这里返回 400。`plan` 不要求客户资料非空（它的依据是上游定稿），`fast` 要求。
+快车道（`fast`）、执行层（`plan`）和慢车道（`slow`）都走这里，三者 system prompt 不同
+（找事实 / 承接结论出方案 / 照顾问拍板的方向写一份完整方案）。
+`plan` 不要求客户资料非空（它的依据是上游定稿），`fast` 要求。
+**`slow` 必须先有一条 `kind='decided'` 记录**（见 `/decisions/apply`），没有回 **400**、
+拍板之后又重出过一版岔路口清单回 **409** —— 不拦的话这条路就是「AI 替他把取舍定了再写
+一份完整正文」，而它的产出和照他定的方向写出来的一模一样。
 **不落库**，返回 `{ draft, truncated, discussion, message, stages }`。
 `discussion: { used, dropped }` 是这一版带进 prompt 的本步对话条数（只算 `kind='text'` 的），
 前端必须显示 —— 带上和没带上出来的草稿读起来一模一样。
@@ -143,6 +150,45 @@ SSE 流式端点，消耗额度。
 慢车道出 2–4 个互斥方向，每个带 `markdown`（三件套整段，选中后即定稿正文）+ `writingTip`
 + `aiOpportunities`，外层带 `verdict` 和 `methodBrief`（方法论速览，已拼进每个方向的 markdown
 开头；模型没给时那一节写明「没给」而不是消失），以及和 `/draft` 同义的 `discussion: { used, dropped }`。
+
+### POST /api/consult/projects/:id/stages/:key/decisions
+慢车道**动笔之前**先把「必须由顾问（或客户）拍板的取舍」列出来。只有 `lane='slow'` 能调，
+不产出正文、不定稿、不 `incRound`。返回
+`{ points, noFork, missing, dropped, truncated, discussion, message, stages }`：
+
+- `points[]`：`{ id, question, methodRef, basis, options[{label,detail,cost}], recommend }`，
+  最多 4 个。`id`（`d1..dN`）由服务端生成，`methodRef` 指向 `GET /stages` 里那条 `method`
+  的第几条 —— 顾问对着操法数得出来这个岔路口是不是编的。
+- **`dropped[]` 必须显示**：缺 `basis` 或凑不出 2 个带 `cost` 的选项的那几处被服务端丢掉了，
+  而少一处的卡片和「这一步只有两处要定」在屏幕上一模一样，那一处最后就是 AI 自己定的。
+- `points` 为空且 `noFork` 有话说 = 这一步真的没有取舍要拍板；两个都空、或者模型给的几处
+  全被丢掉，一律 **502**（一屏空白读起来就是「这一步不用你定，直接出方案吧」）。
+- `missing[]` 是缺事实、不是取舍 —— 那要走补料问卷，做成选项等于让客户猜一个数字。
+- 同时在这一步的对话里追加一条 `kind='decisions'`（`payload` 是整份清单），刷新靠它恢复。
+  **前端认 kind 的那条 `v-if` 链必须加这一支**：认不出的 kind 会落到 `v-else`，被画成
+  一张「已生成候选方向」的卡片而右栏是空的，读起来像那一版丢了。
+
+### POST /api/consult/projects/:id/stages/:key/decisions/apply
+把顾问在那几处岔路口上的选择记下来 —— 它就是这一步出正文时的**地基**（`/draft` 读它）。
+请求体 `{ sheetMessageId, picks: [{ id, label, note? }] }`，返回
+`{ picks, noFork, sheetMessageId, message, stages }`（`message.kind='decided'`，
+`role='user'` —— 那几处是**他**定的，记成 assistant 读起来就是「AI 说它定了」）。
+**不花 AI 额度**（所以不在 `sdkLimits.AI_SPEND_ROUTES` 里），但必须落这条记录。四道闸：
+
+- `sheetMessageId` 必须是**最新那一条** `kind='decisions'`，否则 **409**：清单里的 id
+  是按顺序生成的（`d1..dN`），重出一版之后同一个 `d2` 已经是另一个问题 —— 存下来的是
+  「问题 A + 答案 B」，而它在对话里、在正文的方法论速览里都读得通。
+- **每一处都要有 `label`**，少一处 **400** 并点名是哪几处：留空的那几处 AI 会在写正文时
+  自己定，而定完的正文读起来一样完整。
+- `label` 只能是那个岔路口摆出来的选项之一，否则 **400**：自由发挥的答案配不上任何
+  `cost`，进正文之后「放弃了什么」那一段就是模型编的。要补充就写 `note`（≤300 字，
+  超了**只拒不截** —— 截掉的正是他刚写的那句要求）。
+- `points` 为空的那种（`noFork`）**照样要提交一次**，落一条 `picks: []` 的记录：
+  出正文那条路要求它存在，不然「没有取舍」和「还没拍板」在服务端分不开。
+
+存下来的每一处是 `{ id, question, methodRef, label, detail, cost, note }` ——
+问题和 `cost` **原样存**，不只存 id（同上一条：id 会随重出而漂），而 `cost` 要跟着进正文
+（正文只会讲选中那条路的好处，「放弃了什么」是这一步唯一不可逆的信息）。
 
 ### POST /api/consult/projects/:id/stages/:key/draft/discard
 丢弃这一版草稿 / 候选方向。请求体 `{ kind?: 'draft' | 'directions' }`（默认 `draft`），
@@ -169,8 +215,21 @@ SSE 流式端点，消耗额度。
 它**不会**进下一次 prompt（`discussionBlock` 只取 `kind='text'`）—— 定稿本来就以定稿身份
 进下游 prompt，同一段出现两遍会被模型当成两处独立印证。
 
+### GET /api/consult/projects/:id/report
+把十四步的定稿合并成一份可交付的 markdown → `{ filename, markdown, stale, noBody, chapters, chars }`。
+**不调 AI**（正文原样搬），前端拿 `markdown` 自己存文件。章节顺序来自 `STAGES` 而不是定稿时间。
+有任何一步没定稿一律 **400 + `missing: string[]`**（缺哪几步的 label）：少两章的文档在屏幕上
+和完整的一模一样，而它是要发给客户的东西。`stale`（上游改过之后没重跑的章节）/ `noBody`
+（只存了结论、没有正文的老定稿）**同时写在文档开头和对应章节里**，接口再回一份给前端提示 ——
+只回接口的话用户下载完就再也看不到了，而这份 md 会被直接转出去。
+
 ### POST /api/consult/projects/:id/intake
-让 AI 读客户资料出一份补料问卷 → `{ gaps, questions: [{ id, section, question, why, placeholder }], truncated, round, rounds }`。
+让 AI 读客户资料出一份补料问卷 → `{ gaps, questions: [{ id, section, question, why, placeholder, type, options }], truncated, round, rounds }`。
+`type` 是 `'choice'`（可点选，`options` 里 2-4 个互斥的**类型划分**）或 `'text'`（只能手填）；
+数字、金额、名单类的题服务端一律标 `text` 且清空 `options` —— 给那种题配选项等于让模型编几个
+区间、客户挑最接近的那个，而它进资料之后和客户亲口说的一模一样。选项不足 2 条降级成 `text`
+（不丢题）。「其他」「说不准」由前端固定补，不占 `options` 的名额（靠模型给它会漏，漏掉之后
+客户只能在几个都不对的选项里挑一个最像的）。老轮次没有这两个字段，前端要缺省当 `text` 渲染。
 落库（migration 080，一轮一行），**会删掉这个项目里上一轮没提交的问卷** —— 前端在
 已经填了答案时要先确认。题数太少（模型没按格式回）时 502 + 说明 —— 绝不回空问卷
 （空问卷读作「资料已经够了」）；出的题全是之前问过并且答过的时候 409 + 说明。
@@ -196,6 +255,49 @@ SSE 流式端点，消耗额度。
 超过 40 条上限直接 400，**不只存前几条**。
 
 ### DELETE /api/consult/projects/:id/sources/:sid
+
+### POST /api/consult/sdk/token `PUBLIC`
+第三方**纯前端**页面换一把 15 分钟短 token，用来 iframe 嵌入 /consult 工作台（084）。
+Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_uid }`。
+
+- **必须由第三方页面自己发这个请求**，不能由 iframe 里的页面发：iframe 里发出的
+  Origin/Referer 是**我们自己的**域名，那道白名单于是对每个 pk 都成立，等于没配。
+- `externalUid` **必填**（第三方那边的终端用户 id，签进 token，之后每个请求的租户只从
+  签名过的 token 里取）。缺省成空串的话这个接入方所有终端用户共用一个归属键 ——
+  A 客户的品牌资料会出现在 B 客户的项目列表里，而那就是一列正常的项目。
+- 它是第三方页面传的，**不可信**：纯前端下任何人都能改掉它读到同一把 key 下别人的项目。
+  只是**展示隔离，不是安全边界**。要真隔离，接入方得出一个最小后端来签这个值。
+- Origin 不在 pk 白名单里回 403，**错误里带上收到的那一行** —— 接入方最常见的错是配了
+  https 用了 http，只回一句 not allowed 的话他核对的是自己配的那一行。
+- 换出的 token `scope=consult:embed`，能碰哪些端点由全局 `auth/scopeGuard.ts` 管（默认拒绝）：
+  只放行 `GET /api/consult/stages` 和 `/api/consult/projects` 子树。**其余一律 403**，
+  包括下面那几个发 key 的后台接口。
+
+### GET|POST|PATCH|DELETE /api/consult/admin/sdk-keys `ADMIN`
+pk 的 CRUD（绑账号 / 配 Origin 白名单 / 启停 / 换取限流 / 每把 key 的天花板）。
+`allowedOrigins` **不许为空**：空清单的 key 换不到 token，而后台那一行看起来是建好的。
+
+- `dailyAiLimit`（缺省 50）/ `maxProjects`（缺省 200）：**新 key 一定有上限**，和
+  `ai_app_quota` 的「没配就不限」相反 —— 绑定账号开了专属渠道时它绕过 `ai_quota`，
+  「不限」就是拿他自己那把 key 无上限烧真钱，而每次返回的都是一份正常的草稿。
+  两个字段都必须是 >= 0 的整数（不是就 400），**`0` 是合法值** = 把这把 key 冻住。
+- GET 每行额外回 `ai_used_today` / `projects`：只回上限不回用量的话，接入方那边被 429
+  挡住时后台这一行看起来完全正常，管理员判断不出该调额度还是有人在滥用。
+- 停用/删掉 key 立刻生效（`consultSdkLimits` 每个请求查一次），不用等那把短 token 过期；
+  对外统一回 403 `{ code: 'sdk_key_disabled' }`「接口已关闭，请联系管理员」。
+
+### 上限被触发时的两种 429（带 `code`，都写着真实数字）
+- `sdk_project_cap`：`POST /projects` 超过 `maxProjects`。
+- `sdk_ai_quota`：会花 AI 的端点（`/stages/:key/{draft,directions,chat,search}`、`/intake`）
+  超过 `dailyAiLimit`，服务器时间 0 点重置。**先扣再放行** —— 等 AI 返回了再扣的话，
+  同时打进来的一批请求读到同一个 used，上限形同不存在（而每条都返回正常结果）。
+
+### iframe 嵌入的响应头
+`/consult` 和 `/consult/*` 的响应**不发 `X-Frame-Options`**，改用
+`Content-Security-Policy: … ; frame-ancestors <所有启用中的 pk 的域名之和>`
+（`X-Frame-Options` 只有 DENY/SAMEORIGIN，多域名做不到；留着 DENY 的话第三方页面上是一块白，
+而我们这边每个接口都 200）。没有任何启用的 key 时**照旧 DENY**。名单是**所有 key 的并集**而
+不是按 pk 算：只有 iframe 那第一个文档请求带得上 pk，SPA 内跳和手动刷新都不带。
 
 ---
 

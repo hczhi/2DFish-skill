@@ -313,7 +313,11 @@ server {
     }
 
     # 安全头
-    add_header X-Frame-Options DENY;
+    # ⚠️ 这里**不要**加 `add_header X-Frame-Options DENY;`。Express 已经逐路径发这四个头，
+    # 而品牌咨询要嵌进第三方页面（084）：/consult* 上它故意不发 X-Frame-Options，改发
+    # CSP frame-ancestors（按后台启用中的 key 动态算的域名名单）。Nginx 再补一个 DENY 的话
+    # 浏览器按 DENY 拦掉整个 iframe —— 第三方页面上是一块白，而 pk、白名单、后台那行 key
+    # 全都是好的，每个接口都返回 200，看起来只会像「嵌入功能没做好」。
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -344,6 +348,16 @@ server {
 
     location /uploads/ {
         proxy_pass http://127.0.0.1:3001;
+    }
+
+    # 品牌咨询的页面必须由 Node 出响应头（084 的 iframe 嵌入）。
+    # frame-ancestors 的域名名单是按「后台启用中的 pk」动态算出来的，Nginx 算不出来；
+    # 静态文件直接由 Nginx 发的话，那个头压根不存在，第三方页面上是一块白 + 控制台一行
+    # CSP 警告，而我们这边每个接口都 200。
+    location /consult {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # SPA fallback — 所有非文件路径返回 index.html

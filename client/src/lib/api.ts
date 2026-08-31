@@ -1,8 +1,9 @@
 import { getToken, clearToken } from './auth';
 import { handleQuotaExceeded } from './quota';
 import { openLoginModal } from './loginModal';
+import { isEmbedMode, clearEmbedToken, requestEmbedToken, reportEmbedError } from './embed';
 
-export async function api(url: string, options: RequestInit = {}): Promise<Response> {
+export async function api(url: string, options: RequestInit = {}, retried = false): Promise<Response> {
   const token = getToken();
   const headers = new Headers(options.headers);
   // FormData 必须让浏览器自己写 Content-Type —— 它要在里面附上 multipart 的
@@ -17,6 +18,22 @@ export async function api(url: string, options: RequestInit = {}): Promise<Respo
   const response = await fetch(url, { ...options, headers });
 
   if (response.status === 401) {
+    // 嵌入模式（084）：短 token 只活 15 分钟，过期是常态，而**绝不能弹我们的登录框**
+    // —— 那个框出现在第三方页面里，用户既没有我们平台的账号，也看不出是凭证过期。
+    // 向宿主页面要一把新的，然后把这次请求重放一遍（只重放一次，避免死循环）。
+    if (isEmbedMode()) {
+      clearEmbedToken();
+      if (!retried && (await requestEmbedToken())) {
+        return api(url, options, true);
+      }
+      // 要不到：必须让调用方拿到一个说得清成因的失败，不能静默返回 401
+      // （页面上那会儿是一片空白，读起来像功能坏了）。
+      reportEmbedError('访问凭证已过期，宿主页面没有换到新的。请刷新页面重试。');
+      return new Response(
+        JSON.stringify({ error: '访问凭证已过期（嵌入模式），宿主页面没有换到新的凭证。请刷新页面重试。' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
     clearToken();
     openLoginModal(window.location.pathname, 'ai');
   }

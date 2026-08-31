@@ -1,5 +1,5 @@
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
-import { STAGES, type StageDef } from './stages.js';
+import { STAGES, stageByKey, type StageDef } from './stages.js';
 import {
   appendMessage,
   listMessages,
@@ -8,7 +8,7 @@ import {
   type ConsultEntry,
   type ConsultMessage,
 } from './projectStore.js';
-import { requireStage, StageError } from './draftService.js';
+import { requireOpenStage, StageError } from './draftService.js';
 import { listSources, sourcesBlock } from './sourceStore.js';
 
 // 阶段内对话。一个阶段一段对话：在这一步里继续追问、让 AI 换个角度、
@@ -58,6 +58,67 @@ export function directionsToText(out: {
 }
 
 /**
+ * 岔路口清单的文字版（`kind='decisions'`，慢车道「先定方向」那一屏）。
+ *
+ * 序号和 `directionsToText` 同一个理由：用户下一句就是「第 2 个我选 B」，
+ * 而模型只看得到这段文字。选项的**代价**也要带上 —— 只带选项名的话，
+ * 他说「就按你建议的来」时模型看不到自己建议的那条放弃了什么，答得却很顺。
+ */
+export function decisionsToText(sheet: {
+  points: Array<{ question: string; methodRef?: string; basis?: string; options: Array<{ label: string; detail?: string; cost: string }>; recommend?: string }>;
+  noFork?: string;
+  missing?: string[];
+}): string {
+  if (!sheet.points.length) {
+    return `我读完资料和上游定稿，这一步没有需要你拍板的取舍：${sheet.noFork || '（模型没说明原因）'}`;
+  }
+  const lines = sheet.points.map((p, i) => {
+    const opts = p.options
+      .map((o, j) => `  ${String.fromCharCode(65 + j)}. ${o.label}${o.detail ? ` —— ${o.detail}` : ''}\n     代价：${o.cost}`)
+      .join('\n');
+    return (
+      `## 待定 ${i + 1}：${p.question}${p.methodRef ? `（${p.methodRef}）` : ''}\n` +
+      (p.basis ? `依据：${p.basis}\n` : '') +
+      `${opts}` +
+      (p.recommend ? `\n  🧭 我的建议：${p.recommend}` : '')
+    );
+  });
+  return (
+    `这一步动笔之前有 ${sheet.points.length} 处要你（或客户）拍板 —— 这几处按现在的资料都说得通，` +
+    `我替你选了也写得出一份读起来很完整的方案，但地基就是我选的：\n\n${lines.join('\n\n')}` +
+    (sheet.missing?.length ? `\n\n📋 另外这几件是缺事实、不是取舍，要去问客户：\n${sheet.missing.map((m) => `- ${m}`).join('\n')}` : '')
+  );
+}
+
+/**
+ * 拍板结果的文字版（`kind='decided'`）。
+ *
+ * 这条记录是「这一步的地基是他定的」在对话里唯一的痕迹，所以**每一处的代价也要写出来**：
+ * 只写「他选了 B」的话，过两天回来看不出选 B 放弃了什么，而那正是不可逆的那部分
+ * （定稿之后这一步只读）。它和方向卡一样**不进 prompt**（出正文时读的是 payload 里
+ * 那份结构化的 `DecidedSheet`）—— 当成聊天记录带回去的话，同一批选择会以
+ * 「客户说过的话」的身份再出现一遍，模型把它当成两处独立印证。
+ */
+export function decidedToText(sheet: {
+  picks: Array<{ question: string; methodRef?: string; label: string; cost: string; note?: string }>;
+  noFork?: string;
+}): string {
+  if (!sheet.picks.length) {
+    return `✅ 已确认：这一步没有需要拍板的取舍（${sheet.noFork || '未说明原因'}），按现有资料直接出正文。`;
+  }
+  const lines = sheet.picks.map(
+    (p, i) =>
+      `${i + 1}. ${p.question}${p.methodRef ? `（${p.methodRef}）` : ''}\n` +
+      `   → **${p.label}**（放弃：${p.cost}）` +
+      (p.note ? `\n   → 补充：${p.note}` : '')
+  );
+  return (
+    `✅ 这一步的 ${sheet.picks.length} 处取舍已经由你定了，正文会照这几条写：\n\n${lines.join('\n')}\n\n` +
+    `这几条会写进正文开头的「方法论速览」—— 那是整份方案里唯一能看出地基是谁定的地方。`
+  );
+}
+
+/**
  * 草稿的文字版。**正文要整段带上**（不截断）：用户在这一步说的话十句有八句指着正文里
  * 某一节（「痛点矩阵那条改成 P0」），只带一句话总结的话 AI 看不到那张表，
  * 只能顺着他的话往下编 —— 改出来的东西格式完全正常，改的是它自己想象的那张表。
@@ -82,6 +143,27 @@ export function draftToText(draft: {
 }
 
 /**
+ * 从正文里切出某一节（`## N. 标题` 开头，到下一个 `##` 之前）。找不到返回空串。
+ *
+ * 按标题**包含关键词**认，不按序号：序号是模型自己编的（漏一项就整体前移一位），
+ * 按序号取会静默取到隔壁那一节 —— 气泡里于是挂着一张标题对不上的表，
+ * 而它看起来完全正常。标题行本身也带回去，不然摘出来的表没有名字。
+ */
+function sectionOf(body: string, keyword: string): string {
+  const lines = (body || '').split('\n');
+  const start = lines.findIndex((l) => /^#{2,3}\s/.test(l) && l.includes(keyword));
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^#{2,3}\s/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n').trim();
+}
+
+/**
  * 定稿的文字版，作为一条 `kind='entry'` 的消息进这一步的对话记录。
  *
  * 定稿以前在对话里没有任何痕迹：右栏换成只读的「已定稿」视图，而对话最后一条还是
@@ -93,13 +175,20 @@ export function draftToText(draft: {
  * 同一段东西在上下文里出现两遍，模型会把它当成两处独立印证（「多处资料都指向…」），
  * 而那句话读起来完全正常。
  *
- * 正文不写进这段文字：正文在 `consult_entries.body` 里，右栏显示的是那一份。
+ * 正文**整份**不写进这段文字：正文在 `consult_entries.body` 里，右栏显示的是那一份。
  * 抄一份到消息里的话，重新定稿之后两份就不一样了，而对话里那份看起来才像「最终版」。
+ * 只有 `StageDef.highlight` 指定的那一节例外（见下面）—— 摘一节的代价是重新定稿后
+ * 旧气泡里那张表是旧的，但它头上写着「第 N 版」，说得清是哪一版。
+ *
+ * **rationale / evidence 不摊在这里。** 那两段是推导过程（几百字的因果链 + 客户资料
+ * 原文摘录），写给模型和事后追查用的，顾问真正要看的是正文里那几张表 ——
+ * 摊在气泡里的后果是：气泡长得要滚两屏，而那张表反而还得再点一次才看得到，
+ * 读起来像「定稿定的就是这两段话」。两段仍然存在 `consult_entries` 里，右栏能看。
  */
 export function entryToText(entry: {
+  stage_key: string;
   conclusion: string;
-  rationale: string;
-  evidence: string;
+  body: string;
   confidence: string;
   source_level: string;
   version: number;
@@ -108,8 +197,18 @@ export function entryToText(entry: {
   const head =
     `✅ **已定稿**（第 ${entry.version} 版 · 置信度 ${entry.confidence} · 证据级别 ${entry.source_level}）`;
   const parts = [head, `**结论**：${entry.conclusion}`];
-  if (entry.rationale) parts.push(`**取舍理由**：${entry.rationale}`);
-  if (entry.evidence) parts.push(`**依据**：${entry.evidence}`);
+  const highlight = stageByKey(entry.stage_key)?.highlight;
+  if (highlight) {
+    // 小节标题降到 h4：气泡只有几百像素宽，h2 带一条下边框，在这里读起来像
+    // 「这条消息到此为止」，后面那张表看着是另一条消息。
+    const section = sectionOf(entry.body, highlight).replace(/^#{2,3}\s+/, '#### ');
+    // 找不到也要出声：静默省掉的话气泡读起来是「这一版没有这张表」，
+    // 而真实原因是模型没按清单命名那一节（那才是该回去重出一版的信号）。
+    parts.push(
+      section ||
+        `**${highlight}**：这一版正文里没找到这一节（模型没按输出物清单命名小节）——点下面「在右侧查看完整正文」核一眼，缺了就重出一版。`
+    );
+  }
   if (entry.ai_opportunities?.length) {
     parts.push(`**AI 赋能机会**：${entry.ai_opportunities.join('；')}`);
   }
@@ -160,8 +259,8 @@ ${laneNote}
 
 硬规则：
 1. 只能依据【联网资料】【客户资料】【已定稿结论】这三样。三样里都没有的事实不要当成事实说；
-   缺料就直接指出缺什么，让他补（可以让他用界面上的「联网查资料」去搜）。
-   引用时说清出处：联网资料标「（联网·域名·年份）」，客户资料标「（客户资料）」，
+   缺料就直接指出缺什么，让他补。
+   引用时说清出处：客户资料标「（客户资料）」，
    靠常识的说「这是我按常识推的，只能给区间」—— 把推测说成查到的，读起来和真的一模一样。
 2. 不要跑题到别的阶段去。客户问的是别的阶段的事，就提醒他去那一步聊 —— 这一步的对话只会作为这一步的依据。
 3. 回答短一点：3-6 句，或者一个不超过 5 条的清单。这是对话不是报告，长篇大论他不会看。
@@ -208,7 +307,9 @@ export async function chatInStage(
   stageKey: string,
   text: string
 ): Promise<ChatTurn> {
-  const { stage, entries } = requireStage(project.id, stageKey);
+  // 定稿之后这一步只读（见 requireOpenStage）：这里最要紧 —— 定稿后再聊，模型照样
+  // 一句一句认真回，而那几句既进不了任何 prompt，也改不动已经定下的结论。
+  const { stage, entries } = requireOpenStage(project.id, stageKey);
   const clean = text.trim();
   if (!clean) throw new StageError('说点什么再发', 400);
   if (clean.length > MAX_CHAT_CHARS) {
@@ -239,6 +340,9 @@ export async function chatInStage(
       operation: `chat:${stage.key}`,
       tier: 'default',
       requestSummary: `${project.brand_name} · ${stage.label}`,
+      // 这里要的是「3-6 句」，而实测思维链会为这 3-6 句想上 1500 token / 三十多秒 ——
+      // 对话是一句一句来的，等三十秒和等三秒是两个产品。见 GatewayOptions.noThinking。
+      noThinking: true,
     }
   );
 

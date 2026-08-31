@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { apiGet, apiPost, apiDelete } from '../../lib/api'
+import { apiGet, apiDelete } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { openLoginModal } from '../../lib/loginModal'
 import SiteHeader from '../../components/common/SiteHeader.vue'
@@ -36,16 +36,14 @@ const route = useRoute()
 const router = useRouter()
 const projects = ref<ProjectRow[]>([])
 const loading = ref(false)
-const creating = ref(false)
-const showCreate = ref(false)
 const err = ref('')
 
-const form = ref({ brandName: '', brief: '' })
-const MAX_BRIEF = 20000
-
 onMounted(() => {
-  // 封面上的「新建一个品牌项目」带 ?new=1 过来，直接把表单展开
-  if (route.query.new) showCreate.value = true
+  // 封面上的「新建一个品牌项目」带 ?new=1 过来，现在直接跳去新建页
+  if (route.query.new) {
+    router.replace('/consult/projects/new')
+    return
+  }
   if (!getToken()) {
     openLoginModal(window.location.pathname, '品牌咨询工作台需要登录')
     return
@@ -62,27 +60,6 @@ async function load() {
     err.value = e?.message || '加载失败'
   } finally {
     loading.value = false
-  }
-}
-
-async function create() {
-  if (!form.value.brandName.trim()) { err.value = '请填写品牌 / 客户名称'; return }
-  creating.value = true
-  err.value = ''
-  try {
-    const res = await apiPost('/api/consult/projects', {
-      brandName: form.value.brandName.trim(),
-      brief: form.value.brief,
-    })
-    // 新建项目先去补料问卷页，不直接进工作台：资料缺了不会报错 —— 后面十二步照样
-    // 出结论，只是那些结论是 AI 按常识补的，读起来和真按资料推的一模一样。
-    // `?auto=1` 让那一页自己出第一轮（它会先把这个 query replace 掉再发请求，
-    // 否则刷新一次就又出一轮、又扣一次额度，而两次都显示成功）。
-    router.push(`/consult/projects/${res.project.id}/intake?auto=1`)
-  } catch (e: any) {
-    err.value = e?.message || '创建失败'
-  } finally {
-    creating.value = false
   }
 }
 
@@ -135,44 +112,9 @@ function fmt(ts: string) {
         <div class="list-head">
           <span class="sec-kicker">PROJECTS</span>
           <span class="muted">点一行进工作台，回来的时候停在下一个没定稿的步骤</span>
-          <button class="btn-primary list-new" @click="showCreate = !showCreate">
-            {{ showCreate ? '收起' : '+ 新建项目' }}
+          <button class="btn-primary list-new" @click="router.push('/consult/projects/new')">
+            + 新建项目
           </button>
-        </div>
-
-        <div v-if="showCreate" class="create-card">
-          <label class="field">
-            <span class="label">品牌 / 客户名称</span>
-            <input v-model="form.brandName" type="text" placeholder="例：捷停车" maxlength="60" />
-          </label>
-          <label class="field">
-            <span class="label">
-              客户原始资料（纯文字，可后续补充）
-              <em :class="{ over: form.brief.length > MAX_BRIEF }">
-                {{ form.brief.length }} / {{ MAX_BRIEF }}
-              </em>
-            </span>
-            <textarea
-              v-model="form.brief"
-              rows="10"
-              placeholder="把你手上关于这个客户的东西直接贴进来：做什么的、业务线、规模数据、现有定位表述、竞品名单、目标人群、当前的痛点……缺的部分后面 AI 会问你。"
-            ></textarea>
-            <span class="hint">
-              这段资料会进「四看」每一次分析的 prompt。超过 {{ MAX_BRIEF }} 字会被拒绝而不是自动截断
-              —— 悄悄砍掉后半段的话，AI 是照着半份资料出结论的，而结论看起来完全正常。
-            </span>
-          </label>
-          <div class="create-actions">
-            <button class="btn-primary" :disabled="creating" @click="create">
-              {{ creating ? '创建中…' : '创建并让 AI 看看还缺什么' }}
-            </button>
-            <button class="btn-ghost" @click="showCreate = false">取消</button>
-            <!-- 说清楚会花一次 AI 额度：不说的话用户以为「创建」是纯本地操作 -->
-            <span class="muted">
-              创建后先进补料问卷（消耗 1 次 AI 额度）：全部答完才进工作台，答案会追加进这段资料。
-              填不完可以先离开，已填的都存着。
-            </span>
-          </div>
         </div>
 
         <div v-if="loading" class="empty">加载中…</div>
@@ -190,6 +132,12 @@ function fmt(ts: string) {
             <div class="pc-no">{{ String(i + 1).padStart(2, '0') }}</div>
             <div class="pc-main">
               <div class="pc-title">{{ p.brand_name }}</div>
+              <div class="pc-badges" v-if="p.intake_pending || p.stale_count">
+                <!-- 问卷没提交要留在列表上：那意味着客户资料还缺一块，而这一行的进度数照样在涨 -->
+                <span v-if="p.intake_pending" class="badge-intake">📋 问卷没提交</span>
+                <!-- 待重跑的条数必须留在列表上：进项目才看到的话，一份互相矛盾的方案已经在手上了 -->
+                <span v-if="p.stale_count" class="badge-stale">⚠ {{ p.stale_count }} 条待重跑</span>
+              </div>
               <div class="pc-meta">
                 <span>进度 {{ p.decided_count }} / {{ p.total_stages }}</span>
                 <span>资料 {{ p.brief_chars }} 字</span>
@@ -197,11 +145,7 @@ function fmt(ts: string) {
                 <span>更新 {{ fmt(p.updated_at) }}</span>
               </div>
             </div>
-            <div class="pc-right">
-              <!-- 问卷没提交要留在列表上：那意味着客户资料还缺一块，而这一行的进度数照样在涨 -->
-              <span v-if="p.intake_pending" class="badge-intake">📋 问卷没提交</span>
-              <!-- 待重跑的条数必须留在列表上：进项目才看到的话，一份互相矛盾的方案已经在手上了 -->
-              <span v-if="p.stale_count" class="badge-stale">⚠ {{ p.stale_count }} 条待重跑</span>
+            <div class="pc-footer">
               <div class="progress">
                 <div class="bar" :style="{ width: (p.decided_count / p.total_stages * 100) + '%' }"></div>
               </div>
@@ -287,7 +231,7 @@ function fmt(ts: string) {
 }
 
 .consult-page { flex: 1; padding: 32px 48px 64px; }
-.consult-container { max-width: 1040px; margin: 0 auto; width: 100%; }
+.consult-container { width: 100%; }
 
 .list-head { display: flex; align-items: center; gap: 14px; margin: 4px 0 14px; flex-wrap: wrap; }
 .list-new { margin-left: auto; }
@@ -316,27 +260,6 @@ function fmt(ts: string) {
   background: #FEF3F2; border: 1px solid #FDA29B; color: #B42318; font-size: 13px; line-height: 1.7;
 }
 
-/* 玻璃卡片。4px 品牌色顶边留给「主卡」（这一页就是新建表单）—— 和工作台里那几张一致 */
-.create-card {
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-top: 4px solid var(--brand);
-  border-radius: 14px; padding: 24px; margin-bottom: 28px; box-shadow: var(--shadow);
-}
-.field { display: block; margin-bottom: 16px; }
-.label { display: flex; justify-content: space-between; font-size: 12px; color: var(--color-muted); margin-bottom: 6px; }
-.label em { font-style: normal; color: var(--color-soft); font-family: var(--font-mono); }
-.label em.over { color: #B42318; }
-.field input, .field textarea {
-  width: 100%; box-sizing: border-box; padding: 10px 12px;
-  border: 1px solid var(--color-border-strong); border-radius: 10px;
-  font-size: 13px; font-family: var(--font-sans); color: var(--color-text);
-  background: #fff; resize: vertical; line-height: 1.75;
-}
-.field input:focus, .field textarea:focus { outline: none; border-color: var(--brand); }
-.hint { display: block; margin-top: 6px; font-size: 11px; line-height: 1.7; color: var(--color-soft); }
-.create-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-
 .empty {
   padding: 52px; text-align: center; color: var(--color-soft); font-size: 13px; line-height: 1.8;
   background: var(--color-bg-elevated);
@@ -344,29 +267,43 @@ function fmt(ts: string) {
   border: 1px dashed var(--color-border-strong); border-radius: 14px;
 }
 
-.project-list { display: flex; flex-direction: column; gap: 10px; }
+.project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
 .project-card {
-  display: flex; align-items: center; gap: 18px;
-  padding: 16px 20px; cursor: pointer;
+  position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 16px;
+  padding: 24px; cursor: pointer;
   background: var(--color-bg-elevated);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-radius: 14px;
+  border: 1px solid var(--color-border); border-radius: 16px;
   box-shadow: var(--shadow); transition: box-shadow .3s, border-color .3s;
-  transform: none;
+  overflow: hidden;
 }
 .project-card:hover { box-shadow: var(--shadow-lg); border-color: rgba(11, 74, 111, .3); }
-/* 镂空序号：kimi3 那个 .sec-no 的做法，列表里当行号用 */
+/* 水印序号：破形出框，放置在右上角作为背景 */
 .pc-no {
-  flex: 0 0 auto; font-family: var(--font-mono); font-size: 30px; font-weight: 800;
-  line-height: 1; letter-spacing: -1px; color: transparent; -webkit-text-stroke: 1.2px var(--brand);
+  position: absolute; right: 20px; top: -10px;
+  font-family: var(--font-mono); font-size: 64px; font-weight: 800;
+  line-height: 1; letter-spacing: -2px; color: transparent;
+  -webkit-text-stroke: 1px rgba(11, 74, 111, 0.15);
+  pointer-events: none; z-index: 0;
 }
-.pc-main { flex: 1; min-width: 0; }
-.pc-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; letter-spacing: .3px; }
+.pc-main { flex: 1; min-width: 0; width: 100%; position: relative; z-index: 1; }
+.pc-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; letter-spacing: .3px; }
+.pc-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .pc-meta {
-  display: flex; flex-wrap: wrap; gap: 14px;
+  display: flex; flex-wrap: wrap; gap: 10px;
   font-size: 11px; color: var(--color-soft); font-family: var(--font-mono);
 }
-.pc-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.pc-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; margin-top: auto; padding-top: 16px;
+  border-top: 1px dashed var(--color-border);
+  position: relative; z-index: 1;
+}
 .badge-stale {
   font-size: 11px; padding: 4px 10px; border-radius: 999px;
   background: #FFFAEB; border: 1px solid #FEDF89; color: #B54708; font-weight: 600;
@@ -388,7 +325,6 @@ function fmt(ts: string) {
   .hero { flex-direction: column; padding: 32px 24px 28px; }
   .hero h1 { font-size: 26px; }
   .consult-page { padding: 24px 20px 48px; }
-  .project-card { flex-wrap: wrap; }
-  .pc-right { width: 100%; justify-content: flex-start; }
+  .project-list { grid-template-columns: 1fr; }
 }
 </style>

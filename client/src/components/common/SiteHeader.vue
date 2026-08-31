@@ -1,5 +1,5 @@
 <template>
-  <header class="site-header" :class="{ 'is-home': isHome }">
+  <header v-if="!embedded" class="site-header" :class="{ 'is-home': isHome }">
     <!-- Brand / Back Link -->
     <div class="header-left">
       <router-link :to="locale === 'en' ? '/en' : '/'" class="brand-link" v-if="!isHome">
@@ -36,6 +36,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchMe, logout, isAdmin, type AuthUser } from '../../lib/auth'
 import QuotaIndicator from './QuotaIndicator.vue'
 import { openLoginModal } from '../../lib/loginModal'
+import { isEmbedMode } from '../../lib/embed'
+
+// 嵌到第三方页面里的时候整条刊头（和页脚）都不出现。判断放在这两个组件**自己**身上，
+// 不放在各个页面里：漏掉一个页面的后果是那一页在别人的站点上顶着我们的 LOGIN 按钮和
+// ADMIN/SETTINGS 链接 —— 点进去是我们的登录框（在他们的页面里），而那一页本身工作正常。
+// 顺带也别再发 fetchMe()：拿着 consult:embed 那把短 token 调 /api/auth/me 会被 scopeGuard
+// 403，控制台里一串红，而界面看不出任何异常。
+const embedded = isEmbedMode()
 
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +76,7 @@ function setLocale(lang: string) {
 }
 
 onMounted(async () => {
+  if (embedded) return
   user.value = await fetchMe()
 })
 

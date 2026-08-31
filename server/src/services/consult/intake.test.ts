@@ -18,7 +18,7 @@ vi.mock('../../core/llm/gateway.js', () => ({
 }));
 
 const { initDatabase, getDatabase } = await import('../../db/index.js');
-const { createProject } = await import('./projectStore.js');
+const { createProject, platformOwner } = await import('./projectStore.js');
 const { buildIntake, applyAnswers } = await import('./intakeService.js');
 const { saveRound, markApplied, openRound, answeredQuestions } = await import('./intakeStore.js');
 
@@ -31,13 +31,38 @@ describe('consult 补料问卷', () => {
     getDatabase().exec(
       'DELETE FROM consult_intake; DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;'
     );
-    project = createProject('u1', '捷停车', '停车场 SaaS，覆盖 2000+ 车场');
+    project = createProject(platformOwner('u1'), '捷停车', '停车场 SaaS，覆盖 2000+ 车场');
     replies.length = 0;
   });
 
   it('模型没给出几道题时报错，不回一份空问卷（空问卷=「你的资料够了」）', async () => {
     replies.push({ text: JSON.stringify({ gaps: ['缺财务数据'], questions: [{ question: '  ' }] }) });
     await expect(buildIntake('u1', project)).rejects.toThrow(/不代表你的资料已经齐了/);
+  });
+
+  it('选项凑不够两条的题降级成手填，而不是把这道题丢掉', async () => {
+    // 丢掉的话界面上和「AI 觉得这件事不用问」一模一样，而它可能正是最要紧的那一题。
+    // 另一半同样静默：手填题（数字/名单类）身上留着几个选项，将来前端只看
+    // options 非空就渲染成单选的话，「营收多少」就变成三个 AI 编出来的区间，
+    // 客户挑一个最接近的，那个数字从此以「客户说的」身份进资料。
+    replies.push({
+      text: JSON.stringify({
+        gaps: [],
+        questions: [
+          { question: '经营模式是哪种？', type: 'choice', options: ['直营'] },
+          { question: '去年营收多少？', type: 'text', options: ['1000 万以下', '1000-5000 万'] },
+          { question: '主要客户是谁？' },
+        ],
+      }),
+    });
+    const sheet = await buildIntake('u1', project);
+    expect(sheet.questions.map((q) => q.question)).toEqual([
+      '经营模式是哪种？',
+      '去年营收多少？',
+      '主要客户是谁？',
+    ]);
+    expect(sheet.questions.map((q) => q.type)).toEqual(['text', 'text', 'text']);
+    expect(sheet.questions.every((q) => q.options.length === 0)).toBe(true);
   });
 
   it('只把填了的题追加进资料，空题连题目一起丢掉', () => {
@@ -61,7 +86,9 @@ describe('consult 补料问卷', () => {
   it('同一轮不能补第二遍（补两遍 = 同一批答案在资料里两份，AI 当成两处独立印证）', () => {
     const round = saveRound(project.id, {
       gaps: [],
-      questions: [{ id: 'q1', section: '看自己', question: '客单价多少？', why: '', placeholder: '' }],
+      questions: [
+        { id: 'q1', section: '看自己', question: '客单价多少？', why: '', placeholder: '', type: 'text' as const, options: [] },
+      ],
       truncated: false,
     });
     expect(markApplied(project.id, round.id, { q1: '1200 元' }, 1)).toBe(true);
@@ -74,8 +101,8 @@ describe('consult 补料问卷', () => {
     const round = saveRound(project.id, {
       gaps: [],
       questions: [
-        { id: 'q1', section: '看自己', question: '车场的平均客单价是多少？', why: '', placeholder: '' },
-        { id: 'q2', section: '看竞品', question: '前三大竞品是谁？', why: '', placeholder: '' },
+        { id: 'q1', section: '看自己', question: '车场的平均客单价是多少？', why: '', placeholder: '', type: 'text' as const, options: [] },
+        { id: 'q2', section: '看竞品', question: '前三大竞品是谁？', why: '', placeholder: '', type: 'text' as const, options: [] },
       ],
       truncated: false,
     });

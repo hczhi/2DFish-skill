@@ -1,8 +1,6 @@
 # QiaoNan Platform (mmPla)
 
-## Project Overview
-
-A multi-module platform with independent sub-apps aggregated under a single navigation page. Each module is independently functional but shares a unified auth system and AI gateway.
+多模块平台：各子应用独立可用，共用一套鉴权和 AI 网关，聚合在一个导航页下。
 
 ## 协作方式（优先级高于本文件其余部分）
 
@@ -14,13 +12,12 @@ A multi-module platform with independent sub-apps aggregated under a single navi
 
 - **一次只做一个能单独验证的切片，目标 15 分钟。** 判据不是行数，是「他现在能打开哪个
   页面 / 在群里发哪句话，看到什么变化」。说不出这句话的，就不是一个切片。
-- **做完就停，报告怎么测，等他确认。** 不要自动接着做下一片。他确认后才继续。
+- **做完就停，报告怎么测，等他确认。** 不要自动接着做下一片。
 - **超过 3 个文件要新建、或需要新 migration + 新 action + 新页面同时落地，先说切法再动手。**
   给 2-4 条的顺序清单，第一条必须是能独立验证的。不要写完整设计方案。
 - **切片顺序按「能不能被看见」排，不按依赖漂亮度排。** 后端 service 写完但没有入口 =
   零个可测切片。宁可先接一个粗糙的按钮/命令，再回头补内部结构。
-- 探索性任务（读代码、查坑、定位 bug）不受 15 分钟约束 —— 那本来就没有可交付物，
-  直接给结论。
+- 探索性任务（读代码、查坑、定位 bug）不受 15 分钟约束 —— 直接给结论。
 
 ### 测试
 
@@ -31,28 +28,27 @@ A multi-module platform with independent sub-apps aggregated under a single navi
 总结了错的日期窗口却回「本周（08-03 至 08-09）」、两人同时 @ 时静默丢一条、
 allowlist 拒绝时完全不出声。这些手测测不出来，所以必须有测试。
 
-**默认不写测试**的：CRUD 增删改查、参数校验、UI 渲染、happy path、
-「调了 A 就会调 B」这种 mock 转述、错误路径中会明确报错给用户的那些（他手测就看到了）。
+**默认不写测试**的：CRUD、参数校验、UI 渲染、happy path、「调了 A 就会调 B」这种 mock
+转述、错误路径中会明确报错给用户的那些（他手测就看到了）。
 
 写法约束：
 
 - 一个行为一个 `it`，断言那个会骗人的**结果**（回复文案 / 落库的那一行 / 传给
   Feishu 的那个 open_id），不是中间调用次数。
-- **不铺场景矩阵。** 同一条逻辑不要「有值/空值/超长/特殊字符」排四遍 —— 挑最容易
-  出错的一个。
+- **不铺场景矩阵。** 同一条逻辑不要「有值/空值/超长/特殊字符」排四遍 —— 挑最容易出错的一个。
 - 单个测试文件超过 300 行就停下来问，是不是在测不该测的东西。
   现有的 `diary.test.ts`(2316) / `dispatcher.test.ts`(897) 是历史包袱，
   **不要照着它们的密度写新测试**，改动它们时只删不加。
-- 全量测试 33 秒（`cd server && npx vitest run`），跑之前先 `nvm use 21.7.3`。
-  改完跑一次全量，别为单个功能反复跑。
+- 全量测试 33 秒（`nvm use 21.7.3 && cd server && npx vitest run`）。改完跑一次全量，
+  别为单个功能反复跑。
 
 ### 文档
 
-- **不新建设计文档。** 新增能力写成 CLAUDE.md 里的一条 bullet：**这个决定是什么 +
+- **不新建设计文档。** 新增能力写成本文件里的一条 bullet：**这个决定是什么 +
   改错了会怎样静默出错**。可从代码或 git log 读出来的事实不要写。
-- `docs/` 下已有的长文档（FEISHU_ASSISTANT 1012 行 / FEISHU_DIARY 937 行 /
-  MODULE_DEVELOPMENT 732 行）**只在行为变了导致它说谎时才改**，不做例行同步。
-- 不写变更日志、不写实现总结、不写 PR 描述式的收尾文档。完成情况在回复里说。
+- `docs/` 下已有的长文档（FEISHU_ASSISTANT / FEISHU_DIARY / MODULE_DEVELOPMENT）
+  **只在行为变了导致它说谎时才改**，不做例行同步。
+- 不写变更日志、不写实现总结、不写 PR 描述式的收尾文档。
 - 例外：`docs/API.md` 的新端点要补 —— 前端要照它调。
 
 ### 回复
@@ -60,817 +56,837 @@ allowlist 拒绝时完全不出声。这些手测测不出来，所以必须有�
 改完直接报「做了什么 / 你现在测什么 / 有什么没做」，三句话量级。不复述代码，
 不列文件清单，不写小结章节。不问要不要 commit —— 他自己提交。
 
+## 三条贯穿全文的硬规则
+
+1. **静默失败优先。** 下面每一条记的都是同一种事故：出错时用户看到的是一句正常的成功
+   回复。任何丢弃、降级、部分成功、回落都必须出声，并且要说出**真实成因** —— 合成一句
+   通用错误 = 指错方向，用户会一路重试/改 prompt，每次扣一次额度。
+2. **`max_tokens` 是留给思维链的空间，不是正文长度。** 差额全在 `reasoning_content`：它算进
+   `max_tokens` 却不出现在 `content` 里（库里同一个 deepseek-v4-flash，这个差额在 0 到
+   9700 之间乱跳），所以症状是**「有时」格式错误、「有时」空返回**，完全指不到额度上。
+   吐 JSON 的端点一律走 `core/llm/parseJson.ts` 的 `jsonGateway`（平台唯一实现，不要再
+   写 `/\{[\s\S]*\}/`），报错一律走同一份 `jsonFailMessage`（consult 的 `gateFailMessage`
+   就是它 —— 各写一份的话改了一边另一边照旧，而两边是同一个模型的同一个毛病）：
+   **空返回 / 截断 / 没按 JSON 回**三种成因解法完全不同，且报错里必须带思维链 token 数
+   —— 不带的话用户只会一路调高
+   `max_tokens`，而那个数字永远调不完。`finish_reason=length` **不重试**（同样的 body 断
+   在同一处，只是把 token 和时间花两遍）。调低这些数不省钱（按实际用量计费），只是把偶发
+   的长思维链变成确定性失败。
+3. **会算错的格式不交给 LLM。** id、时间窗口、数据源级别一律在代码里算，prompt 里连示例
+   都不出现（有测试断言 `/ou_[a-z0-9]{4,}/` 不出现在意图 prompt 里）。模型编一个 guid 可
+   能撞上别人的任务、编一个日期窗口会总结错的几天、说自己是「L1 联网检索」的那一刻那句话
+   就是免费的 —— 三种都不报错，输出读起来完全正常。
+
 ## Quick Start
 
 ```bash
-# Install dependencies
-cd server && npm install
-cd ../client && npm install
-cd ..
-
-# Run both (from root)
-npm run dev
-# Or separately:
-# cd server && npm run dev
-# cd client && npm run dev
+cd server && npm install && cd ../client && npm install
+cd .. && npm run dev          # server :3001, client :5173
 ```
 
-Server runs on `http://localhost:3001`, Client on `http://localhost:5173`.
+默认管理员 `admin / 123456`（首次登录后改）。Node 必须 21.7.3（`better-sqlite3` 原生模块）。
 
-Default admin credentials: `admin / 123456` (change after first login).
-
-## Architecture
+## 架构与约定
 
 ```
-├── client/                   # Vue 3 + Vite frontend
-│   └── src/
-│       ├── components/       # UI components by module (fish/, board/, common/)
-│       ├── lib/              # Shared utilities (api.ts, auth.ts, quota.ts)
-│       ├── views/            # Pages by module
-│       └── router/           # Route definitions
-├── server/                   # Express + TypeScript backend
-│   └── src/
-│       ├── api/              # Route handlers (thin: validate → call service → respond)
-│       ├── auth/             # Middleware, guards, rate limiting, scopes
-│       ├── core/llm/         # AI gateway (THE entry point for all LLM calls)
-│       ├── db/               # Database init + migration system
-│       └── services/         # Business logic
-├── skills/                   # AI skill definitions (markdown prompts)
-├── workspaces/               # User workspace files
-└── docs/                     # Architecture & API documentation
+client/src/{components,views}/<module>/  lib/api.ts  router/
+server/src/{api,auth,core/llm,db,services}/
+skills/  workspaces/  docs/
 ```
 
-## Key Conventions
+- **后端** ESM，import 带 `.js`；`api/` 一个模块一个 Router 且要薄（校验 → service → 响应），
+  业务逻辑在 `services/`。
+- **所有 AI 调用走 `core/llm/gateway.ts`**，不要自己 new OpenAI。
+- **DB** better-sqlite3。改表加 `db/migrations/NNN_x.ts` 并在 `migrations/index.ts` 注册，
+  启动自动跑。**迁移里不能调飞书/网络接口** —— 一次网络抖动会让服务起不来；需要建远端结构的，
+  做成「下次用到时补建」（见任务管理表）。
+- **鉴权** 三档在 `auth/middleware.ts` 配：PUBLIC 不校验 / OPTIONAL 有 token 才解析 /
+  PROTECTED 无 token 回 401。所有调 AI 的端点都是 PROTECTED。**不在 `/api/` 下的路径一律
+  OPTIONAL**（那是 client/dist 和 SPA fallback）：浏览器的文档请求从不带 Authorization 头，
+  跟着默认值判成 PROTECTED 的话整站在 Express 上是一句 `Authentication required`
+  （RELEASE.md 的方案 A 就是全部转发给 Node），而 iframe 嵌入死得更隐蔽 —— 第一个文档请求
+  就 401，第三方页面上是一块白，而 pk / 白名单 / frame-ancestors 全是配好的、每个接口都
+  200。页面级权限在前端路由守卫和各 API 端点上，不在这里。
+- **前端** Vue 3 `<script setup lang="ts">`；请求一律走 `lib/api.ts`（自动带 token、处理 429）；
+  路由 `meta.requiresAuth / requiresAI / requiresAdmin`。
+- 新模块：`api/` 建 Router → `app.ts` 注册 → `views/<module>/` → `router/index.ts` 加 meta
+  → `Home.vue` 加卡片。
 
-### Backend
+## AI 网关与配额
 
-- **ESM modules** — all imports use `.js` extension
-- **Express routers** — one file per module in `server/src/api/`
-- **AI calls MUST go through `server/src/core/llm/gateway.ts`** — never instantiate OpenAI client directly
-- **Database** — SQLite via `better-sqlite3`. Schema evolution via migration files in `server/src/db/migrations/`
-- **Auth** — three-tier: PUBLIC / OPTIONAL / PROTECTED (configured in `auth/middleware.ts`)
-
-### Frontend
-
-- **Vue 3 Composition API** — `<script setup lang="ts">`
-- **API calls** — always use `client/src/lib/api.ts` (auto-attaches auth token, handles 429 quota errors)
-- **Route guards** — `meta.requiresAuth` for login-required, `meta.requiresAI` for AI-feature pages, `meta.requiresAdmin` for admin
-
-### Database Migrations
-
-Adding a new migration:
-1. Create `server/src/db/migrations/NNN_description.ts`
-2. Export a `Migration` object with `id` and `up(db)` function
-3. Register in `server/src/db/migrations/index.ts`
-4. The migration runs automatically on next server start
-
-### Adding a New Module
-
-1. **Backend**: Create `server/src/api/yourModule.ts` with an Express Router
-2. **Register** in `server/src/app.ts`
-3. **AI calls**: Use `aiGateway()` or `aiGatewayStream()` from gateway
-4. **Frontend**: Create views under `client/src/views/yourModule/`
-5. **Router**: Add route in `client/src/router/index.ts` with appropriate `meta` flags
-6. **Home**: Add navigation card in `client/src/views/Home.vue`
-
-## Auth Model
-
-| Level | Behavior |
-|-------|----------|
-| PUBLIC | No auth needed |
-| OPTIONAL | Token parsed if present, not required |
-| PROTECTED | 401 if no valid token |
-
-All AI-calling endpoints are PROTECTED. Users must log in to use AI features.
-
-## AI Quota System
-
-- Each user gets 10 free AI calls per day (configurable per-user by admin)
-- Anonymous visitors get 3/day, isolated per IP+UA fingerprint (`auth/requester.ts`)
-- Platform key is set by admin in Admin > System Config
-- Quota resets daily at midnight (server time)
-- HTTP 429 returned when quota exceeded
-- Users on a **dedicated AI channel** bypass quota entirely (they burn their own key)
-
-## AI Model Resolution
-
-All text calls resolve a provider from the `ai_providers` table via
-`resolveLLMProvider(tier, userId)`. Two mutually exclusive paths:
-
-**Platform channel** (default) — `owner_user_id IS NULL` rows:
-requested `tier` → `default` tier → legacy `system_config.platform_*` keys.
-
-**Dedicated channel** — set per user by an admin in Admin > User Management > 专属 AI.
-When `user.use_dedicated_ai = 1`, only that user's own providers are used;
-**there is no fallback to the platform**. A missing tier throws
-`DedicatedChannelError` (HTTP 503) rather than silently spending the platform key.
-Dedicated channels must have all three tiers configured (`default`/`strong`/`fast`) —
-the admin API refuses to enable the switch until they do.
-
-Tier usage: `strong` = structured/JSON tasks (xhs structure/validate/diagnose,
-tender profile, feishu intent parsing — all require `response_format: json_object`),
-`fast` = bulk prose, `default` = everything else (chat, consultant, ui-review, fish).
-
-`ai_logs.provider_id` / `provider_owner` record which key paid for each call.
+- 登录用户 10 次/天（管理员可按人调），匿名 3 次/天按 IP+UA 指纹隔离（`auth/requester.ts`），
+  超了 429，每天 0 点（服务器时间）重置。平台 key 存库里的 `system_config`，不在 .env。
+- 文本调用一律 `resolveLLMProvider(tier, userId)` 从 `ai_providers` 解析，两条互斥的路：
+  **平台渠道**（`owner_user_id IS NULL`）按 请求 tier → `default` → 旧的
+  `system_config.platform_*` 回落；**专属渠道**（管理员在 用户管理 > 专属 AI 打开
+  `use_dedicated_ai`）只用该用户自己的接入点，**没有平台回落**，缺档位抛
+  `DedicatedChannelError`(503) 而不是悄悄花平台的钱 —— 也因此三档必须齐（不齐管理员 API
+  不让开这个开关）。专属渠道**绕过账号总配额**（烧自己的 key），但仍受应用额度限制。
+- 档位：`strong` = 要 `response_format: json_object` 的结构化任务（xhs
+  structure/validate/diagnose、标讯画像、飞书意图解析），`fast` = 大段散文，`default` =
+  其余（chat / 咨询 / ui-review / fish）。平台渠道**可能压根没有 strong 那一档**（回落
+  default），所以「换成强模型」不是格式错误的解法。
+- `ai_logs.provider_id / provider_owner` 记哪把 key 付了这次的钱。
+- **关思维链是唯一让一条路径快起来的开关（`GatewayOptions.noThinking`），实测同一条接入点
+  36.6 秒 → 3.5 秒，而正文还长了一点。** 耗时几乎全花在没人看得见的那一段思考上，「上下文太长」
+  不是原因（输入拉 16 倍只多 2 秒），所以想快就动这个开关，不是砍 prompt。它在**吐 JSON 的
+  路径上治的其实是截断**：思维链算进 `max_tokens` 却不进 `content`（硬规则 2），标讯抽取的
+  「提取到 0 条」和评分的「解析失败」都是它。四个键一起发（各家网关认的不是同一个），严格的
+  网关回 400 就**摘掉重发并喊一句** —— 不重发的话换条接入点之后整个模块变成一句 400；发出去
+  也不等于生效（宽松网关对不认识的键既不报错也不照办），所以还要回头核 `reasoning_tokens`
+  并在没关掉时喊出来。两处入口（`aiGateway` / `aiGatewayStream`）都要认，只在一处认的话
+  流式那条静默照旧慢，而现象只是「首字来得慢」，看起来像网络。
+- **后台那个开关是 `ai_providers.no_thinking`（087），和调用方传的值取「或」—— 只能强制关，
+  开不回来。** 能强制开的话，标讯抽取/评分、consult 对话/草稿那几条写死 `noThinking: true` 的
+  路径会被后台一个勾选框换回慢的那一版，而那几处关它治的是截断和「等四分钟」，退回去之后现象
+  只是「怎么又解析失败了」。不放在 `extra_json` 里：那是个自由文本框，键名拼错完全静默
+  （保存成功、界面和生效了一模一样）。列表/卡片上必须显示它，只在编辑表单里的话「这条为什么
+  答得这么浅」得逐条点开才看得出来；`upsertProvider` 里按 `!== undefined` 保留旧值（写成
+  `data.no_thinking ? 1 : 0` 的话，任何一次没带这个字段的编辑都会把它悄悄关掉）。
+  旧 `system_config` 那条回落没有这一列，缺省 false —— 凭空给 true 等于升级之后全站悄悄不想了。
 
 ## 对外中转接口（专属渠道下发的 key，082）
 
-- **一把 key 绑死一条 `provider_id`，不按档位解析。** 走 `resolveLLMProvider` 的话，
-  同一档有第二条接入点时它挑「最近更新的那条」—— 管理员停用第一条之后下游照样通，
-  只是换了模型、换了付钱的那把 key，回复读起来完全正常。绑死这一行才做得到
-  「接入点关了就访问不了」。模型也因此由接入点决定，下游 body 里的 `model` 一律忽略。
+- **一把 key 绑死一条 `provider_id`，不按档位解析。** 按档位解析时，同档有第二条接入点它会
+  挑「最近更新的那条」—— 管理员停用第一条之后下游照样通，只是换了模型、换了付钱的 key，
+  回复读起来完全正常。绑死这一行才做得到「接入点关了就访问不了」。模型因此由接入点决定，
+  body 里的 `model` **明确忽略**（下游填错模型名不该整个调用失败），所以返回里必须回**真实**
+  模型名 —— 那是他唯一能发现「答的不是我选的模型」的地方；`GET /v1/models` 同理只列绑定那一个。
 - **删接入点必须同时把绑上去的 key 标废**（`aiProviderService.deleteProvider` →
-  `revokeRelayKeysByProvider`），不能只靠调用时「查不到那条 provider 就拒」：
-  provider 的 id 是外部可指定的（种子那条就叫 `default-llm`），删掉再建一条同 id 的之后，
-  那把早该失效的 key 会自己活过来。所以 `revoked_at` 是一列而不是 DELETE。
-  吊销的条数要回给后台并显示出来 —— 删接入点的人不一定知道有下游在用它，不说的话
-  那几个下游明天开始收到「接口已关闭」，而这边只看到一句「已删除」。
-- **对外一律回「接口已关闭，请联系管理员」（停用 / 删除 / 专属开关关了都算），
-  但库里存 `revoke_reason` 给管理员看。** 反过来，`findRelayKeyByRaw` 对已吊销的行
-  **照样返回**：在那里直接当不存在的话，「key 抄错了」和「接口已关闭」会合并成一句
-  「无效的 API Key」，下游只会一直去核对那把没抄错的 key。
-- **`/api/v1/*` 是 public（`auth/middleware.ts`），校验全在 `relayService.authorizeRelay`。**
-  走 protected 的话 authMiddleware 先回一句 401 «Invalid or expired token»，下游只会以为
-  自己那把 key 废了。`aiGateway` 认 `GatewayOptions.providerId`（`aiGatewayStream` 也认 ——
-  只在一处认的话另一处会静默用回按档位解析出来的那条）。用量记在 `ai_logs.source='relay'`，
-  限流就是 `ai_app_quota` 的 `app='relay'`（专属渠道绕过账号总额，但受应用额度限制）。
-- **不支持的东西必须明确 400，不能悄悄丢：** `stream: true`（无声忽略 = 客户端等一个永不
-  到来的 SSE，界面上是「AI 没回答」）、`tools`/`functions`（剥掉之后模型用普通文字回答，
-  而客户端在等 tool_call，看起来像模型不肯调工具）。body 里的 `model` 反过来是**明确忽略**
-  的（下游填错模型名不该整个调用失败），所以返回里必须回**真实**模型名 ——
-  那是他唯一能发现「答的不是我选的模型」的地方。`GET /v1/models` 同理只列绑定那一个。
-- **错误体一律 OpenAI 形状 `{error:{message,type,code}}`。** 第三方客户端只认这个，
-  回我们自己的 `{error:"…"}` 会被显示成空白或「未知错误」，下游看不到原因。
-  上游失败要把原文带出去（502），否则「模型名不对 / 上游余额不足」只有我们日志里有。
-- key 只存 sha256，明文只在生成那一次返回，库里另存一段 `key_prefix` 供辨认 ——
-  后台三把 key 长得一样时，管理员会吊销错那一把，而两把都显示「已吊销/仍有效」，
-  看不出挑错了。前端复制失败必须出声，静默失败 = 那把 key 只能重新生成。
+  `revokeRelayKeysByProvider`），不能只靠调用时「查不到那条 provider 就拒」：provider 的 id
+  是外部可指定的（种子那条就叫 `default-llm`），删掉再建一条同 id 的之后，那把早该失效的 key
+  会自己活过来 —— 所以 `revoked_at` 是一列而不是 DELETE。吊销条数要回给后台并显示出来：
+  删接入点的人不一定知道有下游在用它，不说的话那几个下游明天开始收到「接口已关闭」，
+  而这边只看到一句「已删除」。
+- **对外一律回「接口已关闭，请联系管理员」**（停用 / 删除 / 专属开关关了都算），库里存
+  `revoke_reason` 给管理员看。反过来 `findRelayKeyByRaw` 对已吊销的行**照样返回**：在那里当
+  不存在的话，「key 抄错了」和「接口已关闭」会合并成一句「无效的 API Key」，下游只会一直去
+  核对那把没抄错的 key。
+- **`/api/v1/*` 是 public，校验全在 `relayService.authorizeRelay`。** 走 protected 的话
+  authMiddleware 先回一句 401 «Invalid or expired token»，下游只会以为自己那把 key 废了。
+  `providerId` 要在 `aiGateway` **和** `aiGatewayStream` 两处都认 —— 只在一处认的话另一处会
+  静默用回按档位解析出来的那条。用量记 `ai_logs.source='relay'`，限流是 `ai_app_quota` 的
+  `app='relay'`。
+- **不支持的东西必须明确 400，不能悄悄丢**：`stream: true`（无声忽略 = 客户端等一个永不到来
+  的 SSE，界面上是「AI 没回答」）、`tools`/`functions`（剥掉之后模型用普通文字回答，而客户端
+  在等 tool_call，看起来像模型不肯调工具）。
+- **错误体一律 OpenAI 形状 `{error:{message,type,code}}`。** 第三方客户端只认这个，回我们自己
+  的 `{error:"…"}` 会被显示成空白或「未知错误」。上游失败要把原文带出去（502），否则
+  「模型名不对 / 上游余额不足」只有我们日志里有。
+- key 只存 sha256，明文只在生成那一次返回，另存一段 `key_prefix` 供辨认 —— 后台三把 key 长得
+  一样时管理员会吊销错那一把，而两把都显示「已吊销/仍有效」，看不出挑错了。前端复制失败必须
+  出声（静默失败 = 那把 key 只能重新生成）。
 
-## Feishu Assistant (飞书助理)
+## 飞书助理（`services/feishuAssistant/`）
 
-Users bind a Feishu **self-built app**; the server opens an outbound **websocket
-long connection** to Feishu and handles `@`-mentions as natural-language commands.
-See `docs/FEISHU_ASSISTANT.md` for the full design and `docs/FEISHU_DIARY.md` for
-项目日记, its main use. The load-bearing facts:
+用户绑自建应用，服务端主动开 websocket 长连接，把群里 `@` 的自然语言当命令处理。
+完整设计见 `docs/FEISHU_ASSISTANT.md`，项目日记见 `docs/FEISHU_DIARY.md`。
 
-- **It is a project-group assistant, not a general Feishu bot.** Scope: one project
-  per group, a log table + a review table per project, one company-wide project index,
-  plus Feishu tasks. Five actions were **deleted outright** (create/update/delete
-  calendar event, freebusy query, DM a colleague) — not for being unpopular, but
-  because each cost twice: the action list goes into the prompt **verbatim**, so every
-  semantically-adjacent action adds a mis-selection surface (「给张三派个任务，明天开始」
-  used to split into task + calendar event when the user wanted one task); and their
-  scopes (`calendar:calendar.event:*`, `calendar:calendar.free_busy:read`) are the
-  hardest part of onboarding, so requiring them for capability nobody uses lengthens
-  the step most likely to fail. Don't re-add them without a concrete need.
+### 定位与投递
 
-- **Long connection, not webhook** — `lark.createLarkChannel({transport:'websocket'})`
-  in `services/feishuAssistant/connection.ts`. No public callback URL, no signature
-  verification, no AES decryption, no URL-verification challenge. The module has
-  **zero public routes**. Requires single-instance deployment (long connection is
-  competing-consumption across a cluster), which matches `core/jobs.ts`'s assumption.
-- **The 3-second rule** — Feishu times out events at 3s and retries on success too
-  (at-least-once). `dispatcher.handleMessage()` therefore only dedups + logs
-  synchronously, then fires `void execute(...)` and returns. Reply comes later.
-  Because that promise is detached, nothing bounds concurrency: `concurrency.ts`
-  gates **intent parsing only** (4 concurrent / 20 queued → `TooBusyError`).
-  The gate's promise 「本次没有执行任何操作」 is only true at that position —
-  moving it around `execute` makes the message a lie.
-- **`safety.batch.text.delayMs = 0` is load-bearing.** LarkChannel's default merges
-  same-chat messages within 600ms and keeps only the *last* message's metadata, so
-  two people @-ing at once means one command silently vanishes (never `claimEvent`ed,
-  no log row, reply threaded to the wrong message).
-- **Anything dropped must be said out loud.** Steps past `MAX_STEPS` are reported via
-  the required `ParsedIntent.droppedSteps` field; allow-list rejections increment
-  `feishu_chats.reject_count` (the bot stays silent in unlisted groups, so this
-  counter is the only way a user learns why nothing happened); zombie `pending`/
-  `running` rows are reaped at startup. A silent drop reads as success.
-- **Clarification carries exactly one turn back** (`findPriorClarification`), gated on
-  same chat + same speaker + ≤10 min + previous action was `reply`. That last gate is
-  the important one: carrying context past a *write* action lets 「再发一条」 replay a send.
-- **Dedup on `message_id`, not `event_id`**, via `feishu_events` PK collision
-  (`commandLog.claimEvent`). LarkChannel's own dedup is in-memory and dies on
-  restart while Feishu retries for up to 6 hours, so the DB is authoritative.
-- **Group chats only.** `dispatcher.handleMessage` rejects `chatType !== 'group'`
-  before anything else (returns `'p2p_rejected'`). DMs had **no gate at all** — the
-  allowlist is group-only, so anyone in the tenant could burn the bound account's AI
-  quota invisibly (DMs aren't in `feishu_chats` either). And a DM can do strictly less
-  than a group message while failing in more ways (no project to bind, no `@` to
-  resolve people from). `policy.dmMode` stays **`'open'`** even so: the SDK's
-  `'disabled'` drops DMs *silently*, and silence reads as 「助理坏了」. Messages are
-  received and refused with 「请到群里 @ 我」 — before intent parsing, so no quota is
-  spent. Still goes through `claimEvent` (Feishu retries would otherwise deliver five
-  identical refusals). Unlike the allowlist path, which stays silent on purpose
-  (replying would expose the bot to any group) and only bumps `reject_count`.
-- **Adding a Feishu feature** = one file in `services/feishuAssistant/actions/`
-  exporting an `ActionDef` + one entry in `actions/index.ts`. The LLM prompt, the
-  permission checklist in the UI, **and** the 「我目前会…」 list in
-  `dispatcher.ts:fallbackReply()` are all generated from the registry
-  (`ActionDef.hint` → `capabilityHints()`). `hint` is **required** for exactly this
-  reason: that list used to be hand-written prose, and after the five deletions it was
-  still advertising 建日程/发消息 — a reply that says 「我不会这个，但我会建日程」 to a
-  request to create an event, with no test failing. What still restates capabilities in
-  prose and therefore still goes stale: `intent.ts`'s `diaryHint()`, the
-  `<ul class="caveats">` in `views/feishu/FeishuHome.vue`, and the docs.
-- **`ACTIONS` order is behavior, not formatting.** It goes into the prompt verbatim and
-  the model reads top-down, taking the first action that fits. So: keep create next to
-  its update/delete, *and* keep semantically-confusable groups apart with the more
-  commonly wanted one first. The diary block used to sit last (9-12) with `create_task`
-  at 3, so 「添加新项目，X」 selected `create_task` and replied 「✅ 任务已创建」 — the
-  worst kind of failure, one that looks like success. Order alone isn't enough: it
-  changes *which is seen first*, never *why it isn't the other one*. That's
-  `intent.ts`'s `PROJECT_VS_TASK_RULE` plus the exclusion written into `create_task` /
-  `update_task`'s **own** descriptions — it has to live on the mis-selected action,
-  since by the time the model reads it, `create_diary_project`'s text is far above.
-  Both halves are required; `intent.test.ts` 「「项目」和「任务」不能串味」 guards them.
-- **The intent prompt is generated, not authored.** The 本企业的补充规则 section only
-  **appends** company jargon and time habits. The action list, JSON format, and
-  open_id constraint stay in code — each fails silently if edited away (unselectable
-  action / `null` intent / message to the wrong person). The priority disclaimer
-  (last hard rule) appears and disappears together with the supplement block.
-- **That supplement is per-app (`feishu_apps.intent_supplement`, migration 059), not
-  per-platform.** `prompt_skill_bindings`'s PK is `slot` alone, so the skill slot is
-  one copy for the whole platform — with several companies on one deployment, A's
-  jargon lands in B's prompt. The app column wins; the slot (seeded by 056) is the
-  **fallback, not a base layer** — 056 is an illustrative template whose invented
-  jargon must not be taken as real. Users edit it at /feishu > 助理规则.
-  It has its **own** `PUT /apps/:id/intent-supplement` because `POST /apps` is
-  whole-row replace and several frontend callers pass partial fields (enable/disable,
-  one-click allow a chat) — hanging it there blanks the user's text days before
-  anyone notices ("the assistant suddenly stopped understanding us"). 4000-char cap:
-  the text ships with every single command, and a long one pushes the hard rules down.
-- **Nor does it emit `guid` / `record_id` — same rule, same reason.** `update_task`
-  resolves "which one" by reverse-lookup,三条路按这个顺序：**任务管理表（070）→
-  `feishu_project_tasks`（068）→ 执行日志**（`feishu_commands.result` 经
-  `commandLog.findRecentActionResults` → `actions/recent.ts:findRecentTarget`，
-  scoped to app + speaker, 7 days, 50 rows）。表排在最前面是因为它是开放编辑的、
-  而且 `list_tasks` 只读它 —— 用户在表里把标题改成「Q3 报告」之后，只按库反查会
-  回一句「我只能改我自己帮你建的那些」，而那一行就在他打开的表里。走表这条路时
-  guid 从「飞书任务」那格链接的 query 参数里取（`taskBase.guidFromUrl`，取不到的行
-  直接不作为候选 —— 空 guid 去 patch 只会撞一句飞书原文），行号直接用 `record_id`
-  写回（`writeTaskRow`，不再按「助理标记」查一次：那一列用户也能改），库里那行
-  按标记回查后一并更新（按标题回查会静默漏掉库和甘特图两处）。**表这条路也要筛
-  「我负责的 或 我派出去的」**，和库那条一个口径：整个群都看得见这张表，不筛的话
-  「周报做完了」会撞上同名的、别人那一行，改掉它再回一句「✅ 已标记完成」。
-  「我派出去的」现在只能靠库里那行的 `created_by` 认 —— 库那份砍掉之前，表里得先
-  有一列记下派活人，否则派活人从此改不动自己派的活。表**读失败**时退回库那条路，
-  但最终那句「找不到」里必须带上「任务管理表这次没读出来」：不说的话用户会照着
-  「我只能改我自己帮你建的那些」去手动改，而真实原因是权限掉了/接口挂了。
-  A fabricated guid mostly 404s, but *if it hits* the assistant modified someone
-  else's task and replied 「已完成」. Ambiguity is **always** refused with the
-  candidates listed — including the no-keyword case, where it deliberately does
-  **not** fall back to the most recent (「那个任务」 means the one they had in mind).
-  Consequences that must stay visible: the not-found wording is
-  「**我只能改我自己帮你建的那些**」 (not 「没找到」 — `task.list` returns only the
-  calling identity's items, so a user-created task is silently *absent*, and
-  「没找到」 sends them off re-phrasing forever); and the `actions` list must include the
-  update action itself (a renamed item is called by its **new** name, which only
-  exists on the update row). The `deletedBy` tombstone param was removed along with the
-  delete actions (an unused param reads as "this is handled"), so **deleted things now
-  stay in the candidate pool** — any future delete action must restore it, because every
-  failure on that path looks like success: a dead id gets patched, or 「再删一次」 really
-  runs a second deletion while the reply says 「已删除」.
-  Keyword matching normalizes away **all** whitespace on both sides (`recent.ts:norm`) —
-  Chinese spacing is optional, so 「xzy8 月飞书 skill 开发」 vs 「xzy8月飞书skill开发」
-  is the same thing to the user, and a raw `includes` produced a self-contradicting
-  reply that listed the very item it claimed not to find. Whitespace only — widening it
-  to fuzzy matching reintroduces the "modified the wrong one, replied 已完成" failure.
-- **Computed formats are built in code, not by the LLM** — review time windows are a
-  7-value enum the model picks from, and `diary/range.ts` turns it into the actual
-  window (`localDate` / `wallToMs`, Asia/Shanghai, Monday-first). Same shape as the id
-  rule: the model never emits a format it can silently get wrong, because a wrong
-  window doesn't error — it summarizes the wrong days while the reply says
-  「本周（08-03 至 08-09）」. An unrecognized range degrades to `today` **and says so**.
-- **`update_task` spans four endpoints** (`patch` / `addMembers` / `addReminders` /
-  `comment.create` — the last takes the guid in `data.resource_id`, not a path
-  param), so partial success is unavoidable: do everything possible, then say which
-  parts landed. `patch`'s `update_fields` is strictly paired with the values —
-  a field named but not supplied is **cleared**. A task needs a `due` before a reminder
-  can exist, and supports only one (`relative_fire_minute`).
-- **A task lives in three places, and `list_tasks` reads exactly one of them.**
-  Native Feishu task + `feishu_project_tasks` + 任务管理表（070）。
-  读回只走 070 那张（`taskBase.queryTasks`），所以任何写路径
-  漏掉它都是假成功：`update_task` 一度只写前两处，于是「把 X 标记完成」回
-  「✅ 已标记完成」，紧接着「还有什么没做完」照样列出 X，两句都不报错。定位那一行
-  只能靠建它时写进「助理标记」列的 `<message_id>#<step_index>`（标题会被改），
-  找不到行时**必须说出来**而不是静默返回成功。完成/重新打开还要一并写/清
-  「实际完成日期」—— 只改进展会让那两列互相矛盾。
-- **任务管理表的结构是「下次派活时补建」出来的**（迁移里不能调飞书接口 ——
-  一次网络抖动会让服务起不来）。所以 `taskBase.upgradeTaskBase` 会被反复执行，
-  幂等只靠两个存下来的值：列看 `task_field_map` 里有没有那个键（**不是**看表里有没有
-  那一列 —— 用户手动删掉的列会被无限重建），甘特视图看 `task_gantt_view_id`（072）
-  是否为空。少任何一半，每次派活都多建一个同名视图 / 多加一列，而每次都成功、
-  回帖里看不出异常。公式列（是否延期）故意不补：它缺失就是当初公式被拒过，
-  补也补不上，只会每次派活挂一句永远不会好的 warning。甘特图用哪两列当起止是飞书
-  自己认的（表里有三个日期列，接口指定不了），所以建完必须提示用户扫一眼 ——
-  认错了不报错，只是横条画在别的区间上。
-- **补出来的列对老行是空的，所以「飞书任务」这一列要回填一次**（073 的
-  `task_url_backfilled`，同样挂在下次派活上）。这一列是库里那份任务砍掉之后
-  **唯一**还能定位到飞书任务的东西（guid 藏在 applink 里），老行不补的话那些任务
-  从此只剩一个标题、点不进飞书也改不动，而没有任何一处会报错。对齐只认「助理标记」
-  （`<message_id>#<step_index>`）：按标题对齐会把链接贴到另一个任务上，那一格看着
-  完全正常，点进去是别人的活。已经有值的格子不覆盖（用户手填的比库里那份新）。
-  失败**不置位**（下次再试），所以置位只能在真写成之后；提前置位 = 那批链接永远是空的。
-- **老「任务」表（068，日记 base 里那张带甘特图的 tab）已经删掉了**（074）。任务只剩
-  任务管理表那一份，`create_task` 写不进它就**整条抛错**：以前那是个 warning，因为库里
-  还有一份；现在回一句「✅ 已创建」而表里没有那行，下一句「还有什么没做完」就不提它，
-  两句都不报错。抛错的话飞书任务**已经建出来了**，所以话术必须带上链接并明说
-  **「别重说一遍」**（`client_token` 按 message_id 算，新消息就是新 token，挡不住）。
-  库里 `feishu_project_tasks` 那份从此只用于两件事：判「这活是我派出去的」（`update_task`
-  的授权）和统计未同步数 —— 后者靠 `appendTaskRow` 之后那次 `markTaskSynced`，
-  不置位的话后台会永远显示一个不存在的缺口。
-- **删老表之前必须先把老任务搬进任务管理表**（`taskBase.importLegacyTasks`，
-  返回 `ok` 才允许 `bitable.dropTaskTable`）。070 之前派的活只存在于库和老表里，
-  而 `list_tasks` 只读任务管理表 —— 老表一删，那些任务在飞书里就只剩各人任务中心那一条，
-  「还有什么没做完」从此漏掉它们，一句错都不报。搬不完（查重列读不到 / 表超过扫描上限 /
-  写到一半失败）就**不删**，下次派活接着搬；查重和写入共用「助理标记」那一列，
-  没有它就整个放弃（否则每次派活把同一批老任务再写一遍，而每次都成功）。
-- **三张表之间的互跳入口是「一张表」，不是文档里的一句话**（074，`diary/crossLinks.ts`）。
-  多维表格没有「插一句话」这种能力，所以两个 base 各建一张一行的「🔗 相关链接」表
-  （tab 栏上看得见），项目总表多一列「任务表」。做这件事的原因是两个 base 都不在任何人的
-  云文档空间里（建表没传 folder_token）且链接分享是关的 —— 群消息一刷走，用户手上有哪张
-  表就只剩哪张。幂等全靠库里存的四个值：`link_table_id` / `task_link_table_id` /
-  `task_col_added` / `task_col_backfilled`，**不去飞书看现状**（用户手动删掉那张表之后，
-  看现状的写法会他删一次我们建一次，而每次都成功）。表建出来了但那一行没写进去也要存
-  table_id，否则下次派活又多一张同名表。`ensureIndexTaskColumn` 是唯一的例外（会 list
-  一次列）：飞书拒同名列，不看一眼就会每次派活挂一句永远不会好的 warning。
-  回填**无论成败都置位**并在 warning 里点名失败的项目 —— 一个永久失效的 record_id
-  会让这段每次派活重跑，而用户手填一次就解决了。补列必须在 `addToIndex` **之前**：
-  老总表没这一列，而 `record.create` 遇到不认识的列名是**整行失败** ——
-  新项目压根没进总表，回帖里只有一句「总表这次没更新」。
-- **The LLM emits names, never open_ids.** The prompt contains no `ou_xxx` at all
-  (there's a test asserting `/ou_[a-z0-9]{4,}/` never appears in it), and actions take
-  `create_task.assignee` / `update_task.followers` as **names**.
-  `actions/people.ts:resolvePerson()` is
-  the only place a name becomes an open_id, from two code-controlled sources:
-  the event's `mentions[]`, then the local directory. Resolution failure throws —
-  it never picks one of several matches and never falls back to the speaker
-  (a task silently created on yourself looks like success).
-- **Chat registry (migration 058)** — `feishu_chats`, keyed by `app_id`. Exists because
-  `oc_xxx` is invisible in the Feishu client, which made the allow-list unconfigurable
-  in practice. `GET /apps/:id/chats` computes `in_allowlist` **server-side** (empty
-  list = all allowed); don't reimplement that rule per page — the wrong answer reads
-  as "protected". The edit form must also list already-configured ids the registry
-  hasn't seen, or saving silently drops them.
-- **Org directory (migration 057)** — `feishu_directory_users` / `_departments`, keyed
-  by `app_id`. Synced once automatically after binding, refreshable from the 组织架构
-  page. This is what makes 「派给张三一个任务」 work for people the speaker didn't `@`
-  (including people not in this group) — `mentions[]` only covers who was `@`-ed.
-  Two sources: `contact/v3` department-tree BFS (full company), falling back to
-  `im.chat.list` + `chatMembers.get` (zero contact scopes, group members only).
-  **Downgrade only on Feishu code 99991672** — degrading on a network error hands the
-  user a partial roster that looks complete. A failed sync never wipes the old roster.
-- **Task `due.timestamp` is in milliseconds** (a Feishu quirk — most of their time
-  fields are seconds). Use `actions/time.ts` helpers, never raw arithmetic.
-- **项目日记 (migration 066)** — `feishu_diary_indexes` / `_projects` / `_records` /
-  `_summaries`, keyed by `app_id` like 057/058. One project per group
-  (`(app_id, chat_id)` unique) and no duplicate names (`(app_id, name)` unique) — the
-  two indexes map to two different refusal messages. `(app_id, message_id, step_index)`
-  on records is the whole of replay idempotency. **DB first, bitable second**: the table
-  is a mirror, sync is append-only, and a failed push only adds a warning to the reply
-  (a failed command would make the user repeat it, ending with two rows). Backfill rides
-  the *next* record — there is no cron — so `unsynced_count` must stay visible in the UI
-  or the gap is undiagnosable. Web routes are **read-only** for the same reason: a web
-  delete can't be un-pushed. Note `db/index.ts` doesn't set `PRAGMA foreign_keys`, so
-  cascade declarations don't fire — `appStore.deleteApp` clears these tables by hand.
-- **AI quota** is charged to `feishu_apps.user_id` (the platform account that bound
-  the app), so the dedicated-channel mechanism above applies unchanged. The person
-  speaking in Feishu needs no platform account. Note 复盘 costs **two** calls
-  (parse + summarize) while everything else costs one, and it deliberately spends the
-  second one only when the range actually has records.
+- **它是项目群助理，不是通用飞书机器人。** 范围：一个群一个项目、每项目一张日志表 + 一张复盘
+  表、一张公司级项目索引，加飞书任务。日程的增/改/删、忙闲查询、私聊同事**五个动作已删除** ——
+  不是因为不受欢迎，是因为它们各花两份代价：动作清单**原样**进 prompt，每个语义相邻的动作都
+  是一个误选面（「给张三派个任务，明天开始」曾被拆成任务 + 日程）；而它们的 scope
+  （`calendar:calendar.event:*`、`calendar:calendar.free_busy:read`）是开通流程里最难的一步。
+  没有具体需求不要加回来。
+- **长连接不是 webhook**（`connection.ts` 的 `lark.createLarkChannel({transport:'websocket'})`）：
+  没有公网回调、没有签名校验、没有 AES 解密、没有 URL 验证挑战，模块**零公开路由**。要求单实例
+  部署（长连接在集群里是竞争消费），和 `core/jobs.ts` 的假设一致。
+- **3 秒规则**：飞书 3 秒超时且成功也会重试（at-least-once），所以 `dispatcher.handleMessage()`
+  同步只做去重 + 落日志，然后 `void execute(...)` 就返回，回复稍后再来。那个 promise 是脱管的，
+  没有任何东西约束并发：`concurrency.ts` 只闸**意图解析**（4 并发 / 20 排队 → `TooBusyError`）。
+  它那句「本次没有执行任何操作」只在那个位置上是真的，挪到 `execute` 外面就变成谎话。
+- **去重认 `message_id` 不认 `event_id`**（`commandLog.claimEvent` 靠 `feishu_events` 主键撞）：
+  SDK 自己的去重在内存里、重启就没，而飞书会重试 6 小时，所以库才是权威。
+- **`safety.batch.text.delayMs = 0` 是承重的**：LarkChannel 默认合并同群 600ms 内的消息且只保留
+  **最后一条**的元数据，两个人同时 @ 就有一条命令静默消失（没 `claimEvent`、没日志行、回复还线程
+  挂到错的消息上）。
+- **只服务群聊**：`handleMessage` 在一切之前拒掉 `chatType !== 'group'`（`'p2p_rejected'`）。私聊
+  原来完全没有闸门 —— allowlist 是群级的，租户内任何人都能隐形烧掉绑定账号的 AI 额度（私聊也不在
+  `feishu_chats` 里），而私聊能做的事严格少于群消息、失败方式却更多。但 `policy.dmMode` 仍是
+  **`'open'`**：SDK 的 `'disabled'` 是**静默**丢弃，而静默读起来就是「助理坏了」。所以照收，在意图
+  解析**之前**回一句「请到群里 @ 我」（不花额度），并且照样 `claimEvent`（否则飞书重试会送来五条
+  一样的拒绝）。allowlist 那条路相反，**故意不回话**（回了等于把机器人暴露给任何群），只加
+  `feishu_chats.reject_count` —— 那个计数器是用户唯一能知道为什么没反应的地方。
+- **澄清只带一轮上下文**（`findPriorClarification`）：同群 + 同人 + ≤10 分钟 + 上一个动作是
+  `reply`。最后那条最重要 —— 带着**写**动作的上下文往下走，「再发一条」就会重放一次发送。
+- 超过 `MAX_STEPS` 的步骤走 `ParsedIntent.droppedSteps`（必填）报出去；启动时回收僵尸
+  `pending`/`running` 行。
 
-## 标讯多维表格的可见范围
+### 动作注册表与意图
+
+- **加一个能力 = `actions/` 一个文件导出 `ActionDef` + `actions/index.ts` 一行。** prompt、UI 里
+  的权限清单、`dispatcher.ts:fallbackReply()` 里那句「我目前会…」全部由注册表生成
+  （`ActionDef.hint` → `capabilityHints()`）。`hint` 必填就是为了这个：那句话原来是手写散文，
+  删掉五个动作之后还在宣传建日程/发消息 —— 对着「建个日程」回一句「我不会这个，但我会建日程」，
+  而没有任何测试会失败。还在用散文复述能力、因此还会过期的地方：`intent.ts:diaryHint()`、
+  `views/feishu/FeishuHome.vue` 的 `<ul class="caveats">`、docs。
+- **`ACTIONS` 的顺序是行为，不是排版。** 它原样进 prompt，模型自上而下取第一个装得下的。所以：
+  create 和它的 update/delete 挨着，语义易混的两组拉开、更常要的那个在前。日记那块原来排在最后
+  （9-12）而 `create_task` 在 3，于是「添加新项目，X」选中 `create_task` 回一句「✅ 任务已创建」
+  —— 最坏的那种失败，看起来像成功。光靠顺序不够：顺序只改变**先看到哪个**，从不解释**为什么不是
+  另一个**。那是 `intent.ts` 的 `PROJECT_VS_TASK_RULE` 加上写在 `create_task` / `update_task`
+  **自己描述里**的排除条款 —— 必须长在被误选的那个动作上，模型读到它时 `create_diary_project`
+  的文字已经在很上面了。两半都要，`intent.test.ts` 的「「项目」和「任务」不能串味」守着。
+- **意图 prompt 是生成的，不是手写的。** 「本企业的补充规则」只**追加**行业黑话和时间习惯；动作
+  清单、JSON 格式、open_id 约束留在代码里 —— 每一条被编辑掉都是静默失败（动作选不中 / intent 为
+  `null` / 消息发给错的人）。优先级免责声明跟补充块同生同死。
+- **补充规则按应用存**（`feishu_apps.intent_supplement`，059），不按平台：`prompt_skill_bindings`
+  的主键只有 `slot`，一个部署上有几家公司时 A 的黑话会进 B 的 prompt。应用那列优先，056 种的 slot
+  是**回落而不是底层叠加**（那是个示例模板，里面编的黑话不能当真）。用户在 /feishu > 助理规则 编。
+  它有**自己的** `PUT /apps/:id/intent-supplement`，因为 `POST /apps` 是整行替换而前端好几个调用方
+  只传部分字段（启停、一键放行某群）—— 挂在那儿会在没人发现的几天前就把用户写的文本清空
+  （「助理突然听不懂我们说话了」）。4000 字上限：这段文本每条命令都要发一遍，太长会把硬规则挤下去。
+- **模型只吐名字，从不吐 open_id**（见硬规则 3）：`create_task.assignee` / `update_task.followers`
+  收的都是**名字**。`actions/people.ts:resolvePerson()` 是名字变 open_id 的唯一入口，只认两个代码
+  控制的来源：事件的 `mentions[]`，然后本地通讯录。解析失败**抛错** —— 从不在多个同名里挑一个、
+  也从不回落成说话人（悄悄给自己建了个任务看起来完全像成功）。
+- **复盘的时间窗口是 7 个枚举值让模型挑**，`diary/range.ts` 再算成真窗口（`localDate` /
+  `wallToMs`，Asia/Shanghai，周一起）。认不出的值降级成 `today` **并说出来**。
+
+### 群与通讯录
+
+- **群注册表（058）** `feishu_chats`，按 `app_id`。存在的理由：`oc_xxx` 在飞书客户端里看不见，
+  allowlist 实际没法配。`GET /apps/:id/chats` 的 `in_allowlist` **由服务端算**（空清单 = 全放行），
+  不要每个页面再实现一遍那条规则 —— 算错了读起来是「已保护」。编辑表单还必须列出注册表没见过但已
+  配置的 id，否则一保存就静默丢掉。
+- **组织架构（057）** `feishu_directory_users` / `_departments`，按 `app_id`，绑定后自动同步一次，
+  可在页面手动刷新。这是「派给张三一个任务」对没被 @ 的人（甚至不在这个群的人）也能用的原因 ——
+  `mentions[]` 只覆盖被 @ 的。两个来源：`contact/v3` 部门树 BFS（全公司），回落
+  `im.chat.list` + `chatMembers.get`（零通讯录权限，只有群成员）。**只在飞书 code 99991672 时降级**
+  —— 网络错误也降级的话，用户拿到一份看起来很完整的残缺名单。同步失败绝不清掉旧名单。
+
+### 任务的三处落地
+
+- **一个任务活在三个地方，而 `list_tasks` 只读其中一个。** 原生飞书任务 + `feishu_project_tasks`
+  + 任务管理表（070）。读回只走 070（`taskBase.queryTasks`），所以任何写路径漏掉它都是假成功：
+  `update_task` 一度只写前两处，于是「把 X 标记完成」回「✅ 已标记完成」，紧接着「还有什么没做完」
+  照样列出 X，两句都不报错。定位那一行只能靠建它时写进「助理标记」列的
+  `<message_id>#<step_index>`（标题会被改），找不到行时**必须说出来**而不是静默返回成功。
+  完成/重新打开还要一并写/清「实际完成日期」—— 只改进展会让那两列互相矛盾。
+- **`create_task` 写不进任务管理表就整条抛错**（074 删掉老「任务」表之后）：以前那是 warning，
+  因为库里还有一份；现在回「✅ 已创建」而表里没那行，下一句「还有什么没做完」就不提它，两句都不
+  报错。抛错时飞书任务**已经建出来了**，所以话术必须带上链接并明说**「别重说一遍」**
+  （`client_token` 按 message_id 算，新消息就是新 token，挡不住）。库里 `feishu_project_tasks`
+  那份从此只用于两件事：判「这活是我派出去的」（`update_task` 的授权）和统计未同步数 —— 后者靠
+  `appendTaskRow` 之后那次 `markTaskSynced`，不置位的话后台会永远显示一个不存在的缺口。
+- **`update_task` 认「哪一个」靠反查，三条路按序**：任务管理表（070）→ `feishu_project_tasks`
+  （068）→ 执行日志（`feishu_commands.result` 经 `commandLog.findRecentActionResults` →
+  `actions/recent.ts:findRecentTarget`，限 app + 说话人、7 天、50 行）。表排最前是因为它开放编辑
+  而且 `list_tasks` 只读它 —— 用户在表里把标题改成「Q3 报告」之后，只按库反查会回一句「我只能改我
+  自己帮你建的那些」，而那一行就在他打开的表里。走表这条路时 guid 从「飞书任务」那格链接的 query
+  参数里取（`taskBase.guidFromUrl`，取不到的行直接不作为候选 —— 空 guid 去 patch 只会撞一句飞书
+  原文），行号直接用 `record_id` 写回（`writeTaskRow`，不再按「助理标记」查一次：那一列用户也能
+  改），库里那行按标记回查后一并更新（按标题回查会静默漏掉库和甘特图两处）。**表这条路也要筛
+  「我负责的 或 我派出去的」**，和库那条一个口径：整个群都看得见这张表，不筛的话「周报做完了」会
+  撞上同名的、别人那一行，改掉它再回一句「✅ 已标记完成」。「我派出去的」现在只能靠库里那行的
+  `created_by` 认 —— 库那份砍掉之前，表里得先有一列记下派活人。表**读失败**时退回库那条路，但最终
+  那句「找不到」里必须带上「任务管理表这次没读出来」：不说的话用户会照着「我只能改我自己帮你建的
+  那些」去手动改，而真实原因是权限掉了/接口挂了。
+- **找不到和有歧义的话术是承重的。** 找不到时说「**我只能改我自己帮你建的那些**」而不是「没找到」：
+  `task.list` 只返回调用身份自己的条目，用户自建的任务是**静默缺席**的，「没找到」会让他一直换说法
+  重试。歧义**永远**拒绝并列出候选 —— 包括没关键词那种，故意**不**回落成最近一条（「那个任务」指的
+  是他心里那个）。返回的 `actions` 清单必须包含 update 动作本身：改过名的东西是用**新**名字叫的，
+  而那个名字只存在于 update 那行。关键词匹配把两边**所有**空白都归一化掉（`recent.ts:norm`）——
+  中文空格是可选的，「xzy8 月飞书 skill 开发」和「xzy8月飞书skill开发」对用户是同一个东西，裸
+  `includes` 曾产生一句自相矛盾的回复：列出了它声称找不到的那一项。只归一化空白，放宽成模糊匹配
+  会把「改错了那一个还回 ✅」请回来。
+- **`deletedBy` 墓碑参数已随删除类动作一起删掉**（没人用的参数读起来像「这事处理过了」），所以
+  **删掉的东西现在留在候选池里**。将来加删除动作必须把它恢复：那条路上每种失败都长得像成功 ——
+  拿一个已死的 id 去 patch，或者「再删一次」真的删了第二遍而回复说「已删除」。
+- **`update_task` 横跨四个端点**（`patch` / `addMembers` / `addReminders` / `comment.create`，
+  最后那个 guid 在 `data.resource_id` 而不是 path 参数），所以部分成功不可避免：能做的都做，然后
+  说清哪几件落地了。`patch` 的 `update_fields` 和值严格配对 —— 点了名但没给值的字段会被**清空**。
+  提醒依赖 `due` 且只支持一个（`relative_fire_minute`）。`due.timestamp` 是**毫秒**（飞书的怪癖，
+  他们大多数时间字段是秒），用 `actions/time.ts` 的助手，别自己算。
+
+### 任务管理表的结构是「下次派活时补建」出来的
+
+（迁移里不能调飞书接口，所以这些补建都挂在下一次派活上，`taskBase.upgradeTaskBase` 会被反复执行。）
+
+- **幂等只靠存下来的值，不去飞书看现状。** 列看 `task_field_map` 里有没有那个键（**不是**看表里
+  有没有那一列 —— 用户手动删掉的列会被无限重建），甘特视图看 `task_gantt_view_id`（072）是否为空。
+  少任何一半，每次派活就多建一个同名视图 / 多加一列，而每次都成功、回帖里看不出异常。公式列
+  （是否延期）故意不补：它缺失就是当初公式被拒过，补也补不上，只会每次派活挂一句永远不会好的
+  warning。甘特图用哪两列当起止是飞书自己认的（表里三个日期列，接口指定不了），所以建完必须提示
+  用户扫一眼 —— 认错了不报错，只是横条画在别的区间上。
+- **补出来的列对老行是空的，所以「飞书任务」这一列要回填一次**（073 的 `task_url_backfilled`）。
+  库里那份任务砍掉之后这一列是**唯一**还能定位到飞书任务的东西（guid 藏在 applink 里），老行不补
+  的话那些任务从此只剩一个标题、点不进飞书也改不动，而没有任何一处会报错。对齐只认「助理标记」：
+  按标题对齐会把链接贴到另一个任务上，那一格看着完全正常，点进去是别人的活。已经有值的格子不覆盖
+  （用户手填的比库里那份新）。失败**不置位**（下次再试），所以置位只能在真写成之后 —— 提前置位 =
+  那批链接永远是空的。
+- **删老表之前必须先把老任务搬进任务管理表**（`taskBase.importLegacyTasks` 返回 `ok` 才允许
+  `bitable.dropTaskTable`）。070 之前派的活只存在于库和老表里，而 `list_tasks` 只读任务管理表 ——
+  老表一删，那些任务在飞书里就只剩各人任务中心那一条，「还有什么没做完」从此漏掉它们，一句错都不
+  报。搬不完（查重列读不到 / 表超过扫描上限 / 写到一半失败）就**不删**，下次派活接着搬；查重和
+  写入共用「助理标记」那一列，没有它就整个放弃（否则每次派活把同一批老任务再写一遍，而每次都成功）。
+- **三张表之间的互跳入口是「一张表」，不是文档里的一句话**（074，`diary/crossLinks.ts`）：多维表格
+  没有「插一句话」这种能力，所以两个 base 各建一张一行的「🔗 相关链接」表（tab 栏上看得见），项目
+  总表多一列「任务表」。做这件事的原因是两个 base 都不在任何人的云文档空间里（建表没传
+  folder_token）且链接分享是关的 —— 群消息一刷走，用户手上有哪张表就只剩哪张。幂等靠库里四个值：
+  `link_table_id` / `task_link_table_id` / `task_col_added` / `task_col_backfilled`。表建出来了但那
+  一行没写进去也要存 table_id，否则下次派活又多一张同名表。`ensureIndexTaskColumn` 是唯一会 list
+  一次列的例外：飞书拒同名列，不看一眼就会每次派活挂一句永远不会好的 warning。回填**无论成败都置
+  位**并在 warning 里点名失败的项目 —— 一个永久失效的 record_id 会让这段每次派活重跑，而用户手填
+  一次就解决了。补列必须在 `addToIndex` **之前**：老总表没这一列，而 `record.create` 遇到不认识的
+  列名是**整行失败**，新项目压根没进总表，回帖里只有一句「总表这次没更新」。
+
+### 项目日记（066）
+
+- `feishu_diary_indexes` / `_projects` / `_records` / `_summaries`，按 `app_id`（同 057/058）。
+  一群一项目（`(app_id, chat_id)` 唯一）、不许重名（`(app_id, name)` 唯一）—— 两个索引对应两句
+  不同的拒绝话术。`(app_id, message_id, step_index)` 就是重放幂等的全部。
+- **先库后表**：多维表格是镜像，同步只追加，推失败只在回复里加一句 warning（命令失败会让用户重说
+  一遍，最后变成两行）。补推搭在**下一条记录**上（没有 cron），所以 `unsynced_count` 必须在界面上
+  看得见，否则这个缺口无法诊断。Web 路由**只读**，同理：网页删掉的行没法从表里撤回。
+- `db/index.ts` 没开 `PRAGMA foreign_keys`，级联声明不生效 —— `appStore.deleteApp` 手动清这几张表。
+- AI 配额记在 `feishu_apps.user_id`（绑应用的那个平台账号），所以专属渠道那套照常适用；在飞书里说
+  话的人不需要平台账号。复盘花**两次**调用（解析 + 总结），且第二次只在窗口里真有记录时才花。
+
+## 标讯
+
+### 多维表格的可见范围
 
 - **标讯表是「企业内获得链接的人可阅读」，日记表是「关闭分享」—— 两个模块故意不同。**
-  `feishuBitable.ts:setTenantReadable` 发 `link_share_entity: 'tenant_readable'`；
-  diary 的 `closeLinkShare` 发 `'closed'`。标讯表要在应用所属企业内全员可见（推送
-  卡片发到群里，换个人或转给同事都该能直接打开），所以 `grantPermission` 不再是
-  「能不能打开」的前提，只用来给编辑权。改回 `closed` 的后果不是报错，是企业内的人
-  点卡片按钮全是「无权限访问」，而后台显示「✅ 已处理」。
-- **`external_access` 是布尔，不是 `external_access_entity`。** `/drive/v1/permissions/
-  :token/public` 是 v1 端点，v2 才用那个枚举。传错的字段被**静默忽略**且接口照样
-  返回 `code=0` —— 于是「已设置」是真的，「不能转发到组织外」是假的，表里的预算/
-  评分/AI 策略可以被转出公司。`bitableShare.test.ts` 断言请求体守这一条。
-  同一个坑在 diary 的 `bitable.ts` / `taskBase.ts` 注释里也记着。
-- 凭据只有一份：`tender_user_preferences.feishu_app_id/secret`（migration 045/050），
-  建表、写记录、群推送共用它和同一份 token 缓存，没有任何写死的 app_id。
+  `feishuBitable.ts:setTenantReadable` 发 `link_share_entity: 'tenant_readable'`，diary 的
+  `closeLinkShare` 发 `'closed'`。标讯表要在应用所属企业内全员可见（推送卡片发到群里，换个人或转给
+  同事都该能直接打开），所以 `grantPermission` 不再是「能不能打开」的前提，只用来给编辑权。改回
+  `closed` 的后果不是报错，是企业内的人点卡片按钮全是「无权限访问」，而后台显示「✅ 已处理」。
+- **`external_access` 是布尔，不是 `external_access_entity`**（`/drive/v1/permissions/:token/public`
+  是 v1 端点，v2 才用那个枚举）。传错的字段被**静默忽略**且接口照样返回 `code=0` —— 于是「已设置」
+  是真的，「不能转发到组织外」是假的，表里的预算/评分/AI 策略可以被转出公司。`bitableShare.test.ts`
+  断言请求体守这一条。
+- 凭据只有一份：`tender_user_preferences.feishu_app_id/secret`（045/050），建表、写记录、群推送共用
+  它和同一份 token 缓存，没有任何写死的 app_id。
 
-## 标讯手动推送与清空重灌
+### 手动推送与清空重灌
 
-- **「现在该让用户看到哪些标讯」只定义在 `candidates.ts`。** 三个消费者：预览数、
-  卡片条目、清空重灌的内容。三者不同源时的失败全是无声的 —— 卡片标题写 28 条、
-  点按钮进表里只有 12 行；或者预览说 0 条不给推而表里一堆。它**不看**
-  `bitable_synced_at` / `tender_bitable_sync`（那两个是「增量推到哪了」，
-  和「现在该看到什么」无关；拿它当条件的话同步过一次之后手动推送永远是空的）。
-  计数带着和取数**同一个 limit**：截断了却显示总数，用户以为漏推了一批。
-- **手动推送 = 清空重灌 + 发卡片，顺序不能反，重灌失败就不发卡片。**
-  写入路径是 append-only，一行写进去就再也不会变，而 `aiExtractService` 事后才补
-  截止日期/预算、`status` 事后才变 scored —— 所以不重灌的话用户点开永远看到
-  「待处理」和空的截止日期。重灌中途失败时表是**空的**，这时候照样发卡片，用户点
-  按钮看到空表会以为数据丢了；群里没消息是看得见的，所以宁可不发
-  （`pushService.ts:runManualPush`，`pushService.test.ts` 守这一条）。
-- **清空重灌必须先把「跟进状态」读出来再写回去。** 那一列我们只建不写，是用户在
-  飞书里自己点的 —— 整条链路当初做成 append-only 就是为了它（`toFields` 压根不写
-  这一列）。改成重灌就得自己接住：不保的话用户的标记每次清零，而后台报「✅ 已重建」。
-  `snapshotTable` 一趟同时取 record_id 和这一列，不分两趟：分两趟之间表可能被改过，
-  读到的标记对应的行已经不是要删的那些。
-- **重灌成功后状态位要对齐表里的内容**（先全清再按重灌进去的那批置位）。不重置的
-  后果两个方向都有：留着「已同步」的行若已不在表里，增量同步再也不会补它；
-  而 NULL 的行若其实在表里，下次增量同步会再追加一遍。
-- **评分流程不发卡片，手动按钮是唯一入口。** 自动推送发的是「本轮新评出来的」，
-  而那一刻行里的截止日期/预算/status 还没被 `aiExtractService` 补上 —— 卡片说的和
-  用户点进去看到的不是一回事，且 append-only 意味着那行以后也不会变。评分里保留的是
-  **增量同步**（表里有数据是随时能自己打开看的前提），去掉的只有推送。日志最后一行
-  必须写「不再自动推送」：以前评分日志是以「📮 已推送 N 条」收尾的，不说的话管理员
-  会等一条永远不会来的群消息，而日志显示「全部完成」。
-- **`feishu_enabled` 列已无人读**（migration 035 建的，列留着）。它管的就是那次自动
-  推送，所以自动推送去掉后 GET/PUT 都不再回显和写它，前端那个开关也删了 ——
-  留着比删掉更糟：管理员关掉它以为不会再推，而按钮照样能推。
-- **`tender_user_preferences.feishu_chat_id` 存的是逗号分隔的多个群 ID**（没有额外
-  状态要存，不值得开表），所以每个读它的地方都必须过 `feishuNotify.parseChatIds`
-  —— 整列当一个 chat_id 用的话飞书只回一句 230002「群不存在」，管理员盯着自己刚
-  复制的两个 id 只会以为是复制错了。中英文逗号/分号/换行都当分隔符（手拼时这三种
-  都很自然，只认半角的话另两种会静默变成一个怪 id）。前端 `TenderManagement.vue`
-  里有一份同规则的拆分，改了这个正则要一起改，否则复选框显示没勾却照样推过去了。
-- **多群推送逐群报成败，不合成一个 `ok`。** 部分成功是常态（最常见是机器人没被拉进
-  某个群，230013）：合成成功会把那个群的失败吃掉（那群人从此收不到推送，后台一直
-  显示 ✅），合成失败会让管理员重推（另外几个群于是收到两条一样的卡片）。
-  `pushToChats` 返回 `ChatPushResult[]`，`ManualPushResult.ok` 的含义只是「至少推成
-  一个群」，`chats` 才是真相，调用方必须逐条显示 —— 手动推送、测试消息、评分流程
-  里的自动推送三处都得报。串行发不 `Promise.all`：同一应用并发发消息撞频控 230020。
-- **群列表（`listBotChats`）是可选增强，拿不到必须退回手填。** `GET /im/v1/chats`
-  要 `im:chat:readonly`，它**不在**推送必需权限里，所以那个接口永远返回 200 带
-  `{available:false, reason}`，报 4xx 会让没开这个权限的用户连群都配不了。手填输入框
-  也永远可见：机器人被移出群之后它就不在列表里了，只有输入框能看到「配了但列表里没有」
-  的那些 id（前端把它们单独警告出来，否则那个群会稳定失败而没人知道）。
+- **「现在该让用户看到哪些标讯」只定义在 `candidates.ts`。** 三个消费者：预览数、卡片条目、清空重灌
+  的内容。三者不同源时的失败全是无声的 —— 卡片标题写 28 条、点按钮进表里只有 12 行；或者预览说 0 条
+  不给推而表里一堆。它**不看** `bitable_synced_at` / `tender_bitable_sync`（那两个是「增量推到哪了」，
+  和「现在该看到什么」无关；拿它当条件的话同步过一次之后手动推送永远是空的）。计数带着和取数**同一个
+  limit**：截断了却显示总数，用户以为漏推了一批。
+- **手动推送 = 清空重灌 + 发卡片，顺序不能反，重灌失败就不发卡片。** 写入路径是 append-only，一行写
+  进去就再也不会变，而 `aiExtractService` 事后才补截止日期/预算、`status` 事后才变 scored —— 不重灌
+  的话用户点开永远看到「待处理」和空的截止日期。重灌中途失败时表是**空的**，这时候照样发卡片，用户
+  点按钮看到空表会以为数据丢了；群里没消息是看得见的，所以宁可不发（`pushService.ts:runManualPush`，
+  `pushService.test.ts` 守这一条）。
+- **清空重灌必须先把「跟进状态」读出来再写回去。** 那一列我们只建不写，是用户在飞书里自己点的 ——
+  整条链路当初做成 append-only 就是为了它（`toFields` 压根不写这一列）。不保的话用户的标记每次清零，
+  而后台报「✅ 已重建」。`snapshotTable` 一趟同时取 record_id 和这一列，不分两趟：分两趟之间表可能被
+  改过，读到的标记对应的行已经不是要删的那些。
+- **重灌成功后状态位要对齐表里的内容**（先全清再按重灌进去的那批置位）。不重置的后果两个方向都有：
+  留着「已同步」的行若已不在表里，增量同步再也不会补它；而 NULL 的行若其实在表里，下次增量同步会再
+  追加一遍。
+- **评分流程不发卡片，手动按钮是唯一入口。** 自动推送发的是「本轮新评出来的」，而那一刻行里的截止
+  日期/预算/status 还没被 `aiExtractService` 补上 —— 卡片说的和用户点进去看到的不是一回事，且
+  append-only 意味着那行以后也不会变。评分里保留的是**增量同步**（表里有数据是随时能自己打开看的
+  前提），去掉的只有推送。日志最后一行必须写「不再自动推送」：以前评分日志是以「📮 已推送 N 条」收尾
+  的，不说的话管理员会等一条永远不会来的群消息，而日志显示「全部完成」。
+- **`feishu_enabled` 列已无人读**（035 建的，列留着）。它管的就是那次自动推送，所以自动推送去掉后
+  GET/PUT 都不再回显和写它，前端那个开关也删了 —— 留着比删掉更糟：管理员关掉它以为不会再推，而按钮
+  照样能推。
+- **`tender_user_preferences.feishu_chat_id` 存的是逗号分隔的多个群 ID**（没有额外状态要存，不值得开
+  表），所以每个读它的地方都必须过 `feishuNotify.parseChatIds` —— 整列当一个 chat_id 用的话飞书只回
+  一句 230002「群不存在」，管理员盯着自己刚复制的两个 id 只会以为是复制错了。中英文逗号/分号/换行都
+  当分隔符（手拼时这三种都很自然）。前端 `TenderManagement.vue` 里有一份同规则的拆分，改了这个正则要
+  一起改，否则复选框显示没勾却照样推过去了。
+- **多群推送逐群报成败，不合成一个 `ok`。** 部分成功是常态（最常见是机器人没被拉进某个群，230013）：
+  合成成功会把那个群的失败吃掉（那群人从此收不到推送，后台一直显示 ✅），合成失败会让管理员重推
+  （另外几个群于是收到两条一样的卡片）。`pushToChats` 返回 `ChatPushResult[]`，`ManualPushResult.ok`
+  只意味着「至少推成一个群」，`chats` 才是真相，手动推送 / 测试消息 / 评分里的增量同步三处都必须逐条
+  显示。串行发不 `Promise.all`：同一应用并发发消息撞频控 230020。
+- **群列表（`listBotChats`）是可选增强，拿不到必须退回手填。** `GET /im/v1/chats` 要
+  `im:chat:readonly`，它**不在**推送必需权限里，所以那个接口永远返回 200 带
+  `{available:false, reason}`，报 4xx 会让没开这个权限的用户连群都配不了。手填输入框也永远可见：
+  机器人被移出群之后它就不在列表里了，只有输入框能看到「配了但列表里没有」的那些 id（前端把它们单独
+  警告出来，否则那个群会稳定失败而没人知道）。
 
-## 标讯的时效闸门（7 天，两个日期都算）
+### 时效闸门（7 天，两个日期都算）
 
-- **可见性只在读的时候过滤，从不删行。** 爬虫的去重集合就是 `tenders` 表
-  本身（`content_hash`），删了行等于让同一条标讯明天再抓一遍、再评一次分；
-  `recommendService` 还要 JOIN 回来读用户反馈，`ai_reason` 也是花了 token 的。
-  所以窗口天数改大改小**立刻生效**，不依赖任何定时任务跑过一遍。
-- **唯一的写侧动作是 `expireOverdueTenders`（入库满窗口天数 → `status='expired'`），
-  它不负责隐藏，只是别让草稿库继续骗人花额度。** 草稿库列的是 `status='draft'` 的
-  **全部**行、不过闸门，于是一个月前入库、永远不可能再可见的草稿照样摆在「待提取」里
-  等人勾选 —— 点下去是一次实打实的 AI 提取，提完置成 extracted，然后被闸门挡住，
-  整条链路一句错都不报。三条口径：**只看 `created_at`**（`publish_date` 是爬虫写的、
-  可能是空串，拿一列不可信的数据去改状态就是把标讯永久打成作废）；**不碰
-  `'rejected'` 且用另一个状态值** —— 那是相关性误杀，「已作废 N」是发现闸门太狠的唯一
-  线索，混在一起就再也说明不了任何事，而 `restore` 认 rejected 的话用户点「恢复」→
-  回到 draft → 下次巡检又作废，`ai_extracted` 已经被清（token 白扔），两次点击都显示
-  成功（所以 `restore` 对 `'expired'` 明确回 400 并说清「只能改窗口天数」）；**改掉的
-  条数必须报出来**（启动日志 / cron 日志）—— 一趟把 80 条草稿扫成作废，不说的话第二天
-  草稿库少一截，看起来像数据丢了。
-- **巡检是 cron（每天 02:10）+ 启动补一趟，不能只在启动时跑。** 这个服务正常连着跑几个
-  月（单实例 + 飞书长连接），「启动时跑一次」实际等于「永不再跑」，草稿库会慢慢重新长出
-  一批永远不可能可见的待提取行。启动那趟是为了改窗口天数之后立刻收口，否则新落在窗口外
-  的那批要等到明天才从「待提取」消失，而这期间照样能被勾选去提取。
-- **窗口天数出现在界面上的地方一律由接口回（`visibleDays`），不写死。** `/list`、
-  `/admin/tenders`、`/admin/drafts` 三处都回它。写死那份在改天数之后会稳定说谎，
-  而「上周看到的那条不见了」恰恰只靠这句话解释。
-- **`created_at` 和 `publish_date` 必须同时在窗口内，少一个都会漏一类。**
-  只看入库时间：gdgpo 真有 `publish_date=2024-12-05` 的历史公告，今天抓进来就以
-  「新标讯」身份挂满整个窗口，还要花 token 评分；只看发布日期：很久以前入库、发布日期
-  写成今天的行永远不过期。两类都不报错，只是列表里多出用户不想看的东西。
-- **`created_at` 故意不容忍空值，`publish_date` 必须容忍。** 后者是爬虫写的
-  `item.releaseTime || ''`，平台漏给时间就是空串，而 SQLite 里 `'' >= date(...)`
-  为 false —— 不显式兜的话新抓的标讯会被判成过期，静默地不进列表、不评分、不推送。
-  前者始终由代码写 `new Date().toISOString()`，容忍它等于开一个绕过闸门的后门。
-- **`expiredSql` 是对整个表达式取 `NOT`，不是把每个条件分别取反。** 分别取反会让
-  「入库很久 + 发布日期是今天」这类行两边都不落，后台的「已超期 N 条」于是比实际少，
-  读起来像口径问题而不是漏了一批。`retention.test.ts` 用真 sqlite 断言两者互补。
-- **`visibleSql(alias)` 收的是表别名不是列名**（各处查询都是 `FROM tenders t`）。
-  传错不报错，只是 SQL 里少了一半条件。
-- **推荐列表也过闸门 —— 它曾是唯一漏掉的那个消费者。** `GET /recommendations`
-  （网页推荐页 + SDK 挂在外站的「投标资讯」，取数收在 `services/tender/recommendList.ts`）
-  原来筛的是 `r.created_at >= datetime('now','-20 days')`，那是**评分时间**、不是标讯的时效：
-  一条入库很久的标讯只要最近 20 天内被评过分就一直挂着，而排序是 `total_score DESC`，
-  所以旧的高分条目永远钉在最前面，卡片和今天新评出来的长得一模一样。`/list`、飞书卡片、
-  多维表格重灌全都过闸门（`candidates.ts`），于是同一个人在网页和飞书里看到的不是一批
-  东西，两边都不报错。那个 20 天的条件**删掉**而不是和闸门叠着：闸门更严，留着等于在一个
-  查询里写两个窗口，改天数的人只会改到其中一个。总数和明细共用同一段 `where` 和同一个
-  `JOIN tenders`（历史上明细带 JOIN、总数不带 → 「共 40 条」配一张空白页）。
-  `POST /recommendations/rescore` 的重评名单（`staleRecommendations`）也必须过闸门：
-  它是「先删旧记录再评」，而评分那边过闸门，于是过期那几行被静默删掉、评不回来，
-  接口回 `rescored: 0`，用户接着点，每点一次再删一批，两次点击都显示成功。
+- **可见性只在读的时候过滤，从不删行。** 爬虫的去重集合就是 `tenders` 表本身（`content_hash`），删了
+  行等于让同一条标讯明天再抓一遍、再评一次分；`recommendService` 还要 JOIN 回来读用户反馈，
+  `ai_reason` 也是花了 token 的。所以窗口天数改大改小**立刻生效**，不依赖任何定时任务跑过一遍。
+- **`created_at` 和 `publish_date` 必须同时在窗口内，少一个都会漏一类。** 只看入库时间：gdgpo 真有
+  `publish_date=2024-12-05` 的历史公告，今天抓进来就以「新标讯」身份挂满整个窗口，还要花 token 评分；
+  只看发布日期：很久以前入库、发布日期写成今天的行永远不过期。两类都不报错，只是列表里多出用户不想看
+  的东西。
+- **`created_at` 故意不容忍空值，`publish_date` 必须容忍。** 后者是爬虫写的 `item.releaseTime || ''`，
+  平台漏给时间就是空串，而 SQLite 里 `'' >= date(...)` 为 false —— 不显式兜的话新抓的标讯会被判成
+  过期，静默地不进列表、不评分、不推送。前者始终由代码写 `new Date().toISOString()`，容忍它等于开一个
+  绕过闸门的后门。
+- **`expiredSql` 是对整个表达式取 `NOT`，不是把每个条件分别取反。** 分别取反会让「入库很久 + 发布日期
+  是今天」这类行两边都不落，后台的「已超期 N 条」于是比实际少，读起来像口径问题而不是漏了一批。
+  `retention.test.ts` 用真 sqlite 断言两者互补。`visibleSql(alias)` 收的是表别名不是列名（各处查询都是
+  `FROM tenders t`）—— 传错不报错，只是 SQL 里少了一半条件。
+- **唯一的写侧动作是 `expireOverdueTenders`（入库满窗口天数 → `status='expired'`），它不负责隐藏，只是
+  别让草稿库继续骗人花额度。** 草稿库列的是 `status='draft'` 的**全部**行、不过闸门，于是一个月前入库、
+  永远不可能再可见的草稿照样摆在「待提取」里等人勾选 —— 点下去是一次实打实的 AI 提取，提完置成
+  extracted，然后被闸门挡住，整条链路一句错都不报。三条口径：**只看 `created_at`**（`publish_date` 可能
+  是空串，拿一列不可信的数据去改状态就是把标讯永久打成作废）；**不碰 `'rejected'` 且用另一个状态值**
+  —— 那是相关性误杀，「已作废 N」是发现闸门太狠的唯一线索，混在一起就再也说明不了任何事，而 `restore`
+  认 rejected 的话用户点「恢复」→ 回到 draft → 下次巡检又作废，`ai_extracted` 已经被清（token 白扔），
+  两次点击都显示成功（所以 `restore` 对 `'expired'` 明确回 400 并说清「只能改窗口天数」）；**改掉的条数
+  必须报出来**（启动日志 / cron 日志）—— 一趟把 80 条草稿扫成作废，不说的话第二天草稿库少一截，看起来
+  像数据丢了。
+- **巡检是 cron（每天 02:10）+ 启动补一趟，不能只在启动时跑。** 这个服务正常连着跑几个月（单实例 + 飞书
+  长连接），「启动时跑一次」实际等于「永不再跑」。启动那趟是为了改窗口天数之后立刻收口，否则新落在窗口
+  外的那批要等到明天才从「待提取」消失，而这期间照样能被勾选去提取。
+- **窗口天数出现在界面上的地方一律由接口回（`visibleDays`），不写死。** `/list`、`/admin/tenders`、
+  `/admin/drafts` 三处都回它。写死那份在改天数之后会稳定说谎，而「上周看到的那条不见了」恰恰只靠这句话
+  解释。
+- **推荐列表也过闸门 —— 它曾是唯一漏掉的那个消费者。** `GET /recommendations`（网页推荐页 + SDK 挂在外站
+  的「投标资讯」，取数在 `services/tender/recommendList.ts`）原来筛的是
+  `r.created_at >= datetime('now','-20 days')`，那是**评分时间**、不是标讯的时效：一条入库很久的标讯只要
+  最近 20 天内被评过分就一直挂着，而排序是 `total_score DESC`，所以旧的高分条目永远钉在最前面，卡片和
+  今天新评出来的长得一模一样。那个 20 天的条件**删掉**而不是和闸门叠着：闸门更严，留着等于在一个查询里
+  写两个窗口，改天数的人只会改到其中一个。总数和明细共用同一段 `where` 和同一个 `JOIN tenders`（历史上
+  明细带 JOIN、总数不带 → 「共 40 条」配一张空白页）。`POST /recommendations/rescore` 的重评名单
+  （`staleRecommendations`）也必须过闸门：它是「先删旧记录再评」，而评分那边过闸门，于是过期那几行被静默
+  删掉、评不回来，接口回 `rescored: 0`，用户接着点，每点一次再删一批，两次点击都显示成功。
+- **后台列表也过闸门，并且要显示挡掉了多少条。** 只挡用户侧的话，后台看到 3000 条、用户侧 200 条，两边都
+  写「全部标讯」，谁都不会想到是两套过滤条件；而后台突然从 3000 变 200 又会读成数据丢了，所以
+  `/admin/tenders` 回 `hiddenExpired` + `visibleDays`，前端必须显示出来。列表按 `created_at DESC` 排而不是
+  发布日期：按发布日期排的话今天新抓的一批散落在中间，管理员翻第一页看不到本次爬取的结果，只会以为爬虫没
+  抓到东西。
 
-- **后台列表也过闸门，并且要显示挡掉了多少条。** 只挡用户侧的话，后台看到 3000 条、
-  用户侧 200 条，两边都写「全部标讯」，谁都不会想到是两套过滤条件；而后台突然从
-  3000 变 200 又会读成数据丢了，所以 `/admin/tenders` 回 `hiddenExpired` +
-  `visibleDays`，前端必须显示出来。列表按 `created_at DESC` 排而不是发布日期：
-  按发布日期排的话今天新抓的一批散落在中间，管理员翻第一页看不到本次爬取的结果，
-  只会以为爬虫没抓到东西。
+### 详情链接（各平台的参数不止 id）
 
-## 标讯详情链接（各平台的参数不止 id）
-
-- **szexgrp 的详情页要三个参数，少一个是「永远转圈」而不是报错。**
-  `jyxxDetails.js` 用 `bidSectionNumber` 当 `sectionCode` 去调
-  `/api/v1/rhgw/szjy/detail`，缺了就 `if (!contentCode) return;` ——
-  而这行在 `$("#loading").show()` **之后**，所以页面标题正常、无 404、无报错，
-  只是空白转圈；后台一路显示「✅ 已处理」。拼法照抄站内 `home.js`：
-  `linkTo` 优先，否则 `jyxxDetails.htm?bidSectionNumber=..&contentId=..&code=<noticeTypeCode.split('_')[1]>`，
-  `bidSectionNumber` 为空（实测 200 条里 5 条，含 3 条白名单内的意向征集）时换
-  `details.htm?contentId=`（那个页面只认 contentId）。存进 `tenders.url` 的链接
-  再没有第二次机会 —— 表是 append-only，多维表格的清空重灌也是从这一列读的，
-  所以拼错了要靠迁移洗（见 071）。
-- **验链接不能只看 HTTP 200。** 这三个平台的详情页都是 CMS 空壳 + JS 取数，
-  参数错了返回的 HTML 和正确的**逐字节一样**（只差个缓存戳），
-  `curl` 对比不出来。要判对错只能看它背后那个 XHR：参数缺了接口回
+- **szexgrp 的详情页要三个参数，少一个是「永远转圈」而不是报错。** `jyxxDetails.js` 用
+  `bidSectionNumber` 当 `sectionCode` 去调 `/api/v1/rhgw/szjy/detail`，缺了就 `if (!contentCode) return;`
+  —— 而这行在 `$("#loading").show()` **之后**，所以页面标题正常、无 404、无报错，只是空白转圈；后台一路
+  显示「✅ 已处理」。拼法照抄站内 `home.js`：`linkTo` 优先，否则
+  `jyxxDetails.htm?bidSectionNumber=..&contentId=..&code=<noticeTypeCode.split('_')[1]>`，
+  `bidSectionNumber` 为空（实测 200 条里 5 条，含 3 条白名单内的意向征集）时换 `details.htm?contentId=`
+  （那个页面只认 contentId）。存进 `tenders.url` 的链接再没有第二次机会 —— 表是 append-only，多维表格的
+  清空重灌也是从这一列读的，所以拼错了要靠迁移洗（见 071）。
+- **验链接不能只看 HTTP 200。** 这三个平台的详情页都是 CMS 空壳 + JS 取数，参数错了返回的 HTML 和正确的
+  **逐字节一样**（只差个缓存戳），`curl` 对比不出来。要判对错只能看它背后那个 XHR：参数缺了接口回
   `code:200` + `data.bid:null`。
 
-## 标讯 AI 提取与相关性闸门
+### AI 提取与相关性闸门
 
-- **提取的失败形态就是「0 条已处理 + ✅ 已完成」，所以 0 条必须 `job.fail`。**
-  一批 3 条的完整 JSON 要 1300+ 输出 token，`max_tokens` 原来是 2000 —— 顶格截断的
-  数组括号配不平，`parseFirstJsonArray` 返回 null，整批静默变成 0 条结果，而草稿
-  一条不少地留在原地（用户唯一能看出不对的地方就是草稿数没变）。现在：4000 token、
-  走 `jsonGateway`（解析失败重试一次 + 带回 `finish_reason`），截断 / 解析失败 /
-  「模型没原样回 id 于是按顺序对齐」三种情况各说一句话进运行日志，部分失败也要
-  分开报数（只报成功数的话，剩下几条会被当成「本来就不该提取」）。
-- **吃掉 `max_tokens` 的是思维链，不是 JSON，所以解法是拆批而不是调大那个数。**
-  ai_logs 里有 `output_tokens=2001` 而 `content` 只有 476 字符、断在半个字段上的记录
-  —— 差额全在 `reasoning_content`，它算进 `max_tokens` 却不出现在 `content` 里。
-  三件事必须都在：截断的 raw 里救回断点前写完的对象（`parseJsonArrayItems`，只在
-  `finish_reason=length` 时用 —— 正常路径下接受半截数组等于把模型胡说也当结果）；
-  没救回来的逐条重试，**并且这一轮后面所有批次直接改成单条**（不改的话每批都要先
-  白花一次调用才发现装不下，实测 7 批全中）；报错里带上思维链 token 数，
-  不带的话用户只会一路调高 `max_tokens`，而那个数字永远调不完。
-  `jsonGateway` 遇到 `finish_reason=length` **不再重试**：同样的请求会断在同一个
-  地方，重发只是把 token 和时间花两遍（单批曾因此耗时 85 秒）。
-- **相关性闸门判 false 的代价不对称，所以缺省是放行。** `relevant=false` 的标讯置
-  `status='rejected'`（作废）：不进标讯列表、不参与评分。误放一条无关的用户划过去
-  就完了；误杀一条相关的，它从此不在任何列表里，用户根本不知道有这条 —— 所以
-  「字段缺失/拼错/拿不准」全按 true，`prompt` 里也明写这一条，关键词库为空时干脆
+- **提取的失败形态就是「0 条已处理 + ✅ 已完成」，所以 0 条必须 `job.fail`。** 一批 3 条的完整 JSON 要
+  1300+ 输出 token，`max_tokens` 原来是 2000 —— 顶格截断的数组括号配不平，`parseFirstJsonArray` 返回
+  null，整批静默变成 0 条结果，而草稿
+  一条不少地留在原地（用户唯一能看出不对的地方就是草稿数没变）。现在 4000 token 走 `jsonGateway`，
+  截断 / 解析失败 / 「模型没原样回 id 于是按顺序对齐」三种情况各说一句话进运行日志，部分失败也要分开
+  报数（只报成功数的话，剩下几条会被当成「本来就不该提取」）。
+- **吃掉 `max_tokens` 的是思维链（硬规则 2），所以解法是拆批而不是调大那个数。** 三件事必须都在：截断的
+  raw 里救回断点前写完的对象（`parseJsonArrayItems`，**只在** `finish_reason=length` 时用 —— 正常路径下
+  接受半截数组等于把模型胡说也当结果）；没救回来的逐条重试，**并且这一轮后面所有批次直接改成单条**
+  （不改的话每批都要先白花一次调用才发现装不下，实测 7 批全中）；报错里带上思维链 token 数。
+- **相关性闸门判 false 的代价不对称，所以缺省是放行。** `relevant=false` 的标讯置 `status='rejected'`：
+  不进标讯列表、不参与评分。误放一条无关的用户划过去就完了；误杀一条相关的，它从此不在任何列表里，用户
+  根本不知道有这条 —— 所以「字段缺失/拼错/拿不准」全按 true，`prompt` 里也明写这一条，关键词库为空时干脆
   不拼这段规则（否则「和全部关键词都无关」对每条都成立，整批作废）。
-- **相关性规则写在代码里（`relevanceRule()` 拼在模板后面），不写进
-  `DEFAULT_EXTRACT_PROMPT`。** `system_config.tender_extract_prompt` 里有一份用户可编
-  辑的副本且**优先级更高**，只改默认值的话装着旧副本的部署里模型压根不返回
-  `relevant`，而缺省放行 = 闸门形同不存在，全程零报错，用户只会以为「AI 判得不准」。
-- **状态过滤一律写白名单 `status IN ('extracted','scored')`，不写 `!= 'draft'`。**
-  后者会让任何新状态默认可见/默认参与评分：`/list` 会把作废的摆回用户面前；
-  `loadUnscoredForUser` 会花 token 评它，而评完那行就进了 `tender_recommendations`
-  —— 推荐列表和飞书卡片从那张表取数、不看 status，作废的于是绕过闸门重新出现。
-- **作废可复查、可恢复，否则误杀是永久静默丢失。** 草稿库分「待提取 / 已作废」两个
-  视图（两个数字都常显 —— 「已作废 37」这种异常值是发现闸门太狠的唯一线索），
-  `reject_reason`（迁移 075）存一句理由。恢复走 `POST /admin/drafts/:id/restore`，
-  必须连 `ai_extracted` 一起清掉：留着的话服务层按「已经提取过了」跳过它，那条标讯
-  从此卡在草稿库进不了列表，而两次点击都显示成功。
+- **相关性规则写在代码里（`relevanceRule()` 拼在模板后面），不写进 `DEFAULT_EXTRACT_PROMPT`。**
+  `system_config.tender_extract_prompt` 里有一份用户可编辑的副本且**优先级更高**，只改默认值的话装着旧副本
+  的部署里模型压根不返回 `relevant`，而缺省放行 = 闸门形同不存在，全程零报错，用户只会以为「AI 判得不准」。
+- **状态过滤一律写白名单 `status IN ('extracted','scored')`，不写 `!= 'draft'`。** 后者会让任何新状态默认
+  可见/默认参与评分：`/list` 会把作废的摆回用户面前；`loadUnscoredForUser` 会花 token 评它，而评完那行就进
+  了 `tender_recommendations` —— 推荐列表和飞书卡片从那张表取数、不看 status，作废的于是绕过闸门重新出现。
+- **作废可复查、可恢复，否则误杀是永久静默丢失。** 草稿库分「待提取 / 已作废」两个视图（两个数字都常显 ——
+  「已作废 37」这种异常值是发现闸门太狠的唯一线索），`reject_reason`（075）存一句理由。恢复走
+  `POST /admin/drafts/:id/restore`，必须连 `ai_extracted` 一起清掉：留着的话服务层按「已经提取过了」跳过
+  它，那条标讯从此卡在草稿库进不了列表，而两次点击都显示成功。
 
-## 标讯评分失败不许落行（假分数会被锁死）
+### 评分失败不许落行（假分数会被锁死）
 
-- **`scoreBusinessWithLLM` 拿不到 JSON、上游报错、额度打满，一律往外抛，不兜底成
-  50 分。** `loadUnscoredForUser` 用 `NOT EXISTS(tender_recommendations)` 判「评过了」，
-  所以只要落了行，这条标讯**永远不会再被评** —— 那份编出来的分数就是最终结果，还会
-  跟着增量同步进多维表格、进飞书卡片。而它在屏幕上和真评出来的一模一样：业务分 =
-  关键词分×0.4 + 兜底 50×0.6，于是关键词命中的那些稳定显示成「68 分 · 可考虑」，
-  只有推荐理由那一栏写着两个字「解析失败」，分析/投标思路是空的。抛出去 = 不落行 =
-  下次点「开始评分」自动重试；代价是运行日志里**必须**报「N 条评分失败（未写入，
-  仍算未评分）」，不说的话管理员看到「完成」就走了。额度打满同理必须抛：
-  以前它在 `scoreBusinessWithLLM` 里被 catch 成一行 `reason='每日AI额度已用完'` 的
-  50 分记录，外层那句「⚠️ AI额度已用完，评分中止」是死代码，于是额度见底的那一刻起，
-  剩下几百条标讯被逐条写成假分数且永不重评。
-- **评分的 `max_tokens`（`MAX_SCORE_TOKENS = 4000`）是留给思维链的空间，不是正文长度。**
-  原来给 1000：库里 deepseek-v4-pro 的实测是 4-12 output token/字（547 字的回复花了
-  3116 token），而这份 JSON 含 analysis 2-3 句 + strategy 3-4 句，正文本身 300-500 字 ——
-  于是经常在写完 JSON 之前顶格截断。思维链长短随机，所以症状是「有些条解析失败、
-  有些条正常」，完全指不到额度上。走 `jsonGateway` + `jsonFailMessage`（同 xhs / 看板
-  那条规矩，全平台一份实现）：空返回 / 截断 / 没按 JSON 回三种成因分开说，并带上
-  思维链 token 数 —— 只说「解析失败」的话，看到的人会去改评分 prompt 或反复重评。
+- **`scoreBusinessWithLLM` 拿不到 JSON、上游报错、额度打满，一律往外抛，不兜底成 50 分。**
+  `loadUnscoredForUser` 用 `NOT EXISTS(tender_recommendations)` 判「评过了」，所以只要落了行，这条标讯
+  **永远不会再被评** —— 那份编出来的分数就是最终结果，还会跟着增量同步进多维表格、进飞书卡片。而它在屏幕
+  上和真评出来的一模一样：业务分 = 关键词分×0.4 + 兜底 50×0.6，于是关键词命中的那些稳定显示成「68 分 ·
+  可考虑」，只有推荐理由那一栏写着两个字「解析失败」。抛出去 = 不落行 = 下次点「开始评分」自动重试；代价是
+  运行日志里**必须**报「N 条评分失败（未写入，仍算未评分）」，不说的话管理员看到「完成」就走了。额度打满
+  同理必须抛：以前它被 catch 成一行 `reason='每日AI额度已用完'` 的 50 分记录，外层那句「⚠️ AI额度已用完，
+  评分中止」是死代码，于是额度见底的那一刻起，剩下几百条标讯被逐条写成假分数且永不重评。
+- **`MAX_SCORE_TOKENS = 4000` 是留给思维链的空间**（硬规则 2）。原来给 1000：这份 JSON 含 analysis 2-3 句 +
+  strategy 3-4 句，正文本身 300-500 字，而库里 deepseek-v4-pro 的实测是 4-12 output token/字 —— 于是经常在
+  写完 JSON 之前顶格截断，症状是「有些条解析失败、有些条正常」。
 
-## 标讯清空（按平台 / 全部）
+### 清空（按平台 / 全部）
 
-- **「一条标讯」是四张表**：`tenders` + `tender_recommendations` + `tender_user_feedback`
-  + `tender_bitable_sync`。`services/tender/purge.ts` 一个事务删完，子表先删、本体后删
-  （反了的话子表的 `IN (SELECT id FROM tenders …)` 匹配不到任何行，孤儿全留）。
-  留孤儿不会报错：用户侧三处的「总数」查询不带 JOIN、「明细」查询带 INNER JOIN，
-  于是 `/recommendations`、`/feedback` 会显示「共 40 条」却渲染不出行、翻出空白页，
-  而 `recommendService` 的 `feedbackCount`（<5 放宽预筛阈值）把孤儿反馈也算进去，
-  于是用严格阈值配空的历史反馈段。按平台删时**子表条件也要带 platform**，
-  漏了就是全表删而返回值只报本平台的条数 —— 后台一句「已清空 gdgpo 2 条」，
-  别的平台的用户从此推荐列表是空的。`purge.test.ts` 守这两条。
-- **确认框的条数只能来自 `GET /admin/tenders/stats`，不能用列表的 total。**
-  后台列表过了 14 天闸门又叠着搜索/关键词筛选 —— 拿它当确认数就是写着
-  「确认清空 12 条」然后删掉 3000 条，而用户是照那个数字点确认的。
-- **清库不清多维表格**（表是 append-only，Web 侧删不掉已推送的行），也不清
-  关键词/评分配置/爬取日志。而候选为 0 时手动推送**不重灌也不发卡片**，
-  所以全清之后飞书表会停在旧数据上直到下一轮评分出来 —— 这句必须写在返回里，
-  否则「✅ 已清空」和用户在飞书里看到的满表旧数据直接矛盾。
-- 有爬取/提取/评分任务在跑时清空返回 **409**：那些任务攥着一批内存里的 id，
-  清完会继续往 `tender_recommendations` 写已不存在的 `tender_id`（没有外键约束，
-  写得进去），刚清干净的库立刻又有孤儿，而两边的日志都显示成功。
+- **「一条标讯」是四张表**：`tenders` + `tender_recommendations` + `tender_user_feedback` +
+  `tender_bitable_sync`。`services/tender/purge.ts` 一个事务删完，子表先删、本体后删（反了的话子表的
+  `IN (SELECT id FROM tenders …)` 匹配不到任何行，孤儿全留）。留孤儿不会报错：用户侧三处的「总数」查询不带
+  JOIN、「明细」查询带 INNER JOIN，于是 `/recommendations`、`/feedback` 会显示「共 40 条」却渲染不出行，
+  而 `recommendService` 的 `feedbackCount`（<5 放宽预筛阈值）把孤儿反馈也算进去，于是用严格阈值配空的历史
+  反馈段。按平台删时**子表条件也要带 platform**，漏了就是全表删而返回值只报本平台的条数 —— 后台一句
+  「已清空 gdgpo 2 条」，别的平台的用户从此推荐列表是空的。`purge.test.ts` 守这两条。
+- **确认框的条数只能来自 `GET /admin/tenders/stats`，不能用列表的 total。** 后台列表过了闸门又叠着搜索/
+  关键词筛选 —— 拿它当确认数就是写着「确认清空 12 条」然后删掉 3000 条，而用户是照那个数字点确认的。
+- **清库不清多维表格**（表是 append-only，Web 侧删不掉已推送的行），也不清关键词/评分配置/爬取日志。而候选
+  为 0 时手动推送**不重灌也不发卡片**，所以全清之后飞书表会停在旧数据上直到下一轮评分出来 —— 这句必须写在
+  返回里，否则「✅ 已清空」和用户在飞书里看到的满表旧数据直接矛盾。
+- 有爬取/提取/评分任务在跑时清空返回 **409**：那些任务攥着一批内存里的 id，清完会继续往
+  `tender_recommendations` 写已不存在的 `tender_id`（没有外键约束，写得进去），刚清干净的库立刻又有孤儿，
+  而两边的日志都显示成功。
 
-## 智慧看板（/board）拿不到答案时
+## 智慧看板（/board）
 
-- **`/ai/board/chat` 空手而归必须回 502，前端也绝不回落显示用户的问题。**
-  看板只能显示它收到的东西：字段全空的 200 在屏幕上和「模型没回答」无法区分，而前端
-  旧代码 `displayText(... || message)` 会把刚问的那句话翻上看板 —— 用户看到的是
-  「今天下雨」四个大字，像是「答案就是问题」，没有一处报错。空返回的成因是思维链
-  （`max_tokens` 原来 1000，reasoning_tokens 算进额度却不进 `content`），所以报错里
-  要带上思维链 token 数，否则用户只会觉得「AI 变傻了」。
-  这个端点也**不准**再用 `/\{[\s\S]*\}/`：走 `jsonGateway`（平台唯一实现）。
+- **`/ai/board/chat` 空手而归必须回 502，前端也绝不回落显示用户的问题。** 看板只能显示它收到的东西：字段全
+  空的 200 在屏幕上和「模型没回答」无法区分，而前端旧代码 `displayText(... || message)` 会把刚问的那句话翻
+  上看板 —— 用户看到的是「今天下雨」四个大字，像是「答案就是问题」，没有一处报错。（空返回的成因和报错话术
+  见硬规则 2。）
 
-## 小红书写作台的改写路径
+## 小红书写作台
 
-- **风格下拉只出现在真的会把它传给接口的地方。** `SelectionChat` 的
-  `skills`/`skillId` 是可选 prop，结构阶段**故意不传**（`/structure/node-chat` 只吃
-  `xhs-structure` 底座，读不到 styleSkill）。摆一个没人读的下拉出来，用户换了风格、
-  AI 照旧改法，返回的东西看着完全正常 —— 他只会以为这个 skill 没什么效果。
-  浮层里选的风格存在 `reviseSkillId`，空值 = 跟随①，且**从不回写①的 `skillId`**：
-  改一段用了别的风格不该悄悄换掉下次「重新成文」的风格。
-- **全文改写走流式，所以必须自己接住两件事。** 一是**截断**：`streamToSSE` 在
-  `finish_reason === 'length'` 时补一个 `{"truncated":true}` 事件，成文和改写两处都要
-  提示 —— 结尾断在半句话上的稿子和写完的长得一模一样，用户会直接采纳/发布。
-  二是**回滚**：改写结果先进预览等采纳（流式 `setContent` 会冲掉 TipTap 的撤销栈），
-  采纳时把旧正文存进 `preRewriteBody` 供「↩ 撤销改写」还原，而**换稿/新建/重新成文
-  时必须清掉它**，否则那个按钮会把上一篇的正文贴进这一篇，两边都不报错。
-- **内置 skill 模板（`services/xhs/skillTemplates.ts`）只能是一个主文件。**
-  `uws.assembleSkillBody` 把**没被 `{{ref}}` 引用的引用文件也全部拼在末尾**，
-  所以在这个平台上拆多文件不是懒加载，只是让人误以为省了 token。导入时
-  `setMainBody` 失败要把空壳 `deleteSkill` 掉：列表里留一个空 skill，用户选它去生成，
-  出来的东西和没挂 skill 一模一样，没有任何一处会报错。`GET /skills/templates`
-  必须注册在 `/skills/:id` **之前**（Express 按注册顺序匹配，否则回一句
-  「模板不存在」，读起来像模板没了而不是路由写错了）。模板里那个出处字段叫
-  `origin` 不叫 `source` —— `aiAppRegistry.test.ts` 全仓扫 `source: '…'` 字面量核
-  AI 应用白名单，占这个键名会让那个守卫报假失败。
-- **吐 JSON 的那几个端点，`max_tokens` 是「留给思维链跑的空间」，不是正文长度**
-  （`api/xhs.ts:JSON_BUDGET`，一处集中给值）。带思维链的模型把 reasoning 算进这个额度
-  却不放进 `content`：库里同一个 deepseek-v4-flash，revise 那次 `output_tokens=1501` 而
-  content 只有 57 字，consult 的 draft:audience 是 11757 对 3024 字 —— 同一个模型这个
-  差额在 0 到 9700 之间乱跳。所以「发散观点」原来那 2000 经常在写出第一个 `}` 之前就顶格，
-  用户看到的是「AI 返回格式异常」，而思维链短的那几次又正常出来了：症状是**「有时」格式
-  错误**，完全指不到额度上。`jsonGateway` 在 `finish=length` 时故意不重试（同样的 body
-  断在同一处），所以给不够就是确定性失败，只能靠用户手点去赌下一次想得短一点。调低这些数
-  不省钱（计费按实际用量），只是把偶发的思维链长跑变成一次白扣额度的报错。
-  另外 `tier: 'strong'` 在平台渠道上**可能压根没有那一档**（`aiProviderService.ts`
-  回落 default），所以「换成强模型」不是这类问题的解法。
-- **「拿不到 JSON」必须分三句话说，而且不能回 200 带空数组。**
-  报错走 `core/llm/parseJson.ts:jsonFailMessage`（consult 的 `gateFailMessage` 是同一份 ——
-  各写一份的话改了一边另一边照旧，而两边是同一个模型的同一个毛病）：空返回 / 截断 /
-  真的没按 JSON 回，三种成因的解法完全不同，合成一句「格式异常，请重试」是**指错方向** ——
-  用户会去改选题、一路重试，每次扣一次额度。空结果同理要 502 而不是空数组：
-  `ideas: []` 在面板上显示的是「还没有结果，点上面「帮我发散观点」」（像没点过）、
-  `nodes: []` 是一张空画布（像要自己从零搭）、`issues: []` + `validated=true` 直接就是
-  「结构没问题，可以成文」、node-chat 三样全空显示「(AI 未提出修改)」（像 AI 看过觉得没问题）。
-  自检那条判的是**形状**（`ok` 是不是 boolean / `issues` 是不是数组）而不是空不空 ——
-  「没有问题」本身是合法结果。`xhsBrainstorm.test.ts` 守发散那两条。
+- **风格下拉只出现在真的会把它传给接口的地方。** `SelectionChat` 的 `skills`/`skillId` 是可选 prop，结构
+  阶段**故意不传**（`/structure/node-chat` 只吃 `xhs-structure` 底座，读不到 styleSkill）。摆一个没人读的下拉
+  出来，用户换了风格、AI 照旧改法，返回的东西看着完全正常 —— 他只会以为这个 skill 没什么效果。浮层里选的
+  风格存在 `reviseSkillId`，空值 = 跟随①，且**从不回写①的 `skillId`**：改一段用了别的风格不该悄悄换掉下次
+  「重新成文」的风格。
+- **全文改写走流式，所以必须自己接住两件事。** 一是**截断**：`streamToSSE` 在 `finish_reason === 'length'`
+  时补一个 `{"truncated":true}` 事件，成文和改写两处都要提示 —— 结尾断在半句话上的稿子和写完的长得一模一样，
+  用户会直接采纳/发布。二是**回滚**：改写结果先进预览等采纳（流式 `setContent` 会冲掉 TipTap 的撤销栈），
+  采纳时把旧正文存进 `preRewriteBody` 供「↩ 撤销改写」还原，而**换稿/新建/重新成文时必须清掉它**，否则那个
+  按钮会把上一篇的正文贴进这一篇，两边都不报错。
+- **内置 skill 模板（`services/xhs/skillTemplates.ts`）只能是一个主文件。** `uws.assembleSkillBody` 把**没被
+  `{{ref}}` 引用的引用文件也全部拼在末尾**，所以在这个平台上拆多文件不是懒加载，只是让人误以为省了 token。
+  导入时 `setMainBody` 失败要把空壳 `deleteSkill` 掉：列表里留一个空 skill，用户选它去生成，出来的东西和没挂
+  skill 一模一样，没有任何一处会报错。`GET /skills/templates` 必须注册在 `/skills/:id` **之前**（Express 按
+  注册顺序匹配，否则回一句「模板不存在」，读起来像模板没了而不是路由写错了）。模板里那个出处字段叫 `origin`
+  不叫 `source` —— `aiAppRegistry.test.ts` 全仓扫 `source: '…'` 字面量核 AI 应用白名单，占这个键名会让那个守卫
+  报假失败。
+- **吐 JSON 的那几个端点的 `max_tokens` 集中在 `api/xhs.ts:JSON_BUDGET` 一处给值**（背景见硬规则 2）。实测
+  同一个 deepseek-v4-flash：revise 那次 `output_tokens=1501` 而 content 只有 57 字，consult 的 draft:audience
+  是 11757 对 3024 字 —— 所以「发散观点」原来那 2000 经常在写出第一个 `}` 之前就顶格，而思维链短的那几次又
+  正常出来了。
+- **「拿不到 JSON」不能回 200 带空数组，必须 502。** `ideas: []` 在面板上显示的是「还没有结果，点上面「帮我
+  发散观点」」（像没点过）、`nodes: []` 是一张空画布（像要自己从零搭）、`issues: []` + `validated=true` 直接
+  就是「结构没问题，可以成文」、node-chat 三样全空显示「(AI 未提出修改)」（像 AI 看过觉得没问题）。自检那条
+  判的是**形状**（`ok` 是不是 boolean / `issues` 是不是数组）而不是空不空 —— 「没有问题」本身是合法结果。
+  `xhsBrainstorm.test.ts` 守发散那两条。
 
-## 品牌咨询的数据源分级（L1–L4）
+## 品牌咨询（/consult）
 
-- **级别在代码里算，不问模型、也不收前端**（`consult/sourceStore.ts:sourceLevelFor`）。
-  路由里原来硬写 `sourceLevel: 'L1'`，于是一条纯靠常识编出来的结论在界面上挂着
-  「L1 联网检索」—— 和真查过的一模一样，而客户会拿它去做决策。同「计算格式不交给 LLM」
-  那条规矩：模型说自己是 L1 的那一刻，那句话本身就是免费的。
-- **联网结果要用户逐条勾选才进 prompt**（`consult_sources`，迁移 079）。不勾的那些是
-  同名公司、几年前的旧闻，全塞进去的话 AI 会照着别人家的数字写这家企业的现状卡，
-  而那一节读起来完全正常。`(project_id,url)` 唯一：同一条来源进两遍 prompt 会被模型
-  当成两处独立印证（「多个来源都提到…」），界面上只是多了一行；所以挡掉几条要报出去。
-  超过 40 条**只拒不截**：截掉后半截的话用户以为 AI 读过他勾的那几条。
-- **没有联网资料时那一段不能省，要明说「这次没联网」**（`sourcesBlock` 空集分支）。
-  省掉的话模型手里只剩客户资料，它会照常识把推测写成「据公开数据」「行业报告显示」——
-  读起来和查到的一模一样。同理，搜索不可用时回 503 / 检索失败回 502 **都带原文**，
-  绝不回空列表：空列表被读成「网上没有这家公司的资料」，用户接着就按 L3 编了。
-- **补料问卷（`consult/intakeService.ts`）：0 题必须抛错，空答案必须丢掉。** 前者因为
-  一份空问卷在界面上和「AI 认为你的资料已经齐了」一模一样，用户于是带着半份资料跑完
-  四看，而四看的结论全部来自那段资料；后者因为「问：X 答：（空）」进 prompt 之后会被
-  模型当成「客户确认没有 X」，比缺料更糟。答案由服务端**追加**（`POST /intake/apply`），
-  不让前端回传整份 brief：他那边还开着一个 20000 字的输入框，整段替换就是「谁最后点
-  保存谁赢」，而两次操作都回「已保存」。超上限只拒不截 —— 截掉的正好是刚填的那些答案。
-- **问卷落库（080）之后，「同一轮」和「已经答过的题」都要靠库里那行挡。** 一份十几题的
-  问卷是拿去逐条问客户的，不存的话切个页面就全空了而界面不报错（所以有
-  `PUT /intake/answers` 逐题暂存，存不上必须出声）。两处去重都是「静默出错」类：
-  同一 `roundId` 补第二遍要 409 —— 同一批答案在资料里出现两份，AI 会把它当成两处独立
-  印证；下一轮出题要剔掉**已经问过并且客户答了**的题（`answeredQuestions`，只算答了的
-  —— 留空是客户当时答不出来，再问合理），剔重按「去掉所有空白」比，放宽成模糊匹配会把
-  「车场数量」和「车位数量」判成同一题，那题从此再也问不出来。剔完一题不剩时回 409
-  并说明「没有新问题」，和「问卷没生成」是两句不同的话。出新一轮会删掉上一轮没提交的
-  那行，所以前端点「重出一份」前要确认 —— 用户填了八题跑去问客户，回来手滑一点就没了。
-- **问卷是独立一页（`ConsultIntake.vue`，`/consult/projects/:id/intake`），新建项目一律
-  先过一轮。** 缺料不报错 —— 十二步照样出结论，只是那些结论是 AI 照常识补的，读起来和真按
-  资料推的一模一样，所以这道闸门是这个模块唯一防得住它的地方。它不能是工作台右侧抽屉里的
-  一块：抽屉会被 `select()` 在窄屏关掉、也能被用户点 ×，关掉之后主区没有任何痕迹说明
-  「有一份十几题的问卷没填」。**抽屉里那份问卷 UI 已经删掉，不要再加回来** —— 两套问卷 UI
-  必然漂：那一份当初就少了「全部必填」和逐题暂存，用它填完提交，界面上和在问卷页填完
-  一模一样，而实际进资料的只有他随手填的那两条。工作台现在只有两个入口（左栏那条黄提示、
-  「客户原始资料」下面那一行），后者也是**出下一轮问卷的唯一入口**。连带四条：**① 自动出题只认 `?auto=1`，而且发请求之前先
-  `router.replace` 把它去掉** —— 留着的话刷新一次就又出一轮，扣一次额度、把这一轮连已填的
-  答案一起替换掉，而两次都显示成功。**② 工作台的闸门要落在挑阶段和自动分析之前 `return`**
-  （`ConsultProject.vue:load`）：落在后面的话那一步已经花掉一次额度出了一版照缺料资料的草稿。
-  **③ 只挡第一轮（`intakeRounds === 0`）**，后面几轮不挡 —— 客户还没回话的那几天他连自己的
-  项目都打不开。**④ 失败态（出题 502 / 额度 429）必须留「跳过，直接进工作台」的出口，
-  而那个出口要在 sessionStorage 记一个 `consult-intake-skip:<projectId>`**：不记的话点了跳过
-  又被闸门弹回来，两页之间来回跳。跳过之后左栏常挂一条「补料问卷没提交」——
-  不挂的话跳过那一下是静默的，而它决定后面每一步结论的质量。同理 `GET /projects` 每行回
-  `intake_pending`，列表上必须显示：那一行的进度数照样在涨，和资料齐全的项目一模一样。
-- 前端 `ConsultProject.vue` 里 `levelNow` 是同一口径的第二份（提前告诉用户「现在定稿
-  会是 L3」）。两边不一致时界面上看不出来，改一边必须改另一边。
-- **`StageDef.method`（分析操法）和 `deliverables` 是两件事：前者说「按什么顺序推」，
-  后者说「要交出什么」。** 只给清单不给操法的后果是**表格填满了但推导是模型自己编的** ——
-  价值主张三层都在却没做过三问检验、竞品每家写的维度还不一样，而这种正文和照方法论推出来的
-  在屏幕上一模一样，顾问会直接拿去用。所以两条 prompt 的硬规则 0 都是「先照操法推完再写」，
-  且 `GET /stages` 把 `method` 原样回给前端**照原样显示** —— 用户对着它数正文的顺序，
-  是唯一能发现「没照方法论推」的地方。改操法就是改分析质量，不是改文案。
-- **`## 0. 方法论速览` 和 `## 写作建议` 是每份正文固定的头尾两节，不在输出物清单里。**
-  速览要写「这一次照操法哪几条推的」；慢车道那份（`methodBrief`）**模型没给也要留着这一节
-  并写明没给**，不能让它消失 —— 少一节的正文读起来照样完整（三件套都在），而那个方向
-  已经是后面每一步的地基了。写作建议是给内部顾问的组织建议，不是客户话术。
-- **AI 赋能机会存**`consult_entries.ai_opportunities`**这一列（081），不留在 body 里。**
-  方法论要求各模块只标 1-2 个、最后汇成独立一章「AI 转型机会清单」；埋在 markdown 正文里的话
-  那一章只能把十二份正文整段塞回 prompt 去重新找，而 `knowledgeBlock` 刻意不这么干
-  （上下文被表格占满之后模型开始照常识写）—— 结果是那一章漏掉大半个模块，而它读起来是一份
-  完整的清单。超过 2 条 / 单条超 200 字**只拒不截**（手填的第 3 条被悄悄丢掉的话，界面上是
-  「已定稿」而那一章里永远没有它）；老定稿（`'[]'`）在界面上要显示成「这条没标 AI 机会」
-  而不是留空 —— 留空和「这一步确实没有 AI 机会」长得一样。
-- **第二层（内容营销战略）单开一条车道 `plan`，不塞进 fast、也不塞进 slow。** 它走 `/draft`
-  那条流程（出草稿 → 改 → 定稿），但 system prompt 是另一份：fast 那份写着「四看是找事实，
-  不要发挥」，拿它出内容方案的话模型只敢复述上游结论，交出一份没有平台矩阵、没有排期的综述；
-  slow 那份要求每个方向带定位语 + 一句话身份，于是模型会**给内容方案编一句定位语**，
-  和定稿过的那句不一样 —— 两种都读起来完全正常。`requires` 只挂 `house/relmap/creative`
-  三条（它们已经把四看四问传递地串上了），因为 `requires` 同时决定哪几条定稿**带正文**
-  进 prompt，挂满十二条的话上下文全是表格、客户资料被挤到最后，模型开始照常识写。
-- **左栏的分组顺序按 `GET /stages` 返回的顺序推，不写死 `['四看','四问','四大成']`。**
-  写死那份清单的话新增分组的那几步在界面上**完全不存在**，而解锁、进度数、接口全是对的 ——
-  用户只会以为方案就到「核心沟通创意」为止。同理 `selected.lane === 'fast'` 这种二分判断要
-  写成 `!== 'slow'`（`isDraftLane`）：漏掉 plan 的话那一步一个按钮都没有，像是没做完。
-- **第三层（数字化营销战略）的 `requires` 是 `content/relmap/creative` 三条，不是只挂 `content`。**
-  解锁条件其实一样（content 已经把前 13 步串上了），差别在**哪几条定稿带正文进 prompt**：
-  AARRR 五阶段要逐段对上用户关系图谱那张分层表、AIDMA 的 M/A 两段要落到核心沟通创意里
-  那句具体的广告语 —— 只给一句话总结的话模型会自己编一套分层和一句 slogan，
-  而那张表和真按分层写的长得一模一样。品牌屋故意不挂（它的正文基本是上游结论的汇总表，
-  一句话总结照样进 prompt）：四条正文一起塞，上下文全是表格，客户资料被挤到最后。
-- **阶段内对话改不了任何东西，它唯一的作用是进下一次「重出」的 prompt**
-  （`draftService.discussionBlock`，本步最近 16 条）。以前 `/draft` / `/directions` 压根不读
-  对话：用户在这一步聊二十句再点「让 AI 重出一版」，出来的东西和没聊过时是同一个分布，
-  而它读起来完全正常、界面上还写着「聊定了再去上面出草稿」—— 他会以为自己在调教 AI。
-  所以两件事必须成对：prompt 里带上那几条，**并且把带了几条回给界面**
-  （`discussion:{used,dropped}`，`used=0` 也要出声）—— 带上和没带上出来的草稿一模一样，
-  不给这个数的话「聊天有没有用」永远只能靠感觉。只带 `kind='text'` 的：方向卡 / 上一版草稿
-  那两种气泡是模型自己的输出，带回去它会照抄上一版（两版都读得通，用户只会以为自己没说清），
-  而且那是整段正文，带上就把客户资料挤到上下文末尾。`discussionRule` 和这一段**同时出现、
-  同时消失**（同 tender 的 `relevanceRule`）：没聊过却留着那条规则，模型会顺着它编一段共识。
-  **定稿也在对话里留一条痕（`kind='entry'`，`chatService.entryToText`），但它和方向卡/草稿
-  一样不进 prompt。** 不留痕的话这一步的对话永远以「已生成草稿」那张卡片收尾，过两天回来
-  看不出最终定的是哪一版（那张卡片打开的是当时那版草稿）；而把它算成 `text` 带回 prompt
-  的话，同一段结论会以「客户/顾问说过的话」的身份再出现一遍 —— 模型把它当成两处独立印证
-  （「多处资料都指向…」），出来的正文完全正常。正文不抄进那条消息（重新定稿之后两份会不一样，
-  而对话里那份看着才像最终版）。
-  **「丢弃草稿」同样要落一条记录（`kind='discard'`，`POST …/draft/discard`），不能只清本地
-  状态。** 那一版整份存在 `kind='draft'` 那条消息的 `payload` 里，`restoreArtifact` 会照它恢复
-  —— 只 `draft.value = null` 的话切走再切回来那一版又在右栏了，用户点过的「丢弃」等于没发生，
-  而两次操作都显示成功。所以 `restoreArtifact` 找的是 draft/directions/**discard** 三种里最后
-  那一条，最后一条是 discard 就什么都不恢复；那次请求失败也必须出声（本地已经清了，界面上
-  看起来是丢掉了）。对话里之前那张产出卡片要置灰并明说点不开：留着「查看 →」的话点了什么都
-  不发生，读起来像界面坏了。话术里「没有进知识库」这半句是硬的 —— 用户分不清「丢弃草稿」和
-  「删掉这一步的结论」，不说的话他以为刚定稿的东西也一起没了。
-  规则里那两条豁免是硬的 —— 客户一句「简单点」不能执行成少写一节（少一节的正文读起来一样
-  完整），模型自己在对话里的推测不能升格成「客户确认过」（那一句和有依据的一模一样）。
-- **进入一个阶段会自动跑一次分析（`ConsultProject.vue:autoRun`），判据是
-  `unlocked && !hasEntry && round === 0`。** 少了后两条的话每次点回这一步都重跑一次：白扣
-  一次额度，还把用户正在右栏改的那版草稿顶掉，两件事都不报错。`stale`（上游变了建议重跑）
-  故意不自动跑 —— 那一步已经有定稿，自动覆盖等于把他确认过的结论换成一版没人看过的。
-  连带三条：**① `makeDraft` / `loadDirections` 必须在发请求前把 stageKey 取好，返回时
-  `key !== selectedKey` 就只收下 stages、不往界面上挂** —— 原来取的是返回时的
-  `selected.key`，切走之后那份草稿会挂在**新**阶段名下，定稿就存到别的阶段去了，两步都不报错
-  （自动分析让这种切换从边缘情况变成常态）；丢掉的那一版要出声说「额度已经花了，切回去能看到」。
-  **② `restoreArtifact` 要连 `kind='draft'` 一起从对话记录恢复**（原来只恢复方向卡）：
-  自动出过草稿再切走切回来，`round` 已经是 1 不会再自动跑，对话里挂着「已生成草稿」而右栏是
-  空的 —— 那一步看起来就是卡死了，唯一出路是再花一次额度。**③ 自动跑必须排在 `loadMessages`
-  之后**（顺序反了那句 `messages.value = res.messages` 会把刚生成的草稿气泡抹掉），
-  且 loading 文案要和用户手点的区分开：他没点任何按钮，只写「思考中」的话他会以为卡住了，
-  接着去点「重新生成草稿」，同一步花两次额度。
-- **分析结果以库里那一行为准，不只等那次 POST 的返回**（`ConsultProject.vue:startRunPoll`，
-  跑的期间每 8 秒拉一次 `GET …/messages`）。那个返回收不到的情况很平常 —— 页面热更新过、
-  网络断一下、服务重启、手机息屏、代理掐长连接 —— 而服务端那一版**已经写进对话记录了**
-  （`appendMessage` 在 `res.json` 之前），于是界面上剩一个永远转的圈圈加一排灰按钮，
-  用户只能靠刷新才发现「其实早就出来了」，在那之前他会以为额度白花、再点一次生成。
-  四条都是必需的：捞到之后**先等 3 秒**再认（库里那行是 `res.json` 前一刻写的，正常的
-  一次分析也会被撞上 —— 不等的话每次都要多弹一句「这一版是捞回来的」，弹多了就没人当真）；
-  收下之后按 **message id 去重**（`adopted()`，晚到的那次返回会把同一张卡片再贴一遍）；
-  状态位**最后**才清（清早了那条 `watch(runningStage)` 会在这一版挂上去之前就去补跑当前步，
-  本地 `round` 还是 0，于是同一步再花一次额度）；等满 4 分钟没结果就**出声并把界面解开**
-  （一直转下去的话「还在跑」和「早就断了」在屏幕上是同一个样子）。
-- **这一步正在分析时，这一步的对话和右栏按钮全部停掉**（`stageBusy`）。不是防并发（各是
-  一次独立调用，技术上都跑得通），是因为这段时间里每个操作都静默地不生效：这时候说的话
-  进不了正在写的那一版（`discussionBlock` 在请求发出那一刻就取完了），而回来的草稿读起来
-  完全正常，用户以为自己那句被听进去了；这时候点「完成定稿」定的是**旧**那一版，紧接着新的
-  一版盖进右栏，看起来像那次定稿没保存上。停掉必须**连理由一起写在界面上** —— 只把按钮和
-  输入框变灰的话读起来是「界面坏了」，他会刷新（正在跑的那一版就此变成孤儿）。另外
-  「重新生成草稿」在右栏已有草稿时要先确认：新的一版是整个盖进去的，他改过的部分没有任何
-  地方留着（草稿不落库），而两次都显示成功。
-- **正文里的表格必须由 `lib/markdown.ts:wrapTables` 套一层 `.md-table` 再交给 CSS 滚。**
-  这一份正文的主体就是表格（竞品对照、痛点优先级矩阵、数据置信度表），而它渲染在 60% 宽的
-  抽屉和更窄的聊天气泡里：没有那层 wrapper，横向溢出的是**容器**（`.drawer-body` 一轴 auto
-  另一轴就跟着 auto），连按钮和标题一起横着滚出可视区；而表格宽度收得住时，列会被挤成
-  一字一行的竖排文字 —— 两种都不报错、表格也在，只是没人读得下去，也就没人去核对里面的数字。
-  `td` 的 `min-width` 和这层 wrapper 是**一对**：少了它表格永远收在 100% 宽里，滚动条永远
-  不出现，那层 wrapper 等于没加。类名两边写死（`markdown.ts` ↔ `ConsultProject.vue` 的
-  `.md :deep(.md-table)`），改一边就静默回到老样子。
+### 数据源分级与资料
 
-## Environment Variables
+- **级别在代码里算，不问模型、也不收前端**（`consult/sourceStore.ts:sourceLevelFor`，见硬规则 3）。路由里原来
+  硬写 `sourceLevel: 'L1'`，于是一条纯靠常识编出来的结论在界面上挂着「L1 联网检索」—— 和真查过的一模一样，
+  而客户会拿它去做决策。前端 `ConsultProject.vue` 里 `levelNow` 是同一口径的第二份（提前告诉用户「现在定稿会
+  是 L3」），两边不一致时界面上看不出来，改一边必须改另一边。
+- **联网结果要用户逐条勾选才进 prompt**（`consult_sources`，079）。不勾的那些是同名公司、几年前的旧闻，全塞
+  进去的话 AI 会照着别人家的数字写这家企业的现状卡，而那一节读起来完全正常。`(project_id,url)` 唯一：同一条
+  来源进两遍 prompt 会被模型当成两处独立印证（「多个来源都提到…」），界面上只是多了一行，所以挡掉几条要报出
+  去。超过 40 条**只拒不截**：截掉后半截的话用户以为 AI 读过他勾的那几条。
+- **没有联网资料时那一段不能省，要明说「这次没联网」**（`sourcesBlock` 空集分支）。省掉的话模型手里只剩客户
+  资料，它会照常识把推测写成「据公开数据」「行业报告显示」—— 读起来和查到的一模一样。同理，搜索不可用时回
+  503 / 检索失败回 502 **都带原文**，绝不回空列表：空列表被读成「网上没有这家公司的资料」，用户接着就按 L3
+  编了。
+
+### 补料问卷
+
+- **0 题必须抛错，空答案必须丢掉**（`consult/intakeService.ts`）。前者因为一份空问卷在界面上和「AI 认为你的
+  资料已经齐了」一模一样，用户于是带着半份资料跑完四看，而四看的结论全部来自那段资料；后者因为「问：X
+  答：（空）」进 prompt 之后会被模型当成「客户确认没有 X」，比缺料更糟。答案由服务端**追加**
+  （`POST /intake/apply`），不让前端回传整份 brief：他那边还开着一个 20000 字的输入框，整段替换就是「谁最后
+  点保存谁赢」，而两次操作都回「已保存」。超上限只拒不截 —— 截掉的正好是刚填的那些答案。
+- **问卷最多 8 题，且这条调用一次给足 240 秒、不重试**（`intakeService.ts` 的 `MAX_QUESTIONS` /
+  `AI_TIMEOUT_MS`）。题数不是排版：这份问卷是发给**客户本人**填的，十四题带 why 带示例他填一半就停，
+  而回来的半份答案在界面上和填满的一模一样，缺的那几题从此不会再问（下一轮会剔掉已答过的、接着问更深的）。
+  超时那半条同样是「看起来正常」的失败：默认 120 秒 + 重试 1 次 = 用户等满 240 秒拿一句失败，
+  而两次断在同一个地方（同样的资料、同样的思维链），额度扣两遍、问卷一个字都没有。
+  `max_tokens` 不动（硬规则 2：那是留给思维链的空间，调小只是把偶发的长思维链变成确定性失败）。
+  另外 `api/consult.ts` 里那句 504 话术要对**所有** consult 端点都成立 —— 原来写着「这一步要写好几张表」，
+  出问卷时那是假的，用户照着去删表格是删不到的。**这条调用也 `noThinking: true`** —— consult 的对话和草稿早就
+  关了，只有它漏着，而现象只是「出问卷要等两三分钟」，日志里一切正常，看起来像模型慢（见硬规则 2 和
+  `GatewayOptions.noThinking` 的实测）。「太慢」的解法是这个开关，不是少出几题、也不是拆成一题一次调用
+  （那是把一次调用变成 N 次，首题快了、填完整份更慢，而登录用户缺省只有 10 次/天）。
+- **选项只能是「类型划分」，绝不能是数字、金额、数量、名单、日期**（`IntakeQuestion.type` / `options`，
+  `MAX_OPTIONS`）。给「客单价多少」配 A/B/C 三个区间的话，客户挑一个最接近的，那个**模型编出来的数字**
+  就以「客户说的」身份进了客户资料（`applyAnswers` 只写「问 X 答 Y」，不记 Y 是选的还是填的），后面十四步
+  全按它推，而它在正文里和客户亲口说的一模一样 —— 这是这条链路上最贵的一种静默失败（同硬规则 3）。所以
+  服务端按 `type` 落闸：`text` 的题**清空** `options`（留着的话将来前端只看 options 非空就渲染成单选），
+  选项不足 2 条**降级成手填而不是丢题**（丢掉那题在界面上和「AI 觉得这件事不用问」一模一样）。
+  「其他（自己填）」和「说不准」是**前端固定补**的两个出口，不让模型给也不占 `options` 名额：靠模型给它会漏，
+  漏掉之后客户只能在几个都不对的选项里挑一个最像的。「说不准」原样写进资料 —— AI 读到它会知道这项没有数据，
+  而留空的那题它会照行业常识补一个，读起来完全正常。
+- **问卷落库（080）之后，「同一轮」和「已经答过的题」都要靠库里那行挡。** 一份七八题的问卷是拿去逐条问客户的，
+  不存的话切个页面就全空了而界面不报错（所以有 `PUT /intake/answers` 逐题暂存，存不上必须出声）。同一
+  `roundId` 补第二遍要 409 —— 同一批答案在资料里出现两份，AI 会把它当成两处独立印证；下一轮出题要剔掉**已经
+  问过并且客户答了**的题（`answeredQuestions`，只算答了的 —— 留空是客户当时答不出来，再问合理），剔重按「去掉
+  所有空白」比，放宽成模糊匹配会把「车场数量」和「车位数量」判成同一题，那题从此再也问不出来。剔完一题不剩时
+  回 409 并说明「没有新问题」，和「问卷没生成」是两句不同的话。出新一轮会删掉上一轮没提交的那行，所以前端点
+  「重出一份」前要确认 —— 用户填了八题跑去问客户，回来手滑一点就没了。
+- **问卷是独立一页（`ConsultIntake.vue`，`/consult/projects/:id/intake`），新建项目一律先过一轮。** 缺料不报错
+  —— 十二步照样出结论，只是那些结论是 AI 照常识补的，读起来和真按资料推的一模一样，所以这道闸门是这个模块唯一
+  防得住它的地方。它不能是工作台右侧抽屉里的一块：抽屉会被 `select()` 在窄屏关掉、也能被用户点 ×，关掉之后主区
+  没有任何痕迹说明「有一份七八题的问卷没填」。**抽屉里那份问卷 UI 已经删掉，不要再加回来** —— 两套问卷 UI 必然
+  漂：那一份当初就少了「全部必填」和逐题暂存，用它填完提交，界面上和在问卷页填完一模一样，而实际进资料的只有他
+  随手填的那两条。工作台现在只有两个入口（左栏那条黄提示、「客户原始资料」下面那一行），后者也是**出下一轮问卷
+  的唯一入口**。连带四条：
+  - **① 自动出题只认 `?auto=1`，而且发请求之前先 `router.replace` 把它去掉** —— 留着的话刷新一次就又出一轮，扣
+    一次额度、把这一轮连已填的答案一起替换掉，而两次都显示成功。
+  - **② 工作台的闸门要落在挑阶段之前 `return`**（`ConsultProject.vue:load`）：落在后面的话他已经进了工作台，
+    对着一份缺料的资料点下「生成」，出来的一版读起来完全正常。
+  - **③ 只挡第一轮（`intakeRounds === 0`）**，后面几轮不挡 —— 客户还没回话的那几天他连自己的项目都打不开。
+  - **④ 失败态（出题 502 / 额度 429）必须留「跳过，直接进工作台」的出口，而那个出口要在 sessionStorage 记一个
+    `consult-intake-skip:<projectId>`**：不记的话点了跳过又被闸门弹回来，两页之间来回跳。跳过之后左栏常挂一条
+    「补料问卷没提交」—— 不挂的话跳过那一下是静默的，而它决定后面每一步结论的质量。同理 `GET /projects` 每行回
+    `intake_pending`，列表上必须显示：那一行的进度数照样在涨，和资料齐全的项目一模一样。
+
+### 十二步的方法论与车道
+
+- **`StageDef.method`（分析操法）和 `deliverables` 是两件事：前者说「按什么顺序推」，后者说「要交出什么」。**
+  只给清单不给操法的后果是**表格填满了但推导是模型自己编的** —— 价值主张三层都在却没做过三问检验、竞品每家写的
+  维度还不一样，而这种正文和照方法论推出来的在屏幕上一模一样，顾问会直接拿去用。所以两条 prompt 的硬规则 0 都是
+  「先照操法推完再写」，且 `GET /stages` 把 `method` 原样回给前端**照原样显示** —— 用户对着它数正文的顺序，是唯一
+  能发现「没照方法论推」的地方。改操法就是改分析质量，不是改文案。
+- **慢车道的每个候选方向各写一份「按输出物清单成节」的正文（`StageDirection.body`）。** 少了它，四问 + 四大成八步
+  交出来的定稿正文**结构完全一样**：定位语 + 三件套三张表，一个字都不提「定位共识书」「价值金字塔三层」「关系生命
+  周期四阶段」—— 正文是 `directionToMarkdown` 在代码里拼的，`deliverables` 从来没进过输出，而那份清单在界面上是显示
+  着的，用户对着它也数不出缺什么（三张表填得满满的）。模型漏给 body 的方向**整张丢掉并点名**（同三件套缺件）：拼出
+  来的卡片照样是一张完整的卡片，点「就用这个」定稿之后这一步就只读了，再也补不回来。每份 400-900 字的区间写在
+  prompt 里而不是靠 `max_tokens` 兜 —— 四份完整正文会撞上接入点 ~300 秒的上限，那时用户等满五分钟拿到一句「上游
+  网关掐掉了」，而额度已经扣了。
+- **`## 0. 方法论速览` 和 `## 写作建议` 是每份正文固定的头尾两节，不在输出物清单里。** 速览要写「这一次照操法哪
+  几条推的」；慢车道那份（`methodBrief`）**模型没给也要留着这一节并写明没给**，不能让它消失 —— 少一节的正文读起来
+  照样完整（三件套都在），而那个方向已经是后面每一步的地基了。写作建议是给内部顾问的组织建议，不是客户话术。
+- **AI 赋能机会存 `consult_entries.ai_opportunities` 这一列（081），不留在 body 里。** 方法论要求各模块只标 1-2 个、
+  最后汇成独立一章「AI 转型机会清单」；埋在 markdown 正文里的话那一章只能把十二份正文整段塞回 prompt 去重新找，而
+  `knowledgeBlock` 刻意不这么干（上下文被表格占满之后模型开始照常识写）—— 结果是那一章漏掉大半个模块，而它读起来
+  是一份完整的清单。超过 2 条 / 单条超 200 字**只拒不截**（手填的第 3 条被悄悄丢掉的话，界面上是「已定稿」而那一章
+  里永远没有它）；老定稿（`'[]'`）在界面上要显示成「这条没标 AI 机会」而不是留空 —— 留空和「这一步确实没有 AI 机会」
+  长得一样。
+- **第二层（内容营销战略）单开一条车道 `plan`，不塞进 fast、也不塞进 slow。** 它走 `/draft` 那条流程（出草稿 → 改 →
+  定稿），但 system prompt 是另一份：fast 那份写着「四看是找事实，不要发挥」，拿它出内容方案的话模型只敢复述上游
+  结论，交出一份没有平台矩阵、没有排期的综述；slow 那份要求每个方向带定位语 + 一句话身份，于是模型会**给内容方案编
+  一句定位语**，和定稿过的那句不一样 —— 两种都读起来完全正常。
+- **`requires` 管解锁和 stale，`contextBodies` 管「哪几条定稿带整份正文进 prompt」（不填 = 跟 requires 一样）。**
+  两件事的答案不一样：内容营销战略必须等品牌屋定稿（解锁），但它要逐格读的是**看用户**那张画像卡（触点偏好 +
+  决策链里的谁付钱/谁使用）和**看竞品**那几张对标卡（对手的渠道与内容打法）—— 为了带上画像卡去往 `requires` 里加
+  `audience` 的话解锁条件跟着变了，不加的话模型手里只有一句话总结，它会**编一份画像和一组平台偏好**（标签、时段、
+  爱看什么都很具体），整份内容方案投在编出来的人身上，而没有一处报错。也因此**不能挂满十二条**（上下文全是表格，
+  客户资料被挤到最后，模型开始照常识写）：`content` 带 `audience/competitor/value/creative`，品牌屋和用户关系图谱降成
+  一句话总结（前者的正文本来就是上游结论的汇总表，后者的分层是运营口径）。第三层（数字化营销战略）沿用 requires
+  （`content/relmap/creative`）：AARRR 五阶段要逐段对上用户关系图谱那张分层表、AIDMA 的 M/A 两段要落到核心沟通创意
+  里那句具体的广告语 —— 只给一句话总结的话模型会自己编一套分层和一句 slogan，而那张表和真按分层写的长得一模一样。
+  取哪几份**只在 `bodyKeys(stage)` 一处算**：出草稿和出方向两条路径各写一份的话，同一步在两条车道下读到的依据不一样。
+- **第二层（内容营销战略）要答的是三句话：谁是目标客户 / 他们在哪 / 怎么让他们看到并记住我们。** 所以它的操法是一条
+  固定顺序的链：① 价值 + 竞品差异（只从价值主张和看竞品里取，不新造）→ ② 购买者和使用者**先判是不是同一个人**
+  （不是就两份画像、两套平台、两套内容分开写 —— 合成一份的后果是内容全讲给用的人听而钱在另一个人手里，B 端和母婴
+  宠物儿童教育最常见，那份画像读起来完全正常）→ ③ 使用场景（每个场景要落到「他这时会搜什么词」，落不到就变不成
+  选题）→ ④ 平台矩阵 + 选题（每个平台写清它自己的用户喜好和内容规则）。**顺序反了就是这一步最大的失败形态**：先挑
+  平台再回头找人，会得到一份「小红书 + 抖音 + 视频号」放到任何品牌上都成立的通用方案，而它读起来最像专业方案。
+  「记住我们」那一句必须复用核心沟通创意里定过的广告语，另起一句的话一份方案里有两个口号，两处各自都通顺。
+  **最后一节是「一个完整的营销策划案例」，它是验收件不是示范文**：前面几节各自都成立却拼不出一个能开工的东西，是这一
+  步最常见的交付失败，而八张表齐全的正文看不出这一点。所以案例里的人群 / 场景 / 平台只能从上面那几节里取（冒出矩阵里
+  没有的平台，那一条和其他条一样通顺而整份方案自相矛盾）、内容标题要写出**那句原文**（写成「围绕痛点写一条」的话清单
+  看着是张完整排期表，实际一个字的交付都没有）、广告语那一格**只能抄不能写** —— 在「案例」里另起一句是最容易发生的那
+  次另起，它读起来像可以自由创作的地方。
+- **第三层（数字化营销战略）= 公域 AIDMA 九步 + 私域 AARRR 五步，而它的前四步「不重写、只引用」。** 品牌价值 / 竞品
+  差异 / 画像 / 购买决策者与使用者 / 使用场景在第二层已经定过了，这一步重推一遍必然得到**第二版画像和第二套人群** ——
+  两章各自都通顺而互相矛盾，客户手上于是有两份不一样的目标客户，没有一处报错。所以第一节是一张「取自哪一步哪一节 +
+  照它用的那句话 + 有没有对不上」的承接确认表，这一步真正新增的只有两件事：**线下触点**（第二层只管线上平台）和
+  **转化与私域机制**。连带四条硬要求：线上触点只能从第二层的平台矩阵里取；线下要具体到点位和时段（「线下渠道」「地推」
+  在表格里看着是填满的，实际等于没写）；创意要写出**那句原文或那个动作**（「做一场事件营销」是品类名不是创意）；每个
+  钩子和促销都要判「会不会伤价格带和定位」（长期打折把品牌打回工具属性，而当期数据是好的，这是最容易被数字掩盖的一次
+  退化）。私域四段逐段对上用户关系图谱的分层表，机制要算得过来 —— 只发不消耗的积分是挂在账上的负债，而它在方案里只是
+  一行权益；裂变必须写防刷与合规（诱导分享在微信生态会被封，方案里不说，执行时才发现）。最后一节同第二层，是**串起来
+  的验收件**：前面几节各自都成立却串不起来（看到之后没有承接、加了企微之后没有下一步）是这一步最常见的交付失败，而十
+  张表齐全的正文看不出这一点。
+- **左栏的分组顺序按 `GET /stages` 返回的顺序推，不写死 `['四看','四问','四大成']`。** 写死那份清单的话新增分组的那
+  几步在界面上**完全不存在**，而解锁、进度数、接口全是对的 —— 用户只会以为方案就到「核心沟通创意」为止。同理
+  `selected.lane === 'fast'` 这种二分判断要写成 `!== 'slow'`（`isDraftLane`）：漏掉 plan 的话那一步一个按钮都没有，
+  像是没做完。
+
+### 阶段内的对话、草稿与生成
+
+- **慢车道动笔之前先出「待定方向」（岔路口，`decisionService.ts` + `POST …/stages/:key/decisions`）：只问取舍，不写
+  正文。** 原来只有「AI 出 2-4 份完整方向，你挑一份」那条路 —— 四份各自都通顺，用户实际是在读四份写好的东西里挑文笔，
+  而那几处取舍（竞品挑哪几家、画像分几类、定位取哪个角色）已经被模型替他定死在正文里了，事后翻正文看不出是哪一处
+  选错的（每一节都在、表格也满）。四条硬要求各挡一种「读起来完全正常」的失败：**岔路口只能来自 `StageDef.method`
+  并写出第几条**（`methodRef` 原样显示 —— 顾问对着操法数得出来它是不是编的；操法里没有的取舍是模型造的，而卡片上
+  它和真的一样）；**每处必须有 `basis`（依据出自哪条定稿/资料哪句话）**，没有的整条丢掉；**每个选项必须有 `cost`
+  （选它放弃什么）**，凑不出两个带代价的选项就丢掉整条 —— 三个没代价的选项等于「都挺好」，随手点一个就是模型替他
+  定了，而一个选项的「岔路口」是通知不是选择；**丢掉的那几处要回 `dropped` 并显示出来**（少一处的卡片和「这一步
+  只有两处要定」一模一样）。缺事实的走 `missing` 不做成选项（做成选项就是让客户猜一个数字，而猜出来的以「他定的」
+  身份进正文）。`points` 空 + `noFork` 有话说 = 真的没有取舍；**两个都空、或者给的几处全被丢掉，一律 502** ——
+  一屏空白读起来就是「这一步不用你定，直接出方案吧」，而这条路存在的全部理由就是别让模型悄悄替他定。
+  它落一条 `kind='decisions'`（`payload` 整份），`restoreArtifact` 必须认它：不认的话切走切回来那几处取舍就没了，
+  右栏空着看起来像这一步什么都没发生，他会直接去点「直接出候选方向」—— 那几处又变成模型定的。**加一种 kind 就要在
+  前端那条 `v-if` 链上加一支**：认不出的 kind 落到 `v-else`，被画成「已生成候选方向」而右栏是空的。
+  不 `incRound`（轮次是「出过几版产出」，把问方向算进去的话界面上的版数比他看过的多，他会以为有一版没显示出来），
+  也要登记进 `sdkLimits.ts:AI_SPEND_ROUTES`（漏一条那条路对第三方就是免费的）。
+- **拍板落一条 `kind='decided'`（`POST …/decisions/apply`，不花额度），而慢车道的 `/draft` 没有它就 400 ——
+  那条记录是这一步正文的地基。** 不拦的话 `/draft` 在慢车道上就是「AI 替他把取舍定了再写一份完整正文」，
+  和照他定的方向写出来的一模一样。四道闸各挡一种读起来完全正常的失败：**必须对着最新那一条 `decisions` 拍板**
+  （`sheetMessageId` 不符回 409 —— 清单 id 是 `d1..dN` 按顺序生成的，重出一版之后同一个 `d2` 已经是另一个问题，
+  存下来的是「问题 A + 答案 B」）；**每一处都要有答案**（少一处 400 并点名，留空的那几处模型写正文时会自己定）；
+  **答案只能是摆出来的选项之一**（自由发挥的答案配不上任何 `cost`，进正文之后「放弃了什么」那段就是它编的；
+  要补充走 `note`，>300 字只拒不截）；**`noFork` 那种照样要提交一次**，落一条 `picks: []` 的记录 —— 不然
+  「没有取舍」和「还没拍板」在服务端分不开。每一处**原样存** `{question, cost, …}` 不只存 id（同上，id 会漂），
+  而 `cost` 要跟着进 prompt：正文只会讲选中那条路的好处，「放弃了什么」是这一步唯一不可逆的信息。
+  慢车道那份 system prompt 是**另一份**（`slowSystem`，不是 `fastSystem`）：它要求照他定的写、不许「或者也可以…」
+  （一份方案两个地基，两段各自都通顺），放弃的东西要落到边界那几节，冲突时照他定的写并在 `rationale` 里点出来，
+  且 `## 0. 方法论速览` 必须写明这 N 处是顾问定的、选了哪条、放弃了什么 —— 那是整份方案里唯一能看出地基是谁定的
+  地方。拍板之后又重出一版岔路口清单（`restaked`）时 `/draft` 回 409：照旧那批选择写出来的正文，地基是他没看过的
+  那几处取舍。前端两处配套：`restoreArtifact` 要认 `decided`（右栏空着的话他唯一看得见的入口是「开始分析」，
+  点下去重问一遍、已定的那批作废、额度再花一次），并且**慢车道界面上只剩这一个入口** ——
+  「AI 直接出候选方向」（`/directions`）那个按钮已经去掉，`loadDirections` 留着只为恢复老项目里已经出过的方向卡，
+  别给它接回按钮：它不读拍板的那几条，出来的四份各自都通顺，挑的时候看不出 AI 替他定过什么。
+- **阶段内对话改不了任何东西，它唯一的作用是进下一次「重出」的 prompt**（`draftService.discussionBlock`，本步最近
+  16 条）。以前 `/draft` / `/directions` 压根不读对话：用户在这一步聊二十句再点「让 AI 重出一版」，出来的东西和没聊
+  过时是同一个分布，而它读起来完全正常、界面上还写着「聊定了再去上面出草稿」—— 他会以为自己在调教 AI。所以两件事
+  必须成对：prompt 里带上那几条，**并且把带了几条回给界面**（`discussion:{used,dropped}`，`used=0` 也要出声）——
+  带上和没带上出来的草稿一模一样，不给这个数的话「聊天有没有用」永远只能靠感觉。
+- **只带 `kind='text'` 的进 prompt。** 方向卡 / 上一版草稿那两种气泡是模型自己的输出，带回去它会照抄上一版（两版都
+  读得通，用户只会以为自己没说清），而且那是整段正文，带上就把客户资料挤到上下文末尾。`discussionRule` 和这一段
+  **同时出现、同时消失**（同 tender 的 `relevanceRule`）：没聊过却留着那条规则，模型会顺着它编一段共识。规则里那
+  两条豁免是硬的 —— 客户一句「简单点」不能执行成少写一节（少一节的正文读起来一样完整），模型自己在对话里的推测不能
+  升格成「客户确认过」（那一句和有依据的一模一样）。
+- **定稿也在对话里留一条痕（`kind='entry'`，`chatService.entryToText`），但它和方向卡/草稿一样不进 prompt。** 不留痕
+  的话这一步的对话永远以「已生成草稿」那张卡片收尾，过两天回来看不出最终定的是哪一版；而把它算成 `text` 带回 prompt
+  的话，同一段结论会以「客户/顾问说过的话」的身份再出现一遍 —— 模型把它当成两处独立印证。正文不抄进那条消息（重新
+  定稿之后两份会不一样，而对话里那份看着才像最终版）。
+- **「丢弃草稿」同样要落一条记录（`kind='discard'`，`POST …/draft/discard`），不能只清本地状态。** 那一版整份存在
+  `kind='draft'` 那条消息的 `payload` 里，`restoreArtifact` 会照它恢复 —— 只 `draft.value = null` 的话切走再切回来那
+  一版又在右栏了，用户点过的「丢弃」等于没发生，而两次操作都显示成功。所以 `restoreArtifact` 找的是
+  draft/directions/**discard** 三种里最后那一条，最后一条是 discard 就什么都不恢复；那次请求失败也必须出声（本地已经
+  清了，界面上看起来是丢掉了）。对话里之前那张产出卡片要置灰并明说点不开：留着「查看 →」的话点了什么都不发生，读起来
+  像界面坏了。话术里「没有进知识库」这半句是硬的 —— 用户分不清「丢弃草稿」和「删掉这一步的结论」。
+- **进入一个阶段**不再**自动跑分析，改成对话末尾一个显眼按钮（`ConsultProject.vue:showRunCta`）。** 原来是
+  `autoRun`：一进这一步就花掉一次额度出一版，而那一下发生在用户还没说一句话之前 —— 他进来往往正是想先交代两句
+  （「这家的重点是加盟商，不是终端」），而自动跑出来的那一版读起来完全正常，所以他不会重出（要再花一次额度），
+  那句交代就永远没进过任何 prompt，整个 `discussionBlock` 等于白做。按钮的位置是承重的：**跟在对话末尾**而不是
+  钉在顶上的介绍卡里 —— 先聊几句再点是这次改动的全部目的，按钮跟着对话往下走，聊到哪儿它就在哪儿。还没产出时把
+  输入条上那两个小按钮（重新生成草稿 / 生成新方向）收起来：两个入口并排而其中一个写着「重新」，读起来像已经生成
+  过一版了。连带两条仍然成立：
+  - **① `makeDraft` / `loadDirections` 必须在发请求前把 stageKey 取好，返回时 `key !== selectedKey` 就只收下 stages、
+    不往界面上挂** —— 原来取的是返回时的 `selected.key`，切走之后那份草稿会挂在**新**阶段名下，定稿就存到别的阶段去
+    了，两步都不报错（这一步要跑几分钟，中途切去看别的阶段是常事）；丢掉的那一版要出声说「额度已经花了，切回去能看到」。
+  - **② `restoreArtifact` 要连 `kind='draft'` 一起从对话记录恢复**（原来只恢复方向卡）：出过草稿再切走切回来，对话里
+    挂着「已生成草稿」而右栏是空的 —— 那一步看起来就是卡死了，唯一出路是再花一次额度。
+- **慢车道「采纳此方向」= 直接定稿，没有第二道确认**（`pickDirection` 末尾 `await saveDraft()`）。原来那一步只是把方向
+  摊进右栏草稿编辑器、再点一次「完成定稿」才落库，中间什么都没多问；而右栏那一版**不落库**，切走或刷新之后
+  `restoreArtifact` 只能从方向卡那条记录恢复，而那条记录里没有「他选了哪一个」—— 恢复出来的是四张卡片重新让他挑一遍，
+  看起来就像他那次采纳压根没发生。所以确认不是删掉了，是**写在按钮和卡片上方那句话里**（「直接定稿，这一步随即锁定、
+  只读，也没有重跑入口」）：定稿不可逆，藏着这件事比多点一次更糟。定稿失败时 `draft` 留在右栏（`saveDraft` 只在成功
+  那条路上清），他能在那儿重试一次 —— `pickDirection` 因此不能吞掉那个错。
+- **分析结果以库里那一行为准，不只等那次 POST 的返回**（`ConsultProject.vue:startRunPoll`，跑的期间每 8 秒拉一次
+  `GET …/messages`）。那个返回收不到的情况很平常 —— 页面热更新过、网络断一下、服务重启、手机息屏、代理掐长连接 ——
+  而服务端那一版**已经写进对话记录了**（`appendMessage` 在 `res.json` 之前），于是界面上剩一个永远转的圈圈加一排灰
+  按钮，用户只能靠刷新才发现「其实早就出来了」，在那之前他会以为额度白花、再点一次生成。四条都是必需的：捞到之后
+  **先等 3 秒**再认（库里那行是 `res.json` 前一刻写的，正常的一次分析也会被撞上 —— 不等的话每次都要多弹一句「这一版
+  是捞回来的」，弹多了就没人当真）；收下之后按 **message id 去重**（`adopted()`，晚到的那次返回会把同一张卡片再贴一
+  遍）；状态位**最后**才清（清早了那条 `watch(runningStage)` 会在这一版挂上去之前就去补跑当前步，本地 `round` 还是
+  0，于是同一步再花一次额度）；等满 4 分钟没结果就**出声并把界面解开**（一直转下去的话「还在跑」和「早就断了」在屏幕
+  上是同一个样子）。
+- **这一步正在分析时，这一步的对话和右栏按钮全部停掉**（`stageBusy`）。不是防并发（各是一次独立调用，技术上都跑得
+  通），是因为这段时间里每个操作都静默地不生效：这时候说的话进不了正在写的那一版（`discussionBlock` 在请求发出那一刻
+  就取完了），而回来的草稿读起来完全正常，用户以为自己那句被听进去了；这时候点「完成定稿」定的是**旧**那一版，紧接着
+  新的一版盖进右栏，看起来像那次定稿没保存上。停掉必须**连理由一起写在界面上** —— 只把按钮和输入框变灰的话读起来是
+  「界面坏了」，他会刷新（正在跑的那一版就此变成孤儿）。另外「重新生成草稿」在右栏已有草稿时要先确认：新的一版是整个
+  盖进去的，他改过的部分没有任何地方留着（草稿不落库），而两次都显示成功。
+- **正文里的表格必须由 `lib/markdown.ts:wrapTables` 套一层 `.md-table` 再交给 CSS 滚。** 这一份正文的主体就是表格
+  （竞品对照、痛点优先级矩阵、数据置信度表），而它渲染在 60% 宽的抽屉和更窄的聊天气泡里：没有那层 wrapper，横向溢出
+  的是**容器**（`.drawer-body` 一轴 auto 另一轴就跟着 auto），连按钮和标题一起横着滚出可视区；而表格宽度收得住时，
+  列会被挤成一字一行的竖排文字 —— 两种都不报错、表格也在，只是没人读得下去，也就没人去核对里面的数字。`td` 的
+  `min-width` 和这层 wrapper 是**一对**：少了它表格永远收在 100% 宽里，滚动条永远不出现，那层 wrapper 等于没加。
+  类名两边写死（`markdown.ts` ↔ `ConsultProject.vue` 的 `.md :deep(.md-table)`），改一边就静默回到老样子。
+- **渲染前要把表格分隔行的格数补成表头的格数（`markdown.ts:fixTableDelimiters`）。** GFM 要求两者严格相等，**差一格
+  整张表就不是表** —— marked 当普通段落渲染，十几行七八列的内容变成一大片竖线（实测触点地图那张：表头 7 格、模型给了
+  8 个 `---`，而同一份正文里下一张表是好的）。这是这条链路上唯一一种「一个字都没丢、但没人读得下去」的失败：不报错、
+  不缺节，而顾问不会去核一片竖线里的数字。靠 prompt 让模型数对格数是数不对的，所以在渲染前修，且**只修分隔行**（数据
+  行多给少给 GFM 自己会截断补空）；那一行必须自带 `|` 才动它，否则普通的 `---` 分割线会被当成表格。
+
+### 导出方案（`reportService.ts`）
+
+- **导出只做合并，不调 AI**（`GET /projects/:id/report` → `{filename, markdown, stale, noBody, chapters}`，前端自己存
+  文件），章节顺序**只能来自 `STAGES`** 而不是定稿时间 —— 按定稿顺序拼出来的方案照样每章都完整，只是「四大成」跑到
+  「四看」前面去了。**少任何一步就 400 并点名缺哪几步**（`missingStages`）：半份方案在屏幕上和完整的一模一样（每章
+  都有结论、有表格、有置信度），而它是要发给客户的东西，静默导出等于把「还没做完」变成一份看起来做完了的交付物。
+- **`stale` / `noBody` 要写进 md 正文（开头汇总 + 对应章节各挂一句），不是只回给接口。** 过期那几章是上游被改之前定
+  的、和后面互相矛盾而两章各自都通顺；`noBody` 是 078 之前的老定稿，少了那几张表的章节读起来仍然完整。只回接口的话
+  用户下载完就再也看不到了，而这份 md 会被直接转出去。前端那次下载（`createObjectURL` + `a.click()`）失败也必须走
+  错误横幅：静默失败时按钮点下去什么都不发生，读起来像功能坏了。
+- **按钮在全定稿之前是灰的，而不是藏起来的**，并写出还差几步 —— 藏起来的话用户既不知道有这个功能，也不知道差哪几步。
+
+### 对外接入：第三方纯前端 iframe 嵌入（084）
+
+- **scope 短 token 的端点闸门在 `auth/scopeGuard.ts`，全局挂、默认拒绝。** 它原来只挂在
+  `tenderRouter` 里面（`tenderSdkGuard`），于是一把写在第三方页面 JS 里的 `tender:read` 短 token
+  在 `/api/tender` 之外**畅通无阻**：以绑定账号的身份调 `/api/ai/chat`、`/api/xhs/*`、
+  `/api/consult/*`、`/api/feishu-assistant/*`（改别人的飞书应用绑定），每一处都返回 200，账单和
+  数据都记在那个账号上，后台看不出这些请求来自一把公开的 pk。加一条 scope 必须在那张表里登记它
+  能碰的端点（带 method —— 只按路径放行的话同一个 URL 上的写端点跟着开），忘了登记是 403 而不是
+  放行整个平台。`consult:embed` 只放行 `stages` 和 `projects` 两棵子树：写成 `^/api/consult/`
+  就是把发 key 的后台接口一起开给了那把公开 pk。
+- **换 token 必须由第三方页面自己发，不能由 iframe 里的页面发。** iframe 里发出的请求
+  Origin/Referer 是**我们自己的**域名，那道白名单于是对每个 pk 都成立 —— 白名单看着配了，实际
+  任何域名都能用。所以只有 `POST /api/consult/sdk/token` 这一下需要 CORS（工作台跑起来之后它的
+  请求是同源的）。
+- **`external_uid` 由第三方页面传、签进 JWT，业务侧只从签名过的 token 里取。** 收请求参数的话改
+  一个 query 就能读到同一把 key 下别人的项目，而返回的是一列正常的项目。它**必填、不给缺省值**：
+  默认成空串 = 那个接入方所有终端用户共用一个归属键，A 客户的品牌资料出现在 B 客户的列表里。
+  但纯前端下它**不可信**，只是展示隔离不是安全边界 —— 这句必须同时写在文档页上，否则接入方会拿
+  它装真客户的品牌资料。
+- **pk 的公共逻辑（Origin 归一化 / 白名单 / 换取限流 / CORS 回写）只有 `core/sdkKeys.ts` 一份**，
+  tender 和 consult 两条 SDK 共用。各写一份的话归一化会漂（一边去尾斜杠一边没去），后台两处显示
+  的白名单一模一样，而同一个 Origin 在一个模块里放行、在另一个模块里 403。
+- **`allowedOrigins` 不许为空。** 空清单在 `originAllowed` 里是「谁都不放行」—— 接入方拿到一把
+  怎么试都 403 的 key，而后台那一行看起来是建好了的。
+- **项目的归属键是三列 `(user_id, sdk_pk, external_uid)`，不是 `user_id`（085）。** 少了后两列，
+  同一把 pk 下所有终端用户共用一个工作台（A 客户的品牌资料出现在 B 客户的列表里），而绑定账号
+  自己在网页上也会看到第三方建的全部项目 —— 两边都只是「一列正常的项目」。SQL 一律
+  `col IS ?`（`projectStore.ts:OWNER_SQL`）：`= NULL` 在 SQLite 里永远不成立，网页登录的用户
+  （两列都是 NULL）会看到一个空列表，而接口 200。`ProjectOwner` 是**必填参数**而不是可选参数，
+  就是为了让漏改的调用点编译不过 —— 漏一处的后果是那一处读的是别人的租户。
+- **每把 pk 有自己的天花板，而且缺省就有（086，`services/consult/sdkLimits.ts`）。** 和
+  `ai_app_quota` 的「没配就不限」相反：绑定账号开了专属渠道时绕过 `ai_quota`，「不限」等于拿他
+  自己那把 key 无上限烧真钱，而每次返回的都是一份正常的草稿。`0` 是合法值（冻住这把 key），所以
+  取值不能写 `Number(x) || 缺省`。**花钱的端点写在 `AI_SPEND_ROUTES` 一张表里，漏一条那条路就是
+  免费的**（`consultSdkLimits.test.ts` 逐条守着）；**先扣再放行** —— 事后扣的话同时打进来的一批
+  请求读到同一个 used，上限形同不存在。两种 429 各带 `code` 和真实数字（`sdk_project_cap` /
+  `sdk_ai_quota`）：合成一句「操作失败」的话接入方会一路重试，每次重试都可能是一次真实调用。
+  停用/删 key 在这里也判一次（不然管理员点了停用，那把已签出去的短 token 还能用一刻钟）；后台
+  列表必须同屏显示 `ai_used_today` / `projects` —— 只显示上限的话被 429 挡住的接入方在后台看着
+  完全正常。
+- **`/consult*` 的响应不发 `X-Frame-Options`，改用 CSP `frame-ancestors`（名单 = 所有启用中的 pk
+  的域名之和）。** `X-Frame-Options` 只有 DENY/SAMEORIGIN（`ALLOW-FROM` 早废弃），留着 DENY 的
+  后果不是报错，是第三方页面上一块白 + 控制台一行 CSP 警告，而我们这边每个接口都 200。名单是
+  **并集**而不是按 pk 算：只有 iframe 那第一个文档请求带得上 pk，SPA 内跳和手动刷新都不带，按 pk
+  算的话刷新一下整个 frame 被拦。没有启用的 key 时**照旧 DENY**（这不是顺便开着的能力），发/停
+  用/删 key 后 `invalidateFrameAncestors()` 立刻生效。`consultEmbedHeaders.test.ts` 守两个方向。
+- **嵌入模式的短 token 只放在内存里（`client/src/lib/embed.ts`），绝不 `setToken()`。** iframe 和
+  我们的站点同源、共用一份 localStorage，写进去会盖掉用户自己的登录态 —— 他在另一个标签页里突然
+  变成一个只能碰 /consult 的账号，界面上就是「莫名其妙被降权了」。「是不是嵌入模式」记在
+  sessionStorage（按标签页 + 按源），因为刷新 iframe 之后内存里那把没了，只有这个标记能让路由
+  守卫**重新握手**而不是在别人的页面里弹出我们的登录框；同理 `api.ts` 遇到 401 时在嵌入模式下是
+  「要一把新的 + 重放一次」，要不到就返回一个说得清成因的 401，绝不开登录框。
+- **换 token 失败必须由宿主 postMessage 回一条带原文的 `{type:'token', token:null, error}`。**
+  不回的话 iframe 干等 10 秒超时，然后显示一句泛泛的「没拿到凭证」，而真实成因（域名白名单没配 /
+  key 停用 / 换取限流）三种解法完全不同 —— 接入方得去翻宿主页面的控制台才知道是哪一种。
+- **SDK 产物是**第二次** lib 构建（`sdk/vite.consult.config.ts`），且 `emptyOutDir: false`。**
+  UMD 不支持多入口，而清 dist 会让这次构建抹掉上一次的 `tender-sdk.*`，两次都打印成功 ——
+  线上那些 `<script src=".../tender-sdk.umd.cjs">` 从此 404。
+- **反代那一层能把这套头全部作废，而且不报错**（RELEASE.md 六）：Nginx 里一句
+  `add_header X-Frame-Options DENY;` 会盖在 `/consult*` 上（浏览器按 DENY 拦掉整个 frame）；
+  Nginx 直接发 `client/dist`（方案 B）时 `frame-ancestors` 压根不存在，所以 `/consult` 必须
+  单独 `proxy_pass` 给 Node —— 那个名单是按「启用中的 pk」动态算的，Nginx 算不出来。两种都
+  只表现成第三方页面上一块白 + 一行控制台警告，我们这边每个接口都 200。
+- **`/sdk` 静态挂载要给 `.cjs` 显式发 `application/javascript`**（两条 SDK 共用这个坑）：
+  express.static 认不出这个后缀、回 `application/octet-stream`，而我们全局发着
+  `X-Content-Type-Options: nosniff`，于是浏览器**拒绝执行**那个 UMD 包 ——
+  `<script src>` 是 200、文件内容也是对的，控制台里只有一句 MIME 警告加
+  `ConsultSDK is not defined`，读起来像 SDK 没构建出来。
+- **接入方能直接打开的样例页是 `sdk/public/consult-demo.html`**（跟着两次 lib 构建复制进
+  `dist`，走公开的 `/sdk` 静态挂载，所以线上是 `<平台域名>/sdk/consult-demo.html`）。它是
+  「假的第三方站点」外壳 + 那几行 `mountConsult`，`baseUrl` 是页面上一个输入框（本机开发要
+  填 Vite 那个 5173，填成 3001 会取到上一次编译的前端）。后台那行 key 的「接入代码」按钮给
+  的是同一段。**不要再开第二份样例**：两份必然漂，而漂掉的通常正是「在宿主页面换 token」
+  这一条 —— 抄错的那份跑起来一切正常，白名单等于没配。
+
+## 环境变量
 
 ```
 PORT=3001
 JWT_SECRET=your-random-secret-here
+CONFIG_ENCRYPTION_KEY=...      # 库里第三方密钥用它做 AES-GCM；没配时别轮换 JWT_SECRET
 ```
 
-Platform API key is stored in the database `system_config` table, NOT in .env.
+平台 API key 存库里的 `system_config` 表，不在 .env。

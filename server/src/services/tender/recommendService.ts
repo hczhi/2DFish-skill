@@ -344,9 +344,13 @@ ${feedbackSection}
   // 额度不足、上游报错一律**往外抛**（原来这里 catch 成 reason='每日AI额度已用完'
   // 的 50 分行，于是外层那句「⚠️ AI额度已用完，评分中止」是死代码，
   // 而额度打满的那一刻起，剩下几百条标讯会被逐条写成编出来的 50 分且永不重评）。
+  // 关思维链（见 GatewayOptions.noThinking）。评分是逐条跑的：一轮几十条，
+  // 每条多花三十秒思维链就是管理员盯着进度条等半小时。而 MAX_SCORE_TOKENS 那 4000
+  // 本来是给 analysis/strategy 那几百字的，思维链一占就断在半句话上 —— 那正是
+  // 下面 jsonFailMessage 要报的那种失败。
   const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
     () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: MAX_SCORE_TOKENS }),
-    { userId, source: 'tender', operation: 'score-business' }
+    { userId, source: 'tender', operation: 'score-business', noThinking: true }
   );
 
   if (!parsed) {

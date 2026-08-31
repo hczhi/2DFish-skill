@@ -29,6 +29,9 @@ interface Entry {
   body: string
   rationale: string
   evidence: string
+  confidence: string
+  /** JSON 数组字符串（服务端那一列原样回来，见 projectStore.parseEntryAiOpportunities） */
+  ai_opportunities: string
   source_level: string
   stale: number
   version: number
@@ -68,11 +71,53 @@ interface Direction {
 interface Msg {
   id: string
   role: 'user' | 'assistant'
-  /** 'entry' = 定稿那一刻留在对话里的记录（服务端 chatService.entryToText 生成） */
-  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard'
+  /**
+   * 'entry' = 定稿那一刻留在对话里的记录（服务端 chatService.entryToText 生成）；
+   * 'decisions' = 慢车道动笔前那一屏岔路口；'decided' = 他在那几处岔路口上拍的板
+   * （**它是这一步正文的地基**，所以恢复它比恢复岔路口清单更要紧）。
+   *
+   * 加一种 kind 必须同时在下面那条 `v-if` 链上加一条分支：认不出的 kind 会落到最后那个
+   * `v-else`，被画成一张写着「已生成候选方向」的卡片，点开右栏是空的 —— 读起来像那一版丢了。
+   */
+  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided'
   content: string
   payload: string
   created_at: string
+}
+
+/** 一处要顾问拍板的取舍（服务端 decisionService.DecisionPoint）。 */
+interface DecisionPoint {
+  id: string
+  question: string
+  methodRef: string
+  basis: string
+  options: Array<{ label: string; detail: string; cost: string }>
+  recommend: string
+}
+interface DecisionSheet {
+  points: DecisionPoint[]
+  noFork: string
+  missing: string[]
+  /** 服务端丢掉的那几处（缺依据 / 凑不出带代价的选项）。**必须显示** ——
+   *  少一处的卡片和「这一步只有两处要定」在屏幕上一模一样，而那一处最后是 AI 自己定的。 */
+  dropped: string[]
+  truncated: boolean
+}
+/** 他在那几处岔路口上定的答案（服务端 decisionService.DecidedSheet）。 */
+interface DecidedSheet {
+  picks: Array<{
+    id: string
+    question: string
+    methodRef: string
+    label: string
+    detail: string
+    /** 选它放弃的东西。**必须显示** —— 那是这一步唯一不可逆的信息，
+     *  而正文只会讲选中那条路的好处。 */
+    cost: string
+    note: string
+  }>
+  noFork: string
+  sheetMessageId: string
 }
 
 const selectedKey = ref<string>('')
@@ -90,28 +135,37 @@ const directions = ref<Direction[] | null>(null)
 const directionsStageKey = ref('')
 const directionsVerdict = ref('')
 const loadingDirections = ref(false)
+const decisions = ref<DecisionSheet | null>(null)
+const decisionsStageKey = ref('')
+const loadingDecisions = ref(false)
+/**
+ * 这几个选择对的是哪一条 `kind='decisions'` 消息。**必须跟着一起发** ——
+ * 清单里的 id 是按顺序生成的（d1..dN），重出一版之后同一个 `d2` 已经是另一个问题，
+ * 服务端靠这个 id 才拒得掉「问题 A 配答案 B」那条读起来完全正常的记录。
+ */
+const decisionsMsgId = ref('')
+/** 每处岔路口选中的选项名（id → label）+ 他自己补的一句（id → note）。 */
+const picks = ref<Record<string, string>>({})
+const pickNotes = ref<Record<string, string>>({})
+const applying = ref(false)
+/** 已经拍过板的那份（右栏那块只读回顾 + 「按这几条出正文」的入口）。 */
+const decided = ref<DecidedSheet | null>(null)
+const decidedStageKey = ref('')
 const draft = ref<Draft | null>(null)
 const draftStageKey = ref('')
 const drafting = ref(false)
 const draftTruncated = ref(false)
 const draftDiscussion = ref<{ used: number; dropped: number } | null>(null)
-/** 正在自动分析的阶段 key（空 = 这次是用户自己点的）。只用来换一句文案：
-    用户没点任何按钮，界面上不说清「这是自动开始的、在花额度」的话，
-    他会以为页面卡住了，接着去点「重新生成草稿」，于是同一步花两次额度。 */
-const autoStage = ref('')
 /**
- * 正在被分析的**那一步**的 key（手点的和自动跑的都记）。
+ * 正在被分析的**那一步**的 key。
  *
  * `drafting` / `loadingDirections` 是全局布尔，拿它当「转圈圈」的条件的话：在「看行业」
- * 自动分析的中途切到「看自己」，「看自己」的对话里也挂着一句「正在自动分析这一步」——
+ * 分析的中途切到「看自己」，「看自己」的对话里也挂着一句「正在分析这一步」——
  * 而那一步压根没在跑，额度花在别的步上，出来的草稿也会出现在别的步里。用户会一直等，
  * 等到的是另一步的结果，两边都不报错。所以气泡只在 `runningStage === 当前步` 时出现，
  * 别的步在跑时改成明说「哪一步在跑」（顺便解释按钮为什么是灰的）。
  */
 const runningStage = ref('')
-/** 这次会话里已经自动跑过（或跑失败过）的步骤。失败也算 —— 不记的话
-    「跑完补跑当前步」那条 watch 会对一个稳定失败的步骤无限重试，每次都扣额度。 */
-const autoTried = new Set<string>()
 const draftPreview = ref(true)
 const savingEntry = ref(false)
 const staledNote = ref<string[]>([])
@@ -120,7 +174,9 @@ const savingBrief = ref(false)
 const briefSaved = ref(false)
 const workspaceTab = ref<'task' | 'kb'>('task')
 const workspaceOpen = ref(false) // Drawer state
-const sidebarOpen = ref(true) // Sidebar state
+// 左栏缺省收起：正文（尤其定稿后那份满是表格的报告）比阶段清单值钱，展开的入口
+// 一直挂在左上角（`btn-global-sidebar-toggle`）。
+const sidebarOpen = ref(false) // Sidebar state
 
 watch(messages, () => {
   nextTick(() => {
@@ -219,12 +275,137 @@ const stageBusy = computed(() => !!runningStage.value && runningStage.value === 
 /** 有任何一步在跑。出草稿/出方向的按钮按这个禁用，不按各自那个全局布尔：
     A 步在跑 directions 时 `drafting` 是 false，于是在 B 步还能点出第二个并发的分析，
     先结束的那个会把 `runningStage` 清掉 —— 另一步的转圈圈就此消失而它还在花额度。 */
-const anyRunning = computed(() => !!runningStage.value || drafting.value || loadingDirections.value)
+const anyRunning = computed(
+  () => !!runningStage.value || drafting.value || loadingDirections.value || loadingDecisions.value || applying.value
+)
+
+/**
+ * `methodRef`（例「操法 3」）指的那条操法的原文。
+ *
+ * **光摆一个序号等于没摆**：「操法 3」在卡片上什么都没说，要知道它是什么得滚回顶上那个
+ * 折叠块去数第三条 —— 没人会数，于是这个序号唯一的作用（顾问核出「这个岔路口是模型自己
+ * 造的」，操法里压根没有这一条）就落空了，而编出来的 `methodRef` 和真的长得一模一样。
+ * 对不上号（模型给的是一句话而不是序号、或者序号超出范围）就返回空串，卡片上只留原样的
+ * 那个标签 —— 悄悄换成第 1 条的话，那才是真的在替模型圆谎。
+ */
+function methodText(ref: string): string {
+  const n = Number((ref.match(/\d+/) || [])[0])
+  const list = selected.value?.method || []
+  if (!(n >= 1 && n <= list.length)) return ''
+  return list[n - 1].replace(/\*\*/g, '')
+}
+
+/**
+ * 标签上的那句话。**要说出界面上真实存在的那个东西的名字**：模型给的是「操法 2」，
+ * 而「操法」这个词在整个界面上一次都没出现过（顶上那个折叠块里那份清单叫「💡 该怎么想」）——
+ * 于是标签指向一个用户找不到的地方，他只能跳过它，那这个岔路口是照方法论推的还是模型
+ * 顺口编的就再没人核了（编出来的那种和真的长得一模一样）。所以这里把序号翻成
+ * 「出自「该怎么想」第 N 条」。
+ *
+ * 号对不上时**原样显示模型给的那串字**（不翻译、不改成第 1 条）：那正是「这条是编的」
+ * 的信号，翻得漂亮一点就是替它圆谎。
+ */
+function methodLabel(ref: string): string {
+  if (!methodText(ref)) return ref
+  const n = Number((ref.match(/\d+/) || [])[0])
+  return `出自「该怎么想」第 ${n} 条`
+}
+
+/** 这一步的岔路口清单 / 拍板结果在不在屏幕上（右栏那一块和对话末尾那个 CTA 共用）。 */
+const hasSheet = computed(() => !!decisions.value && decisionsStageKey.value === selectedKey.value)
+const hasDecided = computed(() => !!decided.value && decidedStageKey.value === selectedKey.value)
+
+/** 还有几处没定。定完才让提交 —— 留空的那几处 AI 会在写正文时自己定，而正文读起来一样完整。 */
+const pendingPicks = computed(() =>
+  (decisions.value?.points || []).filter(p => !picks.value[p.id]).length
+)
 
 const selected = computed(() => stages.value.find(s => s.key === selectedKey.value) || null)
 const entryOf = (key: string) => entries.value.find(e => e.stage_key === key) || null
+
+/**
+ * 这一步的定稿（有就是只读态）。
+ *
+ * **定稿之后这一步锁死**：不能改定稿、不能再聊、不能再出草稿/方向，中间那块换成这一份
+ * 报告本身。服务端同一道闸在 `draftService.requireOpenStage`，两边都要有 —— 只挡前端的话
+ * 老页面（没刷新的那个标签页）照样能发，而它花了额度、AI 认真回了一段，那段话既进不了
+ * 任何 prompt 也改不动结论；只挡服务端的话按钮还在，点下去是一句报错。
+ */
+const stageEntry = computed(() => (selected.value ? entryOf(selected.value.key) : null))
+const stageLocked = computed(() => !!stageEntry.value)
+/**
+ * 定稿之后接着做哪一步：往后数第一条还没定稿的。
+ *
+ * 这个入口是必需的，不是锦上添花：这一栏换成只读报告之后，界面上一个能点的东西都没有，
+ * 而「下一步」在左边那条窄栏里 —— 不给出口的话他会以为流程到这儿就结束了。
+ */
+const nextStage = computed(() => {
+  const i = stages.value.findIndex(s => s.key === selectedKey.value)
+  if (i < 0) return null
+  return stages.value.slice(i + 1).find(s => !s.hasEntry) || null
+})
+/**
+ * 紧挨着的下一步（**不管它定稿了没有**）。右下角那颗按钮用它。
+ *
+ * 和 `nextStage`（往后数第一条还没定稿的）是两件事，不能共用：十四步都定稿之后
+ * `nextStage` 指的是队尾那一条，于是在「看用户」这一步点「下一步」会跳到
+ * 「数字化营销战略」—— 界面上它和真的翻页一模一样，而他是在**顺着读**这份报告，
+ * 一下被扔到最后一章，回头只能靠左栏一个个找刚才读到哪了。
+ */
+const nextInOrder = computed(() => {
+  const i = stages.value.findIndex(s => s.key === selectedKey.value)
+  if (i < 0) return null
+  return stages.value[i + 1] || null
+})
+/** 定稿里那几条 AI 赋能机会。读坏了当没有 —— 不能因为这一列而让整份报告打不开。 */
+const entryAiOpps = computed<string[]>(() => {
+  try {
+    const v = JSON.parse(stageEntry.value?.ai_opportunities || '[]')
+    return Array.isArray(v) ? v.map((x: unknown) => String(x ?? '').trim()).filter(Boolean) : []
+  } catch {
+    return []
+  }
+})
 const labelOf = (key: string) => stages.value.find(s => s.key === key)?.label || key
 const decidedCount = computed(() => stages.value.filter(s => s.hasEntry).length)
+
+// ── 导出方案 ──────────────────────────────────────────────
+const exporting = ref(false)
+/** 十四步全定稿才让点：半份方案在屏幕上和完整的一模一样，而它是要发给客户的东西。 */
+const canExport = computed(() => stages.value.length > 0 && decidedCount.value === stages.value.length)
+async function exportReport() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const res = await apiGet<{ filename: string; markdown: string; stale: string[]; noBody: string[]; chapters: number }>(
+      `/api/consult/projects/${projectId}/report`
+    )
+    // 下载这一步失败必须出声（浏览器拦了弹窗 / 磁盘满）：静默失败的话按钮点下去
+    // 什么都不发生，读起来像功能坏了，而那份方案其实已经拼好了。
+    const url = URL.createObjectURL(new Blob([res.markdown], { type: 'text/markdown;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = res.filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    // 过期 / 缺正文的章节也在文档开头写着，但这里再说一遍：他可能不看就转出去了
+    if (res.stale.length || res.noBody.length) {
+      err.value =
+        `已导出 ${res.chapters} 章，但文档里有需要注意的地方：` +
+        [
+          res.stale.length ? `${res.stale.join('、')} 这几章是上游改动之前定的（可能和后面矛盾）` : '',
+          res.noBody.length ? `${res.noBody.join('、')} 只有结论、没有正文` : '',
+        ].filter(Boolean).join('；') +
+        '。文档开头也标了同样的话。'
+    }
+  } catch (e: any) {
+    err.value = `导出失败：${e.message}`
+  } finally {
+    exporting.value = false
+  }
+}
 
 const groups = computed(() => {
   const out: { name: string; items: StageItem[] }[] = []
@@ -264,24 +445,18 @@ async function load() {
       ? { gaps: res.intake.gaps, questions: res.intake.questions, truncated: res.intake.truncated }
       : null
     intakeAnswers.value = { ...(res.intake?.answers || {}) }
-    // 第一轮问卷没提交过就先回问卷页。**必须在挑阶段、自动分析之前 return** ——
-    // 落在后面的话这一步已经花掉一次额度出了一版照缺料资料的草稿，而它读起来完全正常。
+    // 第一轮问卷没提交过就先回问卷页。**必须在挑阶段之前 return** —— 落在后面的话
+    // 他已经进了工作台，对着一份缺料的资料点下「生成」，出来的一版读起来完全正常。
     // 只挡第一轮（`intakeRounds === 0`）：后面几轮也挡的话，客户还没回话的那几天
     // 他连自己的项目都打不开。跳过入口见 `intakeSkipped`。
     if (res.intake && !intakeRounds.value && !intakeSkipped()) {
       await router.replace(`/consult/projects/${projectId}/intake`)
       return
     }
-    let entering = ''
     if (!selectedKey.value) {
       selectedKey.value = (stages.value.find(s => !s.hasEntry) || stages.value[0])?.key || ''
-      entering = selectedKey.value
       await loadMessages(selectedKey.value)
     }
-    // 进工作台就把当前这一步跑出来。放在 loadMessages 之后：反过来的话
-    // loadMessages 那句 `messages.value = res.messages` 会把刚生成的草稿气泡抹掉
-    // （草稿还在右栏，只是对话里少一条，看起来像它没生成过）。
-    if (entering) await autoRun(entering)
   } catch (e: any) {
     err.value = e?.message || '加载失败'
   } finally {
@@ -289,9 +464,27 @@ async function load() {
   }
 }
 
+/**
+ * 「继续下一步」：切过去之后把中间这一栏滚回顶上。
+ *
+ * 必须显式滚：`messages` 那个 watch 每次换阶段都把滚动条推到**底**（聊天该那样），
+ * 而下一步是从头开始的 —— 落在底部时他看到的是输入条和一句「还没开始分析」，
+ * 阶段标题、要回答的问题、那份「该怎么想」全在视口上面，读起来就是「点了下一步却什么
+ * 都没换」（上一步的报告本来也是滚到底才看见这颗按钮的）。
+ * 排在 watch 的回调之后：那次 `nextTick` 是 `select` 里赋值 messages 时排的，比这里早。
+ */
+async function goNextStage(key: string) {
+  await select(key)
+  await nextTick()
+  if (chatScrollRef.value) chatScrollRef.value.scrollTop = 0
+}
+
 async function select(key: string) {
   if (key === selectedKey.value) return
-  if (draft.value && !confirm('当前草稿还没定稿，切换阶段会丢掉它。继续？')) return
+  // 切换阶段不再拦一句确认：那一版**不会丢** —— 它整份存在对话里 `kind='draft'` 那条
+  // 消息的 payload 里，切回来 `restoreArtifact` 会照原样恢复。真正丢掉的只有他在右栏
+  // 编辑器里手改过、还没定稿的那些字（草稿不落库），而为这件事拦住每一次翻看别的阶段
+  // 太贵了 —— 这一步要跑几分钟，中途切去看上游结论是常事。
   draft.value = null
   draftStageKey.value = ''
   draftTruncated.value = false
@@ -300,6 +493,16 @@ async function select(key: string) {
   directions.value = null
   directionsStageKey.value = ''
   directionsVerdict.value = ''
+  decisions.value = null
+  decisionsStageKey.value = ''
+  // 选中的选项按 `d1..dN` 存，而每一步都有自己的 d1 —— 不清的话切到下一步，
+  // 那几处岔路口一进来就是「已经选好的」，而他一个都没看过（服务端会按 label 拒掉，
+  // 但界面上那几个高亮读起来完全像他自己点的）。
+  picks.value = {}
+  pickNotes.value = {}
+  decisionsMsgId.value = ''
+  decided.value = null
+  decidedStageKey.value = ''
   chatText.value = ''
   chatDropped.value = 0
   chatOpen.value = false
@@ -310,10 +513,7 @@ async function select(key: string) {
     workspaceOpen.value = false
   }
 
-  // 先等对话拉完再自动跑（理由同 load()：顺序反了那条草稿气泡会被覆盖掉）
   await loadMessages(key)
-  if (key !== selectedKey.value) return
-  await autoRun(key)
 }
 
 // ── 分析结果的兜底：不只等那次 POST 的返回 ──────────────────
@@ -324,9 +524,15 @@ async function select(key: string) {
 // —— 在那之前他会以为额度白花了，再点一次生成（又花一次）。所以分析期间每 8 秒去库里
 // 看一眼这一步有没有新的产出，有就直接收下并把转圈圈停掉。
 const POLL_MS = 8000
-/** 等多久就认定这次真的没戏（8s × 30 = 4 分钟）。到点必须**出声**并把界面解开：
-    一直转下去的话「还在跑」和「早就断了」在屏幕上是同一个样子。 */
-const POLL_MAX_TICKS = 30
+/** 等多久就认定这次真的没戏。到点必须**出声**并把界面解开：
+    一直转下去的话「还在跑」和「早就断了」在屏幕上是同一个样子。
+
+    这个数必须**比服务端那个超时长**（draftService.AI_TIMEOUT_MS = 330 秒；四看那一步
+    实测要 260-300 秒）。短了的话服务端还在写、界面已经说「等太久了」，用户走了，
+    而那一版稍后照样落进对话记录 —— 下次进来看到一版没人要的草稿，一句错都不报。 */
+const POLL_MAX_TICKS = 45
+/** 上面那个窗口有多长。文案里写死分钟数的话，改了 TICKS 就变成一句谎话。 */
+const POLL_WINDOW_LABEL = `${Math.round((POLL_MS * POLL_MAX_TICKS) / 60000)} 分钟`
 let runPoll: number | undefined
 
 function stopRunPoll() {
@@ -341,7 +547,7 @@ function clearRunState() {
   runningStage.value = ''
   drafting.value = false
   loadingDirections.value = false
-  autoStage.value = ''
+  loadingDecisions.value = false
   stopRunPoll()
 }
 
@@ -356,7 +562,9 @@ function startRunPoll(key: string) {
     try {
       const res = await apiGet(`/api/consult/projects/${projectId}/stages/${key}/messages`)
       const fresh = (res.messages as Msg[]).filter(
-        m => !seen.has(m.id) && (m.kind === 'draft' || m.kind === 'directions')
+        m =>
+          !seen.has(m.id) &&
+          (m.kind === 'draft' || m.kind === 'directions' || m.kind === 'decisions')
       )
       if (fresh.length) {
         if (runningStage.value !== key) return stopRunPoll()
@@ -393,7 +601,7 @@ function startRunPoll(key: string) {
     if (ticks >= POLL_MAX_TICKS) {
       clearRunState()
       err.value =
-        `「${labelOf(key)}」等了 4 分钟还没有结果，先把界面解开。额度可能已经花掉了 —— ` +
+        `「${labelOf(key)}」等了 ${POLL_WINDOW_LABEL}还没有结果，先把界面解开。额度可能已经花掉了 —— ` +
         '先切走再切回来（或刷新一次）看看那一版是不是已经出来了，确认没有再重新生成。'
     }
   }, POLL_MS)
@@ -424,10 +632,9 @@ async function loadMessages(key: string) {
 /**
  * 从对话记录里把这一步最后一份产出恢复到右栏。
  *
- * **草稿也要恢复，不能只恢复方向。** 自动分析上线之后这条路是常态：进「看自己」自动出了
- * 草稿 → 切去别处看一眼 → 切回来。不恢复的话对话里挂着一张「已生成草稿」的卡片、点开
- * 右栏是空的，而 `round` 已经是 1 所以再也不会自动跑 —— 那一步看起来就是卡死了，
- * 而唯一的出路（再点一次「重新生成草稿」）要再花一次额度。
+ * **草稿也要恢复，不能只恢复方向。** 出了草稿 → 切去别处看一眼 → 切回来是常态。
+ * 不恢复的话对话里挂着一张「已生成草稿」的卡片、点开右栏是空的，那一步看起来就是
+ * 卡死了 —— 而唯一的出路（再点一次「生成」）要再花一次额度。
  *
  * **「已丢弃」也算一份产出**（`kind='discard'` 排在同一条时间线上找最后一条）：只找
  * draft/directions 的话，用户点过「丢弃草稿」，切走再切回来那一版又原样回来了 ——
@@ -437,10 +644,44 @@ function restoreArtifact(key: string) {
   if (entryOf(key) || draft.value) return
   const last = [...messages.value]
     .reverse()
-    .find(m => m.kind === 'directions' || m.kind === 'draft' || m.kind === 'discard')
+    .find(
+      m =>
+        m.kind === 'directions' ||
+        m.kind === 'draft' ||
+        m.kind === 'discard' ||
+        m.kind === 'decisions' ||
+        m.kind === 'decided'
+    )
   if (!last || last.kind === 'discard') return
   try {
     const p = JSON.parse(last.payload || '{}')
+    // 拍过板的那份最要紧：它是这一步正文的地基，服务端出正文时就读它。不恢复的话
+    // 右栏是空的、对话里挂着一条「已确认」，他唯一看得见的入口是「重新分析这一步」——
+    // 点下去重出一版，那几处取舍要重问一遍，而已经定的那批就此作废（额度也再花一次）。
+    if (last.kind === 'decided') {
+      if (!Array.isArray(p.picks)) return
+      if (!p.picks.length && !p.noFork) return
+      decided.value = { picks: p.picks, noFork: p.noFork || '', sheetMessageId: p.sheetMessageId || '' }
+      decidedStageKey.value = key
+      return
+    }
+    // 岔路口那一屏同理要恢复：对话里挂着「已生成待定方向」而右栏是空的话，那一步看起来
+    // 卡死了，而他唯一的出路是再点一次（再花一次额度），那几处取舍还得重问一遍。
+    if (last.kind === 'decisions') {
+      if (!Array.isArray(p.points)) return
+      if (!p.points.length && !p.noFork) return
+      decisions.value = {
+        points: p.points,
+        noFork: p.noFork || '',
+        missing: Array.isArray(p.missing) ? p.missing : [],
+        dropped: Array.isArray(p.dropped) ? p.dropped : [],
+        truncated: !!p.truncated,
+      }
+      decisionsStageKey.value = key
+      // 提交时要对着这一条 id 拍板（服务端拒掉配到旧清单上的选择）
+      decisionsMsgId.value = last.id
+      return
+    }
     if (last.kind === 'draft') {
       if (!p.conclusion && !p.body) return
       draft.value = {
@@ -468,6 +709,9 @@ async function sendChat() {
   // 这一步正在分析时不发（回车这条路也走这里）：见 stageBusy 的注释 ——
   // 发出去也不会进正在写的那一版，而回来的草稿看不出少听了一句。
   if (stageBusy.value) return
+  // 已定稿的步骤只读（见 stageEntry）。回车这条路必须也挡：输入条虽然换掉了，
+  // 但键盘事件在旧 DOM 上仍可能触发，而服务端回的是一句 409，读起来像故障。
+  if (stageLocked.value) return
   const key = selected.value.key
   
   // 乐观更新（Optimistic UI）：立即将用户的输入上屏，不等待后端响应
@@ -513,13 +757,18 @@ async function sendChat() {
 }
 
 /**
- * 出候选方向（慢车道）。`key` 在发请求**之前**就取好，返回时如果用户已经切走
+ * 出候选方向（慢车道的老路）。**界面上已经没有入口了**，这个函数留着只是为了不动
+ * `/directions` 那条接口和它的方向卡（老项目里已经出过的那几张照样要恢复得出来）——
+ * 别顺手给它接回一个按钮：它不读顾问拍板的那几条，出来的四份方案地基是 AI 自己定的，
+ * 而四份各自都通顺，挑的时候看不出它替你定过什么（那正是「先定方向」要防的事）。
+ *
+ * `key` 在发请求**之前**就取好，返回时如果用户已经切走
  * 就只留服务端那份 stages，不往界面上挂 —— 原来这里取的是返回时的
  * `selected.value.key`，切走之后这几个方向会挂在**新**阶段的名下，
  * 选一个方向再定稿就存到别的阶段去了，而两步都没有任何报错。
- * 自动分析（`autoRun`）会让这种切换变成常态，所以必须挡住。
+ * 这一步要跑几分钟，中途切去看别的阶段是常事，所以必须挡住。
  */
-async function loadDirections(key?: string, auto = false) {
+async function loadDirections(key?: string) {
   const stageKey = key || selected.value?.key
   if (!stageKey) return
   loadingDirections.value = true
@@ -531,7 +780,8 @@ async function loadDirections(key?: string, auto = false) {
     const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/directions`, {})
     // 轮询已经把这一批收下了（那次返回来得晚）：再走一遍就是同一批方向卡贴两张
     if (adopted(res.message)) return
-    // stages 照样收下：服务端那一轮已经计上了，本地不更新的话切回来又会自动跑一次
+    // stages 照样收下：服务端那一轮（`round`）已经计上了，本地不更新的话界面上这一步
+    // 看起来还是「一次都没跑过」
     stages.value = res.stages
     if (stageKey !== selectedKey.value) {
       err.value = `「${labelOf(stageKey)}」的候选方向已经出好了（额度已经花掉），但你已经切到别的阶段 —— 切回去就能看到。`
@@ -548,13 +798,119 @@ async function loadDirections(key?: string, auto = false) {
 
     openWorkspace('task')
   } catch (e: any) {
-    err.value = (auto ? '自动分析失败：' : '') + (e?.message || '出方向失败')
+    err.value = e?.message || '出方向失败'
   } finally {
     clearRunState()
   }
 }
 
-function pickDirection(d: Direction) {
+/**
+ * 慢车道动笔之前先问方向（岔路口）。**不产出正文、不定稿**，只把「这一步有哪几处得你拍板」
+ * 摆出来。`key` 的取法和 `loadDirections` 同一条理由（切走之后不能挂到新阶段名下）。
+ */
+async function loadDecisions(key?: string) {
+  const stageKey = key || selected.value?.key
+  if (!stageKey) return
+  loadingDecisions.value = true
+  runningStage.value = stageKey
+  err.value = ''
+  staledNote.value = []
+  startRunPoll(stageKey)
+  closeWorkspaceForRun()
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/decisions`, {})
+    // 轮询先捞到了就不再收一遍（否则对话里两张一样的卡片）
+    if (adopted(res.message)) return
+    stages.value = res.stages
+    if (stageKey !== selectedKey.value) {
+      err.value = `「${labelOf(stageKey)}」的待定方向已经出好了（额度已经花掉），但你已经切到别的阶段 —— 切回去就能看到。`
+      return
+    }
+    decisions.value = {
+      points: res.points || [],
+      noFork: res.noFork || '',
+      missing: res.missing || [],
+      dropped: res.dropped || [],
+      truncated: !!res.truncated,
+    }
+    decisionsStageKey.value = stageKey
+    // 新的一版清单和旧的选择配不上（`d2` 已经是另一个问题），所以选择跟着清空 ——
+    // 留着的话那几个高亮读起来像他已经在这一版上选过了。
+    picks.value = {}
+    pickNotes.value = {}
+    decisionsMsgId.value = res.message?.id || ''
+    decided.value = null
+    decidedStageKey.value = ''
+    draftDiscussion.value = res.discussion || null
+    if (res.message) messages.value = [...messages.value, res.message]
+    openWorkspace('task')
+  } catch (e: any) {
+    err.value = e?.message || '出待定方向失败'
+  } finally {
+    clearRunState()
+  }
+}
+
+/**
+ * 提交这几处拍板，紧接着按它出这一步的正文。
+ *
+ * 两件事必须连在一起：这一屏只是取舍清单，停在这里的话他手上什么产出都没有，而界面上
+ * 那几个高亮读起来很像「已经在推进了」。所以提交成功就直接接着出正文（出正文那一次才
+ * 花 AI 额度，提交本身不花）。
+ *
+ * 提交失败**不接着出正文**：没有那条 `decided` 记录，服务端会拒掉出正文那一步（400），
+ * 而两次报错叠在一起读起来像出正文本身坏了。
+ */
+async function applyPicks() {
+  const key = decisionsStageKey.value || selected.value?.key
+  if (!key || !decisions.value || applying.value) return
+  if (!decisionsMsgId.value) {
+    err.value =
+      '这一版待定方向的记录 id 没拿到（页面可能是热更新过的）—— 切走再切回来一次，' +
+      '或者点一次「重新分析这一步」，不然这几个选择会被配到别的清单上。'
+    return
+  }
+  applying.value = true
+  err.value = ''
+  let ok = false
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/stages/${key}/decisions/apply`, {
+      sheetMessageId: decisionsMsgId.value,
+      picks: decisions.value.points.map(p => ({
+        id: p.id,
+        label: picks.value[p.id] || '',
+        note: (pickNotes.value[p.id] || '').trim(),
+      })),
+    })
+    stages.value = res.stages
+    if (res.message && key === selectedKey.value) messages.value = [...messages.value, res.message]
+    if (key !== selectedKey.value) {
+      err.value = `「${labelOf(key)}」那几处取舍已经记下了，但你已经切到别的阶段 —— 切回去点「按定好的方向出正文」。`
+      return
+    }
+    decided.value = { picks: res.picks || [], noFork: res.noFork || '', sheetMessageId: res.sheetMessageId || '' }
+    decidedStageKey.value = key
+    decisions.value = null
+    decisionsStageKey.value = ''
+    ok = true
+  } catch (e: any) {
+    err.value = e?.message || '提交这几处取舍失败'
+  } finally {
+    applying.value = false
+  }
+  if (ok) await makeDraft(key)
+}
+
+/**
+ * 采纳一个候选方向 = **直接定稿**，没有第二道确认。
+ *
+ * 原来「采纳」只是把它摊进右栏的草稿编辑器，还要再点一次「完成定稿」才落库。那一步
+ * 什么都没多问（不是确认框，只是多一次点击），而它带来一种真的丢失：右栏那一版
+ * **不落库**，切走或刷新之后靠 `restoreArtifact` 从对话记录恢复，而方向卡那条记录里
+ * 没有「他选了哪一个」—— 恢复出来的是四张卡片重新让他挑一遍，看起来就像他那次采纳
+ * 压根没发生。所以确认不是藏起来，是写在按钮上：定稿之后这一步只读。
+ */
+async function pickDirection(d: Direction) {
   const others = (directions.value || []).filter(x => x !== d).map(x => x.title)
   draft.value = {
     conclusion: `${d.tagline}｜${d.identity}`,
@@ -581,16 +937,18 @@ function pickDirection(d: Direction) {
   draftStageKey.value = directionsStageKey.value
   draftPreview.value = true
   openWorkspace('task')
+  // 定稿失败时 draft 留在右栏（saveDraft 只在成功那条路上清掉它），他能在那儿看到
+  // 「完成定稿」再试一次 —— 所以这里不吞错，err 那条横幅就是他唯一的线索。
+  await saveDraft()
 }
 
 /** 出草稿（快车道 / 内容方案）。`key` 的取法和 `loadDirections` 同一条理由。 */
-async function makeDraft(key?: string, auto = false) {
+async function makeDraft(key?: string) {
   const stageKey = key || selected.value?.key
   if (!stageKey) return
   // 右栏已经有一版就先问一句：新的一版是整个盖进去的，他在编辑器里改的那些没有任何
-  // 地方留着（草稿不落库），而两次都显示成功。自动跑那条路进不来（autoRun 已经挡了
-  // 「这一步有草稿」的情况），所以只问手点的这条。
-  if (!auto && draft.value && draftStageKey.value === stageKey) {
+  // 地方留着（草稿不落库），而两次都显示成功。
+  if (draft.value && draftStageKey.value === stageKey) {
     if (!confirm('重出一版会覆盖右栏现在这一版（包括你改过的部分），并再花 1 次 AI 额度。继续？')) return
   }
   drafting.value = true
@@ -598,6 +956,7 @@ async function makeDraft(key?: string, auto = false) {
   err.value = ''
   staledNote.value = []
   startRunPoll(stageKey)
+  closeWorkspaceForRun()
   try {
     const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/draft`, {})
     // 同 loadDirections：轮询先捞到了就不再收一遍（否则对话里两张一样的卡片）
@@ -614,65 +973,33 @@ async function makeDraft(key?: string, auto = false) {
     if (res.message) messages.value = [...messages.value, res.message]
     openWorkspace('task')
   } catch (e: any) {
-    err.value = (auto ? '自动分析失败：' : '') + (e?.message || '出草稿失败')
+    err.value = e?.message || '出草稿失败'
   } finally {
     clearRunState()
   }
 }
 
 /**
- * 进入一个阶段时自动分析一次。
+ * 这一步还没有任何产出，该显示那个「生成」按钮。
  *
- * 判据是「这一步压根还没跑过」：`round === 0 && !hasEntry`。少了这两条的话每次点回
- * 这一步都重跑一次 —— 白扣一次额度，还会把用户正在右栏改的那版草稿顶掉，两件事都不报错。
- * stale（上游改了建议重跑）**故意不自动跑**：那一步已经有定稿了，自动覆盖等于把他
- * 确认过的结论换成一版没人看过的。锁住的步骤当然也不跑（前置没定稿，出来的是编的）。
+ * **进入阶段不再自动跑一次**（原来的 `autoRun`）：那一下是在用户还没说一句话的时候
+ * 就花掉一次额度，出来的一版只按客户资料写 —— 而他进这一步往往正是想先交代两句
+ * （「这家的重点是加盟商，不是终端」）。自动跑掉的那一版读起来完全正常，所以他不会
+ * 重出（要再花一次额度），那句交代就永远没进过任何 prompt。
+ * 现在改成他点，对话先聊、聊完再点，`discussionBlock` 就真的带上那几条。
  */
-async function autoRun(key: string) {
-  if (autoTried.has(key)) return
-  const s = stages.value.find(x => x.key === key)
-  if (!s || !s.unlocked || s.hasEntry || s.round > 0) return
-  // 一次只跑一个：全局的 drafting/loadingDirections 被第二个调用覆盖之后，
-  // 先结束的那个会把 loading 关掉，界面上另一步就成了「没在跑」而它还在花额度。
-  if (runningStage.value) return
-  if (draftStageKey.value === key || directionsStageKey.value === key) return
-  autoStage.value = key
-  autoTried.add(key)
-  try {
-    if (s.lane === 'slow') await loadDirections(key, true)
-    else await makeDraft(key, true)
-  } finally {
-    autoStage.value = ''
-  }
-}
+const noArtifact = computed(
+  () =>
+    !(draft.value && draftStageKey.value === selectedKey.value) &&
+    !(directions.value && directionsStageKey.value === selectedKey.value)
+)
+const showRunCta = computed(
+  () => !!selected.value && selected.value.unlocked && !stageLocked.value && noArtifact.value && !runningStage.value
+)
 
-/**
- * 上一步跑完了，补跑用户现在停在的那一步。
- *
- * 上面那句 `if (runningStage.value) return` 单独存在的话是个静默丢弃：在「看行业」分析
- * 的中途切到「看自己」，「看自己」这一辈子都不会自动分析了 —— 右栏空的、对话空的，
- * 读起来就是「这一步本来就没东西」，而它其实是被跳过的。
- */
-watch(runningStage, (now, before) => {
-  if (now || !before) return
-  if (selectedKey.value) void autoRun(selectedKey.value)
-})
-
-function editEntry() {
-  const e = selected.value && entryOf(selected.value.key)
-  if (!e) return
-  draft.value = {
-    conclusion: e.conclusion,
-    body: e.body || '',
-    rationale: e.rationale,
-    evidence: e.evidence,
-    gaps: [],
-  }
-  draftStageKey.value = selected.value!.key
-  draftTruncated.value = false
-  draftDiscussion.value = null
-  openWorkspace('task')
-}
+// 「修改定稿」那个按钮和它的 editEntry 已经删掉：定稿现在是一次性的（服务端
+// `requireOpenStage` 也不收第二版）。留着按钮的话点下去是把定稿抄进草稿编辑器、
+// 改半天再点「完成定稿」才收到一句 409 —— 改动没地方留，而中间每一步都像成功。
 
 async function saveDraft() {
   if (!draft.value || !draftStageKey.value) return
@@ -856,6 +1183,18 @@ function openWorkspace(tab?: 'task' | 'kb') {
   if (tab) workspaceTab.value = tab
   workspaceOpen.value = true
 }
+
+/**
+ * 一跑起来就把右栏收起来（出结果时 `openWorkspace('task')` 会自己开回来）。
+ *
+ * 抽屉是盖在对话上的，而这几分钟里它摆的是**已经作废的那一屏**（刚提交的那份取舍清单、
+ * 或者上一版草稿），盖住的恰好是唯一有动静的地方：对话末尾那句「正在写这一步的正文」和
+ * 输入条上那句「这一步正在分析，先不接受输入」。留着不收的话他对着一屏纹丝不动的旧内容，
+ * 只能理解成刚才那次点击没生效 —— 于是回头再点一次，而那是又一次真实的 AI 调用。
+ */
+function closeWorkspaceForRun() {
+  workspaceOpen.value = false
+}
 </script>
 
 <template>
@@ -915,6 +1254,18 @@ function openWorkspace(tab?: 'task' | 'kb') {
           </button>
         </div>
       </div>
+
+      <!-- 导出方案：全定稿才亮。没定完时不隐藏而是灰着说还差几步 ——
+           藏起来的话用户不知道有这个功能，也不知道差的是哪几步。 -->
+      <div class="rail-footer" v-if="stages.length">
+        <button class="btn-export" :disabled="!canExport || exporting" @click="exportReport">
+          {{ exporting ? '正在合并…' : '⬇ 导出方案' }}
+        </button>
+        <div class="export-sub">
+          <template v-if="canExport">十四步合并成一份 md，正文原样搬，不重新生成</template>
+          <template v-else>还差 {{ stages.length - decidedCount }} 步定稿（现在导出的会是半份方案）</template>
+        </div>
+      </div>
     </nav>
 
     <!-- Main Chat Stream -->
@@ -963,7 +1314,47 @@ function openWorkspace(tab?: 'task' | 'kb') {
           </details>
         </div>
 
-        <!-- Chat messages -->
+        <!-- 定稿之后中间这一栏不再是聊天，而是这一步的咨询报告本身（只读）。
+             理由：定稿是一次性的，这一步之后既不能改也不能再聊（见 stageEntry），
+             那么留着一条输入框和一串讨论记录只会让人以为还能在这里推进它。 -->
+        <div v-if="stageLocked && stageEntry && selected" class="report">
+          <div class="report-head">
+            <span class="report-tag">✅ 已定稿 · 只读</span>
+            <span class="report-meta">
+              第 {{ stageEntry.version }} 版 · 置信度 {{ stageEntry.confidence }} ·
+              证据级别 {{ stageEntry.source_level }} ·
+              {{ (stageEntry.updated_at || '').slice(0, 10) }}
+            </span>
+          </div>
+          <!-- stale 要说清「报告是按旧上游写的」，而不只是一个 ⚠：定稿锁定之后这一步
+               没有重跑入口，不说的话他只看到一个警告图标，不知道该拿它怎么办。 -->
+          <div v-if="stageEntry.stale" class="report-warn">
+            ⚠ 上游结论后来改过，这一份是按<strong>改之前</strong>的上游写的。这一步已锁定、没有重跑入口 ——
+            引用它时自己核一眼有没有和上游冲突。
+          </div>
+
+          <h3 class="report-h">一句话结论</h3>
+          <p class="report-conclusion">{{ stageEntry.conclusion }}</p>
+
+          <h3 class="report-h">完整报告</h3>
+          <div v-if="stageEntry.body" class="md report-body" v-html="md(stageEntry.body)"></div>
+          <!-- 正文为空要出声：一份只有一句结论的定稿和「正文没加载出来」在屏幕上一样 -->
+          <div v-else class="report-empty">
+            这一版没有正文，只定了上面那一句结论（当时定稿时正文是空的）。
+          </div>
+
+          <template v-if="entryAiOpps.length">
+            <h3 class="report-h">本步的 AI 赋能机会</h3>
+            <ul class="report-ai"><li v-for="(o, i) in entryAiOpps" :key="i">{{ o }}</li></ul>
+          </template>
+        </div>
+
+        <!-- Chat messages。定稿之后收进一个折叠块 —— 直接不渲染的话，那一步的讨论
+             记录看起来是被删掉了（它还在库里，只是这一栏换成了报告）。 -->
+        <component :is="stageLocked ? 'details' : 'div'" class="msg-log">
+          <summary v-if="stageLocked" class="msg-log-summary">
+            查看定稿前的讨论记录（{{ messages.length }} 条，只读）
+          </summary>
         <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
           <!-- 丢弃那条不挂 AI 头像：挂上去就成了「AI 说它把草稿丢了」，而那是用户自己点的 -->
           <div class="msg-avatar" v-if="m.role === 'assistant' && m.kind !== 'discard'">AI</div>
@@ -974,6 +1365,10 @@ function openWorkspace(tab?: 'task' | 'kb') {
               <div v-html="md(m.content)"></div>
               <button class="link-btn" @click="openWorkspace()">在右侧查看完整正文 →</button>
             </div>
+            <!-- 拍板：摊在对话里（正文的地基就是这几条）。**不做成那张「查看 →」的产出卡片**
+                 —— 认不出的 kind 会落到下面那个 v-else，被画成「已生成候选方向」，点开右栏
+                 根本不是方向卡。 -->
+            <div v-else-if="m.kind === 'decided'" class="msg-bubble md decided-msg" v-html="md(m.content)"></div>
             <!-- 丢弃：单独一条细提示，不做成 AI 气泡（那是这一步的状态，不是 AI 说的话） -->
             <div v-else-if="m.kind === 'discard'" class="discard-note">{{ m.content }}</div>
             <div
@@ -984,7 +1379,9 @@ function openWorkspace(tab?: 'task' | 'kb') {
             >
               <div class="artifact-icon">{{ discardedMsgs[m.id] ? '🗑' : '📄' }}</div>
               <div class="artifact-meta">
-                <strong>{{ m.kind === 'draft' ? '已生成草稿' : '已生成候选方向' }}</strong>
+                <!-- 每种 kind 都要有自己的名字：认不出的那种会被画成「已生成候选方向」，
+                     而点开右栏根本不是方向卡 —— 读起来像那一版丢了 -->
+                <strong>{{ m.kind === 'draft' ? '已生成草稿' : m.kind === 'decisions' ? '已列出待定方向（还没定）' : '已生成候选方向' }}</strong>
                 <!-- 作废的卡片要明说点不开：留着「查看 →」的话点了什么都不发生 -->
                 <span>{{ discardedMsgs[m.id] ? '这一版已丢弃，右侧工作区里没有它了' : '点击在右侧工作区查看详情' }}</span>
               </div>
@@ -993,20 +1390,70 @@ function openWorkspace(tab?: 'task' | 'kb') {
             </div>
           </div>
         </div>
-        
-        <!-- 自动分析/对话思考中的 loading 状态 -->
-        <!-- 如果是自动跑（runningStage）或者正在对话（chatting），都显示思考气泡 -->
+        </component>
+
+        <!-- 还没有产出时，这一步唯一的推进入口就是这个按钮（原来是进阶段自动跑，
+             见 showRunCta 的注释）。放在对话末尾而不是顶上：先聊几句再点是这次改动的
+             全部目的，按钮跟着对话往下走，聊到哪儿它就在哪儿。 -->
+        <div v-if="showRunCta && !chatting" class="run-cta">
+          <div class="run-cta-body">
+            <div class="run-cta-title">
+              {{ hasDecided ? '方向已经定了，还没出正文' : isDraftLane ? '这一步还没有草稿' : '这一步还没开始分析' }}
+            </div>
+            <p class="run-cta-sub">
+              可以先在下面把你的判断交代给 AI（重点是谁、哪些事实别写错、忌讳什么），
+              <strong>本步最近 16 条对话会一起进 prompt</strong>，聊完再点右边的按钮。
+              <!-- 每种状态都要说清那个按钮会干什么。慢车道「开始分析」**不写正文**，
+                   不说的话他点完看到一屏选项，会以为分析失败了（或者以为这就是产出）。 -->
+              <template v-if="hasDecided">
+                <br />右栏那 {{ decided!.picks.length }} 处取舍已经由你定了，正文会照它写
+                （正文出来还要你定稿）。
+              </template>
+              <template v-else-if="!isDraftLane">
+                <br />这一步<strong>先问后写</strong>：「开始分析」出来的是几处要你拍板的取舍
+                （竞品挑哪几家、定位取哪个角色这类），<strong>还不是正文</strong>；定完之后
+                才照你定的方向写一份完整的。
+              </template>
+            </p>
+          </div>
+          <!-- 一个入口。原来慢车道还并排一个「AI 直接出候选方向」（`/directions`：AI 把那几处
+               取舍替他定了，再拿四份写好的方案给他挑），已经去掉 —— 摆着它就是给一条绕过
+               拍板的路，而那四份各自都通顺，挑的时候看不出它替你定过什么。接口还在，老项目
+               里已经出过的方向卡照样恢复得出来。 -->
+          <button v-if="hasDecided" class="btn-run-cta" :disabled="anyRunning" @click="makeDraft()">
+            按定好的方向出这一步的正文 →
+          </button>
+          <button
+            v-else
+            class="btn-run-cta"
+            :disabled="anyRunning"
+            @click="isDraftLane ? makeDraft() : loadDecisions()"
+          >
+            {{ isDraftLane ? '生成这一步的草稿 →' : hasSheet ? '重新分析这一步（重出一版取舍）' : '开始分析 →' }}
+          </button>
+        </div>
+
+        <!-- 正在跑 / 正在对话都显示思考气泡 -->
         <div v-if="(runningStage && runningStage === selectedKey) || chatting" class="msg assistant">
           <div class="msg-avatar">AI</div>
           <div class="msg-content">
             <div class="msg-bubble loading-bubble">
-              <span class="loading-dots">
-                {{ chatting ? '思考中' : (autoStage ? '正在自动分析这一步' : '思考中') }}<span>.</span><span>.</span><span>.</span>
-              </span>
-              <div v-if="autoStage && !chatting" class="loading-sub">
-                第一次进入这一步会自动跑一遍（消耗 1 次 AI 额度），通常 30–60 秒。
-                别刷新，也不用再点「{{ isDraftLane ? '重新生成草稿' : '生成新方向' }}」——
-                那会再花一次额度。
+              <div class="loading-progress-bar">
+                <div class="loading-progress-inner"></div>
+              </div>
+              <div class="loading-title">
+                <!-- 慢车道现在也走 /draft（照拍好的方向写正文），所以这句不能再按车道分 ——
+                     按车道写的话「正在出候选方向」会挂在一次真正在写正文的调用上。 -->
+                {{ chatting ? '思考中' : loadingDecisions ? '正在分析' : loadingDirections ? '正在出候选方向' : (isDraftLane ? '正在写这一步的草稿' : '正在写这一步的正文') }}
+              </div>
+              <div v-if="!chatting" class="loading-sub">
+                <!-- 这个数写少了的后果不是不好看：他等到写着的那个时间就认定卡住了，
+                     去刷新（正在跑的那一版变成孤儿）或者再点一次生成（同一步花两次额度）。
+                     原来写「30–60 秒」而实测是 260–300 秒（思维链两万多 token）；
+                     现在服务端关掉了思维链（GatewayOptions.noThinking），实测回到
+                     十几秒到一分钟。**关不掉的接入点会退回四分钟量级**（服务端日志里会
+                     喊一句），所以这里给的是区间的上限，不是那个好看的下限。 -->
+                <strong>通常十几秒到 1 分钟</strong>（这一步要写六节带表格的正文）。别刷新，也不用再点一次生成 —— 那会再花一次额度。
               </div>
             </div>
           </div>
@@ -1014,15 +1461,28 @@ function openWorkspace(tab?: 'task' | 'kb') {
         <!-- 别的步在跑：这一步的按钮是灰的，不说清哪一步在跑的话看起来像界面坏了 -->
         <div v-else-if="runningStage" class="other-running">
           ⏳ 「{{ labelOf(runningStage) }}」正在分析中，结果会出现在那一步里。
-          这一步要等它跑完（同时跑两个会互相顶掉），跑完会自动接着分析这一步。
+          这一步要等它跑完（同时跑两个会互相顶掉），跑完回来再点一次这一步的生成按钮。
         </div>
-        
+
         <!-- Bottom spacing for capsule -->
         <div class="chat-bottom-spacer"></div>
       </div>
 
+      <!-- 定稿之后这一步只读：输入条整个换掉，不是把它变灰 —— 灰着的输入框读起来是
+           「界面坏了 / 网络卡了」，他会刷新、会反复点发送。 -->
+      <div v-if="stageLocked" class="locked-capsule-wrapper">
+        <div class="locked-capsule done">
+          <span>✅ 这一步已定稿 </span>
+          <button v-if="nextStage" class="btn-next-stage" @click="select(nextStage!.key)">
+            继续「{{ nextStage.label }}」→
+          </button>
+          <span v-else class="lc-sub">十四步都定稿了</span>
+        </div>
+      </div>
+
+
       <!-- Floating Input Capsule -->
-      <div class="input-capsule-wrapper" v-if="selected && selected.unlocked">
+      <div class="input-capsule-wrapper" v-else-if="selected && selected.unlocked">
         <!-- 为什么停掉输入，要写在他眼皮底下：只把发送键变灰的话，他会以为是网络卡了，
              刷新页面（正在跑的那一版就此变成孤儿）或者反复点发送。 -->
         <div v-if="stageBusy" class="capsule-note">
@@ -1042,23 +1502,28 @@ function openWorkspace(tab?: 'task' | 'kb') {
           <div class="capsule-actions">
             <!-- 一律写成 `makeDraft()`：`@click="makeDraft"` 会把 MouseEvent 当第一个
                  参数传进去，那个位置现在是 stageKey，拼出来的是一条打不通的 URL -->
+            <!-- 还没有产出时这两个小按钮收起来：那时候对话末尾那个 CTA 就是入口，
+                 两个按钮并排而其中一个写着「重新生成」，读起来像已经生成过一版了。 -->
+            <!-- 慢车道这个小按钮分两种：拍过板的重出正文（照那几条写），没拍过板的
+                 重新分析一次（出取舍）。写成一个「重新生成」都走 makeDraft 的话，慢车道
+                 没拍板那次会收到一句 400，读起来像界面坏了。 -->
             <button
-              v-if="isDraftLane"
+              v-if="!showRunCta && (isDraftLane || hasDecided)"
               class="btn-ghost small"
               :disabled="drafting || stageBusy"
               :title="runningStage && runningStage !== selectedKey ? `「${labelOf(runningStage)}」正在分析中` : ''"
               @click="makeDraft()"
             >
-               重新生成草稿
+               {{ isDraftLane ? '重新生成草稿' : '按定好的方向重出正文' }}
             </button>
             <button
-              v-if="!isDraftLane"
+              v-else-if="!showRunCta"
               class="btn-ghost small"
-              :disabled="loadingDirections || stageBusy"
+              :disabled="loadingDecisions || stageBusy"
               :title="runningStage && runningStage !== selectedKey ? `「${labelOf(runningStage)}」正在分析中` : ''"
-              @click="loadDirections()"
+              @click="loadDecisions()"
             >
-               生成新方向
+               重新分析这一步
             </button>
             <button class="btn-send" :disabled="chatting || stageBusy || !chatText.trim()" @click="sendChat">
               ↑
@@ -1071,6 +1536,23 @@ function openWorkspace(tab?: 'task' | 'kb') {
           🔒 请先完成前置阶段：{{ selected.missing.join('、') }}
         </div>
       </div>
+
+      <!-- 右下角再来一颗「下一步」。和居中那颗（在上面那条已定稿的胶囊里）是两个入口，
+           故意重复：居中那颗压在正文最后几行上，而报告有十几屏，滚到底想读的正是那几行。
+           这一颗**还会把视口滚回顶上**（见 goNextStage）：换过去之后落在底部的话，阶段标题
+           和「该怎么想」全在视口上面，读起来是「点了下一步却什么都没换」。
+
+           **必须放在上面那条 v-if / v-else-if 链之外**：夹在链子中间的话
+           `v-else-if="selected && selected.unlocked"`（输入条）就找不到它的 v-if 了，
+           于是已定稿的阶段上一边是只读报告、一边冒出一条能打字的输入框 ——
+           在那里说的话既进不了任何 prompt 也改不动结论，而它看起来完全正常。 -->
+      <button
+        v-if="stageLocked && nextInOrder"
+        class="btn-next-corner"
+        @click="goNextStage(nextInOrder.key)"
+      >
+        下一步「{{ nextInOrder.label }}」→
+      </button>
     </main>
 
     <!-- Right Workspace Drawer -->
@@ -1140,6 +1622,10 @@ function openWorkspace(tab?: 'task' | 'kb') {
               <div class="dirs-head">
                 <span class="draft-tag">候选方向 (请选择其一)</span>
               </div>
+              <div class="dirs-note">
+                选中的那一个<strong>直接定稿</strong>：这一步随即锁定、只读，也没有重跑入口。
+                想先聊聊再定，就回左边的对话区。
+              </div>
               <!-- 同草稿那边：正在重出一批，这几张卡片马上会被换掉。这时候「采纳」的是
                    旧那一批里的一个，新的一批一到就把右栏换成新卡片，他刚采纳的那一版
                    连痕迹都没有（`pickDirection` 只改本地状态）。 -->
@@ -1153,8 +1639,12 @@ function openWorkspace(tab?: 'task' | 'kb') {
                   <h3>{{ d.title }}</h3>
                 </div>
                 <div class="md dir-md" v-html="md(d.markdown)"></div>
+                <!-- 点下去就定稿了，没有第二道确认（见 pickDirection）。所以按钮上必须
+                     写明不可逆 —— 定稿之后这一步只读、也没有重跑入口。 -->
                 <div class="draft-actions">
-                  <button class="btn-primary" :disabled="stageBusy" @click="pickDirection(d)">采纳此方向</button>
+                  <button class="btn-primary" :disabled="stageBusy || savingEntry" @click="pickDirection(d)">
+                    {{ savingEntry ? '定稿中…' : '就用这个方向 · 直接定稿' }}
+                  </button>
                 </div>
               </div>
               <div v-if="directionsVerdict" class="verdict">
@@ -1166,6 +1656,145 @@ function openWorkspace(tab?: 'task' | 'kb') {
               </div>
             </div>
 
+            <!-- 待定方向（岔路口）：动笔之前先把「得你拍板的取舍」摆出来。
+                 这一屏不产出正文、不定稿，所以下面必须写清「还没有任何东西被定下来」——
+                 一屏卡片读起来很像已经在推进这一步了。 -->
+            <div v-else-if="decisions && decisionsStageKey === selected.key" class="dirs">
+              <div class="dirs-head">
+                <span class="draft-tag">🛤 待定方向（动笔前的取舍）</span>
+              </div>
+              <div v-if="decisions.truncated" class="draft-busy">
+                ⚠ 模型这次的返回被截断了 —— 下面这几处可能不全（断在半句上的清单和写完的长得一样）。
+              </div>
+              <!-- 丢掉的那几处必须说出来：少一处的卡片和「这一步只有两处要定」一模一样，
+                   而那一处最后是 AI 自己定的。 -->
+              <div v-if="decisions.dropped.length" class="inline-gaps">
+                <strong>这几处 AI 没给全，已经丢掉（等于它自己会替你定，留意一下）：</strong>
+                <ul><li v-for="(d, i) in decisions.dropped" :key="i">{{ d }}</li></ul>
+              </div>
+              <div v-if="!decisions.points.length" class="dirs-note">
+                AI 认为这一步没有需要你拍板的取舍：{{ decisions.noFork }}
+                <br />不同意的话在左边对话里说清楚该在哪儿分岔，再点一次「重新分析这一步」。
+              </div>
+              <div v-for="(p, i) in decisions.points" :key="p.id" class="dir-card">
+                <div class="dir-top">
+                  <span class="dir-idx">{{ i + 1 }}</span>
+                  <h3>{{ p.question }}</h3>
+                </div>
+                <!-- 标签要说出界面上那份清单的名字，后面还要接上那一条的原文：光一个
+                     「操法 2」既指不到任何看得见的东西、也没说自己是什么，用户只能跳过它 ——
+                     而它唯一的作用就是核出「清单里压根没有这一条」的岔路口（那种是模型
+                     造的，卡片上和真的一样）。 -->
+                <div class="dec-meta">
+                  <span v-if="p.methodRef" class="dec-tag">{{ methodLabel(p.methodRef) }}</span>
+                  <span v-if="methodText(p.methodRef)" class="dec-method" :title="methodText(p.methodRef)">{{ methodText(p.methodRef) }}</span>
+                  <span v-if="p.basis" class="dec-basis">依据：{{ p.basis }}</span>
+                </div>
+                <button
+                  v-for="(o, j) in p.options"
+                  :key="j"
+                  type="button"
+                  class="dec-opt"
+                  :class="{ chosen: picks[p.id] === o.label }"
+                  :disabled="stageBusy || applying"
+                  @click="picks[p.id] = o.label"
+                >
+                  <div class="dec-opt-label">
+                    {{ String.fromCharCode(65 + j) }}. {{ o.label }}
+                    <span v-if="picks[p.id] === o.label" class="dec-chosen-tag">✓ 已选</span>
+                  </div>
+                  <div v-if="o.detail" class="dec-opt-detail">{{ o.detail }}</div>
+                  <!-- 代价是这张卡片的重点：没有它三个选项就是「都挺好」，
+                       随手点一个等于 AI 替你定了 -->
+                  <div class="dec-opt-cost">放弃：{{ o.cost }}</div>
+                </button>
+                <div v-if="p.recommend" class="dec-recommend">🧭 AI 的建议：{{ p.recommend }}</div>
+                <!-- 补充说明：都不合适时的出口是「在对话里说清再重出一版」，不是在这里
+                     自己写一个答案 —— 自己写的答案配不上任何「放弃什么」，进正文之后
+                     那一段就是 AI 编的。所以这里只收对选项的补充。 -->
+                <label class="dec-note">
+                  <span>补充说明（可空，最多 300 字，会跟着这条选择进正文）</span>
+                  <textarea
+                    v-model="pickNotes[p.id]"
+                    rows="2"
+                    :disabled="stageBusy || applying"
+                    placeholder="例：选 B，但别提加盟商；口径按客户上次会议那句"
+                  ></textarea>
+                </label>
+              </div>
+              <div v-if="decisions.missing.length" class="inline-gaps">
+                <strong>这几件是缺事实、不是取舍，要去问客户：</strong>
+                <ul><li v-for="(m, i) in decisions.missing" :key="i">{{ m }}</li></ul>
+              </div>
+              <!-- 提交 = 把这几条记成这一步正文的地基，紧接着出正文（那一次才花额度）。
+                   每一处都必须选：留空的那几处 AI 会在写正文时自己定，而定完的正文
+                   读起来一样完整（服务端同一道闸在 applyDecisions）。 -->
+              <div class="dirs-note">
+                点「就按这几个走」之后：这几条会记进对话，然后<strong>直接接着出这一步的正文</strong>
+                （出正文花 1 次 AI 额度，提交本身不花）。正文出来还要你在这儿定稿，<strong>还不是定稿</strong>。
+                都不合适的话别硬选一个 —— 在左边对话里说清该在哪儿分岔，再点一次「重出一版待定方向」。
+              </div>
+              <div class="draft-actions">
+                <button
+                  class="btn-primary"
+                  :disabled="applying || stageBusy || (!!decisions.points.length && pendingPicks > 0)"
+                  @click="applyPicks()"
+                >
+                  {{
+                    applying
+                      ? '正在记下这几条…'
+                      : !decisions.points.length
+                        ? '确认这一步没有取舍 · 出正文 →'
+                        : pendingPicks
+                          ? `还差 ${pendingPicks} 处没定`
+                          : '就按这几个走 · 出这一步的正文 →'
+                  }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 拍板之后：这几条就是正文的地基，所以右栏留一份只读回顾 + 出正文的入口。
+                 不留的话右栏是空的，他唯一看得见的按钮是「开始分析」——
+                 点下去重出一版，那几处取舍要重问一遍，已经定的那批作废，额度也再花一次。 -->
+            <div v-else-if="decided && decidedStageKey === selected.key" class="dirs">
+              <div class="dirs-head">
+                <span class="draft-tag">✅ 方向已定（正文的地基）</span>
+              </div>
+              <div v-if="!decided.picks.length" class="dirs-note">
+                这一步没有需要拍板的取舍：{{ decided.noFork || '（未说明原因）' }}
+              </div>
+              <div v-for="(p, i) in decided.picks" :key="p.id" class="dir-card">
+                <div class="dir-top">
+                  <span class="dir-idx">{{ i + 1 }}</span>
+                  <h3>{{ p.question }}</h3>
+                </div>
+                <div class="dec-meta">
+                  <span v-if="p.methodRef" class="dec-tag">{{ methodLabel(p.methodRef) }}</span>
+                  <span v-if="methodText(p.methodRef)" class="dec-method" :title="methodText(p.methodRef)">{{ methodText(p.methodRef) }}</span>
+                </div>
+                <div class="dec-opt chosen">
+                  <div class="dec-opt-label">{{ p.label }} <span class="dec-chosen-tag">✓ 你定的</span></div>
+                  <div v-if="p.detail" class="dec-opt-detail">{{ p.detail }}</div>
+                  <!-- 放弃了什么必须一直显示：正文只会讲选中那条路的好处，
+                       而这半句是这一步唯一不可逆的信息 -->
+                  <div class="dec-opt-cost">放弃：{{ p.cost }}</div>
+                </div>
+                <div v-if="p.note" class="dec-recommend">你的补充：{{ p.note }}</div>
+              </div>
+              <div class="dirs-note">
+                正文会照这几条写，并在开头的「方法论速览」里写明哪几处是你定的、放弃了什么。
+                想改的话点「重出一版待定方向」重问一遍（已经定的这批就作废了）。
+              </div>
+              <div class="draft-actions">
+                <button class="btn-primary" :disabled="anyRunning || stageBusy" @click="makeDraft()">
+                  按这几条出这一步的正文 →
+                </button>
+                <button class="btn-ghost" :disabled="anyRunning || stageBusy" @click="loadDecisions()">
+                  重出一版待定方向
+                </button>
+              </div>
+            </div>
+
             <!-- 已定稿内容 -->
             <div v-else-if="entryOf(selected.key)" class="entry-box">
               <div class="entry-head">
@@ -1174,10 +1803,11 @@ function openWorkspace(tab?: 'task' | 'kb') {
               </div>
               <p class="entry-conclusion">{{ entryOf(selected.key)!.conclusion }}</p>
               <div v-if="entryOf(selected.key)!.body" class="md" v-html="md(entryOf(selected.key)!.body)"></div>
-              <div class="draft-actions">
-                <!-- 正在重出一版时也停：editEntry 把定稿抄进草稿编辑器，而那一版一到
-                     就把编辑器整个换掉，他刚开始改的东西没了。 -->
-                <button class="btn-ghost" :disabled="stageBusy" @click="editEntry">修改定稿</button>
+              <!-- 只读要说出来，不能只是「没有按钮」：一个没有任何按钮的面板读起来像
+                   界面没加载完，他会刷新、会去别处找那个改的入口。 -->
+              <div class="entry-locked">
+                🔒 这一步已定稿，内容锁定不再修改 —— 下游每一步的结论都建立在它上面。
+                中间那一栏就是这一份完整报告。
               </div>
             </div>
 
@@ -1425,6 +2055,66 @@ function openWorkspace(tab?: 'task' | 'kb') {
   padding: 16px 0 24px;
 }
 
+.rail-footer {
+  flex: 0 0 auto;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(0,0,0,0.05);
+}
+.btn-export {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--navy);
+  border-radius: 12px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.btn-export:hover:not(:disabled) { opacity: 0.85; }
+.btn-export:disabled {
+  background: transparent;
+  border-color: rgba(0,0,0,0.12);
+  color: var(--color-soft);
+  cursor: not-allowed;
+}
+.export-sub {
+  margin-top: 6px;
+  font-size: 11px; line-height: 1.6;
+  color: var(--color-soft);
+}
+
+.rail-footer {
+  flex: 0 0 auto;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(0,0,0,0.05);
+}
+.btn-export {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--navy);
+  border-radius: 12px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+.btn-export:hover:not(:disabled) { opacity: 0.85; }
+.btn-export:disabled {
+  background: transparent;
+  color: var(--color-soft);
+  border-color: rgba(0,0,0,0.12);
+  cursor: not-allowed;
+}
+.export-sub {
+  margin-top: 6px;
+  font-size: 11px; line-height: 1.6;
+  color: var(--color-soft);
+}
+
 .rail-group { margin-bottom: 16px; }
 .rail-title {
   margin: 8px 24px;
@@ -1520,57 +2210,62 @@ function openWorkspace(tab?: 'task' | 'kb') {
 .chat-bottom-spacer { height: 60px; }
 
 .stage-intro-card {
-  margin: 0 auto 32px;
-  max-width: 800px;
   width: 100%;
-  flex-shrink: 0; /* 修复由于处于 flex 容器中导致的底部截断问题 */
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .intro-header {
-  padding-bottom: 24px;
+  /* padding-bottom: 24px; */
 }
 
 .intro-title-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
 .step-badge {
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 800;
-  letter-spacing: 0.5px;
+  letter-spacing: 2px;
   color: var(--brand);
-  background: var(--brand-soft);
-  padding: 4px 10px;
-  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  text-transform: uppercase;
   flex-shrink: 0;
 }
 
 .stage-title {
-  font-size: 24px;
+  font-size: 40px;
   font-weight: 800;
-  letter-spacing: -0.5px;
-  color: var(--navy);
+  letter-spacing: 1px;
+  color: var(--color-text);
   margin: 0;
   flex-shrink: 0;
+  line-height: 1.2;
 }
 
 .stage-question {
-  font-size: 14px;
-  color: var(--color-muted);
+  font-size: 16px;
+  color: var(--color-soft);
   margin: 0;
   line-height: 1.6;
   font-weight: 500;
-  margin-left: 8px;
-  padding-left: 16px;
-  border-left: 2px solid rgba(0,0,0,0.06);
+  margin-left: 0;
+  padding-left: 20px;
+  border-left: 2px solid var(--brand);
+  max-width: 65ch;
 }
 
 /* Collapsible Methodology */
 .intro-methodology {
-  border-top: 1px solid rgba(0,0,0,0.06);
-  padding-top: 16px;
+  /* padding-top: 16px; */
+  padding-bottom: 10px;
 }
 .intro-methodology[open] .chevron {
   transform: rotate(180deg);
@@ -1672,9 +2367,10 @@ function openWorkspace(tab?: 'task' | 'kb') {
 .msg {
   display: flex;
   gap: 16px;
-  max-width: 800px;
-  margin: 0 auto;
+  margin: 0;
   width: 100%;
+  padding: 0 46px; /* 强制与头部标题区和底部输入框两端对齐 */
+  box-sizing: border-box;
 }
 .msg.user { flex-direction: row-reverse; }
 
@@ -1687,6 +2383,10 @@ function openWorkspace(tab?: 'task' | 'kb') {
   font-size: 12px; font-weight: 700;
   flex-shrink: 0;
 }
+.msg.assistant .msg-avatar {
+  /* 头像宽度 32px + gap 16px = 48px，向左悬挂，确保气泡内容精确对齐在 96px 垂直线上 */
+  margin-left: -48px; 
+}
 
 .msg-content {
   max-width: 85%;
@@ -1696,52 +2396,57 @@ function openWorkspace(tab?: 'task' | 'kb') {
 
 .msg-bubble {
   padding: 16px 20px;
-  border-radius: 12px;
+  border-radius: 20px;
   font-size: 15px;
-  line-height: 1.6;
-  background: #fff;
-  border: 1px solid rgba(0,0,0,0.06);
-  box-shadow: var(--shadow-sm);
-  color: var(--navy-2);
+  line-height: 1.8;
+  background: #F8F9FA;
+  border: none;
+  box-shadow: none;
+  color: var(--color-text);
 }
 .msg.user .msg-bubble {
   background: var(--brand);
   color: #fff;
-  border: none;
-  border-top-right-radius: 4px;
+  border-radius: 20px 20px 4px 20px;
   white-space: pre-wrap;
 }
 .msg.user .msg-bubble.user-pick {
   background: var(--brand-soft);
   color: var(--brand-ink);
-  border: 1px solid rgba(59, 91, 219, 0.2);
+  box-shadow: none;
+  border: 1px solid rgba(59, 91, 219, 0.1);
   font-size: 14px;
 }
 .msg.user .msg-bubble.user-pick strong {
   font-size: 15px;
 }
 .msg.user .msg-bubble.user-pick blockquote {
-  margin: 8px 0 0;
-  padding-left: 12px;
-  border-left: 3px solid rgba(59, 91, 219, 0.3);
-  color: var(--navy-2);
+  margin: 12px 0 0;
+  padding-left: 16px;
+  border-left: 2px solid var(--brand);
+  color: var(--color-text);
   font-size: 13px;
 }
-.msg.assistant .msg-bubble { border-top-left-radius: 4px; }
+.msg.assistant .msg-bubble { 
+  border-radius: 20px 20px 20px 4px; 
+}
 
 .msg-artifact {
   display: flex; align-items: center; gap: 16px;
   padding: 16px 20px;
-  border-radius: 12px;
-  background: #fff;
-  border: 1px solid rgba(0,0,0,0.06);
-  box-shadow: var(--shadow-sm);
+  border-radius: 20px;
+  background: #F8F9FA;
+  border: 1px solid transparent;
+  box-shadow: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .msg-artifact:hover {
-  border-color: var(--brand);
-  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.06);
+}
+.msg-artifact:active {
+  transform: scale(0.98);
 }
 .artifact-icon { font-size: 24px; }
 .artifact-meta { display: flex; flex-direction: column; flex: 1; }
@@ -1770,20 +2475,90 @@ function openWorkspace(tab?: 'task' | 'kb') {
   font-size: 12px; line-height: 1.8; color: var(--color-muted);
 }
 
-.loading-bubble { background: transparent; border: none; box-shadow: none; padding: 10px 0; }
-.loading-dots { font-weight: 600; color: var(--color-soft); }
-.loading-dots span { animation: blink 1.4s infinite both; }
-.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
-.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
-.loading-sub {
-  margin-top: 6px; max-width: 520px;
-  font-size: 12px; line-height: 1.8; color: var(--color-soft);
+.loading-bubble { 
+  background: transparent; border: none; box-shadow: none; 
+  display: flex; flex-direction: column; gap: 16px;
 }
-@keyframes blink { 0% { opacity: .2; } 20% { opacity: 1; } 100% { opacity: .2; } }
+.loading-progress-bar {
+  width: 100%; max-width: 240px;
+  height: 4px;
+  background: rgba(30, 41, 59, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.loading-progress-inner {
+  height: 100%;
+  width: 40%;
+  background: var(--navy);
+  border-radius: 2px;
+  animation: progress-indeterminate 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%) scaleX(0.2); }
+  50% { transform: translateX(100%) scaleX(0.8); }
+  100% { transform: translateX(300%) scaleX(0.2); }
+}
+.loading-title { 
+  font-size: 16px; font-weight: 800; /* 杂志化大字重 */
+  letter-spacing: -0.01em; /* 收紧字距 */
+  color: var(--navy);
+  animation: text-breathe 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite alternate;
+}
+@keyframes text-breathe {
+  0% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+.loading-sub {
+  max-width: 520px;
+  font-size: 13px; line-height: 1.8; color: var(--color-muted);
+  opacity: 0;
+  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+}
+
+@keyframes fade-in-up {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
 
 /* 定稿气泡：和普通回答区分开（左边一条绿边），否则它读起来像 AI 又说了一段话 */
 .entry-msg { border-left: 3px solid #10B981; }
 .entry-msg :deep(p:last-of-type) { margin-bottom: 8px; }
+
+/* 这一步还没产出时的生成入口。刻意做得比输入条上那两个小按钮显眼：
+   进阶段不再自动跑之后，看不见它的人会以为这一步只能聊天。 */
+.run-cta {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  padding: 24px 28px;
+  background: rgba(248, 249, 250, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: none; border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+}
+.run-cta-body { flex: 1 1 260px; min-width: 0; }
+.run-cta-title { font-size: 16px; font-weight: 800; color: var(--navy); letter-spacing: -0.02em; }
+.run-cta-sub { margin: 8px 0 0; font-size: 13px; line-height: 1.8; color: var(--color-muted); }
+.btn-run-cta {
+  flex: 0 0 auto; padding: 14px 24px;
+  background: var(--navy, #1E293B); color: #fff;
+  border: none; border-radius: 14px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(30, 41, 59, 0.18);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-run-cta:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(30, 41, 59, 0.1);
+}
+.btn-run-cta:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; transform: none; }
+/* 慢车道那个次要入口（AI 直接出方向）。做成描边的：两个实心按钮并排的话，
+   「先定方向」那条推荐路径看不出来 */
+.btn-run-cta.secondary {
+  background: rgba(255, 255, 255, 0.6); color: var(--navy, #1E293B);
+  border: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  font-weight: 600;
+}
 
 /* 别的步在跑。刻意不做成 AI 气泡：气泡长在这一步的对话里，读起来还是「这一步在跑」 */
 .other-running {
@@ -1796,14 +2571,15 @@ function openWorkspace(tab?: 'task' | 'kb') {
 .input-capsule-wrapper {
   position: absolute;
   bottom: 32px; left: 0; right: 0;
+  padding: 0 96px; /* 与上方的消息流对齐 */
   /* column：分析中那条说明要压在输入条**上面**一行，横排的话它会把输入条挤窄 */
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; gap: 8px;
   pointer-events: none;
 }
 /* 为什么现在不能说话。放在输入条正上方 —— 只把它变灰的话，读起来是「界面坏了」 */
 .capsule-note {
   pointer-events: auto;
-  width: 100%; max-width: 700px;
+  width: 100%;
   box-sizing: border-box;
   padding: 10px 20px;
   background: #FFFBEB;
@@ -1815,6 +2591,22 @@ function openWorkspace(tab?: 'task' | 'kb') {
   position: absolute; bottom: 32px; left: 0; right: 0;
   display: flex; justify-content: center;
 }
+/* 右下角那颗「下一步」。尺寸和 `.btn-next-stage` 一模一样、`bottom` 算成和它同一条
+   水平中线（胶囊 bottom 32 + 上下 padding 16 + 半个按钮高 17 = 65；这颗是 48 + 17）——
+   两颗一样的按钮差几个像素时，看起来是没对齐，而不是「有意摆成两层」。
+   窄屏时抬到居中那颗上面一行：并排会压在它身上，叠着的话点下去哪一颗生效说不清。 */
+.btn-next-corner {
+  position: absolute; right: 50%;
+    margin-right: -520px;bottom: 48px; z-index: 2;
+  padding: 8px 18px; border: none; border-radius: 999px;
+  background: var(--navy); color: #fff;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.btn-next-corner:hover { background: var(--navy-2); }
+@media (max-width: 900px) {
+  .btn-next-corner { right: 16px; bottom: 112px; }
+}
 .locked-capsule {
   padding: 16px 32px;
   background: rgba(255,255,255,0.8);
@@ -1824,10 +2616,68 @@ function openWorkspace(tab?: 'task' | 'kb') {
   font-size: 14px; font-weight: 600; color: var(--color-soft);
   box-shadow: var(--shadow);
 }
+/* 已定稿那一条：不是「被锁在门外」，而是「这一步做完了」，所以颜色和字重跟前者分开 */
+.locked-capsule.done {
+  display: flex; align-items: center; gap: 16px;
+  color: var(--navy);
+  background: rgba(255,255,255,0.92);
+}
+.locked-capsule .lc-sub { font-weight: 500; color: var(--color-soft); }
+.btn-next-stage {
+  padding: 8px 18px; border: none; border-radius: 999px;
+  background: var(--navy); color: #fff;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.btn-next-stage:hover { background: var(--navy-2); }
+
+/* --- 定稿之后中间这一栏：只读的咨询报告 --- */
+.report { max-width: 100%; }
+.report-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--color-border);
+}
+.report-tag { font-size: 16px; font-weight: 800; color: var(--navy); letter-spacing: -0.5px; }
+.report-meta { font-size: 12px; color: var(--color-soft); }
+.report-warn {
+  margin-top: 16px; padding: 12px 16px;
+  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px;
+  font-size: 12.5px; line-height: 1.8; color: #92400E;
+}
+.report-h {
+  margin: 28px 0 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  color: var(--color-soft); text-transform: uppercase;
+}
+.report-conclusion {
+  margin: 0; font-size: 17px; line-height: 1.8; font-weight: 600; color: var(--color-text);
+}
+.report-empty {
+  padding: 12px 16px; background: var(--color-fill);
+  border: 1px dashed var(--color-border-strong); border-radius: 12px;
+  font-size: 12.5px; color: var(--color-muted);
+}
+.report-ai { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.9; color: var(--color-text); }
+
+/* 折叠起来的讨论记录。summary 要看得出能点 —— 看不出的话那段记录等于消失了。 */
+.msg-log { display: flex; flex-direction: column; gap: 24px; }
+details.msg-log { margin-top: 32px; gap: 0; }
+.msg-log-summary {
+  cursor: pointer; padding: 10px 0; margin-bottom: 8px;
+  font-size: 13px; font-weight: 600; color: var(--color-muted);
+  border-top: 1px solid var(--color-border);
+}
+.msg-log-summary:hover { color: var(--navy); }
+details.msg-log[open] > .msg { margin-bottom: 24px; }
+
+.entry-locked {
+  margin-top: 20px; padding: 12px 16px;
+  background: var(--color-fill); border: 1px solid var(--color-border); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.8; color: var(--color-muted);
+}
 
 .input-capsule {
   pointer-events: auto;
-  width: 100%; max-width: 800px;
+  width: 100%;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(24px);
   border: 1px solid rgba(0,0,0,0.08);
@@ -2002,21 +2852,28 @@ function openWorkspace(tab?: 'task' | 'kb') {
 /* Draft Editor */
 .draft-box { border: none; padding: 0; background: transparent; box-shadow: none; margin-bottom: 24px; }
 .draft-head { margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }
-.draft-tag { padding: 0; background: transparent; color: var(--navy); font-size: 16px; font-weight: 800; border-radius: 0; letter-spacing: -0.5px; }
+.draft-tag { padding: 0; background: transparent; color: var(--navy); font-size: 20px; font-weight: 800; border-radius: 0; letter-spacing: -0.02em; margin-bottom: 8px; display: inline-block; }
+
+/* 采纳 = 直接定稿、不可逆，这句必须在卡片上方说清（见 pickDirection） */
+.dirs-note {
+  margin-bottom: 24px; padding: 16px 20px;
+  background: rgba(245, 158, 11, 0.08); border: none; border-radius: 16px;
+  font-size: 13.5px; line-height: 1.8; color: #92400E;
+}
 
 /* 正在重出一版：这块内容马上会被换掉。按钮变灰不解释的话，读起来是「保存不了了」 */
 .draft-busy {
-  margin-bottom: 20px; padding: 12px 16px;
-  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px;
-  font-size: 12px; line-height: 1.8; color: #92400E;
+  margin-bottom: 24px; padding: 16px 20px;
+  background: rgba(245, 158, 11, 0.08); border: none; border-radius: 16px;
+  font-size: 13.5px; line-height: 1.8; color: #92400E;
 }
 
 .inline-gaps {
   margin-bottom: 24px;
-  padding: 16px;
-  background: rgba(255, 251, 235, 0.6);
-  border-radius: 12px;
-  border: 1px solid rgba(253, 230, 138, 0.5);
+  padding: 16px 20px;
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 16px;
+  border: none;
   font-size: 13.5px;
   color: #92400E;
 }
@@ -2069,8 +2926,89 @@ function openWorkspace(tab?: 'task' | 'kb') {
 }
 .draft-actions { display: flex; gap: 12px; margin-top: 32px; }
 
-.dir-card { padding: 24px; border-top: 4px solid transparent; transition: border-color 0.2s, box-shadow 0.2s; background: #fff; border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 16px; }
-.dir-card:hover { border-color: var(--brand); box-shadow: var(--shadow-lg); }
+.dir-card { 
+  padding: 32px 0 48px; 
+  background: transparent; border: none; 
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04); 
+  margin-bottom: 0; 
+}
+.dir-card:last-child { border-bottom: none; }
+.dir-top { position: relative; margin-bottom: 24px; }
+.dir-idx {
+  position: absolute; left: -48px; top: -4px;
+  font-size: 32px; font-weight: 800;
+  color: rgba(30, 41, 59, 0.08); line-height: 1;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.dir-top h3 {
+  font-size: 20px; font-weight: 800; color: var(--navy);
+  margin: 0; line-height: 1.4; letter-spacing: -0.02em;
+}
+
+/* 待定方向（岔路口）。选项做成「卡中卡」而不是列表：每一条要读的是
+   「这条路是什么 + 放弃什么」两行，压成一行的话代价那半句会被跳过。 */
+.dec-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; margin: 8px 0 24px; }
+.dec-tag {
+  flex: 0 0 auto; padding: 4px 10px; border-radius: 8px;
+  background: var(--brand-soft, #EEF2FF); color: var(--brand, #4F46E5);
+  font-size: 12px; font-weight: 700;
+}
+/* 那一条的原文。自己占一行、最多两行（悬停看全文）：这些条目是一两百字的长句，
+   整段摊开的话一屏只放得下一张卡片，几处取舍之间就没法比着看了 ——
+   而这一屏的全部作用就是比着挑。 */
+.dec-method {
+  flex: 1 1 100%; min-width: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  font-size: 13px; line-height: 1.7; color: var(--color-text-soft, #64748B); cursor: help;
+}
+.dec-basis { font-size: 13px; line-height: 1.7; color: var(--color-text-soft, #64748B); }
+/* 选项是按钮：`display:block` + `text-align:left` 是必需的（按钮默认居中且是
+   inline-flex，三行文字会挤成居中一团，读起来像标题而不是可点的选项）。 */
+.dec-opt {
+  display: block; width: 100%; text-align: left; cursor: pointer; font: inherit;
+  margin-bottom: 12px; padding: 20px 24px;
+  background: rgba(248, 249, 250, 0.65); border: none; border-radius: 16px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s;
+}
+button.dec-opt:active:not(:disabled) { transform: scale(0.98); }
+button.dec-opt:hover:not(:disabled) { background: rgba(248, 249, 250, 0.9); }
+button.dec-opt:disabled { cursor: default; opacity: 0.7; }
+/* 选中态要看得出来：只靠一个小勾的话，八处岔路口里漏选一处很难发现，
+   而提交按钮上那句「还差 N 处」是他唯一的线索。 */
+.dec-opt.chosen {
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.12);
+}
+.dec-chosen-tag { margin-left: 8px; font-size: 12px; font-weight: 700; color: var(--brand, #4F46E5); }
+.dec-recommend {
+  margin: 16px 0; padding: 16px 20px;
+  background: rgba(245, 158, 11, 0.08); border-radius: 16px;
+  font-size: 13.5px; line-height: 1.7; color: #92400E;
+}
+.dec-note { display: block; margin: 16px 0 0; }
+.dec-note > span { display: block; margin-bottom: 8px; font-size: 13px; color: var(--color-text-soft, #64748B); }
+.dec-note textarea {
+  width: 100%; padding: 16px 20px; font: inherit; font-size: 14px; line-height: 1.7;
+  border: none; border-radius: 16px; background: rgba(248, 249, 250, 0.65);
+  color: var(--color-text); resize: vertical; transition: all 0.2s;
+}
+.dec-note textarea:focus { outline: none; background: #fff; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06); }
+/* 拍板那条对话记录。它 `role='user'`（那几处是**他**定的，记成 AI 说的就成了
+   「AI 说它定了」），所以必须把用户气泡那身满色底 + `pre-wrap` 覆盖掉 ——
+   不覆盖的话渲染出来的 markdown 挤在一块蓝底上，那几行「放弃：…」读不出来，
+   而那半句是这一步唯一不可逆的信息。左侧竖线用品牌色而不是定稿那条的绿色：
+   两条长得一样的话，「方向定了」会被读成「这一步已经定稿了」。 */
+.msg.user .msg-bubble.decided-msg {
+  background: var(--brand-soft, #EEF2FF);
+  color: var(--color-text);
+  white-space: normal;
+  font-size: 14px;
+  border-left: 3px solid var(--brand, #4F46E5);
+  border-radius: 20px 20px 4px 20px;
+}
+.dec-opt-label { font-size: 15px; font-weight: 700; color: var(--navy, #1E293B); }
+.dec-opt-detail { margin-top: 6px; font-size: 13.5px; line-height: 1.7; color: var(--color-text); }
+.dec-opt-cost { margin-top: 8px; font-size: 13px; line-height: 1.7; color: #B45309; }
 
 /* 已定稿内容 */
 .entry-box { border: none; padding: 0; background: transparent; box-shadow: none; }

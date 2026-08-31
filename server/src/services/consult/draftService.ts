@@ -3,6 +3,8 @@ import { SAMPLING } from '../../core/llm/gateway.js';
 import { STAGES, stageByKey, unlockState, LANE_LABEL, type StageDef } from './stages.js';
 import { listEntries, listMessages, type ConsultProject, type ConsultEntry } from './projectStore.js';
 import { listSources, sourcesBlock } from './sourceStore.js';
+// 只取类型（`import type` 在编译后整句消失），所以这里和 decisionService 之间没有运行时循环依赖。
+import type { DecidedSheet } from './decisionService.js';
 
 // 快车道（四看）的结论草稿。慢车道（四问/四大成）的候选方向是另一条路径，
 // 不共用这里的 prompt —— 两者要的东西不一样：这里要「把资料里已有的事实梳理成一句判断」，
@@ -57,10 +59,46 @@ export const CONFIDENCE_VALUES = ['high', 'mid', 'low'] as const;
  *
  * 所以这两个数是「留给它想」的空间，不是「正文能有多长」。调低它不会省钱
  * （计费按实际用量），只会把偶发的思维链长跑变成一次白扣额度的报错。
+ *
+ * **但往上调也有天花板，而那个天花板不在我们这边。** 实测「看自己」在
+ * deepseek-v4-flash 上思维链要 20501 / 22225 token（两次），24000 的额度于是刚够
+ * 想完、正文断在第一节（finish_reason=length）；把它开到 36000 想给正文留位置，
+ * 结果是那次请求跑到 300.2 秒被**上游网关**掐掉，回一句 nginx 的 `504 <html>`。
+ * 也就是说这条接入点对单次请求有 ~300 秒的上限，而那条思维链撑不进去 ——
+ * 继续加这个数只会把「截断」换成「网关 504」，两种都是白花一次额度。
+ *
+ * 所以这两条调用**关掉思维链**（`noThinking: true`，见 GatewayOptions 上的实测数据）：
+ * 那之后 24000 是实打实留给正文的 24000，上面那两种失败一起消失，耗时也从四分钟量级
+ * 掉到十几秒。这两个数因此现在是**宽松的上限而不是紧的**，不要因为「反正关了思维链」
+ * 就调小它们 —— 关不掉的接入点（`withNoThinking` 会喊那一句）照旧要靠这个额度撑住。
  */
 const MAX_TOKENS_DRAFT = 24000;
-/** 4 个方向 × 六栏是这个模块最长的正文（实测 1500+），再叠思维链的方差。 */
+/**
+ * 4 个方向 × 六栏 × 各带一份输出物清单正文，是这个模块最长的一次输出：六栏部分实测
+ * 1500+ 字，清单正文按 `DIRECTION_BODY_MAX_CHARS` 封顶再乘 4，加起来 5000 字量级。
+ * 上面那个天花板（~300 秒）在这里更近，所以约束写在 prompt 的字数区间上而不是这个数上
+ * —— 这个数只是「别在写完之前被截断」，截断的表现是 JSON 配不平、整批方向一个都不剩。
+ */
 const MAX_TOKENS_DIRECTIONS = 16000;
+
+/**
+ * 出草稿 / 出方向的超时，**并且不重试**（平台默认是 120s + 重试 1 次）。
+ *
+ * 这两条调用要写的是好几张表 + 一整段思维链，实测「看自己」这一步在
+ * deepseek-v4-flash 上 260 秒才回来（120 秒根本不够）—— 而默认那次重试把总等待
+ * 变成 240 秒才报错，两次都白花（同样的资料、同样的 max_tokens，第二次断在同一个
+ * 地方，见 GatewayOptions.maxRetries）。所以一次给足，不重试。
+ *
+ * 给的是 330 秒而不是「越大越好」，理由是**要让上游自己的那句报错先到**：实测这条
+ * 接入点在 300 秒左右会自己掐掉长请求并回一句 nginx 504。我们的超时比它短的话，
+ * 用户看到的是我们合成的「模型在超时时间内没有返回」—— 指向「换个快模型」，
+ * 而真凶是网关的时间上限（同样的模型跑短一点的 prompt 就过了）。
+ *
+ * 这个数和前端那个轮询窗口是**一对**（ConsultProject.vue 的 POLL_MS × POLL_MAX_TICKS）：
+ * 这里给得比它长的话，服务端还在写、界面已经说「超时了」，而那一版稍后会静默落进
+ * 对话记录 —— 用户已经走了，下次进来看到一版没人要的草稿。改这个数要一起改那个。
+ */
+const AI_TIMEOUT_MS = 330_000;
 
 /**
  * 正文的下限。低于这个数说明模型没按输出物清单写，而是回了一段综述。
@@ -103,6 +141,35 @@ export function requireStage(
 }
 
 /**
+ * 同上，外加一道「这一步还没定稿」的闸门 —— 定稿之后这一步是**只读**的。
+ *
+ * 三条写路径（出草稿 / 出方向 / 阶段内对话）都要过这道闸，理由是它们全都以
+ * 「花一次额度、看起来成功」收尾而实际什么都改不了：定稿接口已经不收第二版，
+ * 于是重出的那一版右栏点「完成定稿」时才报错（额度已经花了），而在这一步聊的话
+ * 更彻底 —— 定稿之后 `discussionBlock` 再也不会被读一次，那几句话进不了任何 prompt，
+ * 而 AI 照样一句一句认真回，读起来完全像在推进这一步。
+ *
+ * 报错里必须说出「这一步锁了」和「下一步在哪」：只说「不能操作」的话用户会以为
+ * 是权限或者故障，一路重试。
+ */
+export function requireOpenStage(
+  projectId: string,
+  stageKey: string,
+  opts: { lanes?: StageDef['lane'][] } = {}
+): { stage: StageDef; entries: ConsultEntry[] } {
+  const out = requireStage(projectId, stageKey, opts);
+  const done = out.entries.find((e) => e.stage_key === stageKey);
+  if (done) {
+    throw new StageError(
+      `「${out.stage.label}」已经定稿（第 ${done.version} 版），这一步锁定了：定稿是下游每一步的依据，` +
+        `所以不再改动，也不再接受这一步的对话（聊了也不会进任何 prompt）。接着往下走去下一步。`,
+      409
+    );
+  }
+  return out;
+}
+
+/**
  * 模型没给出能用的 JSON 时的报错文案。实现在 `core/llm/parseJson.ts`（xhs 那几个
  * JSON 端点用的是同一份）—— 各模块各写一份的话，改了这边的措辞另一边照旧，
  * 而两边的症状（空返回 / 截断 / 格式坏）是同一个模型的同一个毛病。
@@ -117,7 +184,8 @@ const gateFailMessage = jsonFailMessage;
  * 最后面 —— 表现不是报错，是模型开始照自己的常识写，回来的东西格式完整、内容和这家
  * 企业无关。带哪几节由调用方按 requires 传，不在这里猜。
  */
-function knowledgeBlock(entries: ConsultEntry[], fullBodyFor: string[] = []): string {
+export function knowledgeBlock(entries: ConsultEntry[], fullBodyFor: string[] = []): string {
+  // 带哪几份正文由 `stage.contextBodies ?? stage.requires` 决定（见 bodyKeys）。
   const byKey = new Map(entries.map((e) => [e.stage_key, e]));
   const withBody = new Set(fullBodyFor);
   const lines: string[] = [];
@@ -134,8 +202,17 @@ function knowledgeBlock(entries: ConsultEntry[], fullBodyFor: string[] = []): st
   return lines.length ? lines.join('\n\n') : '（还没有已定稿的结论，这是第一步）';
 }
 
+/**
+ * 这一步要带整份正文的上游阶段。**默认跟 `requires` 一样，不许在调用点各写一份** ——
+ * 出草稿和出方向两条路径漂开的话，同一步在快/慢车道下读到的依据不一样，而两边都不报错。
+ * 为什么和 requires 分开：见 `StageDef.contextBodies`。
+ */
+export function bodyKeys(stage: StageDef): string[] {
+  return stage.contextBodies ?? stage.requires;
+}
+
 /** 输出物清单进 prompt 的那一段。序号必须写出来 —— 用户界面上照同一个序号数缺了哪一项。 */
-function deliverablesBlock(stage: StageDef): string {
+export function deliverablesBlock(stage: StageDef): string {
   return stage.deliverables.map((d, i) => `${i + 1}. ${d}`).join('\n');
 }
 
@@ -146,7 +223,7 @@ function deliverablesBlock(stage: StageDef): string {
  * 价值主张三层都在却没做过三问检验、没判过卡在哪一层；竞品每家写的维度还不一样。
  * 这种正文和照方法论推出来的在界面上没有区别，顾问会直接拿去用。
  */
-function methodBlock(stage: StageDef): string {
+export function methodBlock(stage: StageDef): string {
   return stage.method.map((m, i) => `${i + 1}) ${m}`).join('\n');
 }
 
@@ -203,6 +280,76 @@ function discussionRule(d: Discussion): string {
 把上次的猜测当成客户确认过的事实写进去，读起来和有依据的一模一样。`;
 }
 
+/**
+ * 这一步顾问拍过的板（`kind='decided'` 那条记录）。**慢车道出正文的地基。**
+ *
+ * `restaked` = 拍板之后他又出了一版岔路口清单。这种情况**不能照旧写正文**：那批选择
+ * 对的是旧那一版的问题（清单里的 id 每次重出都重排），照旧写出来的正文地基是他没看过的
+ * 那几处取舍，而正文和方法论速览读起来完全正常。
+ */
+export function decidedContext(
+  projectId: string,
+  stageKey: string
+): { sheet: DecidedSheet; restaked: boolean } | null {
+  const msgs = listMessages(projectId, stageKey);
+  const last = [...msgs].reverse().find((m) => m.kind === 'decided' || m.kind === 'decisions');
+  if (!last) return null;
+  const decided = [...msgs].reverse().find((m) => m.kind === 'decided');
+  if (!decided) return null;
+  try {
+    const sheet = JSON.parse(decided.payload || '{}') as DecidedSheet;
+    if (!Array.isArray(sheet.picks)) return null;
+    if (!sheet.picks.length && !sheet.noFork) return null;
+    return { sheet, restaked: last.id !== decided.id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 拍板结果进 prompt 的那一段。**代价（`cost`）必须带上**：不带的话模型只讲选中那条路的
+ * 好处，而「放弃了什么」是这一步唯一不可逆的信息（定稿之后只读），也是定位边界那一节的原料。
+ */
+function decidedSection(sheet: DecidedSheet): string {
+  if (!sheet.picks.length) {
+    return `\n\n【顾问已经拍板（这一步没有取舍要定）】
+${sheet.noFork}
+所以照现有资料和上游定稿直接写完这一步，**不要**在正文里另摆几个方向让他再选一次。`;
+  }
+  const lines = sheet.picks
+    .map(
+      (p, i) =>
+        `${i + 1}. ${p.question}${p.methodRef ? `（${p.methodRef}）` : ''}\n` +
+        `   他定了：${p.label}${p.detail ? ` —— ${p.detail}` : ''}\n` +
+        `   这一选择放弃的是：${p.cost}` +
+        (p.note ? `\n   他另外交代：${p.note}` : '')
+    )
+    .join('\n');
+  return `\n\n【顾问已经拍板的方向（这是这一步的地基，${sheet.picks.length} 处）】
+${lines}`;
+}
+
+/**
+ * 慢车道正文的硬规则（拍过板之后）。**「不要再给第二种方案」是这里最要紧的一条**：
+ * 他已经定了，正文里再摆一句「或者也可以…」出来，这份方案就有两个互相矛盾的地基，
+ * 而两段各自都通顺 —— 客户读到的是一份自相矛盾的定位。
+ */
+function decidedRule(sheet: DecidedSheet): string {
+  const picked = sheet.picks.length;
+  return `
+
+关于【顾问已经拍板的方向】（优先级高于你自己的判断）：
+- **照他定的那几条写，不要再给第二种方案、不要再问一次。** 你觉得另一条更好也不许写成
+  「或者也可以…」——一份方案里两个地基，两段各自都通顺，而客户拿到的是自相矛盾的定位。
+- **放弃的东西要真的写出来**（他选那一条时放弃的那些）：落到「边界 / 不做什么 / 不承诺」
+  那几节里。只写好处的正文读起来更漂亮，而下一步会把被放弃的那些又拉回来。
+- 他定的和你从资料里读到的冲突时，**照他定的写，并在 rationale 里点出冲突在哪**
+  （悄悄按自己的判断改一版的话，他看不出这一节已经不是他定的那条路了）。
+- \`## 0. 方法论速览\` 里**必须写出这${picked ? ` ${picked} ` : ''}处取舍是顾问定的、
+  他选的是哪一条、放弃了什么**（一处一句）。这是整份方案里唯一能看出地基是谁定的地方 ——
+  不写的话，他定的和你替他定的在正文里一模一样。`;
+}
+
 /** 对话块进 user prompt 的那一段。丢掉的条数要写给模型：不写它会以为手上是全部上下文。 */
 function discussionSection(d: Discussion): string {
   if (!d.used) return '';
@@ -240,7 +387,7 @@ const RULE_BODY_SECTIONS = `**body 必须按【本步必须产出的东西】逐
    清单里写了"表格"的必须真的输出 markdown 表格（\`| 列 | 列 |\` 带分隔行），不许改写成段落或者项目符号。
    某一项资料实在不支持时，那一节照样要在，里面写明「资料缺什么、补什么才能填」，并把它写进 gaps。
    **另外固定加两节，前后各一节**（它们不在清单里，但每次都要有）：
-   - 开头 \`## 0. 方法论速览\`：2-3 句说清这一步用的是什么框架，以及**这一次实际是照操法哪几条推的**。
+   - 开头 \`## 0. 方法论速览\`：2-3 句说清这一步用的是什么框架，。
      顾问对着这一节就能判断这份正文是推出来的还是套出来的 —— 缺了它，两者在屏幕上没有区别。
    - 结尾 \`## 写作建议\`：这一节进正式方案时怎么组织（用哪张图/表呈现、哪一句是主论点、
      还要配什么证据、哪里要留给顾问自己拍）。这是给内部顾问的，不是给客户的话术。`;
@@ -266,7 +413,10 @@ const RULE_METHOD_FIRST = `**先照【这一步的分析操法】把推导走完
    这种正文和照方法论推出来的在屏幕上一模一样，而顾问会直接拿它进方案。
    rationale 里要写清关键判断是照操法第几条推出来的。`;
 
-const DRAFT_JSON_FORMAT = `{"conclusion":"一句话总结","body":"markdown 正文：## 0. 方法论速览 + 按输出物清单逐项成节 + ## 写作建议","rationale":"为什么这么判断（取舍理由，含关键判断出自操法第几条）","evidence":"依据来自资料里的哪几句/哪些数字","confidence":"high|mid|low","aiOpportunities":["本步的 AI 赋能机会 1","（可选）机会 2"],"gaps":["资料里缺的东西，客户补上能提高置信度"]}`;
+// aiOpportunities 必须出现在这个格式里：这一栏单独存一列（081），而方案最后那一章
+// 「AI 转型机会清单」就是十四步的这一栏汇起来的。格式里不写它，模型就整个不给 ——
+// 那一章于是漏掉这个模块，而它读起来照样是一份完整的清单。
+const DRAFT_JSON_FORMAT = `{"conclusion":"一句话总结","body":"markdown 正文：## 0. 方法论速览 + 按输出物清单逐项成节 + ## 写作建议","rationale":"为什么这么判断（取舍理由，含关键判断出自操法第几条）","evidence":"依据来自资料里的哪几句/哪些数字","confidence":"high|mid|low","aiOpportunities":["本步的 AI 赋能机会 1（只标不展开）","（可选）机会 2"],"gaps":["资料里缺的东西，客户补上能提高置信度"]}`;
 
 /** 四看（fast）的 system prompt：找事实，不许发挥。 */
 function fastSystem(): string {
@@ -288,6 +438,39 @@ function fastSystem(): string {
 
 输出格式：
 ${DRAFT_JSON_FORMAT}`;
+}
+
+/**
+ * 慢车道（四问 / 四大成）**拍过板之后**出正文的 system prompt。
+ *
+ * 它替掉的是「AI 出 2-4 份完整方向、顾问挑一份」那条路：那条路上四份正文各自都通顺，
+ * 顾问实际是在读四份写好的东西里挑文笔，而那几处取舍（竞品挑哪几家、画像分几类、
+ * 定位取哪个角色）已经被模型替他定死在正文里了。现在取舍先单独问过了（decisionService），
+ * 这一份的任务就是**照他定的那几条写完一份**。
+ *
+ * 不能复用 fastSystem：那份写着「四看是找事实，不是发挥」，拿它写定位共识书的话模型
+ * 只敢复述上游结论，交出一份没有定位语、没有边界、没有落地校验的综述 —— 而它读起来完全正常。
+ */
+function slowSystem(stage: StageDef, sheet: DecidedSheet): string {
+  return `你是品牌占位系统的资深咨询顾问，正在做「${stage.group} · ${stage.label}」。
+这一步是**做判断**，而判断里那几处取舍**顾问已经拍过板了**（见【顾问已经拍板的方向】）——
+所以现在不要再摆几个方向让他选，你的活是照他定的那条路，把这一步该交的东西一次写完。
+
+硬规则：
+0. ${RULE_METHOD_FIRST}
+1. ${RULE_BODY_SECTIONS}
+2. 依据是【已定稿结论】+【客户资料】+【联网资料】。资料撑不住的判断不许写成事实，缺什么写进 gaps。
+3. ${RULE_SOURCE_LEVELS}
+4. ${RULE_NO_JARGON}
+5. **写死不写活**：定位语 / 一句话身份 / 边界 / 落地话术这类要给出**那一句原文**，
+   不要写「建议围绕 X 提炼一句」——那种正文表格填得满满的，实际一个字的交付都没有。
+6. confidence 按这一步的依据够不够给：high / mid / low。上游结论缺得多、客户资料薄的时候给低的那一档。
+7. conclusion 是**一句话总结**（40-120 字）：这一步定下来的是什么，不是正文的摘要。
+8. ${RULE_AI_OPPS}
+9. 只输出 JSON，不要任何解释文字。body 里的换行用 \\n。
+
+输出格式：
+${DRAFT_JSON_FORMAT}${decidedRule(sheet)}`;
 }
 
 /**
@@ -332,9 +515,12 @@ function buildMessages(
   project: ConsultProject,
   stage: StageDef,
   entries: ConsultEntry[],
-  disc: Discussion
+  disc: Discussion,
+  decided: DecidedSheet | null
 ) {
-  const system = (stage.lane === 'plan' ? planSystem(stage) : fastSystem()) + discussionRule(disc);
+  const system =
+    (decided ? slowSystem(stage, decided) : stage.lane === 'plan' ? planSystem(stage) : fastSystem()) +
+    discussionRule(disc);
 
   const user = `【品牌 / 客户】${project.brand_name}
 
@@ -345,10 +531,10 @@ function buildMessages(
 ${methodBlock(stage)}
 
 【本步必须产出的东西（body 就照这个清单一项一节写，顺序不要变）】
-${deliverablesBlock(stage)}
+${deliverablesBlock(stage)}${decided ? decidedSection(decided) : ''}
 
 【已定稿结论（企业知识库）】
-${knowledgeBlock(entries, stage.requires)}
+${knowledgeBlock(entries, bodyKeys(stage))}
 
 【联网资料（L1）】
 ${sourcesBlock(listSources(project.id))}
@@ -374,18 +560,41 @@ export async function draftFastStage(
   project: ConsultProject,
   stageKey: string
 ): Promise<{ draft: StageDraft; truncated: boolean; discussion: Discussion }> {
-  // fast 和 plan 共用这条接口（都是「出一份草稿 → 用户改 → 定稿」），system prompt 按车道分。
-  const { stage, entries } = requireStage(project.id, stageKey, { lanes: ['fast', 'plan'] });
+  // 三条车道共用这条接口（都是「出一份草稿 → 用户改 → 定稿」），system prompt 按车道分。
+  // 慢车道走到这里的前提是**取舍已经拍过板**（下面那道闸），所以它用的是 slowSystem。
+  const { stage, entries } = requireOpenStage(project.id, stageKey, { lanes: ['fast', 'plan', 'slow'] });
   // plan 不拦空资料：它的依据是上游那十二条定稿，而那些已经解锁校验过了。
   // fast 必须拦 —— 四看的结论全部来自这段资料，空着的话模型只能编，而编出来的读着一样。
   if (stage.lane === 'fast' && !project.brief.trim()) {
     throw new StageError('先在下面贴一段客户资料 —— 快车道的结论全部来自这段资料，空着的话 AI 只能靠编', 400);
   }
 
+  // 慢车道**必须先拍过板**。不拦的话这条接口就是「AI 把那几处取舍替你定了，然后写一份
+  // 完整正文」——那正是这条流程要替掉的东西，而它的产出和照他定的方向写出来的一模一样。
+  let decided: DecidedSheet | null = null;
+  if (stage.lane === 'slow') {
+    const ctx = decidedContext(project.id, stageKey);
+    if (!ctx) {
+      throw new StageError(
+        `「${stage.label}」要先定方向再出正文：点「开始分析」，把 AI 列出的那几处取舍拍完板，` +
+          `我再照你定的那条路写。不先定的话这几处就是 AI 自己替你定的，而写出来的正文看不出这件事。`,
+        400
+      );
+    }
+    if (ctx.restaked) {
+      throw new StageError(
+        `你拍板之后又出了一版待定方向（问题和顺序都变了）—— 照旧那批选择写出来的正文，地基是你没看过的那几处取舍，` +
+          `而正文读起来完全正常。请在右栏那一版上重新选一遍再出正文。`,
+        409
+      );
+    }
+    decided = ctx.sheet;
+  }
+
   const discussion = discussionBlock(project.id, stageKey);
   const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
     () => ({
-      messages: buildMessages(project, stage, entries, discussion),
+      messages: buildMessages(project, stage, entries, discussion, decided),
       ...SAMPLING.analytic,
       max_tokens: MAX_TOKENS_DRAFT,
       response_format: { type: 'json_object' },
@@ -396,6 +605,10 @@ export async function draftFastStage(
       operation: `draft:${stage.key}`,
       tier: 'strong',
       requestSummary: `${project.brand_name} · ${stage.label}`,
+      timeoutMs: AI_TIMEOUT_MS,
+      maxRetries: 0,
+      // 见 MAX_TOKENS_DRAFT 的注释：这一步的耗时和截断都来自思维链，不是正文长度。
+      noThinking: true,
     }
   );
 
@@ -487,6 +700,16 @@ export interface StageDirection {
   strengths: DirectionStrength[];
   solutions: DirectionSolution[];
   risks: DirectionRisk[];
+  /**
+   * 这个方向下、按**本步输出物清单**逐项成节写出来的正文（`## N. 清单项`）。
+   *
+   * 没有它的时候，慢车道八个阶段（四问 + 四大成）交出来的定稿正文**结构完全一样** ——
+   * 定位语 + 三件套三张表，一个字都不提「定位共识书」「价值金字塔三层」「关系生命周期
+   * 四阶段」这些各步真正要交的东西。而 `deliverables` 那份清单在界面上是显示着的，
+   * 用户对着它数不出缺了什么：那几张表本身填得满满的，读起来就是一份做完的方案。
+   * 快车道早就是按清单成节的（`RULE_BODY_SECTIONS`），慢车道漏掉这件事没有任何报错。
+   */
+  body: string;
   /** 选了这个方向之后，这一节进正式方案时怎么组织（给内部顾问，不是客户话术）。 */
   writingTip: string;
   /** 选了这个方向之后本步的 AI 赋能机会，1-2 条，只标不展开。见 StageDraft.aiOpportunities。 */
@@ -499,6 +722,25 @@ const MAX_DIRECTIONS = 4;
 /** 三件套各自的下限。低于这个数就是「有栏目没内容」，比缺栏目更难发现。 */
 const MIN_REASONS = 2;
 const MIN_SOLUTIONS = 2;
+/**
+ * 每个方向的输出物正文字数区间，**要写进 prompt**。
+ *
+ * 不给上限的话四个方向各写一份清单正文就是四份完整方案：实测慢车道单次输出已经
+ * 1500+ 字，再乘上清单七八项 × 四个方向，输出直接翻到上万字 —— 那条接入点对单次
+ * 请求有 ~300 秒的硬上限（`fail()` 里认的那个 nginx 504），撞上去的时候用户等满
+ * 五分钟拿到一句「上游网关掐掉了」，而额度已经扣了。
+ * 不给下限的话它会把每一节写成一句话，那种正文和真写了的一样有小节标题。
+ */
+const DIRECTION_BODY_MIN_CHARS = 400;
+const DIRECTION_BODY_MAX_CHARS = 900;
+/**
+ * 低于这个数就当这个方向没写正文，整张丢掉（并点名）。
+ *
+ * 这道闸是这个切片的重点：模型漏给 `body` 时 `directionToMarkdown` 照样拼得出一张
+ * 完整的卡片（三件套都在），用户点「就用这个」就把那份没有清单小节的正文定稿了 ——
+ * 而定稿之后这一步是只读的，再也改不回来。
+ */
+const MIN_DIRECTION_BODY_CHARS = 200;
 
 function directionMessages(
   project: ConsultProject,
@@ -511,55 +753,44 @@ function directionMessages(
 而是给客户 ${MIN_DIRECTIONS}-${MAX_DIRECTIONS} 个**互斥的**候选方向，让他来选。
 
 硬规则：
-0. **先照【这一步的分析操法】把方法论的推导走完，再拟方向。** 方向必须是从操法里推出来的取舍
-   （例如价值主张的几个方向要落在金字塔的不同层上、用户关系的方向要对应生命周期卡住的那一段），
-   不是几个听起来不一样的说法。跳过操法拟出来的方向在卡片上和推出来的一模一样，
-   而客户会照着它定下后面每一步的地基。每个方向的 reasons 第一条要说清它对应操法里的哪一条判断。
-1. 方向之间必须互斥：选了 A 就等于放弃 B。几个方向能同时成立的话，客户选哪个都一样，这一步就白做了。
-2. **三件套缺一不可**：🎯 选择理由（reasons）/ ✅ 客户现有优势（strengths）/ 🔧 核心解决方案（solutions）。
-   只有定位语和一句理由的方向，客户照样会点「就用这个」，然后在没有优势、没有落地动作的情况下
-   定下后面每一步的地基 —— 所以宁可少给一个方向，也不要给一个只有骨架的方向。
-3. reasons 给 ${MIN_REASONS}-6 条，每条要能拿去说服老板：为什么是这个方向、对他现在的业务/品牌/市场意味着什么。
-4. strengths 只能写客户**现在手上就有**的东西（资源/能力/资产/团队/数据/用户规模/合作方），
-   每条配一句"对应支撑"说明它具体是什么，并标出出处：【联网资料】里对上的标「（联网·域名·年份）」，
-   【客户资料】里对上的标「（客户资料）」。**不许写"有一定基础""较为完善"这类形容词，也不许把靠常识
-   推出来的东西写成他手上有的** —— 一条不存在的优势会让整个方向的落地动作全部落空，而卡片上看不出来。
-   写不出具体内容就不要列这一条。需要先补能力才成立的，写进 solutions。
-5. solutions 给 ${MIN_SOLUTIONS}-6 条可执行动作，每条**必须**配 deliverable（交付物）/ owner（负责人角色）/
-   goal90（90 天目标，带可验证的数字或状态）。没有这三样的动作就是口号，客户看不出这条到底谁在什么时候做完什么。
-6. risks 每条配 hedge（对冲做法）：只说好处的方向没法比较，而客户会以为这个方向没有代价。
-7. tagline 是对外说的那一句（不超过 20 字，不要"赋能/抓手/闭环/赛道/心智"这类词）；
-   identity 是一句话身份（「我们是 XX 里唯一 YY 的那家」的句式）。两句不许互相复述。
-8. 不要推荐"最优"方向，也不要给第 ${MAX_DIRECTIONS + 1} 个折中方向 —— 折中方向会把互斥性抹掉。
-   把"怎么选、哪些可组合、哪个最契合当前阶段"写进 verdict（🧭 方向研判），取舍权留给客户。
-9. **methodBrief（方法论速览）必须给**：2-3 句说清这一步用的是什么框架，以及**这一轮的几个方向
-   实际是照操法哪几条推出来的**。顾问对着这一节才能判断这几个方向是推出来的还是拍出来的 ——
-   缺了它，两者在卡片上没有区别，而选中的那个会变成后面每一步的地基。
-10. 每个方向还要给两样东西：
-   - writingTip（写作建议）：选了它之后这一节进正式方案怎么组织（用哪张图/表、哪句是主论点、
-     还缺什么证据、哪里留给顾问自己拍）。这是给内部顾问的，不是客户话术。
-   - aiOpportunities：选了它之后**本步视角下的** AI 赋能机会 1-2 条，**只标不展开**
-     （一条一句，说清用 AI 做什么、替代掉现在的哪个动作）。它们最后要汇成方案里独立的一章
-     「AI 转型机会清单」—— 这一步不标的话那一章就少一个模块，而那一章读起来照样是完整的清单。
-     写不出真有关系的就给一条，不要凑数写「用 AI 提升效率」这种。
-11. 只输出 JSON，不要任何解释文字。
+0. **推导先行**：先依据【分析操法】推导，再输出方向。方向必须是从操法逻辑中推演出的取舍，并在 reasons 第一条说明对应操法的哪一条。
+1. **方向互斥**：各方向必须互斥（选 A 必弃 B），没有折中。
+2. **三件套必填**：每个方向必须包含 reasons、strengths、solutions。宁缺毋滥。
+3. **选择理由 (reasons)**：${MIN_REASONS}-6 条，具说服力，说明对业务/市场的实际意义。
+4. **现有优势 (strengths)**：仅限客户**当前已具备**的能力/资源，拒绝空泛形容词或主观推测。每条说明支撑点并标注出处（格式：联网·域名·年份 或 客户资料）。
+5. **解决方案 (solutions)**：${MIN_SOLUTIONS}-6 条可执行动作，必须包含交付物 (deliverable)、负责人 (owner) 和 90天目标 (goal90)。
+6. **风险对冲 (risks)**：每条风险必须配备对应的对冲策略 (hedge)。
+7. **输出物正文 (body)：每个方向各写一份，按【本步定稿后应该产出的东西】那份清单逐项成节**，
+   一项一个 \`## N. 清单项名\`（序号和清单一致），一项都不许省，写的是「选了这个方向，这一项就长这样」。
+   清单里写了"表格 / 清单 / 矩阵"的必须真的输出 markdown 表格（\`| 列 | 列 |\` 带分隔行）。
+   四个方向的这份正文必须**互不相同** —— 同一段话换个说法贴四遍，等于没有取舍。
+   资料不支持某一项时那一节照样要在，里面写明缺什么、补什么才能填。
+   **每个方向的 body 控制在 ${DIRECTION_BODY_MIN_CHARS}-${DIRECTION_BODY_MAX_CHARS} 字**：这是给客户选方向用的，不是终稿；
+   写太长会超时（整次请求有时间上限），选定之后还能在这一步接着聊、接着改。
+   不要在 body 里重复 methodBrief / tagline / reasons / strengths / solutions / risks / writingTip 的内容，那几栏已经单独有位置。
+8. **身份定义**：tagline（对外 Slogan，<20字，拒用互联网黑话）；identity（"我们是 XX 里唯一 YY 的"句式）。两者互不重复。
+9. **方向研判 (verdict)**：不推荐"最优解"，在 verdict 中客观分析各方向的适用场景与组合可能，将取舍权交还客户。
+10. **方法论速览 (methodBrief)**：2-3句话总结使用的分析框架，以及各方向是如何从操法推导而来的。
+11. **落地与延展**：
+    - writingTip：面向内部顾问的方案落笔建议（主论点、缺失证据、需顾问定夺之处）。
+12. 仅输出 JSON，禁止任何额外解释文字。
 
 输出格式：
-{"methodBrief":"方法论速览：这一步用什么框架 + 这几个方向照操法哪几条推的（2-3 句）","directions":[{"title":"方向名（6-14 字）","tagline":"定位语，对外说的那一句","identity":"一句话身份","reasons":["选择理由 1","选择理由 2"],"strengths":[{"item":"客户现在就有的东西","support":"它具体是什么 / 为什么能支撑这个方向"}],"solutions":[{"action":"关键动作","deliverable":"交付物","owner":"负责人角色","goal90":"90 天目标（带数字或可验证状态）"}],"risks":[{"risk":"代价 / 什么情况下站不住","hedge":"对冲做法"}],"writingTip":"选了它之后这一节进方案怎么组织","aiOpportunities":["AI 赋能机会 1","（可选）机会 2"]}],"verdict":"🧭 方向研判：这几个方向怎么选、哪些可以组合、哪个最契合他当前阶段（100-300 字，不替他下死结论）"}`;
+{"methodBrief":"方法论速览：这一步用什么框架 + 这几个方向照操法哪几条推的（2-3 句）","directions":[{"title":"方向名（6-14 字）","tagline":"定位语，对外说的那一句","identity":"一句话身份","reasons":["选择理由 1","选择理由 2"],"strengths":[{"item":"客户现在就有的东西","support":"它具体是什么 / 为什么能支撑这个方向"}],"solutions":[{"action":"关键动作","deliverable":"交付物","owner":"负责人角色","goal90":"90 天目标（带数字或可验证状态）"}],"risks":[{"risk":"代价 / 什么情况下站不住","hedge":"对冲做法"}],"body":"markdown 正文：按本步输出物清单逐项成节（## 1. 清单第一项 …… ## N. 清单第 N 项），清单里要表格的就输出 markdown 表格","writingTip":"选了它之后这一节进方案怎么组织","aiOpportunities":["AI 赋能机会 1","（可选）机会 2"]}],"verdict":"🧭 方向研判：这几个方向怎么选、哪些可以组合、哪个最契合他当前阶段（100-300 字，不替他下死结论）"}`;
 
   const user = `【品牌 / 客户】${project.brand_name}
 
 【当前这一步】${stage.group} · ${stage.label}
-要回答的问题：${stage.question}
+要回答的问题：${stage.question} 
 
 【这一步的分析操法（方法论规定的思考顺序与判断标准，方向要从这里推出来）】
 ${methodBlock(stage)}
 
-【这一步定稿后应该产出的东西（选定方向之后要能撑起这些，出方向时就要往这个方向想）】
+【这一步定稿后应该产出的东西（**每个方向的 body 就照这份清单一项一节写**，序号和顺序不要变）】
 ${deliverablesBlock(stage)}
 
 【已定稿结论（企业知识库，这是你做判断的依据）】
-${knowledgeBlock(entries, stage.requires)}
+${knowledgeBlock(entries, bodyKeys(stage))}
 
 【联网资料（L1）】
 ${sourcesBlock(listSources(project.id))}
@@ -620,6 +851,11 @@ export function directionToMarkdown(d: StageDirection, methodBrief = ''): string
     out.push('', '**⚠️ 风险与对冲**', '', '| 风险 | 对冲 |', '| --- | --- |');
     out.push(...d.risks.map((r) => `| ${cell(r.risk)} | ${cell(r.hedge)} |`));
   }
+  // 输出物清单那几节接在三件套后面：三件套是「为什么选它」，这一段才是「选了它这一步
+  // 交出来的东西长什么样」。排在后面是因为卡片要能横着比 —— 一上来八百字的正文，
+  // 四张卡片在屏幕上就没法对比了，而「选一个」正是这一步的全部意义。
+  // 模型没给（或者只给了一句话）的方向压根走不到这里，见 missingPieces。
+  if (d.body.trim()) out.push('', d.body.trim());
   if (d.writingTip) out.push('', '## 写作建议', '', d.writingTip);
   return out.join('\n');
 }
@@ -636,6 +872,9 @@ function missingPieces(d: StageDirection): string[] {
     miss.push('解决方案的交付物 / 负责人 / 90 天目标');
   }
   if (!d.risks.length) miss.push('代价与对冲');
+  // 输出物正文（见 StageDirection.body）：缺了它这张卡片照样是完整的一张卡片，
+  // 用户定稿之后这一步就只读了 —— 那份没有清单小节的正文再也补不回来。
+  if (d.body.trim().length < MIN_DIRECTION_BODY_CHARS) miss.push('输出物清单正文');
   return miss;
 }
 
@@ -656,7 +895,7 @@ export async function draftDirections(
   truncated: boolean;
   discussion: Discussion;
 }> {
-  const { stage, entries } = requireStage(project.id, stageKey, { lanes: ['slow'] });
+  const { stage, entries } = requireOpenStage(project.id, stageKey, { lanes: ['slow'] });
 
   const discussion = discussionBlock(project.id, stageKey);
   const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
@@ -672,6 +911,9 @@ export async function draftDirections(
       operation: `directions:${stage.key}`,
       tier: 'strong',
       requestSummary: `${project.brand_name} · ${stage.label}`,
+      timeoutMs: AI_TIMEOUT_MS,
+      maxRetries: 0,
+      noThinking: true, // 同上
     }
   );
 
@@ -708,6 +950,10 @@ export async function draftDirections(
         .map((r: any) => ({ risk: str(r?.risk), hedge: str(r?.hedge) }))
         .filter((r: DirectionRisk) => r.risk)
         .slice(0, 8),
+      // body 不 trim 掉内部换行、也不做长度截断：它是 markdown（小节标题和表格分隔行
+      // 全靠换行），截一刀最可能砍掉的是最后那张表的后半截，而缺半张表的正文读起来
+      // 是完整的。超长由 prompt 里的字数区间管，真超了就让它显示出来。
+      body: str(d?.body),
       writingTip: str(d?.writingTip),
       aiOpportunities: parseAiOpportunities(d?.aiOpportunities),
       markdown: '',

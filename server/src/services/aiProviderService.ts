@@ -22,6 +22,11 @@ export interface AIProvider {
   model: string;
   extra_json: string;
   enabled: number;
+  /**
+   * 1 = 走这条接入点的调用一律不带思维链（migration 087）。
+   * **只能强制关，不能强制开** —— 见 gateway 里那句「取或」的注释。
+   */
+  no_thinking: number;
   /** NULL/空 = 平台级；有值 = 该用户的专属接入点（见 migrations/052）。 */
   owner_user_id: string | null;
   /**
@@ -219,6 +224,10 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
     model: data.model ?? existing?.model ?? '',
     extra_json: data.extra_json ?? existing?.extra_json ?? '{}',
     enabled: data.enabled !== undefined ? (data.enabled ? 1 : 0) : existing?.enabled ?? 1,
+    // 同 enabled：body 里没这个字段时保留旧值。写成 `data.no_thinking ? 1 : 0` 的话，
+    // 任何一次没带它的编辑（换个模型、改个名字）都会把这个开关悄悄关掉 ——
+    // 而关掉的现象只是「怎么又变慢了」，保存那一下什么都不会提示。
+    no_thinking: data.no_thinking !== undefined ? (data.no_thinking ? 1 : 0) : existing?.no_thinking ?? 0,
     // 空串归一成 null：平台级必须是 NULL 才能被 `owner_user_id IS NULL` 查到。
     // `??` 的连带后果：已有 owner 的配置**改不回平台级**（传 null 会落回 existing）。
     // 保持这个方向 —— 把某用户的 key 降成平台配置 = 全站所有人开始烧他那把 key，
@@ -232,8 +241,8 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
     updated_at: now,
   };
   db.prepare(
-    `INSERT OR REPLACE INTO ai_providers (id, kind, tier, label, base_url, api_key, model, extra_json, enabled, owner_user_id, scope_app, created_at, updated_at)
-     VALUES (@id, @kind, @tier, @label, @base_url, @api_key, @model, @extra_json, @enabled, @owner_user_id, @scope_app, @created_at, @updated_at)`
+    `INSERT OR REPLACE INTO ai_providers (id, kind, tier, label, base_url, api_key, model, extra_json, enabled, no_thinking, owner_user_id, scope_app, created_at, updated_at)
+     VALUES (@id, @kind, @tier, @label, @base_url, @api_key, @model, @extra_json, @enabled, @no_thinking, @owner_user_id, @scope_app, @created_at, @updated_at)`
     // merged.api_key 此刻是明文（existing 来自已解密的 getProvider），落库前加密
   ).run({ ...merged, api_key: encryptSecret(merged.api_key) });
   // 返回明文那份：调用方（admin API）拿去 maskProvider 脱敏回显

@@ -1,3 +1,5 @@
+import { embedToken, clearEmbedToken } from './embed';
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -8,8 +10,15 @@ export interface AuthUser {
 
 const TOKEN_KEY = 'mmPla_token';
 
+/**
+ * 嵌入模式（084）下用的是内存里那把 15 分钟短 token，**优先于** localStorage。
+ *
+ * 反过来（把短 token 写进 localStorage）不行：iframe 和我们自己的站点同源、共用一份
+ * localStorage，那样会把用户自己的登录态盖掉 —— 他在另一个标签页里突然变成一个只能碰
+ * /consult 的身份，界面上读起来就是「莫名其妙被退出了」。
+ */
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return embedToken() ?? localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string): void {
@@ -17,6 +26,11 @@ export function setToken(token: string): void {
 }
 
 export function clearToken(): void {
+  // 嵌入模式下 401 清的是内存里那把，不能去动 localStorage（见 getToken 的注释）。
+  if (embedToken()) {
+    clearEmbedToken();
+    return;
+  }
   localStorage.removeItem(TOKEN_KEY);
 }
 

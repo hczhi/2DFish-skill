@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initDatabase, getDatabase } from '../../db/index.js';
-import { createProject, buildStageRail, deleteProject, listProjects, appendMessage } from './projectStore.js';
+import { createProject, buildStageRail, deleteProject, listProjects, appendMessage, platformOwner } from './projectStore.js';
 import { STAGES } from './stages.js';
 import { adoptSources } from './sourceStore.js';
 
@@ -17,7 +17,7 @@ describe('consult projectStore', () => {
     db.exec(
       'DELETE FROM consult_sources; DELETE FROM consult_messages; DELETE FROM consult_entries; DELETE FROM consult_stages; DELETE FROM consult_projects;'
     );
-    projectId = createProject('u1', '捷停车', '资料若干').id;
+    projectId = createProject(platformOwner('u1'), '捷停车', '资料若干').id;
   });
 
   it('阶段栏按代码里的清单出，表里没有的照样出、表里多的不出', () => {
@@ -66,11 +66,11 @@ describe('consult projectStore', () => {
     // db/index.ts 没开 PRAGMA foreign_keys，REFERENCES 只是注释。
     // 留下的孤儿不报错，但 listProjects 的 decided_count 是子查询算出来的，
     // 于是「已删掉的项目」的定稿数会一直挂在新建的同名项目上。
-    expect(deleteProject(projectId, 'u1')).toBe(true);
+    expect(deleteProject(projectId, platformOwner('u1'))).toBe(true);
     expect(db.prepare('SELECT COUNT(*) c FROM consult_entries').get()).toEqual({ c: 0 });
     expect(db.prepare('SELECT COUNT(*) c FROM consult_stages').get()).toEqual({ c: 0 });
     expect(db.prepare('SELECT COUNT(*) c FROM consult_messages').get()).toEqual({ c: 0 });
     expect(db.prepare('SELECT COUNT(*) c FROM consult_sources').get()).toEqual({ c: 0 });
-    expect(listProjects('u1')).toEqual([]);
+    expect(listProjects(platformOwner('u1'))).toEqual([]);
   });
 });

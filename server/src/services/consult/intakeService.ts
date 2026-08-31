@@ -20,6 +20,16 @@ export interface IntakeQuestion {
   question: string;
   why: string;
   placeholder: string;
+  /**
+   * `'choice'` = 这题能点选（选项在 {@link options} 里）；`'text'` = 只能手填。
+   *
+   * 这个区分是承重的，见 {@link MAX_OPTIONS} 上面那段：给数字/名单类的题配选项，
+   * 等于让模型编几个区间、客户挑最接近的那个 —— 那个数字进了客户资料之后，
+   * 和客户亲口说的**一模一样**，后面十四步全按它推，没有一处会报错。
+   */
+  type: 'choice' | 'text';
+  /** 只有 `type==='choice'` 时非空。2-4 条互斥的类型划分；「其他」「说不准」由前端固定补，不占这里的名额。 */
+  options: string[];
 }
 
 export interface IntakeSheet {
@@ -30,13 +40,41 @@ export interface IntakeSheet {
 }
 
 const MAX_TOKENS_INTAKE = 12000;
-const MAX_QUESTIONS = 14;
+/**
+ * 8 题（原来 14）。两个理由都不是排版：
+ * - 这份问卷是**发给客户填**的。十四题带 why 带示例，客户填一半就停，而回来的半份答案
+ *   在界面上和填满的一模一样 —— 缺的那几题从此不会再问（下一轮会把已答过的剔掉、
+ *   接着问更深的东西）。宁可少而关键。
+ * - 题数直接决定这次输出多长。这条调用和四看那几步一样撞着接入点 ~300 秒的时间上限
+ *   （见 draftService 的 AI_TIMEOUT_MS），而顶到上限时额度已经扣了、问卷一个字都没有。
+ */
+const MAX_QUESTIONS = 8;
+/**
+ * 出问卷的超时，**并且不重试**。默认是 120 秒 + 重试 1 次，于是慢一点的模型会让用户
+ * 等满 240 秒然后拿到一句失败 —— 两次都白花（同样的资料、同样的思维链，第二次断在同一
+ * 个地方），而第一次其实只要再给它一会儿就写完了。一次给足，不重试。
+ */
+const AI_TIMEOUT_MS = 240_000;
 /**
  * 少于这个数就抛错。**0 题不能当成「资料很齐」**：界面上一份空问卷和
  * 「AI 觉得你的资料没问题」长得一模一样，而真实原因通常是模型没按格式回 ——
  * 用户于是带着一份半截资料去跑四看，出来的结论照样漂亮。
  */
 const MIN_QUESTIONS = 3;
+/**
+ * 一道选择题最多几个选项。**选项只能是「类型/模式」划分，绝不能是数字、金额、数量、
+ * 名单、日期** —— 那类题一律 `type:'text'`。
+ *
+ * 理由是这条链路上最贵的一种静默失败：客单价这种题给出 A/B/C 三个区间，客户挑一个
+ * 最接近的，那个**模型编出来的数字**就进了客户资料，而它在正文里和客户亲口说的
+ * 一模一样（`applyAnswers` 只写「问 X 答 Y」，不记 Y 是选的还是填的），
+ * 后面十四步全按它推。类型划分不吃这个亏：「直营 / 加盟 / 经销」穷尽得起来，
+ * 模型不需要知道这家公司就能列全，客户点一个不会引入任何假数字。
+ *
+ * 少于 2 条的**降级成 text 而不是丢题**：一个只有一个选项的单选在界面上就是个死按钮，
+ * 而丢掉那题的话界面上和「AI 觉得这件事不用问」一模一样。
+ */
+const MAX_OPTIONS = 4;
 
 /** 比题面用的规范化：去掉所有空白（中文空格可有可无）。只去空白 —— 放宽成模糊匹配会把
  *  「车场数量」和「车位数量」判成同一题，那题从此再也问不出来，而界面上看不出少了一题。 */
@@ -66,15 +104,31 @@ ${stageList}
    那是后面十二步要一起做的判断，不是资料。
 4. 也**不要**问公开可查的行业数据（市场规模、竞品融资额这类）：那些走联网检索，
    不该占用客户的时间。
-5. ${MIN_QUESTIONS}–${MAX_QUESTIONS} 题，按对结论影响的大小从大到小排。
-   宁可少而关键，不要凑数 —— 一份 30 题的问卷客户不会填。
-6. \`placeholder\` 给一个具体的填写示例（含单位/量级），让客户知道要答到多细。
+5. **最多 ${MAX_QUESTIONS} 题**（少于 ${MIN_QUESTIONS} 题不算一份问卷），按对结论影响的大小
+   从大到小排。这份问卷要发给客户本人填，题一多他填一半就停 ——
+   所以只留「不知道就没法往下判断」的那几题，一题都不要凑数。
+   **一题只问一件事**：把「你们的价格带、渠道占比和主要客户是谁」拆开问，
+   合成一句的话客户只会答其中一个，而那一行读起来是答过了的。
+6. \`why\` 一句话说清影响四看里哪一步的哪个判断（30 字内），
+   \`placeholder\` 给一个具体的填写示例（含单位/量级），让客户知道要答到多细。两个都要短 ——
+   这两段越长，这次输出越容易顶到时间上限，而顶到时额度已经扣了、问卷一个字都没有。
+7. **能点选的题给选项，不能点选的绝不给。** 客户面对一屏空白输入框会直接放弃，
+   所以凡是答案空间**你不需要认识这家公司就能列全**的题，给 2-${MAX_OPTIONS} 个互斥选项
+   （\`type:"choice"\`）：经营模式（直营/加盟/经销）、客户是企业还是个人、
+   决策里谁掏钱、主要走线上还是线下、目前处在哪个阶段 —— 这类是**类型划分**。
+   反过来，答案是**数字、金额、数量、比例、名单、年份**的题一律 \`type:"text"\`，
+   一个选项都不要给：你编的区间客户会挑一个最接近的，那个数字从此就以「客户说的」
+   身份进了资料，后面每一步都按它推，而没有任何一处会报错。
+   不确定属于哪一类就给 \`text\`。
+   选项要短（12 字内）、彼此不重叠、覆盖常见情况；**不要**自己加「其他」「不确定」
+   这类兜底项，那两个由系统固定补在后面。
 
 只输出 JSON，不要任何解释文字：
 {
   "gaps": ["这份资料目前最要紧的缺口，3-6 条，一条一句话"],
   "questions": [
-    { "section": "看自己", "question": "…", "why": "…", "placeholder": "例：…" }
+    { "section": "看自己", "question": "…", "why": "…", "type": "text", "placeholder": "例：…", "options": [] },
+    { "section": "看自己", "question": "…", "why": "…", "type": "choice", "placeholder": "例：…", "options": ["直营", "加盟", "直营+加盟"] }
   ]
 }`;
 
@@ -120,6 +174,13 @@ export async function buildIntake(
       source: 'consult',
       operation: 'intake',
       tier: 'strong',
+      timeoutMs: AI_TIMEOUT_MS,
+      maxRetries: 0,
+      // 这条路上有人在屏幕前等着（新建项目一律先过一轮问卷），而实测耗时几乎全花在
+      // 没人看得见的那段思考上（见 GatewayOptions.noThinking：36.6 秒 → 3.5 秒）。
+      // consult 的对话和草稿早就写死关掉了，只有这条漏了 —— 现象就是「出问卷要等两三分钟」，
+      // 日志里一切正常，看起来像模型慢。顺带 max_tokens 那 12000 才真的全给正文。
+      noThinking: true,
       requestSummary: `${project.brand_name} · 补料问卷`,
     }
   );
@@ -129,13 +190,24 @@ export async function buildIntake(
   for (const q of rawList) {
     const question = String(q?.question || '').trim();
     if (!question) continue;
+    // 选项去空去重（重复的两个选项在界面上是两个一样的按钮，点哪个都对，
+    // 而客户会以为自己看漏了什么）。不足 2 条就当没给，降级成手填 —— 见 MAX_OPTIONS。
+    const rawOpts: unknown[] = Array.isArray(q?.options) ? q.options : [];
+    const opts = Array.from(
+      new Set(rawOpts.map((o) => String(o ?? '').trim()).filter(Boolean))
+    ).slice(0, MAX_OPTIONS);
+    const choice = q?.type === 'choice' && opts.length >= 2;
     questions.push({
       id: `q${questions.length + 1}`,
       section: String(q?.section || '').trim(),
       question,
       why: String(q?.why || '').trim(),
       placeholder: String(q?.placeholder || '').trim(),
-      });
+      type: choice ? 'choice' : 'text',
+      // text 题一定要清空：留着几个选项在库里，将来前端只看 options 非空就渲染成单选的话，
+      // 「营收多少」会变成三个模型编出来的区间，而那正是这一段要挡住的事。
+      options: choice ? opts : [],
+    });
     if (questions.length >= MAX_QUESTIONS) break;
   }
 

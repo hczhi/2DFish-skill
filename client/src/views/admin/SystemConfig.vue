@@ -20,7 +20,7 @@
     <div class="config-card">
       <table class="prov-table" v-if="providers.length">
         <thead>
-          <tr><th>类型</th><th>档位</th><th>应用</th><th>名称</th><th>模型</th><th>Base URL</th><th>Key</th><th>启用</th><th></th></tr>
+          <tr><th>类型</th><th>档位</th><th>应用</th><th>名称</th><th>模型</th><th>Base URL</th><th>Key</th><th>启用</th><th>思考</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="p in providers" :key="p.id">
@@ -35,6 +35,9 @@
             <td class="mono ellip">{{ p.base_url }}</td>
             <td class="mono">{{ p.api_key || '（未设）' }}</td>
             <td>{{ p.enabled ? '✓' : '✕' }}</td>
+            <!-- 这一列必须在列表上看得见：开关只在编辑弹层里的话，
+                 「这条为什么答得这么浅」得逐条点开才看得出来。 -->
+            <td>{{ p.kind !== 'llm' ? '—' : p.no_thinking ? '已关闭' : '开' }}</td>
             <td class="row-actions">
               <button class="link-btn" @click="editProvider(p)">编辑</button>
               <button class="link-btn" @click="testProvider(p)" :disabled="testingId === p.id">
@@ -92,6 +95,17 @@
           <label class="inline">
             <input type="checkbox" v-model="editing.enabled" /> 启用
           </label>
+          <!-- 勾选框而不是往 extra_json 里填一个键：那是自由文本框，拼错一个字母
+               完全静默（保存成功、界面和生效了一模一样，而每次调用照旧慢十倍）。 -->
+          <label class="inline" v-if="editing.kind === 'llm'">
+            <input type="checkbox" v-model="editing.no_thinking" /> 不使用深度思考
+          </label>
+          <p class="hint wide" v-if="editing.kind === 'llm'">
+            勾上 = 走这条接入点的<b>所有</b>模块都不带思维链（快十倍，而且 max_tokens 全给正文，
+            不再莫名截断）。代价是靠长链推理的任务结论会变浅，<b>而它不报错</b>。
+            标讯（提取/评分/AI 提炼）和咨询（对话/草稿）已在代码里写死关掉，不受这个开关影响 ——
+            这里只能强制关，开不回来。模型或接入点不支持时服务端日志会喊一句。
+          </p>
         </div>
         <div class="prov-editor-actions">
           <button class="btn-primary" @click="saveProvider">{{ editing.id ? '保存修改' : '新增' }}</button>
@@ -202,6 +216,7 @@ const saved = ref(false)
 interface Provider {
   id: string; kind: string; tier: string; label: string;
   base_url: string; api_key: string; model: string; extra_json: string; enabled: number;
+  no_thinking: number;
   scope_app: string;
 }
 const providers = ref<Provider[]>([])
@@ -223,7 +238,7 @@ async function testProvider(p: Provider) {
 }
 
 function emptyEditor() {
-  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true, scope_app: '' }
+  return { id: '', kind: 'llm', tier: 'default', label: '', base_url: '', api_key: '', model: '', extra_json: '', enabled: true, no_thinking: false, scope_app: '' }
 }
 const editing = ref(emptyEditor())
 
@@ -241,7 +256,7 @@ async function loadProviders() {
 function editProvider(p: Provider) {
   // api_key 是脱敏值，不回填到输入框（留空 = 不修改）
   // scope_app 必须回填：漏了它，随手改个名就把「xhs 专用」变成全站通用。
-  editing.value = { id: p.id, kind: p.kind, tier: p.tier, label: p.label, base_url: p.base_url, api_key: '', model: p.model, extra_json: p.extra_json === '{}' ? '' : p.extra_json, enabled: !!p.enabled, scope_app: p.scope_app || '' }
+  editing.value = { id: p.id, kind: p.kind, tier: p.tier, label: p.label, base_url: p.base_url, api_key: '', model: p.model, extra_json: p.extra_json === '{}' ? '' : p.extra_json, enabled: !!p.enabled, no_thinking: !!p.no_thinking, scope_app: p.scope_app || '' }
 }
 
 function resetEditor() { editing.value = emptyEditor() }
@@ -258,6 +273,7 @@ async function saveProvider() {
     model: e.model.trim(),
     extra_json: e.extra_json.trim() || '{}',
     enabled: e.enabled,
+    no_thinking: e.no_thinking,
     // image 类型没有应用维度，别把上一次选的 app 带过去
     scope_app: e.kind === 'llm' ? e.scope_app : '',
   })

@@ -162,9 +162,13 @@ async function extractBatch(
     // jsonGateway 而不是裸 aiGateway：解析失败会自动重试一次，并且把
     // finish_reason 带回来 —— 「被截断」和「模型胡说」得说成两句不同的话，
     // 否则用户只能看到一句「提取到 0 条」，无从下手。
+    // 关思维链（见 GatewayOptions.noThinking）：这条路上它治的不是「慢」而是**截断**。
+    // 一批 3 条的完整 JSON 要 1300+ 输出 token，而思维链算进 MAX_OUTPUT_TOKENS 却不出现在
+    // content 里 —— 于是数组括号配不平、整批变成「提取到 0 条」，而 max_tokens 怎么调都够不上
+    // （下面那段拆批重试就是为它写的）。开了之后这笔额度才真的全给 JSON。
     const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
       () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_tokens: MAX_OUTPUT_TOKENS }),
-      { userId, source: 'tender', operation: 'extract-batch' },
+      { userId, source: 'tender', operation: 'extract-batch', noThinking: true },
       { mode: 'array', attempts: 2 }
     );
     responseContent = raw;

@@ -1,8 +1,16 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
 import { getDatabase } from '../db/index.js';
 import { getJwtSecret } from '../auth/middleware.js';
+import {
+  generatePk as makePk,
+  requestOrigin,
+  originAllowed,
+  normalizeOriginsInput,
+  safeParseArray,
+  checkExchangeRateLimit,
+  applySdkCors,
+} from '../core/sdkKeys.js';
 
 // ============================================================================
 // Tender SDK — 让第三方纯前端项目嵌入"标讯智能推荐"。
@@ -21,18 +29,10 @@ import { getJwtSecret } from '../auth/middleware.js';
 const SDK_SCOPE = 'tender:read';
 const TOKEN_TTL_SECONDS = 15 * 60; // 15 分钟
 
-// scope=tender:read 短 token 允许访问的只读端点（相对 /api/tender）。
-// 用正则匹配 req.path（Express 里是去掉挂载前缀后的路径）。
-const SDK_ALLOWED_PATHS: RegExp[] = [
-  /^\/recommendations$/,
-  /^\/detail\/[^/]+$/,
-  /^\/list$/,
-];
-
 export const PK_PREFIX = 'pk_live_';
 
 export function generatePk(): string {
-  return `${PK_PREFIX}${crypto.randomBytes(24).toString('hex')}`;
+  return makePk(PK_PREFIX);
 }
 
 interface SdkKeyRow {
@@ -44,86 +44,24 @@ interface SdkKeyRow {
   rate_limit: number;
 }
 
-function normalizeOrigin(origin: string): string {
-  return origin.trim().replace(/\/$/, '').toLowerCase();
-}
-
-// 从请求里推断来源 Origin：优先 Origin 头，退回 Referer 的 origin 部分。
-function requestOrigin(req: Request): string | null {
-  const origin = req.headers.origin;
-  if (origin) return normalizeOrigin(origin);
-  const referer = req.headers.referer;
-  if (referer) {
-    try {
-      const u = new URL(referer);
-      return normalizeOrigin(`${u.protocol}//${u.host}`);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function originAllowed(row: SdkKeyRow, origin: string | null): boolean {
-  if (!origin) return false;
-  let list: string[];
-  try {
-    list = JSON.parse(row.allowed_origins);
-  } catch {
-    return false;
-  }
-  if (!Array.isArray(list)) return false;
-  return list.map(normalizeOrigin).includes(origin);
-}
-
-// ---- 每分钟换取 token 的限流（内存计数，按 pk）----
-const exchangeCounts = new Map<string, { count: number; windowStart: number }>();
-
-function checkExchangeRateLimit(pk: string, limit: number, nowMs: number): boolean {
-  const entry = exchangeCounts.get(pk);
-  if (!entry || nowMs - entry.windowStart >= 60_000) {
-    exchangeCounts.set(pk, { count: 1, windowStart: nowMs });
-    return true;
-  }
-  if (entry.count >= limit) return false;
-  entry.count++;
-  return true;
-}
-
-// ---- CORS：仅对 SDK 相关请求，且 Origin 命中白名单时才放行 ----
-// 全局 cors() 白名单不含第三方域名，所以这里按 pk 白名单动态回 CORS 头。
-function applySdkCors(req: Request, res: Response, allowedOrigin: string): void {
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
-  res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-  res.setHeader('Access-Control-Max-Age', '600');
-}
-
 /**
- * 挂在 tenderRouter 最前面：
- *  1. 对带 scope=tender:read 的短 token 做端点白名单闸门（越权直接 403）。
- *  2. 为 SDK 请求回写按 pk 白名单校验过的 CORS 头。
+ * 挂在 tenderRouter 最前面，只做一件事：为 SDK 请求回写 CORS 头。
+ *
+ * **端点白名单不在这里** —— 它在全局的 `auth/scopeGuard.ts`。原来这道闸门只挂在
+ * tenderRouter 里面，于是同一把 `tender:read` 短 token 在 /api/tender 之外畅通无阻
+ * （/api/ai/chat、/api/xhs/*、/api/feishu-assistant/* 都以绑定账号的身份返回 200）。
+ * 两处各写一份的话，改了全局那份而这里照旧 —— 而两处都不报错。
  */
 export function tenderSdkGuard(req: Request, res: Response, next: NextFunction): void {
   // /sdk/token 自身在 handler 里处理 CORS，这里跳过。
   if (req.path === '/sdk/token') return next();
-
-  // 仅约束 scope 短 token；正常登录用户 / admin 不受影响。
   if (req.tokenScope !== SDK_SCOPE) return next();
-
-  // scope 短 token 只能读白名单端点。
-  const allowed = SDK_ALLOWED_PATHS.some((re) => re.test(req.path));
-  if (!allowed) {
-    res.status(403).json({ error: 'This token is limited to read-only tender recommendations' });
-    return;
-  }
 
   // 回写 CORS：短 token 携带的用户来自某个 pk，但 token 本身不带 pk，
   // 只能凭请求 Origin 判断——若 Origin 存在就回显（token 已通过签名校验，
   // 且 scope 受限只读，回显 Origin 不会扩大攻击面）。
   const origin = req.headers.origin;
-  if (origin) applySdkCors(req, res, origin);
+  if (origin) applySdkCors(res, origin, 'GET, POST, OPTIONS');
 
   next();
 }
@@ -133,7 +71,7 @@ export function registerSdkRoutes(router: Router): void {
   router.options('/sdk/token', (req, res) => {
     const origin = req.headers.origin;
     if (origin) {
-      applySdkCors(req, res, origin);
+      applySdkCors(res, origin, 'GET, POST, OPTIONS');
     }
     res.status(204).end();
   });
@@ -153,7 +91,7 @@ export function registerSdkRoutes(router: Router): void {
     }
 
     const origin = requestOrigin(req);
-    if (!originAllowed(row, origin)) {
+    if (!originAllowed(row.allowed_origins, origin)) {
       return res.status(403).json({ error: 'Origin not allowed for this key' });
     }
 
@@ -181,7 +119,7 @@ export function registerSdkRoutes(router: Router): void {
       .run(new Date(nowMs).toISOString(), pk);
 
     // 回写 CORS（origin 此处已通过白名单校验）
-    if (req.headers.origin) applySdkCors(req, res, req.headers.origin);
+    if (req.headers.origin) applySdkCors(res, req.headers.origin, 'GET, POST, OPTIONS');
 
     res.json({ token, token_type: 'Bearer', expires_in: TOKEN_TTL_SECONDS });
   });
@@ -248,27 +186,4 @@ export function registerSdkAdminRoutes(router: Router): void {
     db.prepare('DELETE FROM sdk_keys WHERE pk = ?').run(req.params.pk);
     res.json({ success: true });
   });
-}
-
-function safeParseArray(s: string): string[] {
-  try {
-    const v = JSON.parse(s);
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
-
-// 接受数组或换行/逗号分隔字符串，归一化为去重、去尾斜杠、小写的 origin 数组。
-function normalizeOriginsInput(input: unknown): string[] {
-  let arr: string[];
-  if (Array.isArray(input)) {
-    arr = input.map((x) => String(x));
-  } else if (typeof input === 'string') {
-    arr = input.split(/[\n,]/);
-  } else {
-    arr = [];
-  }
-  const out = arr.map(normalizeOrigin).filter(Boolean);
-  return Array.from(new Set(out));
 }

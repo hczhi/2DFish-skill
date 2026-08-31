@@ -364,7 +364,10 @@ ${rawText.slice(0, 6000)}
   try {
     const { response } = await aiGateway(
       { messages: [{ role: 'user', content: prompt }], ...SAMPLING.analytic, max_tokens: 1500 },
-      { userId, source: 'tender', operation: 'profile-distill', tier: 'strong' }
+      // 关思维链：这是用户点了「AI 提炼」之后在页面上等的一次调用，
+      // 而 max_tokens 只给了 1500 —— 思维链一占就吐不出完整 JSON，
+      // 下面那句 502「AI 返回格式异常」就是它（见 GatewayOptions.noThinking）。
+      { userId, source: 'tender', operation: 'profile-distill', tier: 'strong', noThinking: true }
     );
     const content = response.choices[0]?.message?.content || '';
     const jsonMatch = content.match(/\{[\s\S]*\}/);

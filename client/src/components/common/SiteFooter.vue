@@ -1,5 +1,5 @@
 <template>
-  <footer class="site-footer" :class="{ 'is-home': isHome }">
+  <footer v-if="!embedded" class="site-footer" :class="{ 'is-home': isHome }">
     <div class="footer-content">
       <div class="brand">QiaoNan.</div>
       <div class="copyright">
@@ -19,6 +19,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { isEmbedMode } from '../../lib/embed'
+
+// 见 SiteHeader：嵌进第三方页面时页脚整块不出现（我们的备案信息/关于我们/网站地图挂在
+// 别人的站点底下，点进去还会把 iframe 导到我们的页面上，而那一页在他们的框里是打不开的）。
+const embedded = isEmbedMode()
 
 const route = useRoute()
 const isHome = computed(() => route.path === '/')

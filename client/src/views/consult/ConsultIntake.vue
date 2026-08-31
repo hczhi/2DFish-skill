@@ -6,7 +6,7 @@
  * 快车道四步的结论**全部**来自客户资料那一段，缺料不会报错 —— 十二步照样跑完，
  * 只是那些结论是 AI 照常识补的，读起来和真按资料推的一模一样。抽屉会被
  * `select()` 在窄屏关掉、也能被用户点 ×，关掉之后主区没有任何痕迹说明
- * 「有一份十几题的问卷没填」。
+ * 「有一份七八题的问卷没填」。
  *
  * 两条硬规矩：
  * - **自动出题只认 `?auto=1`，而且发请求之前先把它 replace 掉。** 留着的话刷新一次
@@ -28,6 +28,9 @@ interface IntakeQuestion {
   question: string
   why: string
   placeholder: string
+  /** 老轮次（080 那会儿存的）没有这两个字段，缺省当手填题渲染 —— 判成选择题会是一道没有选项的死题 */
+  type?: 'choice' | 'text'
+  options?: string[]
 }
 
 const route = useRoute()
@@ -66,6 +69,45 @@ const filled = computed(() => questions.value.filter(q => (answers.value[q.id] |
 /** 全部必填（作者拍板）：一题没填就不让提交。 */
 const unfilled = computed(() => questions.value.length - filled.value)
 
+/**
+ * 选择题的两个兜底项由**前端固定补**，不让模型给（prompt 里明说了不要给）。
+ * 靠模型给的话它会漏，而漏掉之后现象是：客户面对三个都不对的选项，只能挑一个最像的 ——
+ * 那一行进资料之后和他亲口说的一模一样。
+ *
+ * 「说不准」原样写进客户资料，这是刻意的：AI 读到「答：说不准」会知道这项没有数据，
+ * 而留空的那题会被它照行业常识补一个，读起来完全正常。
+ */
+const UNSURE = '说不准 / 客户也不确定'
+/** 这题当前处在「其他，自己填」状态。从服务端恢复答案时要按值反推（见 syncOther）。 */
+const otherOn = ref<Record<string, boolean>>({})
+const optsOf = (q: IntakeQuestion) => (q.type === 'choice' ? q.options || [] : [])
+const isChoice = (q: IntakeQuestion) => optsOf(q).length >= 2
+
+function isPicked(q: IntakeQuestion, opt: string) {
+  return !otherOn.value[q.id] && (answers.value[q.id] || '') === opt
+}
+function pick(q: IntakeQuestion, opt: string) {
+  otherOn.value[q.id] = false
+  answers.value[q.id] = opt
+  saveAnswerDraft()
+}
+function pickOther(q: IntakeQuestion) {
+  otherOn.value[q.id] = true
+  // 当前值是某个选项时要清掉：留着的话输入框里预填着一段他没打的字，
+  // 直接提交等于把「点错的那个选项」当成客户的原话补进资料。
+  const cur = answers.value[q.id] || ''
+  if (cur === UNSURE || optsOf(q).includes(cur)) answers.value[q.id] = ''
+}
+/** 按已存的答案反推每题是不是「其他」：刷新回来时不推的话，手填的那段答案会显示成一个都没选中。 */
+function syncOther() {
+  const map: Record<string, boolean> = {}
+  questions.value.forEach(q => {
+    const a = (answers.value[q.id] || '').trim()
+    if (isChoice(q) && a && a !== UNSURE && !optsOf(q).includes(a)) map[q.id] = true
+  })
+  otherOn.value = map
+}
+
 onMounted(async () => {
   if (!getToken()) {
     // loading 必须落下来：留着「加载中…」的话，用户把登录框关掉之后
@@ -95,6 +137,7 @@ async function load() {
       truncated.value = !!res.intake.truncated
       roundId.value = res.intake.id
       answers.value = { ...(res.intake.answers || {}) }
+      syncOther()
     }
   } catch (e: any) {
     err.value = e?.message || '加载失败'
@@ -117,6 +160,7 @@ async function generate() {
     roundId.value = res.round?.id || ''
     rounds.value = res.rounds ?? rounds.value
     answers.value = {}
+    otherOn.value = {}
   } catch (e: any) {
     err.value = e?.message || '生成问卷失败'
   } finally {
@@ -125,7 +169,7 @@ async function generate() {
 }
 
 /**
- * 逐题暂存（失焦时调）。一份十几题的问卷是拿去逐条问客户的，不存的话切个页面就全空了。
+ * 逐题暂存（失焦时调）。一份七八题的问卷是拿去逐条问客户的，不存的话切个页面就全空了。
  * 存不上必须出声：静默 200 的话用户一路以为存住了，关掉页面回来一个字都没有。
  */
 async function saveAnswerDraft() {
@@ -224,13 +268,16 @@ const sections = computed(() => {
 
         <div v-if="loading" class="empty">加载中…</div>
 
-        <!-- 出题中：这一步要 20-40 秒，界面上不说的话用户会以为已经加载完了，
-             直接去点左栏的阶段，而额度这时候已经在扣了 -->
-        <div v-else-if="generating" class="waiting">
-          <div class="spinner"></div>
-          <div class="waiting-title">正在读你贴的资料，列出还得问客户什么…</div>
-          <div class="waiting-sub">
-            通常 20–40 秒。这一步消耗 1 次 AI 额度，<strong>别刷新页面</strong> —— 刷新会让这次的额度白花。
+        <!-- 出题中：去卡片化，大字号排版 -->
+        <div v-else-if="generating" class="waiting-editorial">
+          <div class="we-anim">
+            <span class="we-dot"></span><span class="we-dot"></span><span class="we-dot"></span>
+          </div>
+          <div class="we-kicker">ANALYZING THE BRIEF</div>
+          <h2 class="we-title">AI 正在阅读资料<br/>生成问卷</h2>
+          <div class="we-meta">
+           
+            <p class="we-warn">请勿刷新页面</p>
           </div>
         </div>
 
@@ -247,8 +294,9 @@ const sections = computed(() => {
           </div>
 
           <div class="tip">
-            答案就写客户说的原话。<strong>填不完可以直接离开</strong> ——
-            每题失焦就存一次，回来接着填。
+            有选项的题直接点；数字、金额、名单这类没有选项，写客户说的原话
+            （那种题的选项只能是 AI 编的）。<strong>填不完可以直接离开</strong> ——
+            点一下 / 失焦就存一次，回来接着填。
           </div>
 
           <div v-for="sec in sections" :key="sec.name" class="section">
@@ -267,7 +315,36 @@ const sections = computed(() => {
                   <div class="qa-why">{{ q.why }}</div>
                 </div>
               </div>
+              <!-- 选择题：模型给的是「类型划分」类选项（经营模式、客户是企业还是个人…）。
+                   数字/金额/名单类的题服务端一律标成 text —— 给那种题配选项的话，
+                   客户挑的是模型编出来的一个区间，而它进资料之后和他亲口说的一模一样。 -->
+              <div v-if="isChoice(q)" class="opts">
+                <button
+                  v-for="opt in optsOf(q)" :key="opt" type="button"
+                  class="opt" :class="{ on: isPicked(q, opt) }"
+                  @click="pick(q, opt)"
+                >{{ opt }}</button>
+                <button
+                  type="button" class="opt soft" :class="{ on: isPicked(q, UNSURE) }"
+                  @click="pick(q, UNSURE)"
+                >说不准</button>
+                <button
+                  type="button" class="opt soft" :class="{ on: otherOn[q.id] }"
+                  @click="pickOther(q)"
+                >其他（自己填）</button>
+                <textarea
+                  v-if="otherOn[q.id]"
+                  v-model="answers[q.id]"
+                  rows="2"
+                  :placeholder="q.placeholder || '客户答什么就写什么'"
+                  @change="saveAnswerDraft"
+                ></textarea>
+                <div v-if="isPicked(q, UNSURE)" class="opt-note">
+                  「说不准」会原样写进资料 —— AI 会知道这项没有数据，而空着的那题它会照常识补一个。
+                </div>
+              </div>
               <textarea
+                v-else
                 v-model="answers[q.id]"
                 rows="3"
                 :placeholder="q.placeholder || '客户答什么就写什么'"
@@ -383,96 +460,173 @@ const sections = computed(() => {
 }
 .empty .alert-actions { justify-content: center; }
 
-.waiting {
-  padding: 56px 32px; text-align: center;
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-top: 4px solid var(--brand);
-  border-radius: 14px; box-shadow: var(--shadow);
+/* 去卡片化的高级排版 Loading */
+.waiting-editorial {
+  padding: 80px 20px 120px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
 }
-.spinner {
-  width: 26px; height: 26px; margin: 0 auto 18px;
-  border: 3px solid rgba(11, 74, 111, .18); border-top-color: var(--brand);
-  border-radius: 50%; animation: spin 1s linear infinite;
+.we-anim {
+  display: flex; gap: 6px; margin-bottom: 24px;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
-.waiting-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
-.waiting-sub { font-size: 12px; line-height: 1.9; color: var(--color-soft); }
+.we-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--brand); opacity: 0.2;
+  animation: pulse-dot 1.4s infinite ease-in-out both;
+}
+.we-dot:nth-child(1) { animation-delay: -0.32s; }
+.we-dot:nth-child(2) { animation-delay: -0.16s; }
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.2; }
+  40% { transform: scale(1.2); opacity: 0.8; }
+}
+.we-kicker {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 6px;
+  color: var(--brand); text-transform: uppercase; font-weight: 700;
+  margin-bottom: 20px; margin-right: -6px; /* 补偿 letter-spacing 导致的视觉偏移 */
+}
+.we-title {
+  font-size: 32px; font-weight: 800; line-height: 1.4; letter-spacing: 1px;
+  color: var(--color-text); margin: 0 0 32px 0;
+  font-family: var(--font-sans);
+}
+.we-meta {
+  position: relative;
+}
+.we-meta::before {
+  content: ""; position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+  width: 24px; height: 2px; background: var(--color-border-strong);
+}
+.we-meta p {
+  margin: 0 0 6px; font-size: 13px; line-height: 1.8; color: var(--color-soft);
+}
+.we-meta .we-warn {
+  color: #B42318; font-weight: 600;
+}
 
 .gaps {
-  padding: 16px 20px; margin-bottom: 18px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border); border-left: 3px solid var(--brand);
-  border-radius: 12px; box-shadow: var(--shadow);
+  padding: 0 0 40px; margin-bottom: 40px;
+  border-bottom: 1px solid var(--color-border);
 }
-.gaps-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
-.gaps ul { margin: 0; padding-left: 20px; }
-.gaps li { font-size: 13px; line-height: 1.9; color: var(--color-muted); }
+.gaps-title {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 4px;
+  color: var(--brand); text-transform: uppercase; font-weight: 700;
+  margin-bottom: 24px;
+}
+.gaps ul { margin: 0; padding: 0; list-style: none; }
+.gaps li {
+  position: relative; padding-left: 28px; font-size: 14px; line-height: 1.9;
+  color: var(--color-text); margin-bottom: 14px; font-weight: 500;
+}
+.gaps li::before {
+  content: "—"; position: absolute; left: 0; color: var(--brand); font-weight: 300;
+}
 
 .tip {
-  font-size: 12px; line-height: 1.9; color: var(--color-muted);
-  padding: 11px 14px; margin-bottom: 22px;
-  background: rgba(11, 74, 111, .05); border-radius: 10px;
+  font-size: 13px; line-height: 1.8; color: var(--color-muted);
+  padding: 0 0 0 16px; margin-bottom: 56px;
+  border-left: 2px solid var(--brand);
 }
 
-.section { margin-bottom: 26px; }
-.sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.sec-kicker {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 4px;
-  color: var(--brand); text-transform: uppercase; font-weight: 700;
+.section { margin-bottom: 80px; }
+.sec-head { 
+  position: relative; display: flex; align-items: center; gap: 16px; 
+  margin-bottom: 64px; flex-wrap: wrap; padding-left: 20px;
 }
+.sec-head::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 4px; height: 24px; background: var(--brand); border-radius: 2px;
+}
+.sec-kicker {
+  font-size: 18px; letter-spacing: 2px;
+  color: var(--color-text); font-weight: 800;
+}
+.sec-head .muted { font-size: 13px; color: var(--color-soft); padding-left: 16px; border-left: 1px solid var(--color-border-strong); }
 .muted { font-size: 12px; color: var(--color-soft); }
 
 .qa {
-  padding: 16px 20px; margin-bottom: 10px;
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-radius: 14px; box-shadow: var(--shadow);
-  transition: border-color .3s, box-shadow .3s;
+  position: relative; padding: 0 0 56px; margin-bottom: 56px;
+  border-bottom: 1px solid var(--color-border); z-index: 1;
 }
-.qa:focus-within { border-color: rgba(11, 74, 111, .3); }
-.qa-q { display: flex; gap: 14px; margin-bottom: 10px; }
+.qa:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 24px; }
+.qa-q { position: relative; display: block; margin-bottom: 20px; }
 .qa-no {
-  flex: 0 0 auto; font-family: var(--font-mono); font-size: 22px; font-weight: 800;
-  line-height: 1.2; color: transparent; -webkit-text-stroke: 1.1px var(--brand);
+  position: absolute; top: -40px; left: -24px;
+  font-family: var(--font-mono); font-size: 100px; font-weight: 800;
+  line-height: 1; letter-spacing: -4px; color: transparent;
+  -webkit-text-stroke: 1.5px rgba(11, 74, 111, 0.06);
+  z-index: -1; pointer-events: none; user-select: none;
 }
-.qa-body { min-width: 0; }
-.qa-text { font-size: 14px; font-weight: 700; line-height: 1.7; }
+.qa-body { padding-top: 8px; }
+.qa-text { font-size: 16px; font-weight: 700; line-height: 1.7; color: var(--color-text); margin-bottom: 8px; }
 .qa-text .req {
   font-style: normal; font-family: var(--font-mono); font-size: 10px;
   margin-left: 8px; padding: 2px 7px; border-radius: 999px;
   background: #FEF3F2; border: 1px solid #FDA29B; color: #B42318; font-weight: 700;
+  vertical-align: middle;
 }
-.qa-why { margin-top: 5px; font-size: 12px; line-height: 1.8; color: var(--color-soft); }
+.qa-why { font-size: 13px; line-height: 1.8; color: var(--color-soft); }
 .qa textarea {
-  width: 100%; box-sizing: border-box; padding: 10px 12px;
-  border: 1px solid var(--color-border-strong); border-radius: 10px;
-  font-size: 13px; font-family: var(--font-sans); color: var(--color-text);
-  background: #fff; resize: vertical; line-height: 1.8;
+  position: relative; z-index: 1;
+  width: 100%; box-sizing: border-box; padding: 16px 20px;
+  border: 1px solid var(--color-border); border-radius: 12px;
+  font-size: 14px; font-family: var(--font-sans); color: var(--color-text);
+  background: rgba(255, 255, 255, 0.6); resize: vertical; line-height: 1.8;
+  transition: all .3s ease;
 }
-.qa textarea:focus { outline: none; border-color: var(--brand); }
+.qa textarea:focus {
+  background: #fff; border-color: var(--brand); outline: none;
+  box-shadow: 0 4px 20px -8px rgba(11, 74, 111, 0.15);
+}
+
+/* 选择题。选中态靠底色+边框，不靠 translate —— 同这一页其它交互的规矩。 */
+.opts { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 10px; }
+.opt {
+  padding: 11px 18px; border: 1px solid var(--color-border-strong); border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7); color: var(--color-text);
+  font-size: 14px; font-family: var(--font-sans); font-weight: 500; cursor: pointer;
+  transition: border-color .2s, background .2s, color .2s;
+}
+.opt:hover { border-color: var(--brand); color: var(--brand); }
+.opt.on { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
+.opt.soft { color: var(--color-soft); border-style: dashed; }
+.opt.soft.on { background: var(--navy-2); border-color: var(--navy-2); border-style: solid; color: #fff; }
+.opts textarea {
+  flex-basis: 100%;
+  width: 100%; box-sizing: border-box; padding: 16px 20px;
+  border: 1px solid var(--color-border); border-radius: 12px;
+  font-size: 14px; font-family: var(--font-sans); color: var(--color-text);
+  background: rgba(255, 255, 255, 0.6); resize: vertical; line-height: 1.8;
+}
+.opts textarea:focus {
+  background: #fff; border-color: var(--brand); outline: none;
+  box-shadow: 0 4px 20px -8px rgba(11, 74, 111, 0.15);
+}
+.opt-note { flex-basis: 100%; font-size: 12px; line-height: 1.8; color: var(--color-soft); }
 
 .submit-bar {
-  position: sticky; bottom: 0; z-index: 2;
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-  padding: 16px 20px; margin-top: 24px;
-  background: rgba(255, 255, 255, .9);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-radius: 14px; box-shadow: var(--shadow);
+  position: sticky; bottom: 32px; z-index: 10;
+  display: flex; align-items: center; gap: 20px; justify-content: center;
+  width: max-content; max-width: 100%; margin: 64px auto 0;
+  padding: 12px 12px 12px 28px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(0, 0, 0, 0.06); border-radius: 999px;
+  box-shadow: 0 20px 40px -12px rgba(0,0,0,0.15);
 }
-.submit-bar .leave { margin-left: auto; }
+.submit-bar .muted { font-size: 13px; margin: 0 8px; font-weight: 500; }
+.submit-bar .leave { margin: 0; border-radius: 999px; }
 
 .btn-primary {
-  padding: 10px 20px; border: 1px solid var(--brand); border-radius: 10px;
-  background: var(--brand); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
-  font-family: var(--font-sans);
+  padding: 12px 24px; border: 1px solid var(--brand); border-radius: 999px;
+  background: var(--brand); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: var(--font-sans); transition: background .2s;
 }
 .btn-primary:hover { background: var(--brand-ink); }
 .btn-primary:disabled { opacity: .5; cursor: default; }
 .btn-ghost {
-  padding: 10px 18px; border: 1px solid var(--color-border-strong); border-radius: 10px;
-  background: transparent; color: var(--color-muted); font-size: 13px; cursor: pointer;
-  font-family: var(--font-sans);
+  padding: 12px 20px; border: 1px solid var(--color-border-strong); border-radius: 999px;
+  background: transparent; color: var(--color-muted); font-size: 14px; cursor: pointer;
+  font-family: var(--font-sans); transition: border-color .2s, color .2s;
 }
 .btn-ghost:hover { border-color: var(--brand); color: var(--brand); }
 
