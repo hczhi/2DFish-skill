@@ -298,6 +298,13 @@ server {
     ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
 
+    # 上传客户资料文件（品牌咨询的「从文件提取文字」，最大 300MB）。
+    # ⚠️ 缺省是 1MB，超了 Nginx 直接回一句 413 HTML，**不经过 Node** —— 服务端日志里
+    # 一个字都没有，界面上只有一句泛泛的「上传失败」，看起来像接口挂了而不是文件太大。
+    # 这个数要和 `fileExtract.ts:MAX_FILE_BYTES` 对上：配小了是上面那种无声 413，
+    # 配大了只是把该在这里拒的请求整份读进 Node 的内存里再拒。
+    client_max_body_size 300m;
+
     # 全部转发给 Node（方案A）
     location / {
         proxy_pass http://127.0.0.1:3001;

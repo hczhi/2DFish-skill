@@ -87,6 +87,7 @@ import { migration_084 } from './084_consult_sdk_keys.js';
 import { migration_085 } from './085_consult_project_tenant.js';
 import { migration_086 } from './086_consult_sdk_limits.js';
 import { migration_087 } from './087_provider_no_thinking.js';
+import { migration_088 } from './088_consult_stage_prompts.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -175,4 +176,5 @@ export const allMigrations: Migration[] = [
   migration_085,
   migration_086,
   migration_087,
+  migration_088,
 ];

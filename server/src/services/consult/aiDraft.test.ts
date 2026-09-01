@@ -25,7 +25,7 @@ const { initDatabase, getDatabase } = await import('../../db/index.js');
 const { createProject, saveEntry, appendMessage, platformOwner } = await import('./projectStore.js');
 const { adoptSources } = await import('./sourceStore.js');
 const { draftFastStage, draftDirections } = await import('./draftService.js');
-const { STAGES } = await import('./stages.js');
+const { STAGE_DEFAULTS } = await import('./stages.js');
 
 initDatabase();
 
@@ -244,8 +244,8 @@ describe('consult AI 出草稿 / 出方向', () => {
     // 里 —— 模型手里只有一句话总结的话，它会编一份画像和一组平台偏好，标签、时段、爱看
     // 什么都写得很具体，整份内容方案就投在编出来的人身上，而没有一处会报错。
     // 所以 contextBodies 和 requires 是两回事（requires 还管解锁，不能为了带正文去改它）。
-    const upto = STAGES.findIndex((s) => s.key === 'content');
-    for (const s of STAGES.slice(0, upto)) {
+    const upto = STAGE_DEFAULTS.findIndex((s: any) => s.key === 'content');
+    for (const s of STAGE_DEFAULTS.slice(0, upto)) {
       saveEntry(project.id, s.key, {
         conclusion: `${s.label}那句总结`,
         body: `${s.label}那份正文`,

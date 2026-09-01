@@ -5,6 +5,13 @@
 // 存进表里就变成「老项目一份、新项目一份」，两边的报告章节不一样却都不报错。
 // consult_stages 那张表只存「某个项目在某个阶段干到哪了」。
 //
+// **例外是 `method` 和 `deliverables` 两栏**：它们是纯文字（一条进 prompt、同时原样显示
+// 给用户），后台可以逐步改（088 + `stageOverrides.ts`），这里那份是缺省值。所以：
+// **读这两栏一律走 `stages()` / `stageByKey()`，不要直接用 `STAGE_DEFAULTS`。**
+// 直接读缺省的那一处会变成「后台显示改过了，发给模型的还是旧口径」—— 而那种正文
+// 每节都在、表格也满，对着后台那份新操法数不出任何缺失。名字从 `STAGES` 改成
+// `STAGE_DEFAULTS` 就是为了让漏改的调用点编译不过。
+//
 // 三条车道（作者拍板）：
 // - fast「四看」= 找事实，对错取决于用户给的资料，没什么可选的 → AI 直接出结论草稿，
 //   用户 review / 改 / 补料就定稿。
@@ -14,6 +21,8 @@
 //   它既不是找事实也不是二选一的取舍，所以**单独一条车道而不是塞进 fast**：
 //   fast 的 prompt 写着「四看是找事实，不要发挥」，拿它出内容/数字化方案的话模型会
 //   只敢复述上游结论，交出一份没有平台、没有排期的综述 —— 而那份综述读起来完全正常。
+import { loadStageOverrides } from './stageOverrides.js';
+
 export type StageLane = 'fast' | 'slow' | 'plan';
 // 分组名是数据不是排版：它原样进 prompt（「这一步属于「${stage.group}」」）、也是左栏
 // 分组标题的来源。这个 union 一度还写着改名前的「内容创作 / 数字化营销」，而下面的
@@ -85,7 +94,8 @@ export interface StageDef {
   highlight?: string;
 }
 
-export const STAGES: StageDef[] = [
+/** 代码里的缺省。**不要直接读它的 `method` / `deliverables`**（见文件头）—— 用 `stages()`。 */
+export const STAGE_DEFAULTS: StageDef[] = [
   // ── 四看（找事实 · 快车道）───────────────────────────────
   {
     key: 'self',
@@ -478,10 +488,36 @@ export const STAGES: StageDef[] = [
   },
 ];
 
-const BY_KEY = new Map(STAGES.map((s) => [s.key, s]));
+/**
+ * 合并了后台覆盖（088）之后的阶段清单 —— **顺序、key、lane、requires 全部来自代码**，
+ * 库里只可能换掉 `method` / `deliverables` 两栏的文字。
+ *
+ * 每次调用查一次库（十四步 × 两栏，最多 28 行）。不缓存是有意的：缓存要么带一个失效
+ * 通道（后台改完不生效，读起来就是「保存了没用」），要么带 TTL（改完要等一会儿才生效，
+ * 同样解释不清）。这条路上没有热循环，省这一次查询换来的是一类没法诊断的失效。
+ */
+export function stages(): StageDef[] {
+  const ov = loadStageOverrides();
+  if (!ov.size) return STAGE_DEFAULTS;
+  return STAGE_DEFAULTS.map((s) => {
+    const method = ov.get(`${s.key}.method`);
+    const deliverables = ov.get(`${s.key}.deliverables`);
+    if (!method && !deliverables) return s;
+    return { ...s, method: method ?? s.method, deliverables: deliverables ?? s.deliverables };
+  });
+}
 
+const DEFAULT_BY_KEY = new Map(STAGE_DEFAULTS.map((s) => [s.key, s]));
+
+/** 这一步（合并覆盖后）。不存在的 key 返回 undefined —— 调用方一律当 404。 */
 export function stageByKey(key: string): StageDef | undefined {
-  return BY_KEY.get(key);
+  const def = DEFAULT_BY_KEY.get(key);
+  if (!def) return undefined; // 库里的覆盖不能凭空造出一个阶段
+  const ov = loadStageOverrides();
+  const method = ov.get(`${key}.method`);
+  const deliverables = ov.get(`${key}.deliverables`);
+  if (!method && !deliverables) return def;
+  return { ...def, method: method ?? def.method, deliverables: deliverables ?? def.deliverables };
 }
 
 /**
@@ -505,13 +541,15 @@ export function unlockState(
  * 而对不上的表现是「改了定位，价值主张没被标 stale」，报告里两节口径矛盾，
  * 一句错都不报。
  *
- * 一遍扫描成立的前提是 STAGES 的顺序是拓扑序（requires 只指向前面的阶段）。
+ * 一遍扫描成立的前提是 STAGE_DEFAULTS 的顺序是拓扑序（requires 只指向前面的阶段）。
  * 新增阶段时把它插在它依赖的阶段之后，否则下游会漏标 —— 同上，不报错。
+ *
+ * 这里用缺省清单而不是 `stages()`：依赖关系（requires）后台改不了，不必为它查一次库。
  */
 export function downstreamOf(key: string): string[] {
   const out: string[] = [];
   const dirty = new Set([key]);
-  for (const s of STAGES) {
+  for (const s of STAGE_DEFAULTS) {
     if (s.key === key) continue;
     if (s.requires.some((r) => dirty.has(r))) {
       dirty.add(s.key);

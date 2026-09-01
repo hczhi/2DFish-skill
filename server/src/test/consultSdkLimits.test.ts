@@ -57,6 +57,8 @@ describe('consult SDK 每把 key 的上限', () => {
       `/api/consult/projects/${pid}/stages/audience/chat`,
       `/api/consult/projects/${pid}/stages/audience/search`,
       `/api/consult/projects/${pid}/intake`,
+      // 不在 projects 子树下（上传文件时还没有项目 id），最容易漏的就是这一条
+      '/api/consult/tidy-text',
     ];
     for (const path of paid) {
       const res = await request(app).post(path).set(auth).send({ text: 'x', query: 'x' });

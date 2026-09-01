@@ -357,6 +357,12 @@ const nextInOrder = computed(() => {
   if (i < 0) return null
   return stages.value[i + 1] || null
 })
+/** 紧挨着的上一步（左下角那颗按钮用它）。第一步时为 null，那颗按钮整个不出现。 */
+const prevInOrder = computed(() => {
+  const i = stages.value.findIndex(s => s.key === selectedKey.value)
+  if (i <= 0) return null
+  return stages.value[i - 1] || null
+})
 /** 定稿里那几条 AI 赋能机会。读坏了当没有 —— 不能因为这一列而让整份报告打不开。 */
 const entryAiOpps = computed<string[]>(() => {
   try {
@@ -465,7 +471,7 @@ async function load() {
 }
 
 /**
- * 「继续下一步」：切过去之后把中间这一栏滚回顶上。
+ * 左右下角那两颗翻页按钮（上一步 / 下一步）：切过去之后把中间这一栏滚回顶上。
  *
  * 必须显式滚：`messages` 那个 watch 每次换阶段都把滚动条推到**底**（聊天该那样），
  * 而下一步是从头开始的 —— 落在底部时他看到的是输入条和一句「还没开始分析」，
@@ -473,7 +479,7 @@ async function load() {
  * 都没换」（上一步的报告本来也是滚到底才看见这颗按钮的）。
  * 排在 watch 的回调之后：那次 `nextTick` 是 `select` 里赋值 messages 时排的，比这里早。
  */
-async function goNextStage(key: string) {
+async function goStage(key: string) {
   await select(key)
   await nextTick()
   if (chatScrollRef.value) chatScrollRef.value.scrollTop = 0
@@ -1199,6 +1205,12 @@ function closeWorkspaceForRun() {
 
 <template>
   <div class="desk editorial-theme">
+    <!-- 装饰背景 -->
+    <div class="bg-elements">
+      <div class="bg-overlay"></div>
+      <div class="grid-bg"></div>
+    </div>
+
     <div v-if="err" class="alert-banner">
       <span>{{ err }}</span>
       <button class="alert-close" @click="err = ''" title="关闭提示">×</button>
@@ -1271,13 +1283,21 @@ function closeWorkspaceForRun() {
     <!-- Main Chat Stream -->
     <main class="chat-stream">
       <!-- Global toggle for sidebar when hidden -->
-      <button v-if="!sidebarOpen" class="btn-global-sidebar-toggle" @click="sidebarOpen = true" title="展开侧边栏">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="3" y1="12" x2="21" y2="12"></line>
-          <line x1="3" y1="6" x2="21" y2="6"></line>
-          <line x1="3" y1="18" x2="21" y2="18"></line>
-        </svg>
-      </button>
+      <div v-if="!sidebarOpen" class="global-actions-bar">
+        <button class="btn-global-sidebar-toggle" @click="sidebarOpen = true" title="展开侧边栏">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+        <button class="btn-back-to-work" @click="router.push('/consult/projects')" title="返回工作台">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+      </div>
 
       <div class="chat-scroll-area" ref="chatScrollRef">
         <!-- Editorial Stage Hero -->
@@ -1401,18 +1421,19 @@ function closeWorkspaceForRun() {
               {{ hasDecided ? '方向已经定了，还没出正文' : isDraftLane ? '这一步还没有草稿' : '这一步还没开始分析' }}
             </div>
             <p class="run-cta-sub">
-              可以先在下面把你的判断交代给 AI（重点是谁、哪些事实别写错、忌讳什么），
-              <strong>本步最近 16 条对话会一起进 prompt</strong>，聊完再点右边的按钮。
               <!-- 每种状态都要说清那个按钮会干什么。慢车道「开始分析」**不写正文**，
                    不说的话他点完看到一屏选项，会以为分析失败了（或者以为这就是产出）。 -->
               <template v-if="hasDecided">
-                <br />右栏那 {{ decided!.picks.length }} 处取舍已经由你定了，正文会照它写
+                右栏那 {{ decided!.picks.length }} 处取舍已经由你定了，正文会照它写
                 （正文出来还要你定稿）。
               </template>
               <template v-else-if="!isDraftLane">
-                <br />这一步<strong>先问后写</strong>：「开始分析」出来的是几处要你拍板的取舍
+                这一步<strong>先问后写</strong>：「开始分析」出来的是几处要你拍板的取舍
                 （竞品挑哪几家、定位取哪个角色这类），<strong>还不是正文</strong>；定完之后
                 才照你定的方向写一份完整的。
+              </template>
+              <template v-else>
+                点击下方按钮让 AI 开始分析并生成本步的草稿内容。
               </template>
             </p>
           </div>
@@ -1453,7 +1474,7 @@ function closeWorkspaceForRun() {
                      现在服务端关掉了思维链（GatewayOptions.noThinking），实测回到
                      十几秒到一分钟。**关不掉的接入点会退回四分钟量级**（服务端日志里会
                      喊一句），所以这里给的是区间的上限，不是那个好看的下限。 -->
-                <strong>通常十几秒到 1 分钟</strong>（这一步要写六节带表格的正文）。别刷新，也不用再点一次生成 —— 那会再花一次额度。
+                <strong>通常十几秒到 1 分钟</strong>（这一步要写六节带表格的正文）。别刷新，也不用再点一次生成 
               </div>
             </div>
           </div>
@@ -1482,14 +1503,14 @@ function closeWorkspaceForRun() {
 
 
       <!-- Floating Input Capsule -->
-      <div class="input-capsule-wrapper" v-else-if="selected && selected.unlocked">
+      <div class="input-capsule-wrapper" v-else-if="selected && selected.unlocked && !showRunCta">
         <!-- 为什么停掉输入，要写在他眼皮底下：只把发送键变灰的话，他会以为是网络卡了，
              刷新页面（正在跑的那一版就此变成孤儿）或者反复点发送。 -->
-        <div v-if="stageBusy" class="capsule-note">
+        <!-- <div v-if="stageBusy" class="capsule-note">
           ⏳ 这一步正在分析，先不接受输入 —— 现在发的话<strong>进不了</strong>正在写的这一版
           （它开写的那一刻就把对话取完了）。等它出来再说，那句话会进下一版。
-        </div>
-        <div class="input-capsule" :class="{ busy: stageBusy }">
+        </div> -->
+        <div v-show="!stageBusy" class="input-capsule" :class="{ busy: stageBusy }">
           <textarea
             v-model="chatText"
             rows="1"
@@ -1539,17 +1560,29 @@ function closeWorkspaceForRun() {
 
       <!-- 右下角再来一颗「下一步」。和居中那颗（在上面那条已定稿的胶囊里）是两个入口，
            故意重复：居中那颗压在正文最后几行上，而报告有十几屏，滚到底想读的正是那几行。
-           这一颗**还会把视口滚回顶上**（见 goNextStage）：换过去之后落在底部的话，阶段标题
+           这一颗**还会把视口滚回顶上**（见 goStage）：换过去之后落在底部的话，阶段标题
            和「该怎么想」全在视口上面，读起来是「点了下一步却什么都没换」。
+
+           左下角那颗「上一步」是同一件事的反向：他是**顺着读**这份报告的，读到一半想
+           回头核上一章的结论时，唯一的出口在左边那条窄栏里（窄屏上还是收起来的）。
+           两颗都只在定稿态出现 —— 没定稿时底部中间是那条输入胶囊，翻页按钮并排摆过去
+           会压在它身上。
 
            **必须放在上面那条 v-if / v-else-if 链之外**：夹在链子中间的话
            `v-else-if="selected && selected.unlocked"`（输入条）就找不到它的 v-if 了，
            于是已定稿的阶段上一边是只读报告、一边冒出一条能打字的输入框 ——
            在那里说的话既进不了任何 prompt 也改不动结论，而它看起来完全正常。 -->
       <button
+        v-if="stageLocked && prevInOrder"
+        class="btn-prev-corner"
+        @click="goStage(prevInOrder.key)"
+      >
+        ← 上一步「{{ prevInOrder.label }}」
+      </button>
+      <button
         v-if="stageLocked && nextInOrder"
         class="btn-next-corner"
-        @click="goNextStage(nextInOrder.key)"
+        @click="goStage(nextInOrder.key)"
       >
         下一步「{{ nextInOrder.label }}」→
       </button>
@@ -1589,15 +1622,15 @@ function closeWorkspaceForRun() {
               </div>
               <label class="dfield">
                 <span class="dlabel">结论摘要</span>
-                <textarea v-model="draft.conclusion" rows="2"></textarea>
+                <textarea v-model="draft.conclusion" rows="5"></textarea>
               </label>
               <div class="dfield">
                 <div class="dlabel-bar">
                   <span class="dlabel">正文详情</span>
-                  <div class="dlabel-actions">
+                  <!-- <div class="dlabel-actions">
                     <button class="link-btn" :class="{ active: !draftPreview }" @click="draftPreview = false">✏️ 编辑模式</button>
                     <button class="link-btn" :class="{ active: draftPreview }" @click="draftPreview = true">👁️ 预览模式</button>
-                  </div>
+                  </div> -->
                 </div>
                 <div v-if="draftPreview" class="md md-preview" v-html="md(draft.body)"></div>
                 <textarea v-else v-model="draft.body" rows="20"></textarea>
@@ -1661,7 +1694,7 @@ function closeWorkspaceForRun() {
                  一屏卡片读起来很像已经在推进这一步了。 -->
             <div v-else-if="decisions && decisionsStageKey === selected.key" class="dirs">
               <div class="dirs-head">
-                <span class="draft-tag">🛤 待定方向（动笔前的取舍）</span>
+                <span class="draft-tag">待定方向 （需要你拍板）</span>
               </div>
               <div v-if="decisions.truncated" class="draft-busy">
                 ⚠ 模型这次的返回被截断了 —— 下面这几处可能不全（断在半句上的清单和写完的长得一样）。
@@ -1848,9 +1881,9 @@ function closeWorkspaceForRun() {
                   ｜有一份没提交（{{ intake.questions.length }} 题，已填 {{ intakeFilled }}）
                 </span>
               </div>
-              <button class="btn-ghost small" @click="router.push(`/consult/projects/${projectId}/intake`)">
+              <!-- <button class="btn-ghost small" @click="router.push(`/consult/projects/${projectId}/intake`)">
                 {{ intake && intake.questions.length ? '去填问卷 →' : '让 AI 再出一轮 →' }}
-              </button>
+              </button> -->
             </div>
           </div>
 
@@ -1897,34 +1930,78 @@ function closeWorkspaceForRun() {
   background-clip: content-box;
 }
 
+/* 全局滚动条美化 (只在 Webkit 下生效) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .editorial-theme {
-  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --brand: #3B5BDB;
-  --brand-soft: rgba(59, 91, 219, 0.08);
-  --brand-ink: #2B45A8;
-  --navy: #111827;
-  --navy-2: #374151;
-  --color-text: #111827;
-  --color-muted: #4B5563;
-  --color-soft: #9CA3AF;
-  --color-border: #E5E7EB;
-  --color-border-strong: #D1D5DB;
-  --color-fill: #F9FAFB;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
+  --brand: #FFB800;
+  --brand-soft: rgba(255, 184, 0, 0.15);
+  --brand-ink: #FFB800;
+  --navy: #FFFFFF;
+  --navy-2: rgba(255, 255, 255, 0.85);
+  --color-text: #FFFFFF;
+  --color-text-soft: rgba(255, 255, 255, 0.6);
+  --color-muted: rgba(255, 255, 255, 0.7);
+  --color-soft: rgba(255, 255, 255, 0.5);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.15);
+  --color-fill: rgba(255, 255, 255, 0.05);
+  --bg-color: #12182B;
   
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.02);
-  --shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-  --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.3);
 
   height: 100vh;
   display: flex;
   overflow: hidden;
-  background-color: #FDFDFD;
-  background-image: linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-color: var(--bg-color);
   color: var(--color-text);
   font-family: var(--font-sans);
   position: relative;
+}
+
+.bg-elements {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
+  background-size: cover;
+  background-position: center;
+}
+
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 24, 43, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  z-index: 1;
 }
 
 .alert-banner {
@@ -1983,14 +2060,14 @@ function closeWorkspaceForRun() {
   width: 280px;
   flex: 0 0 auto;
   margin: 16px 0 16px 16px;
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(18, 24, 43, 0.6);
   backdrop-filter: blur(40px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 20px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: left center;
 }
@@ -2027,19 +2104,19 @@ function closeWorkspaceForRun() {
   transition: all 0.2s ease;
   flex-shrink: 0;
 }
-.btn-toggle-sidebar:hover { background: #fff; color: var(--navy); box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.btn-toggle-sidebar:hover { background: rgba(255,255,255,0.1); color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 
 .btn-back {
   width: 28px; height: 28px;
   border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: #fff;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
   color: var(--navy);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: all 0.2s ease;
 }
-.btn-back:hover { background: var(--color-fill); border-color: var(--color-border-strong); }
+.btn-back:hover { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); }
 
 .brand-title {
   font-weight: 700;
@@ -2093,20 +2170,20 @@ function closeWorkspaceForRun() {
 .btn-export {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--navy);
+  border: 1px solid rgba(255,255,255,0.2);
   border-radius: 12px;
-  background: var(--navy);
+  background: rgba(255,255,255,0.1);
   color: #fff;
   font-size: 13px; font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, background 0.2s;
 }
-.btn-export:hover:not(:disabled) { opacity: 0.85; }
+.btn-export:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
 .btn-export:disabled {
   background: transparent;
   color: var(--color-soft);
-  border-color: rgba(0,0,0,0.12);
+  border-color: rgba(255,255,255,0.1);
   cursor: not-allowed;
 }
 .export-sub {
@@ -2140,25 +2217,25 @@ function closeWorkspaceForRun() {
   text-align: left;
   position: relative;
 }
-.rail-item:hover { color: var(--navy); background: rgba(0,0,0,0.03); }
+.rail-item:hover { color: #fff; background: rgba(255,255,255,0.05); }
 .rail-item.active {
-  color: var(--navy);
-  background: #fff;
+  color: #111;
+  background: var(--brand);
   font-weight: 700;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 12px rgba(255, 184, 0, 0.2);
 }
 .rail-item.locked { color: var(--color-soft); opacity: 0.8; }
 .rail-item .dot {
   width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700; color: var(--color-soft);
-  background: rgba(0,0,0,0.05); border-radius: 50%;
+  background: rgba(255,255,255,0.1); border-radius: 50%;
   flex-shrink: 0;
   transition: all 0.2s;
 }
-.rail-item.active .dot { background: var(--brand); color: #fff; box-shadow: 0 2px 8px rgba(59, 91, 219, 0.3); }
-.rail-item.done .dot { background: #10B981; color: #fff; }
-.rail-item.done.active .dot { box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3); }
+.rail-item.active .dot { background: rgba(0,0,0,0.1); color: #111; box-shadow: none; }
+.rail-item.done .dot { background: rgba(16, 185, 129, 0.2); color: #10B981; }
+.rail-item.done.active .dot { background: #10B981; color: #fff; box-shadow: none; }
 
 .rail-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.2s; }
 
@@ -2173,25 +2250,54 @@ function closeWorkspaceForRun() {
   flex-direction: column;
 }
 
-.btn-global-sidebar-toggle {
+.global-actions-bar {
   position: absolute;
   top: 24px;
   left: 24px;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-global-sidebar-toggle {
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(12px);
-  color: var(--navy);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
   box-shadow: var(--shadow-sm);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+.btn-back-to-work {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-back-to-work:hover {
+  background: rgba(255,255,255,0.15);
+  color: var(--brand);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
 .btn-global-sidebar-toggle:hover {
-  background: #fff;
+  background: rgba(255,255,255,0.15);
   border-color: var(--brand);
   color: var(--brand);
   box-shadow: var(--shadow);
@@ -2212,7 +2318,7 @@ function closeWorkspaceForRun() {
 .stage-intro-card {
   width: 100%;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
 }
 
 .intro-header {
@@ -2284,7 +2390,7 @@ function closeWorkspaceForRun() {
 }
 .methodology-trigger::-webkit-details-marker { display: none; } /* Hide default triangle */
 .methodology-trigger:hover {
-  color: var(--navy);
+  color: #fff;
 }
 
 .trigger-icon {
@@ -2294,11 +2400,11 @@ function closeWorkspaceForRun() {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--color-fill);
+  background: rgba(255,255,255,0.1);
   transition: background 0.2s;
 }
 .methodology-trigger:hover .trigger-icon {
-  background: rgba(0,0,0,0.04);
+  background: rgba(255,255,255,0.2);
 }
 
 .chevron {
@@ -2309,20 +2415,20 @@ function closeWorkspaceForRun() {
 .methodology-content {
   margin-top: 20px;
   padding: 24px 32px;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(20px) saturate(150%);
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 4px 24px rgba(0,0,0,0.02), inset 0 0 0 1px rgba(255,255,255,0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.1);
   font-size: 14px;
-  color: var(--navy-2);
+  color: var(--color-muted);
   line-height: 1.8;
 }
 
 .sys-section { margin-bottom: 24px; }
 .sys-section:last-child { margin-bottom: 0; }
 .sys-section strong { 
-  color: var(--brand-ink); 
+  color: #fff; 
   display: block; 
   margin-bottom: 12px; 
   font-weight: 700; 
@@ -2377,7 +2483,7 @@ function closeWorkspaceForRun() {
 .msg-avatar {
   width: 32px; height: 32px;
   border-radius: 8px;
-  background: var(--navy);
+  background: rgba(255,255,255,0.1);
   color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700;
@@ -2399,22 +2505,23 @@ function closeWorkspaceForRun() {
   border-radius: 20px;
   font-size: 15px;
   line-height: 1.8;
-  background: #F8F9FA;
-  border: none;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
   box-shadow: none;
   color: var(--color-text);
 }
 .msg.user .msg-bubble {
   background: var(--brand);
-  color: #fff;
+  color: #111;
   border-radius: 20px 20px 4px 20px;
   white-space: pre-wrap;
+  border: none;
 }
 .msg.user .msg-bubble.user-pick {
-  background: var(--brand-soft);
-  color: var(--brand-ink);
+  background: rgba(255, 184, 0, 0.1);
+  color: var(--brand);
   box-shadow: none;
-  border: 1px solid rgba(59, 91, 219, 0.1);
+  border: 1px solid rgba(255, 184, 0, 0.2);
   font-size: 14px;
 }
 .msg.user .msg-bubble.user-pick strong {
@@ -2435,22 +2542,22 @@ function closeWorkspaceForRun() {
   display: flex; align-items: center; gap: 16px;
   padding: 16px 20px;
   border-radius: 20px;
-  background: #F8F9FA;
-  border: 1px solid transparent;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
   box-shadow: none;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .msg-artifact:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.06);
+  box-shadow: 0 12px 32px -8px rgba(0,0,0,0.2);
 }
 .msg-artifact:active {
   transform: scale(0.98);
 }
 .artifact-icon { font-size: 24px; }
 .artifact-meta { display: flex; flex-direction: column; flex: 1; }
-.artifact-meta strong { font-size: 14px; color: var(--navy); }
+.artifact-meta strong { font-size: 14px; color: #fff; }
 .artifact-meta span { font-size: 12px; color: var(--color-soft); margin-top: 2px; }
 .artifact-action { font-size: 13px; font-weight: 600; color: var(--brand); }
 .artifact-action.muted { color: var(--color-soft); font-weight: 500; }
@@ -2459,18 +2566,19 @@ function closeWorkspaceForRun() {
    它和还在的那版长得一样，点了什么都不发生，读起来像界面坏了。 */
 .msg-artifact.discarded {
   cursor: default;
-  background: var(--color-fill);
+  background: rgba(255,255,255,0.02);
   border-style: dashed;
+  border-color: rgba(255,255,255,0.1);
   box-shadow: none;
   opacity: 0.7;
 }
-.msg-artifact.discarded:hover { border-color: rgba(0,0,0,0.12); box-shadow: none; }
+.msg-artifact.discarded:hover { border-color: rgba(255,255,255,0.2); box-shadow: none; transform: none; }
 .msg-artifact.discarded .artifact-meta strong { text-decoration: line-through; color: var(--color-muted); }
 
 /* 「已丢弃」是这一步的状态，不是 AI 说的话，所以做成一条细提示而不是气泡 */
 .discard-note {
   margin: 8px 0 0; padding: 10px 14px; max-width: 640px;
-  background: var(--color-fill); border: 1px dashed var(--color-border-strong);
+  background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,255,255,0.1);
   border-radius: 12px;
   font-size: 12px; line-height: 1.8; color: var(--color-muted);
 }
@@ -2490,7 +2598,7 @@ function closeWorkspaceForRun() {
 .loading-progress-inner {
   height: 100%;
   width: 40%;
-  background: var(--navy);
+  background: var(--brand);
   border-radius: 2px;
   animation: progress-indeterminate 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
@@ -2502,7 +2610,7 @@ function closeWorkspaceForRun() {
 .loading-title { 
   font-size: 16px; font-weight: 800; /* 杂志化大字重 */
   letter-spacing: -0.01em; /* 收紧字距 */
-  color: var(--navy);
+  color: #fff;
   animation: text-breathe 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite alternate;
 }
 @keyframes text-breathe {
@@ -2528,43 +2636,54 @@ function closeWorkspaceForRun() {
 /* 这一步还没产出时的生成入口。刻意做得比输入条上那两个小按钮显眼：
    进阶段不再自动跑之后，看不见它的人会以为这一步只能聊天。 */
 .run-cta {
-  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  padding: 24px 28px;
-  background: rgba(248, 249, 250, 0.65);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: none; border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 20px;
+  padding: 32px 36px;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
-.run-cta-body { flex: 1 1 260px; min-width: 0; }
-.run-cta-title { font-size: 16px; font-weight: 800; color: var(--navy); letter-spacing: -0.02em; }
-.run-cta-sub { margin: 8px 0 0; font-size: 13px; line-height: 1.8; color: var(--color-muted); }
+.run-cta-body { width: 100%; }
+.run-cta-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: -0.02em; margin-bottom: 12px; }
+.run-cta-sub { margin: 0; font-size: 14px; line-height: 1.8; color: var(--color-muted); }
 .btn-run-cta {
-  flex: 0 0 auto; padding: 14px 24px;
-  background: var(--navy, #1E293B); color: #fff;
-  border: none; border-radius: 14px;
+  align-self: flex-start;
+  margin-top: 8px;
+  flex: 0 0 auto; padding: 14px 28px;
+  background: var(--brand); color: #111;
+  border: none; border-radius: 999px; /* 改为全圆角 */
   font-size: 14px; font-weight: 700; cursor: pointer;
-  box-shadow: 0 6px 16px rgba(30, 41, 59, 0.18);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 16px rgba(255, 184, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-run-cta:hover:not(:disabled) {
+  background: var(--brand-ink);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.3);
 }
 .btn-run-cta:active:not(:disabled) {
-  transform: scale(0.98);
-  box-shadow: 0 2px 8px rgba(30, 41, 59, 0.1);
+  transform: translateY(0) scale(0.98);
 }
 .btn-run-cta:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; transform: none; }
 /* 慢车道那个次要入口（AI 直接出方向）。做成描边的：两个实心按钮并排的话，
    「先定方向」那条推荐路径看不出来 */
 .btn-run-cta.secondary {
-  background: rgba(255, 255, 255, 0.6); color: var(--navy, #1E293B);
-  border: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: rgba(255, 255, 255, 0.1); color: var(--color-text);
+  border: 1px solid rgba(255,255,255,0.2); box-shadow: none;
   font-weight: 600;
+}
+.btn-run-cta.secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
 
 /* 别的步在跑。刻意不做成 AI 气泡：气泡长在这一步的对话里，读起来还是「这一步在跑」 */
 .other-running {
   margin: 8px 0 0; padding: 10px 14px; max-width: 640px;
-  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px;
-  font-size: 12px; line-height: 1.8; color: #92400E;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 12px;
+  font-size: 12px; line-height: 1.8; color: var(--brand);
 }
 
 /* --- Floating Input Capsule --- */
@@ -2582,10 +2701,10 @@ function closeWorkspaceForRun() {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 20px;
-  background: #FFFBEB;
-  border: 1px solid #FDE68A;
+  background: rgba(255, 184, 0, 0.1);
+  border: 1px solid rgba(255, 184, 0, 0.2);
   border-radius: 16px;
-  font-size: 12px; line-height: 1.7; color: #92400E;
+  font-size: 12px; line-height: 1.7; color: var(--brand);
 }
 .locked-capsule-wrapper {
   position: absolute; bottom: 32px; left: 0; right: 0;
@@ -2599,20 +2718,40 @@ function closeWorkspaceForRun() {
   position: absolute; right: 50%;
     margin-right: -520px;bottom: 48px; z-index: 2;
   padding: 8px 18px; border: none; border-radius: 999px;
-  background: var(--navy); color: #fff;
+  background: var(--brand); color: #111;
   font-size: 13px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(255, 184, 0, 0.2);
+}
+.btn-next-corner:hover { background: var(--brand-ink); box-shadow: 0 4px 20px rgba(255, 184, 0, 0.3); }
+/* 左下角那颗「上一步」。位置和 `.btn-next-corner` 严格镜像（同一条水平中线、离中线
+   同样 520px），但**故意不用实心深色**：两颗一样的深色按钮并排时，「回头核上一章」
+   和「往下走」看起来一样重，而这一步只读、往下走才是他要做的事。 */
+.btn-prev-corner {
+  position: absolute; left: 50%;
+  margin-left: -520px; bottom: 48px; z-index: 2;
+  padding: 8px 18px; border: 1px solid rgba(255,255,255,0.1); border-radius: 999px;
+  background: rgba(255,255,255,0.05); color: var(--color-soft);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-size: 13px; font-weight: 600; cursor: pointer;
   box-shadow: var(--shadow);
 }
-.btn-next-corner:hover { background: var(--navy-2); }
+.btn-prev-corner:hover { color: var(--navy); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
 @media (max-width: 900px) {
   .btn-next-corner { right: 16px; bottom: 112px; }
+  .btn-prev-corner { left: 16px; bottom: 112px; }
+  /* 两颗并排在一行上，阶段名长的时候会撞在一起（撞上之后点下去哪颗生效说不清），
+     所以各占不到一半、超出的部分省略号收掉 */
+  .btn-next-corner, .btn-prev-corner {
+    max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 }
 .locked-capsule {
   padding: 16px 32px;
-  background: rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.05);
   backdrop-filter: blur(12px);
   border-radius: 999px;
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(255,255,255,0.1);
   font-size: 14px; font-weight: 600; color: var(--color-soft);
   box-shadow: var(--shadow);
 }
@@ -2620,28 +2759,29 @@ function closeWorkspaceForRun() {
 .locked-capsule.done {
   display: flex; align-items: center; gap: 16px;
   color: var(--navy);
-  background: rgba(255,255,255,0.92);
+  background: rgba(255,255,255,0.15);
 }
 .locked-capsule .lc-sub { font-weight: 500; color: var(--color-soft); }
 .btn-next-stage {
   padding: 8px 18px; border: none; border-radius: 999px;
-  background: var(--navy); color: #fff;
+  background: var(--brand); color: #111;
   font-size: 13px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(255, 184, 0, 0.2);
 }
-.btn-next-stage:hover { background: var(--navy-2); }
+.btn-next-stage:hover { background: var(--brand-ink); box-shadow: 0 4px 20px rgba(255, 184, 0, 0.3); }
 
 /* --- 定稿之后中间这一栏：只读的咨询报告 --- */
 .report { max-width: 100%; }
 .report-head {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px;
-  padding-bottom: 12px; border-bottom: 1px solid var(--color-border);
+  padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);
 }
-.report-tag { font-size: 16px; font-weight: 800; color: var(--navy); letter-spacing: -0.5px; }
+.report-tag { font-size: 16px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
 .report-meta { font-size: 12px; color: var(--color-soft); }
 .report-warn {
   margin-top: 16px; padding: 12px 16px;
-  background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px;
-  font-size: 12.5px; line-height: 1.8; color: #92400E;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.8; color: var(--brand);
 }
 .report-h {
   margin: 28px 0 10px;
@@ -2652,8 +2792,8 @@ function closeWorkspaceForRun() {
   margin: 0; font-size: 17px; line-height: 1.8; font-weight: 600; color: var(--color-text);
 }
 .report-empty {
-  padding: 12px 16px; background: var(--color-fill);
-  border: 1px dashed var(--color-border-strong); border-radius: 12px;
+  padding: 12px 16px; background: rgba(255,255,255,0.05);
+  border: 1px dashed rgba(255,255,255,0.2); border-radius: 12px;
   font-size: 12.5px; color: var(--color-muted);
 }
 .report-ai { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.9; color: var(--color-text); }
@@ -2664,35 +2804,36 @@ details.msg-log { margin-top: 32px; gap: 0; }
 .msg-log-summary {
   cursor: pointer; padding: 10px 0; margin-bottom: 8px;
   font-size: 13px; font-weight: 600; color: var(--color-muted);
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid rgba(255,255,255,0.1);
 }
-.msg-log-summary:hover { color: var(--navy); }
+.msg-log-summary:hover { color: #fff; }
 details.msg-log[open] > .msg { margin-bottom: 24px; }
 
 .entry-locked {
   margin-top: 20px; padding: 12px 16px;
-  background: var(--color-fill); border: 1px solid var(--color-border); border-radius: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
   font-size: 12.5px; line-height: 1.8; color: var(--color-muted);
 }
 
 .input-capsule {
   pointer-events: auto;
   width: 100%;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(0,0,0,0.08);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 28px;
   padding: 12px 12px 12px 24px;
   display: flex; align-items: flex-end; gap: 16px;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.03);
-  transition: border-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.1);
+  transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
 }
 .input-capsule:focus-within {
-  border-color: rgba(59, 91, 219, 0.4);
-  background: #fff;
-  box-shadow: 0 16px 40px rgba(59, 91, 219, 0.08), 0 4px 12px rgba(59, 91, 219, 0.04);
+  border-color: rgba(255, 184, 0, 0.4);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 40px rgba(255, 184, 0, 0.08), 0 4px 12px rgba(255, 184, 0, 0.04);
 }
-.input-capsule.busy { background: rgba(249, 250, 251, 0.9); border-style: dashed; }
+.input-capsule.busy { background: rgba(255, 255, 255, 0.03); border-style: dashed; }
 .input-capsule textarea:disabled { cursor: not-allowed; color: var(--color-soft); }
 .input-capsule textarea {
   flex: 1;
@@ -2701,7 +2842,7 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   resize: none;
   font-size: 15px;
   font-family: var(--font-sans);
-  color: var(--navy);
+  color: #fff;
   padding: 8px 0;
   line-height: 1.6;
   min-height: 24px;
@@ -2717,7 +2858,7 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   width: 40px; height: 40px;
   border-radius: 20px;
   background: var(--brand);
-  color: #fff;
+  color: #111;
   border: none;
   font-size: 18px; font-weight: 700;
   cursor: pointer;
@@ -2739,14 +2880,14 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .drawer-workspace {
   position: absolute;
   top: 16px; bottom: 16px; right: 16px;
-  width: 60%;
+  width: 75%;
   min-width: 480px;
   max-width: 1080px; /* kimi3 的 main 就是这个宽度，再宽一行字读起来要来回扫 */
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(32px);
-  border: 1px solid rgba(0,0,0,0.05);
+  background: rgba(18, 24, 43, 0.6);
+  backdrop-filter: blur(40px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 20px;
-  box-shadow: -12px 0 48px rgba(0,0,0,0.08);
+  box-shadow: -12px 0 48px rgba(0,0,0,0.3);
   display: flex; flex-direction: column;
   transform: translateX(calc(100% + 24px));
   transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -2762,7 +2903,7 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .drawer-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 24px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .drawer-tabs { display: flex; gap: 24px; }
 .drawer-tabs button {
@@ -2772,18 +2913,18 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   border-bottom: 2px solid transparent;
   cursor: pointer; transition: all 0.2s;
 }
-.drawer-tabs button:hover { color: var(--navy-2); }
-.drawer-tabs button.active { color: var(--navy); border-bottom-color: var(--brand); }
+.drawer-tabs button:hover { color: rgba(255,255,255,0.85); }
+.drawer-tabs button.active { color: #fff; border-bottom-color: var(--brand); }
 
 .btn-close {
   width: 32px; height: 32px;
   border-radius: 16px;
-  border: none; background: var(--color-fill);
+  border: none; background: rgba(255,255,255,0.1);
   color: var(--color-muted);
   font-size: 20px; line-height: 1;
   cursor: pointer; transition: background 0.2s;
 }
-.btn-close:hover { background: var(--color-border); color: var(--navy); }
+.btn-close:hover { background: rgba(255,255,255,0.2); color: #fff; }
 
 .drawer-body {
   flex: 1; overflow-y: auto;
@@ -2806,28 +2947,41 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   text-align: center; color: var(--color-soft);
 }
 .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
-.empty-state h3 { font-size: 18px; font-weight: 700; color: var(--navy); margin: 0 0 8px; }
+.empty-state h3 { font-size: 18px; font-weight: 700; color: #fff; margin: 0 0 8px; }
 .empty-state p { font-size: 14px; max-width: 280px; line-height: 1.6; }
 
 /* Buttons */
 .btn-primary {
-  padding: 10px 24px;
-  background: var(--navy); color: #fff;
+  padding: 14px 28px;
+  background: var(--brand); color: #111;
   border: none; border-radius: 999px;
-  font-size: 14px; font-weight: 600;
-  cursor: pointer; transition: background 0.2s;
+  font-size: 14px; font-weight: 700;
+  cursor: pointer; 
+  box-shadow: 0 4px 16px rgba(255, 184, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.btn-primary:hover:not(:disabled) { background: #000; }
-.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary:hover:not(:disabled) { 
+  background: var(--brand-ink); 
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.3);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; transform: none; }
 
 .btn-ghost {
-  padding: 10px 24px;
-  background: transparent; color: var(--navy);
-  border: 1px solid var(--color-border-strong); border-radius: 999px;
+  padding: 12px 24px;
+  background: transparent; color: var(--color-muted);
+  border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 999px;
   font-size: 14px; font-weight: 600;
   cursor: pointer; transition: all 0.2s;
 }
-.btn-ghost:hover:not(:disabled) { background: var(--color-fill); border-color: var(--navy-2); }
+.btn-ghost:hover:not(:disabled) { 
+  background: rgba(255, 255, 255, 0.05); 
+  color: #fff;
+  border-color: #fff; 
+}
 .btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-ghost.small { padding: 6px 12px; font-size: 13px; }
 
@@ -2842,40 +2996,39 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   gap: 8px;
 }
 .link-btn { 
-  background: transparent; border: 1px solid var(--color-border); color: var(--color-muted); cursor: pointer; 
+  background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--color-muted); cursor: pointer; 
   font-size: 12px; padding: 4px 12px; border-radius: 6px; font-weight: 600; 
   transition: all 0.2s;
 }
-.link-btn:hover { background: var(--color-fill); color: var(--navy); border-color: var(--color-border-strong); }
-.link-btn.active { color: var(--brand-ink); background: var(--brand-soft); border-color: transparent; }
+.link-btn:hover { background: rgba(255,255,255,0.05); color: #fff; border-color: rgba(255,255,255,0.2); }
+.link-btn.active { color: #111; background: var(--brand); border-color: transparent; }
 
 /* Draft Editor */
 .draft-box { border: none; padding: 0; background: transparent; box-shadow: none; margin-bottom: 24px; }
 .draft-head { margin-bottom: 24px; display: flex; align-items: center; gap: 12px; }
-.draft-tag { padding: 0; background: transparent; color: var(--navy); font-size: 20px; font-weight: 800; border-radius: 0; letter-spacing: -0.02em; margin-bottom: 8px; display: inline-block; }
+.draft-tag { padding: 0; background: transparent; color: #fff; font-size: 20px; font-weight: 800; border-radius: 0; letter-spacing: -0.02em; margin-bottom: 8px; display: inline-block; }
 
 /* 采纳 = 直接定稿、不可逆，这句必须在卡片上方说清（见 pickDirection） */
 .dirs-note {
   margin-bottom: 24px; padding: 16px 20px;
-  background: rgba(245, 158, 11, 0.08); border: none; border-radius: 16px;
-  font-size: 13.5px; line-height: 1.8; color: #92400E;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 16px;
+  font-size: 13.5px; line-height: 1.8; color: var(--brand);
 }
 
 /* 正在重出一版：这块内容马上会被换掉。按钮变灰不解释的话，读起来是「保存不了了」 */
 .draft-busy {
   margin-bottom: 24px; padding: 16px 20px;
-  background: rgba(245, 158, 11, 0.08); border: none; border-radius: 16px;
-  font-size: 13.5px; line-height: 1.8; color: #92400E;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 16px;
+  font-size: 13.5px; line-height: 1.8; color: var(--brand);
 }
 
 .inline-gaps {
   margin-bottom: 24px;
   padding: 16px 20px;
-  background: rgba(245, 158, 11, 0.08);
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2);
   border-radius: 16px;
-  border: none;
   font-size: 13.5px;
-  color: #92400E;
+  color: var(--brand);
 }
 .inline-gaps strong {
   display: block;
@@ -2898,7 +3051,7 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .dlabel { 
   font-size: 13px; 
   font-weight: 700; 
-  color: var(--navy); 
+  color: #fff; 
   margin-bottom: 12px; 
   display: flex; 
   justify-content: space-between; 
@@ -2908,28 +3061,28 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
   width: 100%; 
   box-sizing: border-box; 
   padding: 16px; 
-  border: 1px solid var(--color-border); 
+  border: 1px solid rgba(255,255,255,0.1); 
   border-radius: 12px; 
   font-family: var(--font-sans); 
   font-size: 15px; 
   line-height: 1.6; 
-  background: #FAFAFA; 
+  background: rgba(255,255,255,0.05); 
   transition: all 0.2s; 
   resize: none; 
-  color: var(--color-text);
+  color: #fff;
 }
 .dfield textarea:focus { 
   outline: none; 
   border-color: var(--brand); 
-  background: #fff;
-  box-shadow: 0 0 0 3px var(--brand-soft); 
+  background: rgba(255,255,255,0.1);
+  box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.15); 
 }
 .draft-actions { display: flex; gap: 12px; margin-top: 32px; }
 
 .dir-card { 
   padding: 32px 0 48px; 
   background: transparent; border: none; 
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04); 
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1); 
   margin-bottom: 0; 
 }
 .dir-card:last-child { border-bottom: none; }
@@ -2937,11 +3090,11 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .dir-idx {
   position: absolute; left: -48px; top: -4px;
   font-size: 32px; font-weight: 800;
-  color: rgba(30, 41, 59, 0.08); line-height: 1;
+  color: rgba(255, 255, 255, 0.05); line-height: 1;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 .dir-top h3 {
-  font-size: 20px; font-weight: 800; color: var(--navy);
+  font-size: 20px; font-weight: 800; color: #fff;
   margin: 0; line-height: 1.4; letter-spacing: -0.02em;
 }
 
@@ -2950,7 +3103,7 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .dec-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; margin: 8px 0 24px; }
 .dec-tag {
   flex: 0 0 auto; padding: 4px 10px; border-radius: 8px;
-  background: var(--brand-soft, #EEF2FF); color: var(--brand, #4F46E5);
+  background: rgba(255, 184, 0, 0.1); color: var(--brand);
   font-size: 12px; font-weight: 700;
 }
 /* 那一条的原文。自己占一行、最多两行（悬停看全文）：这些条目是一两百字的长句，
@@ -2959,61 +3112,62 @@ details.msg-log[open] > .msg { margin-bottom: 24px; }
 .dec-method {
   flex: 1 1 100%; min-width: 0;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
-  font-size: 13px; line-height: 1.7; color: var(--color-text-soft, #64748B); cursor: help;
+  font-size: 13px; line-height: 1.7; color: var(--color-text); cursor: help;
 }
-.dec-basis { font-size: 13px; line-height: 1.7; color: var(--color-text-soft, #64748B); }
+.dec-basis { font-size: 13px; line-height: 1.7; color: var(--color-muted); }
 /* 选项是按钮：`display:block` + `text-align:left` 是必需的（按钮默认居中且是
    inline-flex，三行文字会挤成居中一团，读起来像标题而不是可点的选项）。 */
 .dec-opt {
   display: block; width: 100%; text-align: left; cursor: pointer; font: inherit;
   margin-bottom: 12px; padding: 20px 24px;
-  background: rgba(248, 249, 250, 0.65); border: none; border-radius: 16px;
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s, border-color 0.2s;
 }
 button.dec-opt:active:not(:disabled) { transform: scale(0.98); }
-button.dec-opt:hover:not(:disabled) { background: rgba(248, 249, 250, 0.9); }
+button.dec-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 184, 0, 0.3); }
 button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 /* 选中态要看得出来：只靠一个小勾的话，八处岔路口里漏选一处很难发现，
    而提交按钮上那句「还差 N 处」是他唯一的线索。 */
 .dec-opt.chosen {
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.12);
+  background: rgba(255, 184, 0, 0.1);
+  border-color: var(--brand);
+  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.12);
 }
-.dec-chosen-tag { margin-left: 8px; font-size: 12px; font-weight: 700; color: var(--brand, #4F46E5); }
+.dec-chosen-tag { margin-left: 8px; font-size: 12px; font-weight: 700; color: var(--brand); }
 .dec-recommend {
   margin: 16px 0; padding: 16px 20px;
-  background: rgba(245, 158, 11, 0.08); border-radius: 16px;
-  font-size: 13.5px; line-height: 1.7; color: #92400E;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 16px;
+  font-size: 13.5px; line-height: 1.7; color: var(--brand);
 }
 .dec-note { display: block; margin: 16px 0 0; }
-.dec-note > span { display: block; margin-bottom: 8px; font-size: 13px; color: var(--color-text-soft, #64748B); }
+.dec-note > span { display: block; margin-bottom: 8px; font-size: 13px; color: var(--color-muted); }
 .dec-note textarea {
   width: 100%; padding: 16px 20px; font: inherit; font-size: 14px; line-height: 1.7;
-  border: none; border-radius: 16px; background: rgba(248, 249, 250, 0.65);
-  color: var(--color-text); resize: vertical; transition: all 0.2s;
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 16px; background: rgba(255, 255, 255, 0.05);
+  color: #fff; resize: vertical; transition: all 0.2s;
 }
-.dec-note textarea:focus { outline: none; background: #fff; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06); }
+.dec-note textarea:focus { outline: none; background: rgba(255, 255, 255, 0.1); border-color: var(--brand); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); }
 /* 拍板那条对话记录。它 `role='user'`（那几处是**他**定的，记成 AI 说的就成了
    「AI 说它定了」），所以必须把用户气泡那身满色底 + `pre-wrap` 覆盖掉 ——
    不覆盖的话渲染出来的 markdown 挤在一块蓝底上，那几行「放弃：…」读不出来，
    而那半句是这一步唯一不可逆的信息。左侧竖线用品牌色而不是定稿那条的绿色：
    两条长得一样的话，「方向定了」会被读成「这一步已经定稿了」。 */
 .msg.user .msg-bubble.decided-msg {
-  background: var(--brand-soft, #EEF2FF);
+  background: rgba(255, 184, 0, 0.1);
   color: var(--color-text);
   white-space: normal;
   font-size: 14px;
-  border-left: 3px solid var(--brand, #4F46E5);
+  border-left: 3px solid var(--brand);
   border-radius: 20px 20px 4px 20px;
 }
-.dec-opt-label { font-size: 15px; font-weight: 700; color: var(--navy, #1E293B); }
+.dec-opt-label { font-size: 15px; font-weight: 700; color: #fff; }
 .dec-opt-detail { margin-top: 6px; font-size: 13.5px; line-height: 1.7; color: var(--color-text); }
-.dec-opt-cost { margin-top: 8px; font-size: 13px; line-height: 1.7; color: #B45309; }
+.dec-opt-cost { margin-top: 8px; font-size: 13px; line-height: 1.7; color: var(--brand); opacity: 0.8; }
 
 /* 已定稿内容 */
 .entry-box { border: none; padding: 0; background: transparent; box-shadow: none; }
 .entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.entry-box .tag { padding: 0; background: transparent; color: var(--navy); font-size: 16px; font-weight: 800; border-radius: 0; letter-spacing: -0.5px; }
+.entry-box .tag { padding: 0; background: transparent; color: #fff; font-size: 16px; font-weight: 800; border-radius: 0; letter-spacing: -0.5px; }
 
 /**
  * Markdown Styles —— 表格与排版照 references/kimi3-design-system.css 那份来
@@ -3039,21 +3193,21 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 .md :deep(h1), .md :deep(h2), .md :deep(h3), .md :deep(h4), .md :deep(h5), .md :deep(h6) {
   margin: 32px 0 16px;
   font-weight: 700;
-  color: var(--navy);
+  color: #fff;
   letter-spacing: -0.4px;
   line-height: 1.4;
 }
 .md :deep(h1) { font-size: 24px; }
-.md :deep(h2) { font-size: 20px; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 8px; }
+.md :deep(h2) { font-size: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; }
 .md :deep(h3) { font-size: 16.5px; }
-.md :deep(h4) { font-size: 14.5px; margin: 24px 0 10px; color: var(--navy-2); }
+.md :deep(h4) { font-size: 14.5px; margin: 24px 0 10px; color: rgba(255,255,255,0.85); }
 .md :deep(h5), .md :deep(h6) { font-size: 13.5px; margin: 20px 0 8px; font-weight: 600; color: var(--color-muted); }
 .md :deep(p) { margin: 0 0 16px; }
 .md :deep(ul), .md :deep(ol) { margin: 0 0 16px; padding-left: 22px; }
 .md :deep(li) { margin: 0 0 6px; }
 .md :deep(li > p) { margin: 0; }
 .md :deep(li > ul), .md :deep(li > ol) { margin: 6px 0 0; }
-.md :deep(strong) { font-weight: 600; color: var(--navy); }
+.md :deep(strong) { font-weight: 600; color: #fff; }
 .md :deep(a) {
   color: var(--brand);
   text-decoration: none;
@@ -3066,27 +3220,28 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 .md :deep(code) {
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--color-fill);
-  border: 1px solid var(--color-border);
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.1);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
-  color: var(--navy-2);
+  color: var(--brand);
 }
 .md :deep(pre) {
   margin: 0 0 16px;
   padding: 16px;
   border-radius: 10px;
-  background: var(--navy);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
   overflow-x: auto;
 }
-.md :deep(pre code) { padding: 0; border: none; background: transparent; color: #E8EEF6; line-height: 1.6; }
+.md :deep(pre code) { padding: 0; border: none; background: transparent; color: #fff; line-height: 1.6; }
 .md :deep(blockquote) {
   margin: 16px 0;
   padding: 12px 16px;
-  background: var(--brand-soft);
+  background: rgba(255, 184, 0, 0.1);
   border-left: 3px solid var(--brand);
   border-radius: 0 8px 8px 0;
-  color: var(--brand-ink);
+  color: var(--brand);
   font-size: 14px;
 }
 .md :deep(blockquote p:last-child) { margin-bottom: 0; }
@@ -3095,17 +3250,17 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 .md :deep(.md-table) {
   margin: 24px 0;
   overflow-x: auto; /* 圆角同时把里面那张表裁齐，所以边框/圆角挂在这一层而不是 table 上 */
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 12px;
-  background: #fff;
-  box-shadow: var(--shadow);
+  background: rgba(255,255,255,0.05);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   transition: box-shadow 0.3s;
 }
-.md :deep(.md-table:hover) { box-shadow: var(--shadow-lg); }
+.md :deep(.md-table:hover) { box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
 .md :deep(table) { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .md :deep(th) {
-  background: var(--navy);
-  color: #E8EEF6;
+  background: rgba(255,255,255,0.1);
+  color: #fff;
   text-align: left;
   padding: 12px 16px;
   font-weight: 600;
@@ -3115,21 +3270,21 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 }
 .md :deep(td) {
   padding: 12px 16px;
-  border-top: 1px solid var(--color-border);
-  color: var(--navy-2);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  color: var(--color-muted);
   vertical-align: top;
   min-width: 96px; /* 列宽的下限：再挤就横向滚动，不把中文压成竖排 */
 }
-.md :deep(tbody tr:hover td) { background: #F8FAFC; }
+.md :deep(tbody tr:hover td) { background: rgba(255,255,255,0.02); }
 .md :deep(td p) { margin: 0; }
 .md :deep(td ul), .md :deep(td ol) { margin: 0; padding-left: 18px; }
 
 .md.md-preview {
   padding: 32px 40px;
-  background: #fff;
+  background: rgba(255,255,255,0.05);
   border-radius: 12px;
-  border: 1px solid var(--color-border);
-  box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
   min-height: 400px;
 }
 
@@ -3137,17 +3292,17 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 .intake-link {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   margin-top: 16px; padding: 12px 14px;
-  background: #FAFAFA; border: 1px solid var(--color-border); border-radius: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
 }
 .intake-link .il-text { flex: 1; min-width: 0; font-size: 12px; line-height: 1.7; color: var(--color-muted); }
 
 /* KB */
-.brief-side textarea { width: 100%; box-sizing: border-box; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; font-size: 14px; line-height: 1.6; background: #FAFAFA; margin-bottom: 16px; transition: all 0.2s; }
-.brief-side textarea:focus { outline: none; border-color: var(--brand); background: #fff; box-shadow: 0 0 0 3px var(--brand-soft); }
+.brief-side textarea { width: 100%; box-sizing: border-box; padding: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; font-size: 14px; line-height: 1.6; background: rgba(255,255,255,0.05); color: #fff; margin-bottom: 16px; transition: all 0.2s; }
+.brief-side textarea:focus { outline: none; border-color: var(--brand); background: rgba(255,255,255,0.1); box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.15); }
 .kb-history { margin-top: 40px; }
-.kb-history h4 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
-.kb-item { display: block; width: 100%; text-align: left; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: #fff; margin-bottom: 12px; cursor: pointer; transition: border-color 0.2s; }
-.kb-item:hover { border-color: var(--brand); box-shadow: var(--shadow-sm); }
-.kb-item-head { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 700; color: var(--navy); }
+.kb-history h4 { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #fff; }
+.kb-item { display: block; width: 100%; text-align: left; padding: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; background: rgba(255,255,255,0.05); margin-bottom: 12px; cursor: pointer; transition: border-color 0.2s; }
+.kb-item:hover { border-color: var(--brand); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.kb-item-head { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; font-weight: 700; color: #fff; }
 .kb-item-text { font-size: 14px; color: var(--color-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 </style>

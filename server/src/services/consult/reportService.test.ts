@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initDatabase, getDatabase } from '../../db/index.js';
 import { createProject, saveEntry, listEntries, platformOwner } from './projectStore.js';
-import { STAGES } from './stages.js';
+import { STAGE_DEFAULTS } from './stages.js';
 import { buildReport, missingStages } from './reportService.js';
 
 initDatabase();
@@ -19,7 +19,7 @@ describe('导出方案', () => {
   });
 
   const finalizeAll = (skip: string[] = []) => {
-    for (const s of STAGES) {
+    for (const s of STAGE_DEFAULTS) {
       if (skip.includes(s.key)) continue;
       saveEntry(project.id, s.key, {
         conclusion: `${s.label} 的一句话结论`,
@@ -32,7 +32,7 @@ describe('导出方案', () => {
   it('没定稿完要点名缺哪几步（导出闸门就靠这个）', () => {
     finalizeAll(['digital']);
     const missing = missingStages(listEntries(project.id));
-    expect(missing).toEqual([STAGES.find((s) => s.key === 'digital')!.label]);
+    expect(missing).toEqual([STAGE_DEFAULTS.find((s) => s.key === 'digital')!.label]);
   });
 
   it('过期的章节要写进文档正文，不能只回给接口', () => {
@@ -49,7 +49,7 @@ describe('导出方案', () => {
     finalizeAll(['creative']);
     saveEntry(project.id, 'creative', { conclusion: '广告语定了', body: '', confidence: 'mid' });
     const out = buildReport(project, listEntries(project.id));
-    expect(out.noBody).toContain(STAGES.find((s) => s.key === 'creative')!.label);
+    expect(out.noBody).toContain(STAGE_DEFAULTS.find((s) => s.key === 'creative')!.label);
     expect(out.markdown).toContain('这一步定稿时没有保存正文');
   });
 });

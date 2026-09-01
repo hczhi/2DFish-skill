@@ -1,6 +1,22 @@
 import { Router } from 'express';
+import multer from 'multer';
 import OpenAI from 'openai';
-import { STAGES, stageByKey } from '../services/consult/stages.js';
+import { STAGE_DEFAULTS, stages, stageByKey, type StageDef } from '../services/consult/stages.js';
+import {
+  listStageOverrides,
+  setStageOverride,
+  parseLines,
+  type StageField,
+  type StageOverrideRow,
+} from '../services/consult/stageOverrides.js';
+import {
+  extractFile,
+  ExtractError,
+  MAX_FILE_BYTES,
+  SUPPORTED_EXTS,
+  extFromName,
+} from '../services/consult/fileExtract.js';
+import { tidyExtractedText, planTidy } from '../services/consult/fileTidyService.js';
 import {
   listProjects,
   createProject,
@@ -60,7 +76,7 @@ import {
 import { webSearch, isSearchEnabled } from '../services/webSearchService.js';
 import { QuotaExceededError } from '../core/llm/gateway.js';
 import { registerConsultSdkRoutes, registerConsultSdkAdminRoutes } from './consultSdk.js';
-import { consultSdkLimits } from '../services/consult/sdkLimits.js';
+import { consultSdkLimits, chargeExtraSdkAiCalls } from '../services/consult/sdkLimits.js';
 import { requireAdmin } from '../auth/guards.js';
 
 // 品牌咨询工作台（/consult）。一个品牌 = 一个项目，全部状态落库。
@@ -98,6 +114,30 @@ function owner(req: { user?: { id: string }; sdkPk?: string; externalUid?: strin
     externalUid: req.externalUid ?? null,
   };
 }
+
+/**
+ * 客户资料文件上传。内存存储 —— 解析完就丢，不落盘、不转存 COS（见 /extract-file 的说明）。
+ *
+ * **按扩展名过滤，不按 mimetype。** docx/pptx 的 mimetype 各家浏览器和系统给的不一样
+ * （`application/vnd.openxmlformats-…`、`application/zip`、`application/octet-stream` 都见得到），
+ * .md 更是常见 `text/markdown` / 空。按 mimetype 挡的话表现是「传上去说不支持」，
+ * 而用户手上那个文件明明就是 .docx。
+ *
+ * `.ppt` **故意放过这道过滤**，让 fileExtract 去回那句「请另存为 .pptx」——
+ * 在这里挡掉只会得到一句笼统的「不支持」，用户不知道下一步该干什么。
+ */
+const fileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_BYTES, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    const ext = extFromName(file.originalname);
+    if (ext === '.ppt' || SUPPORTED_EXTS.includes(ext as (typeof SUPPORTED_EXTS)[number])) {
+      cb(null, true);
+    } else {
+      cb(new Error(`不支持 ${ext || '这种没有扩展名的'} 文件。目前支持：${SUPPORTED_EXTS.join(' / ')} / .ppt（会提示你另存为 .pptx）`));
+    }
+  },
+});
 
 /** 把业务错误按自己的状态码透出去；额度用完统一 429（前端 api.ts 认这个）。 */
 function fail(err: unknown, res: any, next: any): void {
@@ -152,7 +192,7 @@ function fail(err: unknown, res: any, next: any): void {
 /** 阶段清单（前端画阶段栏用）。放在服务端返回，避免前后端各写一份对不上。 */
 consultRouter.get('/stages', (_req, res) => {
   res.json(
-    STAGES.map((s) => ({
+    stages().map((s) => ({
       key: s.key,
       label: s.label,
       group: s.group,
@@ -163,6 +203,182 @@ consultRouter.get('/stages', (_req, res) => {
       deliverables: s.deliverables,
     }))
   );
+});
+
+// ── 后台：改各步的「分析操法」和「本步必须产出的东西」（088）──────────────
+//
+// 只这两栏能改（见 stages.ts 文件头）。上限是**只拒不截**：截掉的那几条正好是他刚写的，
+// 而界面上会显示「已保存」，下一次生成就按少了几条的清单跑，正文照样每节都在。
+const MAX_STAGE_FIELD_CHARS = 6000;
+const MAX_STAGE_FIELD_LINES = 24;
+
+const FIELD_LABEL: Record<StageField, string> = {
+  method: '分析操法',
+  deliverables: '本步必须产出的东西',
+};
+
+function fieldView(defLines: string[], row?: StageOverrideRow) {
+  const lines = row ? parseLines(row.body) : [];
+  return {
+    // 缺省和当前值一起回：后台只显示当前值的话，「这条是我改的还是本来就这样」分不出来，
+    // 而恢复缺省之后他也没法比对到底变回了什么。
+    default: defLines,
+    current: lines.length ? lines : defLines,
+    overridden: lines.length > 0,
+    updated_at: row?.updated_at ?? null,
+    updated_by: row?.updated_by ?? null,
+  };
+}
+
+function stageAdminView(def: StageDef, ov: Map<string, StageOverrideRow>) {
+  const method = fieldView(def.method, ov.get(`${def.key}.method`));
+  const deliverables = fieldView(def.deliverables, ov.get(`${def.key}.deliverables`));
+  return {
+    key: def.key,
+    label: def.label,
+    group: def.group,
+    lane: def.lane,
+    question: def.question,
+    method,
+    deliverables,
+    highlight: def.highlight ?? null,
+    // 定稿气泡摊开的那一节按 highlight 的**前缀原词**去认（见 StageDef.highlight）。
+    // 改清单时把那一项的开头改掉，气泡里那张表就再也摊不开 —— 那一步的定稿读起来
+    // 只是「只有一句结论」，所以这里要当场说出来。
+    highlight_broken:
+      !!def.highlight && !deliverables.current.some((d) => d.startsWith(def.highlight!)),
+  };
+}
+
+/** 后台列表：十四步各自的缺省 + 当前值 + 改过没有。 */
+consultRouter.get('/admin/stages', (_req, res) => {
+  const ov = new Map(listStageOverrides().map((r) => [`${r.stage_key}.${r.field}`, r]));
+  res.json({
+    limits: { chars: MAX_STAGE_FIELD_CHARS, lines: MAX_STAGE_FIELD_LINES },
+    stages: STAGE_DEFAULTS.map((s) => stageAdminView(s, ov)),
+  });
+});
+
+/**
+ * 改一步。body `{ method?: string, deliverables?: string }`，**一行一条**（原文，服务端切）。
+ *
+ * 内容为空 = 回落代码里的缺省（不存空串 —— 空的操法在 prompt 里就是「这一步没有规定的
+ * 顺序」，模型自己想一套把表格填满，而那种正文和照方法论推出来的一模一样）。
+ * 所以「恢复缺省」就是提交一个空串，没有第二个端点。
+ */
+consultRouter.put('/admin/stages/:key', (req, res) => {
+  const def = STAGE_DEFAULTS.find((s) => s.key === req.params.key);
+  if (!def) {
+    res.status(404).json({ error: `没有「${req.params.key}」这一步（阶段清单在代码里，后台只能改文字，不能加减步骤）` });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const given = (['method', 'deliverables'] as StageField[]).filter((f) => typeof body[f] === 'string');
+  if (!given.length) {
+    res.status(400).json({ error: '没有要改的内容（method / deliverables 至少给一个字符串）' });
+    return;
+  }
+
+  // **先全部校验再写**：写一半再拒的话界面上是一句「保存失败」，而库里这一步已经半改了，
+  // 下一次生成就按这半份跑，出来的正文读起来完全正常。
+  for (const f of given) {
+    const text = String(body[f]);
+    if (text.length > MAX_STAGE_FIELD_CHARS) {
+      res.status(400).json({
+        error: `「${FIELD_LABEL[f]}」${text.length} 字，超过上限 ${MAX_STAGE_FIELD_CHARS} 字。请自己删到上限以内 —— 这里不替你截，截掉的正好是最后写的那几条。`,
+      });
+      return;
+    }
+    const lines = parseLines(text);
+    if (lines.length > MAX_STAGE_FIELD_LINES) {
+      res.status(400).json({
+        error: `「${FIELD_LABEL[f]}」有 ${lines.length} 条，超过上限 ${MAX_STAGE_FIELD_LINES} 条。这一段每次生成都要发一遍，太长会把硬规则挤下去。`,
+      });
+      return;
+    }
+  }
+
+  const warnings: string[] = [];
+  for (const f of given) {
+    const r = setStageOverride(def.key, f, String(body[f]), req.user!.id);
+    if (r.mode === 'default') warnings.push(`「${FIELD_LABEL[f]}」已恢复成代码里的缺省（提交的内容是空的）。`);
+  }
+
+  const ov = new Map(listStageOverrides().map((r) => [`${r.stage_key}.${r.field}`, r]));
+  const view = stageAdminView(def, ov);
+  if (view.highlight_broken) {
+    warnings.push(
+      `定稿气泡要摊开的那一节按「${def.highlight}」认，而现在的清单里没有以它开头的那一项 —— ` +
+        `这一步定稿后气泡里只剩一句结论，那张表要多点一次才看得到。把那一项的开头改回「${def.highlight}」，或者告诉开发改 highlight。`
+    );
+  }
+  res.json({ ...view, warnings });
+});
+
+/**
+ * 客户资料文件 → 纯文本。**不调 AI、不落库、不存原文件。**
+ *
+ * 不存原文件是有意的：`api/upload.ts` 那条路是转存 COS，而 `file.qiaonan.vip` 是公开
+ * 可访问的 —— 客户的品牌资料、预算、竞品名单传上去等于公开。这里只在内存里解析完就丢。
+ *
+ * 返回的文本给前端**预览**用，由用户确认后自己插进资料框，所以这里**不套** MAX_BRIEF_CHARS：
+ * 一份 PPT 提取出三万字是常事，在这里截掉的话用户看到的是一份「看起来完整」的资料。
+ * 上限那道闸门在 `POST /projects` 和 `PUT /projects/:id/brief`（只拒不截），
+ * 这里只把字数如实回给界面让他自己删。
+ */
+consultRouter.post('/extract-file', (req, res) => {
+  fileUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      // 超大文件必须单独认：multer 的 LIMIT_FILE_SIZE 原文是英文的 'File too large'，
+      // 直接透出去用户看不出是「多大算大」，只会反复传同一个文件。
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          error: `文件超过 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB。请把 PPT 里的图片压一下，或者只传其中一部分。`,
+        });
+      }
+      return res.status(400).json({ error: err.message || '上传失败' });
+    }
+    if (!req.file) return res.status(400).json({ error: '请选择要上传的文件' });
+
+    try {
+      const result = await extractFile(req.file.originalname, req.file.buffer);
+      // tidyPlan 由服务端算：前端要照它决定「传完直接自动整理」还是「先问一句这要花
+      // 几次额度」。前端自己按字数除一下的话那个数会和真实调用次数漂开，界面上写着
+      // 1 次而实际扣了 4 次 —— 他只会以为额度算错了。
+      res.json({ ...result, briefLimit: MAX_BRIEF_CHARS, tidyPlan: planTidy(result.text) });
+    } catch (e: any) {
+      // ExtractError 的 message 就是给用户看的那句话（带成因和出路），原样透出去。
+      // 兜成一句「提取失败」的话，「扫描件」「老 .ppt」「编码乱了」三种解法完全不同。
+      if (e instanceof ExtractError) return res.status(400).json({ error: e.message });
+      console.error('[consult] extract-file failed:', e?.message);
+      res.status(500).json({ error: `解析这个文件时出错了：${e?.message || '未知错误'}` });
+    }
+  });
+});
+
+/**
+ * 把提取出来的碎文本交给模型清理（只删不编，见 fileTidyService）。
+ * **长文本会分几次调用，每次都是一次真实的 AI 额度**（`/extract-file` 的 `tidyPlan.calls`
+ * 提前把这个数告诉界面，由用户点那个写着次数的按钮 —— 悄悄花掉他今天 10 次里的 4 次
+ * 是这条路上最容易发生的静默扣费）。
+ *
+ * 不接项目 id：新建项目页上还没有项目。也因此这段文本由前端传上来 ——
+ * 和 `/intake/apply` 那条「不收整份 brief」的规则不冲突：这里不写任何库，
+ * 结果还是回到预览框里等用户确认。
+ */
+consultRouter.post('/tidy-text', async (req, res, next) => {
+  const text = String(req.body?.text ?? '');
+  const filename = String(req.body?.filename || '未命名文件').slice(0, 200);
+  try {
+    const result = await tidyExtractedText(req.user!.id, filename, text);
+    // 按 pk 的日额度是在中间件里**每个请求扣 1** 的（那时候还没解析 body，不可能知道
+    // 这次要分几段）。分了 N 段就是 N 次真实调用，不把差额补上的话这条路对第三方
+    // 相当于打了 N 折 —— 而后台看到的是一个正常的用量数字。
+    if (req.sdkPk && result.calls > 1) chargeExtraSdkAiCalls(req.sdkPk, result.calls - 1);
+    res.json(result);
+  } catch (e) {
+    fail(e, res, next);
+  }
 });
 
 consultRouter.get('/projects', (req, res) => {

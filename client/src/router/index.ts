@@ -118,6 +118,9 @@ const router = createRouter({
         { path: 'ui-style-skills/:id/edit', name: 'admin-ui-style-skill-edit', component: () => import('../views/admin/UiStyleSkillEditor.vue') },
         { path: 'tender', name: 'admin-tender', component: () => import('../views/admin/TenderManagement.vue') },
         { path: 'consult', name: 'admin-consult', component: () => import('../views/admin/ConsultManagement.vue') },
+        // 咨询流程与方法论（088）：改十四步的「分析操法」和「本步必须产出的东西」。
+        // 和上面那条 /admin/consult（对外接入 = 发 pk）是两页，别合并。
+        { path: 'consult-flow', name: 'admin-consult-flow', component: () => import('../views/admin/ConsultFlow.vue') },
         { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },

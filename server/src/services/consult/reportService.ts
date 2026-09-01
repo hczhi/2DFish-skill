@@ -1,14 +1,14 @@
-import { STAGES } from './stages.js';
+import { stages } from './stages.js';
 import { parseEntryAiOpportunities, type ConsultEntry, type ConsultProject } from './projectStore.js';
 
 // 把十四步的定稿合并成一份可交付的 markdown。
 //
 // 这里唯一会骗人的地方是**「看起来是一份完整方案」**：一份少了两章、或者某几章是在
 // 上游被改之前定的文档，读起来和完整的一模一样（每章都有结论、有表格、有置信度），
-// 顾问会直接发给客户。所以这个模块只做两件事 —— 按 STAGES 的顺序拼，以及把
+// 顾问会直接发给客户。所以这个模块只做两件事 —— 按阶段清单（`stages()`）的顺序拼，以及把
 // 「缺了哪一步 / 哪几章过期 / 哪几章没有正文」全部写在纸面上。
 
-/** 章节顺序**只能**来自 STAGES。 */
+/** 章节顺序**只能**来自 `stages()`（缺省 + 后台覆盖），不是定稿时间。 */
 const CONF_LABEL: Record<string, string> = {
   high: '🟢 高',
   mid: '🟡 中',
@@ -18,7 +18,9 @@ const CONF_LABEL: Record<string, string> = {
 /** 还没定稿的阶段 label。导出前的闸门 —— 见 buildReport 头上的注释。 */
 export function missingStages(entries: ConsultEntry[]): string[] {
   const has = new Set(entries.map((e) => e.stage_key));
-  return STAGES.filter((s) => !has.has(s.key)).map((s) => s.label);
+  return stages()
+    .filter((s) => !has.has(s.key))
+    .map((s) => s.label);
 }
 
 function stamp(d = new Date()): string {
@@ -53,6 +55,9 @@ export interface ReportOut {
  * 再也看不到了，而这份 md 会被直接转出去。
  */
 export function buildReport(project: ConsultProject, entries: ConsultEntry[]): ReportOut {
+  // 只取一次：目录和正文必须是同一份清单（各取一次的话中间被后台改过就会目录说 14 章、
+  // 正文 13 章，而两处各自都完整）。
+  const all = stages();
   const byKey = new Map(entries.map((e) => [e.stage_key, e]));
   const stale: string[] = [];
   const noBody: string[] = [];
@@ -61,7 +66,7 @@ export function buildReport(project: ConsultProject, entries: ConsultEntry[]): R
   const chapters: string[] = [];
   let group = '';
   let no = 0;
-  for (const s of STAGES) {
+  for (const s of all) {
     const e = byKey.get(s.key);
     if (!e) continue; // 正常路径下不会发生（接口先挡了），少一章也不静默补一段占位文字
     no += 1;
@@ -132,7 +137,7 @@ export function buildReport(project: ConsultProject, entries: ConsultEntry[]): R
     '',
     '## 目录',
     '',
-    ...STAGES.map((s, i) => `${i + 1}. ${s.label} —— ${s.question}`),
+    ...all.map((s, i) => `${i + 1}. ${s.label} —— ${s.question}`),
     '',
     ...chapters,
     '\n---\n',

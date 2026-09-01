@@ -1,6 +1,6 @@
 import { jsonGateway } from '../../core/llm/parseJson.js';
 import { SAMPLING } from '../../core/llm/gateway.js';
-import { STAGES } from './stages.js';
+import { stages } from './stages.js';
 import { StageError } from './draftService.js';
 import { MAX_BRIEF_CHARS, type ConsultProject } from './projectStore.js';
 
@@ -81,7 +81,7 @@ const MAX_OPTIONS = 4;
 const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 
 function buildMessages(project: ConsultProject, answered: string[]) {
-  const fastStages = STAGES.filter((s) => s.lane === 'fast');
+  const fastStages = stages().filter((s) => s.lane === 'fast');
   const stageList = fastStages
     .map((s) => `- ${s.label}：${s.question}\n  要产出：${s.deliverables.join('；')}`)
     .join('\n');

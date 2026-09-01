@@ -38,6 +38,13 @@ const SCOPE_RULES: Record<string, ScopeRule[]> = {
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
       path: /^\/api\/consult\/projects(\/|$)/,
     },
+    // 「从文件提取文字」那两条不在 projects 子树下（新建页还没有项目 id，所以它们
+    // 压根不带 id）。不登记的话嵌入版的新建页上传文件是一句 403，而工作台其余部分
+    // 全是好的 —— 读起来像那个按钮坏了。/tidy-text 会调 AI，所以它同时登记在
+    // `consult/sdkLimits.ts:AI_SPEND_ROUTES` 里按 pk 计额度（两处缺一处都不行：
+    // 缺这里是 403，缺那里是这条路对第三方免费）。
+    { methods: ['POST'], path: /^\/api\/consult\/extract-file$/ },
+    { methods: ['POST'], path: /^\/api\/consult\/tidy-text$/ },
   ],
 };
 

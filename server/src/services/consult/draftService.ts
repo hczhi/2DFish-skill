@@ -1,6 +1,6 @@
 import { jsonGateway, jsonFailMessage } from '../../core/llm/parseJson.js';
 import { SAMPLING } from '../../core/llm/gateway.js';
-import { STAGES, stageByKey, unlockState, LANE_LABEL, type StageDef } from './stages.js';
+import { stages, stageByKey, unlockState, LANE_LABEL, type StageDef } from './stages.js';
 import { listEntries, listMessages, type ConsultProject, type ConsultEntry } from './projectStore.js';
 import { listSources, sourcesBlock } from './sourceStore.js';
 // 只取类型（`import type` 在编译后整句消失），所以这里和 decisionService 之间没有运行时循环依赖。
@@ -189,7 +189,7 @@ export function knowledgeBlock(entries: ConsultEntry[], fullBodyFor: string[] = 
   const byKey = new Map(entries.map((e) => [e.stage_key, e]));
   const withBody = new Set(fullBodyFor);
   const lines: string[] = [];
-  for (const s of STAGES) {
+  for (const s of stages()) {
     const e = byKey.get(s.key);
     if (!e) continue;
     let block =

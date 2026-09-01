@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initDatabase, getDatabase } from '../../db/index.js';
 import { createProject, buildStageRail, deleteProject, listProjects, appendMessage, platformOwner } from './projectStore.js';
-import { STAGES } from './stages.js';
+import { STAGE_DEFAULTS } from './stages.js';
 import { adoptSources } from './sourceStore.js';
 
 initDatabase();
@@ -31,7 +31,7 @@ describe('consult projectStore', () => {
     ).run(projectId);
 
     const rail = buildStageRail(projectId);
-    expect(rail.map((s) => s.key)).toEqual(STAGES.map((s) => s.key));
+    expect(rail.map((s) => s.key)).toEqual(STAGE_DEFAULTS.map((s) => s.key));
 
     // 定稿了「看自己」之后，「看行业」才解锁；缺前提时要说出缺的是哪一步
     // （只回一个 false 的话界面只能写「未解锁」，用户会当成功能坏了）。

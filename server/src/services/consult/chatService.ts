@@ -1,5 +1,5 @@
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
-import { STAGES, stageByKey, type StageDef } from './stages.js';
+import { stages, stageByKey, type StageDef } from './stages.js';
 import {
   appendMessage,
   listMessages,
@@ -231,7 +231,7 @@ export function entryToText(entry: {
 function knowledgeBlock(entries: ConsultEntry[], bodyFor: string): string {
   const byKey = new Map(entries.map((e) => [e.stage_key, e]));
   const lines: string[] = [];
-  for (const s of STAGES) {
+  for (const s of stages()) {
     const e = byKey.get(s.key);
     if (!e) continue;
     let block =

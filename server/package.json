@@ -24,11 +24,14 @@
     "express": "^4.19.2",
     "gray-matter": "^4.0.3",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.2",
     "multer": "^2.2.0",
     "node-cron": "^3.0.3",
     "openai": "^4.56.0",
     "playwright": "^1.61.1",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

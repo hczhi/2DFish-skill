@@ -1,3 +1,98 @@
+<template>
+  <div class="page-wrapper">
+    <SiteHeader />
+
+    <div class="home-layout">
+      <!-- 装饰背景 -->
+      <div class="bg-elements">
+      <div class="bg-overlay"></div>
+      <div class="grid-bg"></div>
+    </div>
+
+      <header class="home-header">
+        <div class="header-content">
+          <div class="header-kicker">
+            <span class="kicker-line"></span>
+            <span class="kicker-text">BRAND CONSULTING WORKBENCH</span>
+          </div>
+          <h1 class="header-title" ref="brandNameRef" @mousemove="handleLogoMouseMove" @mouseleave="handleLogoMouseLeave">
+            <span class="letter" style="animation-delay: 1.0s">品</span>
+            <span class="letter" style="animation-delay: 1.05s">牌</span>
+            <span class="letter" style="animation-delay: 1.1s">咨</span>
+            <span class="letter" style="animation-delay: 1.15s">询</span>
+            <span class="letter" style="animation-delay: 1.2s">工</span>
+            <span class="letter" style="animation-delay: 1.25s">作</span>
+            <span class="letter" style="animation-delay: 1.3s">台</span>
+            <span class="brand-dot"></span>
+          </h1>
+          <div class="header-desc-wrapper">
+            <div class="vertical-accent"></div>
+            <p class="header-sub">
+              「四看·四问·四大成」品牌占位方法论 , 写出高质量咨询方案。
+            </p>
+          </div>
+        </div>
+        
+        <div class="header-actions">
+          <button class="btn-create" @click="router.push('/consult/projects/new')">
+            <span class="btn-text">新建咨询项目</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="home-main">
+        <div v-if="err" class="alert">{{ err }}</div>
+
+        <div v-if="loading" class="empty-state">
+          <div class="ios-loading-bar">
+            <div class="ios-loading-fill"></div>
+          </div>
+          <p class="loading-text">加载中...</p>
+        </div>
+        
+        <div v-else-if="!projects.length" class="empty-state">
+          <p>还没有项目，点击右上角新建一个品牌项目开始。</p>
+        </div>
+
+        <div v-else class="projects-grid">
+          <div
+            v-for="(p, i) in projects"
+            :key="p.id"
+            class="project-card"
+            @click="openProject(p)"
+          >
+            <div class="card-bg-number">{{ String(i + 1).padStart(2, '0') }}</div>
+            <div class="card-content">
+              <h3 class="card-title">{{ p.brand_name }}</h3>
+              
+              <div class="card-badges" v-if="p.intake_pending || p.stale_count">
+                <span v-if="p.intake_pending" class="badge warning">问卷未提交</span>
+                <span v-if="p.stale_count" class="badge danger">{{ p.stale_count }} 条待重跑</span>
+              </div>
+              
+              <div class="card-meta">
+                <span class="meta-item">进度 {{ p.decided_count }}/{{ p.total_stages }}</span>
+                <span class="meta-item">资料 {{ p.brief_chars }} 字</span>
+                <span class="meta-item" v-if="p.intake_rounds">已补 {{ p.intake_rounds }} 轮</span>
+                <span class="meta-item">更新 {{ fmt(p.updated_at) }}</span>
+              </div>
+            </div>
+            
+            <div class="card-footer">
+              <div class="progress-track">
+                <div class="progress-fill" :style="{ width: (p.decided_count / p.total_stages * 100) + '%' }"></div>
+              </div>
+              <button class="btn-icon" @click.stop="remove(p)">删除</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <SiteFooter />
+  </div>
+</template>
+
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -21,12 +116,6 @@ interface ProjectRow {
   intake_rounds: number
 }
 
-/**
- * 有一份问卷没提交时，点这一行直接去问卷页而不是工作台。
- * 工作台在第一轮没提交时本来也会把人送回问卷页（`ConsultProject.vue:load`），
- * 这里先跳只是少闪一下；badge 才是关键 —— 不显示的话这一行和资料齐全的项目
- * 长得一模一样，而后面每一步的结论都从那段缺料的资料出。
- */
 function openProject(p: ProjectRow) {
   if (p.intake_pending) router.push(`/consult/projects/${p.id}/intake`)
   else router.push(`/consult/projects/${p.id}`)
@@ -38,8 +127,73 @@ const projects = ref<ProjectRow[]>([])
 const loading = ref(false)
 const err = ref('')
 
+const brandNameRef = ref<HTMLElement | null>(null)
+
+function handleLogoMouseMove(e: MouseEvent) {
+  if (!brandNameRef.value) return
+  
+  const container = brandNameRef.value
+  const rect = container.getBoundingClientRect()
+  const relativeX = (e.clientX - rect.left) / rect.width
+  const letters = container.querySelectorAll('.letter')
+  const dot = container.querySelector('.brand-dot') as HTMLElement
+
+  letters.forEach((letterNode, index) => {
+    const el = letterNode as HTMLElement
+    const letterCenter = (index + 0.5) / letters.length
+    const dist = Math.abs(relativeX - letterCenter)
+    const radius = 0.3
+    
+    if (dist < radius) {
+      const intensity = 1 - (dist / radius)
+      const yOffset = -8 * intensity
+      const baseColor = { r: 255, g: 255, b: 255 }
+      const activeColor = { r: 255, g: 184, b: 0 }
+      
+      const r = Math.round(baseColor.r + (activeColor.r - baseColor.r) * intensity)
+      const g = Math.round(baseColor.g + (activeColor.g - baseColor.g) * intensity)
+      const b = Math.round(baseColor.b + (activeColor.b - baseColor.b) * intensity)
+      
+      el.style.transform = `translateY(${yOffset}px)`
+      el.style.color = `rgb(${r}, ${g}, ${b})`
+    } else {
+      el.style.transform = 'translateY(0px)'
+      el.style.color = 'var(--text-primary)'
+    }
+  })
+
+  if (dot) {
+    const distToRight = Math.abs(relativeX - 1)
+    if (distToRight < 0.2) {
+      const intensity = 1 - (distToRight / 0.2)
+      dot.style.transform = `scale(${1 + 0.5 * intensity})`
+      dot.style.backgroundColor = '#FFFFFF'
+    } else {
+      dot.style.transform = 'scale(1)'
+      dot.style.backgroundColor = 'var(--brand-yellow)'
+    }
+  }
+}
+
+function handleLogoMouseLeave() {
+  if (!brandNameRef.value) return
+  const container = brandNameRef.value
+  const letters = container.querySelectorAll('.letter')
+  const dot = container.querySelector('.brand-dot') as HTMLElement
+  
+  letters.forEach(letterNode => {
+    const el = letterNode as HTMLElement
+    el.style.transform = 'translateY(0px)'
+    el.style.color = 'var(--text-primary)'
+  })
+  
+  if (dot) {
+    dot.style.transform = 'scale(1)'
+    dot.style.backgroundColor = 'var(--brand-yellow)'
+  }
+}
+
 onMounted(() => {
-  // 封面上的「新建一个品牌项目」带 ?new=1 过来，现在直接跳去新建页
   if (route.query.new) {
     router.replace('/consult/projects/new')
     return
@@ -79,252 +233,490 @@ function fmt(ts: string) {
 }
 </script>
 
-<template>
-  <div class="page-wrapper">
-    <SiteHeader />
-
-    <!-- 版式和工作台（ConsultProject.vue）同一套 kimi3：从这一页点进项目不该像换了个产品。
-         这一页保留 SiteHeader/SiteFooter —— 它是入口页，不是那个满屏不滚的工作台。 -->
-    <header class="hero">
-      <div class="hero-main">
-        <div class="hero-kicker">BRAND CONSULTING WORKBENCH</div>
-        <h1>品牌咨询工作台</h1>
-        <div class="hero-rule"></div>
-        <p class="hero-sub">
-          一个品牌一个项目。四看（看自己 / 行业 / 竞品 / 用户）走快车道，
-          四问与四大成一步一步聊出方向，占位定完再往下做内容营销与数字化营销
-          —— 每步定稿都进企业知识库，成为后面判断的依据。
-        </p>
-        <div class="hero-meta">
-          <span>{{ projects.length }} 个项目</span>
-          <span>14 步 · 四看 / 四问 / 四大成 / 第二层 / 第三层</span>
-          <span>结论 + 取舍理由 + 依据 + 置信度</span>
-        </div>
-      </div>
-    </header>
-
-    <div class="consult-page">
-      <div class="consult-container">
-        <div v-if="err" class="alert">{{ err }}</div>
-
-        <!-- 新建按钮放在列表这一行的右端，不放刊头右上角：SiteHeader 是浮在页面上的，
-             刊头右上角正好压在它的 EXIT / 语言切换那一块下面，点不着也看不清。 -->
-        <div class="list-head">
-          <span class="sec-kicker">PROJECTS</span>
-          <span class="muted">点一行进工作台，回来的时候停在下一个没定稿的步骤</span>
-          <button class="btn-primary list-new" @click="router.push('/consult/projects/new')">
-            + 新建项目
-          </button>
-        </div>
-
-        <div v-if="loading" class="empty">加载中…</div>
-        <div v-else-if="!projects.length" class="empty">
-          还没有项目。点上面那个「+ 新建项目」，贴一段客户资料开始。
-        </div>
-
-        <div v-else class="project-list">
-          <div
-            v-for="(p, i) in projects"
-            :key="p.id"
-            class="project-card"
-            @click="openProject(p)"
-          >
-            <div class="pc-no">{{ String(i + 1).padStart(2, '0') }}</div>
-            <div class="pc-main">
-              <div class="pc-title">{{ p.brand_name }}</div>
-              <div class="pc-badges" v-if="p.intake_pending || p.stale_count">
-                <!-- 问卷没提交要留在列表上：那意味着客户资料还缺一块，而这一行的进度数照样在涨 -->
-                <span v-if="p.intake_pending" class="badge-intake">📋 问卷没提交</span>
-                <!-- 待重跑的条数必须留在列表上：进项目才看到的话，一份互相矛盾的方案已经在手上了 -->
-                <span v-if="p.stale_count" class="badge-stale">⚠ {{ p.stale_count }} 条待重跑</span>
-              </div>
-              <div class="pc-meta">
-                <span>进度 {{ p.decided_count }} / {{ p.total_stages }}</span>
-                <span>资料 {{ p.brief_chars }} 字</span>
-                <span v-if="p.intake_rounds">已补 {{ p.intake_rounds }} 轮</span>
-                <span>更新 {{ fmt(p.updated_at) }}</span>
-              </div>
-            </div>
-            <div class="pc-footer">
-              <div class="progress">
-                <div class="bar" :style="{ width: (p.decided_count / p.total_stages * 100) + '%' }"></div>
-              </div>
-              <button class="btn-del" @click.stop="remove(p)">删除</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <SiteFooter />
-  </div>
-</template>
-
 <style scoped>
-/**
- * kimi3 设计系统（references/kimi3-design-system.css），品牌色用 consult 自己那支深蓝 #0B4A6F。
- * 和 ConsultProject.vue 共用同一套变量名和同一条硬规矩：**悬停只改阴影和边框，绝不 translateY**
- * —— 列表里一行往上跳，正在读的那条进度数字就跑掉了。
- */
 .page-wrapper {
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
-
-  --brand: #0B4A6F;
-  --brand-soft: #E7F0F6;
-  --brand-ink: #063553;
-  --navy: #0B1424;
-  --navy-2: #16233C;
-
-  --color-text: #1D1D1F;
-  --color-muted: #434344;
-  --color-soft: #86868B;
-  --color-bg-elevated: rgba(255, 255, 255, 0.75);
-  --color-border: rgba(0, 0, 0, 0.07);
-  --color-border-strong: rgba(0, 0, 0, 0.16);
-  --color-fill: #F5F5F7;
-  --primary-color: var(--brand);
-  --shadow: 0 12px 32px -12px rgba(0, 0, 0, .06), 0 2px 8px rgba(0, 0, 0, .02);
-  --shadow-lg: 0 20px 48px -16px rgba(0, 0, 0, .1), 0 4px 16px rgba(0, 0, 0, .04);
-
+  --brand-yellow: #FFB800;
+  --brand-yellow-hover: #E6A600;
+  
+  /* 调整文字颜色以适应深色背景 */
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255, 255, 255, 0.85);
+  --bg-color: #12182B; /* 从 #0A0F1E 调亮 */;
+  
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #F5F5F7;
-  background-image: linear-gradient(rgba(0,0,0,.03) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(0,0,0,.03) 1px, transparent 1px);
-  background-size: 24px 24px;
-  background-attachment: fixed;
-  color: var(--color-text);
+  background: var(--bg-color);
   font-family: var(--font-sans);
+  color: var(--text-primary);
 }
 
-/* ── 刊头（和工作台顶栏同一支渐变）───────────────── */
-.hero {
-  position: relative; overflow: hidden;
-  padding: 40px 48px 34px; color: #F2F6FC;
-  background: linear-gradient(135deg, #080F1D 0%, var(--navy) 38%, var(--navy-2) 68%, #1E3A5C 105%);
-}
-.hero::before {
-  content: ""; position: absolute; top: -200px; right: -60px; width: 460px; height: 460px;
-  background: radial-gradient(circle, rgba(11, 74, 111, .55) 0%, transparent 65%); pointer-events: none;
-}
-.hero-main { position: relative; z-index: 1; max-width: 720px; }
-/* 每个标题都要显式写 font-family：App.vue 里有一条全局 `h1..h6 { font-family: var(--font-serif) }`，
-   不写的话中文标题落到 Georgia 的中文回退上 —— 字重字号都对，只是整页标题突然变了一种字 */
-.hero-kicker {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 5px;
-  color: rgba(242, 246, 252, .5); text-transform: uppercase;
-}
-.hero h1 {
-  margin: 10px 0 0; font-size: 34px; font-weight: 800; letter-spacing: .5px;
-  font-family: var(--font-sans); color: #fff;
-}
-.hero-rule { width: 56px; height: 3px; border-radius: 2px; background: #4C9CC9; margin: 16px 0; }
-.hero-sub { margin: 0; font-size: 14px; line-height: 1.9; color: rgba(242, 246, 252, .82); }
-.hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.hero-meta span {
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: .5px;
-  padding: 4px 10px; border-radius: 999px;
-  background: rgba(242, 246, 252, .08); border: 1px solid rgba(242, 246, 252, .14);
-  color: rgba(242, 246, 252, .9);
+.home-layout {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 60px 4vw 80px; /* 增加 top padding 避免被固定的 SiteHeader 遮挡 */
 }
 
-.consult-page { flex: 1; padding: 32px 48px 64px; }
-.consult-container { width: 100%; }
+.bg-elements {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  /* 添加首页同款背景图 */
+  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
+  background-size: cover;
+  background-position: center;
+}
 
-.list-head { display: flex; align-items: center; gap: 14px; margin: 4px 0 14px; flex-wrap: wrap; }
-.list-new { margin-left: auto; }
-.sec-kicker {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 4px;
-  color: var(--brand); text-transform: uppercase; font-weight: 700;
+/* 添加一个深色遮罩，保证上方卡片和文字的对比度 */
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 24, 43, 0.65); /* 从 0.85 降低到 0.65 */
+  backdrop-filter: blur(12px); /* 稍微增加模糊度让画面更柔和 */
+  -webkit-backdrop-filter: blur(12px);
 }
-.muted { font-size: 12px; color: var(--color-soft); }
 
-.btn-primary {
-  padding: 9px 18px; border: 1px solid var(--brand); border-radius: 10px;
-  background: var(--brand); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
-  font-family: var(--font-sans);
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  z-index: 1; /* 确保网格在背景和遮罩之上 */
 }
-.btn-primary:hover { background: var(--brand-ink); }
-.btn-primary:disabled { opacity: .5; cursor: default; }
-.btn-ghost {
-  padding: 9px 18px; border: 1px solid var(--color-border-strong); border-radius: 10px;
-  background: transparent; color: var(--color-muted); font-size: 13px; cursor: pointer;
-  font-family: var(--font-sans);
+
+.home-header {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
-.btn-ghost:hover { border-color: var(--brand); color: var(--brand); }
+
+.header-content {
+  flex: 1;
+}
+
+.header-kicker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.kicker-line {
+  width: 48px;
+  height: 2px;
+  background: var(--brand-yellow);
+}
+
+.kicker-text {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--brand-yellow);
+}
+
+.header-title {
+  font-size: 56px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--text-primary);
+  margin: 0 0 24px;
+  display: inline-flex;
+  align-items: baseline;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.header-title:active {
+  transform: scale(0.98);
+}
+
+.header-title .letter {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: transform 0.1s ease, color 0.1s ease;
+}
+
+.brand-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background-color: var(--brand-yellow);
+  border-radius: 50%;
+  margin-left: 4px;
+  opacity: 0;
+  animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.5s forwards;
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+
+@keyframes slideUpFade {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  80% {
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.header-desc-wrapper {
+  display: flex;
+}
+
+.vertical-accent {
+  width: 3px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+}
+
+.header-sub {
+  font-size: 18px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.meta-tags {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.btn-create {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--brand-yellow);
+  color: #111;
+  padding: 14px 32px;
+  font-size: 15px;
+  font-weight: 800;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  /* 基础阴影：去除 Y 轴偏移，只做均匀光晕，彻底消除视觉浮起(位移)感 */
+  box-shadow: 0 0 16px rgba(255, 184, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+  /* 仅过渡需要的属性，避免任何影响盒模型的过渡 */
+  transition: box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.4s;
+  overflow: hidden;
+  /* 强制硬件加速并锁定位置 */
+  transform: translateZ(0);
+}
+
+/* 方案3: 极简波浪流体 (Liquid Glow) - 内部光晕流动 */
+.btn-create::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.35) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 方案3: 表面水流光泽 (Liquid Sweep) */
+.btn-create::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.4) 50%, transparent 80%);
+  background-size: 200% 200%;
+  background-position: -100% 0;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+  z-index: 1;
+  mix-blend-mode: overlay;
+}
+
+.btn-create .btn-text {
+  position: relative;
+  z-index: 2;
+}
+
+.btn-create:hover {
+  /* Hover 时仅加亮外发光和内发光，完全没有 Y 轴位移 */
+  box-shadow: 0 0 24px rgba(255, 184, 0, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.6);
+  color: #000;
+}
+
+.btn-create:hover::before {
+  opacity: 1;
+  /* 启动极简的波浪形光晕呼吸 */
+  animation: liquid-pulse 4s ease-in-out infinite alternate;
+}
+
+.btn-create:hover::after {
+  opacity: 1;
+  /* 启动表面水流扫过 */
+  animation: liquid-sweep 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes liquid-pulse {
+  0% { transform: scale(1) translate(0, 0); }
+  33% { transform: scale(1.1) translate(5%, -2%); }
+  66% { transform: scale(0.95) translate(-3%, 4%); }
+  100% { transform: scale(1.05) translate(-2%, -3%); }
+}
+
+@keyframes liquid-sweep {
+  0% { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.btn-create:active {
+  transform: scale(0.98);
+}
+
+.home-main {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+}
 
 .alert {
-  margin-bottom: 16px; padding: 11px 14px; border-radius: 10px;
-  background: #FEF3F2; border: 1px solid #FDA29B; color: #B42318; font-size: 13px; line-height: 1.7;
+  background: #FEF2F2;
+  border: 1px solid #FCA5A5;
+  color: #991B1B;
+  padding: 12px 16px;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  font-size: 14px;
 }
 
-.empty {
-  padding: 52px; text-align: center; color: var(--color-soft); font-size: 13px; line-height: 1.8;
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px dashed var(--color-border-strong); border-radius: 14px;
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  background: rgba(255, 255, 255, 0.05); /* 调整空状态背景透明度以适应深色背景 */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  color: var(--text-secondary);
+  font-size: 15px;
 }
 
-.project-list {
+.ios-loading-bar {
+  width: 200px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.ios-loading-fill {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 50%;
+  background: var(--brand-yellow);
+  border-radius: 4px;
+  animation: ios-progress 1.5s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  transform-origin: left center;
+}
+
+@keyframes ios-progress {
+  0% { transform: translateX(-100%) scaleX(0.2); }
+  50% { transform: translateX(50%) scaleX(1); }
+  100% { transform: translateX(200%) scaleX(0.2); }
+}
+
+.loading-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--text-secondary);
+}
+
+.projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 24px;
 }
+
 .project-card {
   position: relative;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 16px;
-  padding: 24px; cursor: pointer;
-  background: var(--color-bg-elevated);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--color-border); border-radius: 16px;
-  box-shadow: var(--shadow); transition: box-shadow .3s, border-color .3s;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.05); /* 调整卡片背景透明度以适应深色背景 */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1); /* 添加微弱的白色边框提升质感 */
+  border-radius: 20px;
+  padding: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.project-card:hover {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-4px);
+}
+
+.project-card:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.card-bg-number {
+  position: absolute;
+  top: 12px;
+  right: 24px;
+  font-family: var(--font-mono);
+  font-size: 80px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.03); /* 调整卡片内大数字的颜色以适应深色背景 */
+  line-height: 1;
+  pointer-events: none;
+  letter-spacing: -4px;
+}
+
+.card-content {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  margin-bottom: 32px;
+}
+
+.card-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 16px;
+}
+
+.card-badges {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.badge.warning { background: #FEF3C7; color: #92400E; }
+.badge.danger { background: #FEE2E2; color: #991B1B; }
+
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.meta-item {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.card-footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.progress-track {
+  width: 140px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 2px;
   overflow: hidden;
 }
-.project-card:hover { box-shadow: var(--shadow-lg); border-color: rgba(11, 74, 111, .3); }
-/* 水印序号：破形出框，放置在右上角作为背景 */
-.pc-no {
-  position: absolute; right: 20px; top: -10px;
-  font-family: var(--font-mono); font-size: 64px; font-weight: 800;
-  line-height: 1; letter-spacing: -2px; color: transparent;
-  -webkit-text-stroke: 1px rgba(11, 74, 111, 0.15);
-  pointer-events: none; z-index: 0;
-}
-.pc-main { flex: 1; min-width: 0; width: 100%; position: relative; z-index: 1; }
-.pc-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; letter-spacing: .3px; }
-.pc-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.pc-meta {
-  display: flex; flex-wrap: wrap; gap: 10px;
-  font-size: 11px; color: var(--color-soft); font-family: var(--font-mono);
-}
-.pc-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  width: 100%; margin-top: auto; padding-top: 16px;
-  border-top: 1px dashed var(--color-border);
-  position: relative; z-index: 1;
-}
-.badge-stale {
-  font-size: 11px; padding: 4px 10px; border-radius: 999px;
-  background: #FFFAEB; border: 1px solid #FEDF89; color: #B54708; font-weight: 600;
-}
-.badge-intake {
-  font-size: 11px; padding: 4px 10px; border-radius: 999px;
-  background: var(--brand-soft); border: 1px solid rgba(11, 74, 111, .3); color: var(--brand-ink); font-weight: 600;
-}
-.progress { width: 120px; height: 5px; border-radius: 999px; background: rgba(0, 0, 0, .07); overflow: hidden; }
-.progress .bar { height: 100%; background: var(--brand); }
-.btn-del {
-  padding: 5px 11px; border: 1px solid var(--color-border-strong); border-radius: 8px;
-  background: #fff; color: var(--color-soft); font-size: 12px; cursor: pointer;
-  font-family: var(--font-sans);
-}
-.btn-del:hover { color: #B42318; border-color: #FDA29B; }
 
-@media (max-width: 820px) {
-  .hero { flex-direction: column; padding: 32px 24px 28px; }
-  .hero h1 { font-size: 26px; }
-  .consult-page { padding: 24px 20px 48px; }
-  .project-list { grid-template-columns: 1fr; }
+.progress-fill {
+  height: 100%;
+  background: var(--brand-yellow);
+  border-radius: 2px;
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-icon {
+  background: rgba(255, 255, 255, 0.5);
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+
+@media (max-width: 900px) {
+  .home-layout { padding: 50px 20px 40px; }
+  .home-header { flex-direction: column; align-items: flex-start; gap: 24px; }
+  .header-title { font-size: 40px; }
+  .header-actions { flex-direction: column; align-items: flex-start; }
+  .projects-grid { grid-template-columns: 1fr; }
 }
 </style>

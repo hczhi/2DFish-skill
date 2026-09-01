@@ -1,401 +1,665 @@
 <template>
-  <div class="page-wrapper">
-    <SiteHeader />
+  <div class="page-wrapper" @scroll="handleScroll" ref="wrapperRef">
+    <SiteHeader :class="['dynamic-header', { 'is-scrolled': isScrolled }]" />
+    
     <div class="consult-cover">
-      <div class="background-grid"></div>
-      <div class="header">
-        <div class="header-left">
-          <span class="logo-line"></span>
-          <span class="logo-text">BRAND CONSULTING · 品牌占位系统</span>
+      <!-- 首屏：全屏背景图 -->
+      <section class="hero-section">
+        <div class="hero-bg">
+          <img src="http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg" alt="Business Strategy" class="bg-img" />
+          <!-- 蓝紫渐变遮罩，还原图一质感 -->
+          <div class="bg-overlay"></div>
         </div>
-        <div class="header-right">
-          <span class="collection-text">四看 / 四问 / 四大成</span>
-        </div>
-      </div>
 
-      <div class="main-content">
-        <div class="hero-section">
-          <h1 class="hero-title">
-            <span class="text-black">不是一次出一份报告，</span><br />
-            <span class="text-black">而是</span><span class="text-accent underline">一步一步聊出结论</span>
-          </h1>
-          <p class="hero-subtitle">
-            AI 先给你 2–4 个可选方向，附上选择理由、你手上的现有优势、核心解决方案。<br />
-            你可以选一个、改一个，或者继续追问让它去查资料。<br />
-            <span class="text-accent">每定下一步，就进企业知识库，成为下一步判断的依据。</span>
-          </p>
-          <div class="actions">
-            <router-link to="/consult/projects" class="btn-start">
-              <span class="btn-icon">▶</span>
-              进入项目工作台
-            </router-link>
-            <router-link to="/consult/projects?new=1" class="btn-ghost">
-              新建一个品牌项目
-            </router-link>
+        <div class="hero-content">
+          <div class="hero-left editorial-layout">
+            <div class="hero-kicker">
+              <span class="kicker-line"></span>
+              <span class="kicker-text">AI-POWERED BRAND CONSULTING</span>
+            </div>
+            
+            <h1 class="main-title">
+              让品牌战略<br>决策更简单。
+            </h1>
+            
+            <div class="hero-desc-wrapper">
+              <div class="vertical-accent"></div>
+              <p class="sub-title">
+                基于 AI 的智能品牌咨询框架。<br>
+                通过四看、四问、四大成，抛弃写完即焚的报告，<br>
+                为你构建坚实的商业事实底座。
+              </p>
+            </div>
+            
+            <div class="actions">
+              <router-link to="/consult/projects" class="btn-yellow editorial-btn">
+                进入工作台
+                <span class="icon-arrow">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                </span>
+              </router-link>
+            </div>
+          </div>
+          
+          <!-- 底部滚动提示 -->
+          <div class="scroll-indicator">
+            <div class="mouse-icon">
+              <div class="wheel"></div>
+            </div>
           </div>
         </div>
+      </section>
 
-        <div class="cards-section">
-          <div class="cards-wrapper">
-            <!-- Card 4 (Bottom-most) -->
-            <div class="poster-card card-4">
-              <div class="card-inner">
-                <div class="card-tag">SEQUENCE</div>
-                <h3 class="card-title">先找事实，再做判断</h3>
-                <p class="card-desc">没有事实底座的战略判断，读起来一样漂亮，但依据是空的</p>
-              </div>
+      <!-- 模块一：功能介绍 (Feature Introduction) -->
+      <section class="feature-section">
+        <div class="section-container">
+          <div class="feature-layout">
+            <div class="feature-text-side">
+              <h2 class="section-title">重塑品牌<br>战略决策流</h2>
+              <p class="section-desc">
+                我们抛弃了传统“写完即焚”的 PPT 报告，将品牌咨询拆解为结构化的数据与推演。
+              </p>
+              <div class="feature-decoration-line"></div>
             </div>
-            <!-- Card 3 · 四问飞轮 -->
-            <div class="poster-card card-3">
-              <div class="card-inner">
-                <div class="card-tag">四问 · 做判断</div>
-                <h3 class="card-title">相互咬合的占位飞轮</h3>
-                <p class="card-desc">四个判断彼此支撑，改一个就要回头看另外三个</p>
-                <div class="card-graphic">
-                  <div class="circle-node center-node">品牌占位</div>
-                  <div class="circle-node top-node">定位</div>
-                  <div class="circle-node right-node">价值</div>
-                  <div class="circle-node bottom-node">信任</div>
-                  <div class="circle-node left-node">关系</div>
-                </div>
+            
+            <div class="feature-cards-side">
+              <!-- Feature 1: 四看 -->
+              <div class="feature-card glass-card">
+                <div class="fc-number">01</div>
+                <h3 class="fc-title">四看分析底座</h3>
+                <p class="fc-desc">看自己、看行业、看竞品、看用户。AI 快速阅读你贴入的客户资料，自动生成结构化事实报告，构建坚实的决策基石。</p>
               </div>
-            </div>
-            <!-- Card 2 · 四看 -->
-            <div class="poster-card card-2">
-              <div class="card-inner">
-                <div class="card-tag">四看 · 找事实</div>
-                <h3 class="card-title">战场在哪，我有什么牌</h3>
-                <p class="card-desc">快车道：AI 读你贴的资料直接出结论草稿，你 review</p>
-                <div class="card-list">
-                  <div class="list-item"><span>1</span>看自己 · 基因 / 优势 / 痛点</div>
-                  <div class="list-item"><span>2</span>看行业 · 格局 / 空间 / 趋势</div>
-                  <div class="list-item"><span>3</span>看竞品 · 对标 / 空位 / 避锋</div>
-                  <div class="list-item"><span>4</span>看用户 · 画像 / 真实需求</div>
-                </div>
+              
+              <!-- Feature 2: 四问 -->
+              <div class="feature-card glass-card offset-card">
+                <div class="fc-number">02</div>
+                <h3 class="fc-title">四大成占位飞轮</h3>
+                <p class="fc-desc">定位、价值、信任、关系。四个判断相互咬合彼此支撑。当你修改其中一个，AI 会自动提示需要同步核对的其他三个方向。</p>
               </div>
-            </div>
-            <!-- Card 1 (Top-most) · 知识库 -->
-            <div class="poster-card card-1">
-              <div class="card-inner">
-                <div class="card-tag">企业知识库</div>
-                <h3 class="card-title">每一步的结论都留下来</h3>
-                <p class="card-desc">结论 + 取舍理由 + 依据来源 + 置信度。上游改了，下游会被标出来重跑</p>
-                <div class="kb-mock">
-                  <div class="kb-row"><span class="kb-name">看自己</span><span class="kb-dot green">🟢</span></div>
-                  <div class="kb-row"><span class="kb-name">看行业</span><span class="kb-dot amber">🟡</span></div>
-                  <div class="kb-row"><span class="kb-name">品牌定位</span><span class="kb-dot">…</span></div>
-                </div>
+              
+              <!-- Feature 3: 知识库 -->
+              <div class="feature-card glass-card">
+                <div class="fc-number">03</div>
+                <h3 class="fc-title">企业资产沉淀</h3>
+                <p class="fc-desc">每定下一步结论，包括取舍理由、依据来源与置信度，都会自动存入企业知识库，作为下游设计、营销等动作的核心依据。</p>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <!-- 模块二：服务客户 (Client Logos) -->
+      <section class="clients-section">
+        <div class="section-container">
+          <p class="clients-kicker">TRUSTED BY INNOVATIVE COMPANIES</p>
+          
+          <div class="logo-carousel">
+            <div class="logo-track">
+              <!-- 虚构的商业客户Logo (重复两组以实现无缝滚动) -->
+              <div class="logo-item"><span class="lg-icon">⬡</span> NEXUS TECH</div>
+              <div class="logo-item"><span class="lg-icon">◭</span> QUANTUM</div>
+              <div class="logo-item"><span class="lg-icon">⟡</span> AERONAUTICS</div>
+              <div class="logo-item"><span class="lg-icon">◈</span> SYNAPSE</div>
+              <div class="logo-item"><span class="lg-icon">◮</span> VORTEX</div>
+              <div class="logo-item"><span class="lg-icon">⬢</span> CHRONOS</div>
+              <!-- 重复组 -->
+              <div class="logo-item"><span class="lg-icon">⬡</span> NEXUS TECH</div>
+              <div class="logo-item"><span class="lg-icon">◭</span> QUANTUM</div>
+              <div class="logo-item"><span class="lg-icon">⟡</span> AERONAUTICS</div>
+              <div class="logo-item"><span class="lg-icon">◈</span> SYNAPSE</div>
+              <div class="logo-item"><span class="lg-icon">◮</span> VORTEX</div>
+              <div class="logo-item"><span class="lg-icon">⬢</span> CHRONOS</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
     </div>
+    
+    <!-- 引入通用页脚 -->
     <SiteFooter />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import SiteHeader from '../../components/common/SiteHeader.vue';
 import SiteFooter from '../../components/common/SiteFooter.vue';
 
+const isScrolled = ref(false);
+const wrapperRef = ref<HTMLElement | null>(null);
+
+function handleScroll() {
+  if (!wrapperRef.value) return;
+  // 当向下滚动超过 60px 时，改变导航栏状态
+  isScrolled.value = wrapperRef.value.scrollTop > 60;
+}
+
 onMounted(() => {
   setTimeout(() => {
-    document.querySelector('.consult-cover')?.classList.add('loaded');
+    document.querySelector('.hero-content')?.classList.add('is-visible');
   }, 100);
+  
+  // Intersection Observer for scroll animations in lower sections
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+      }
+    });
+  }, { threshold: 0.15 });
+
+  document.querySelectorAll('.feature-card, .logo-item').forEach((el) => {
+    observer.observe(el);
+  });
 });
 </script>
 
 <style scoped>
-/* 版式抄 /xhs 的海报封面，配色和字体换成 kimi3 那套（references/kimi3-design-system.css），
-   品牌色用 consult 自己那支深蓝 #0B4A6F —— 封面、项目列表、工作台三页必须像同一个产品。
-   例外：这一页的卡片保留 3D 位移悬停。工作台那条「悬停只改阴影」的规矩是为了别让
-   正在核对的表格行跑掉，而这里卡片上没有要核对的数据。 */
 .page-wrapper {
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
-  --brand: #0B4A6F;
-  --brand-soft: #E7F0F6;
-  --brand-ink: #063553;
-  --shadow: 0 12px 32px -12px rgba(0, 0, 0, .06), 0 2px 8px rgba(0, 0, 0, .02);
-  --shadow-lg: 0 20px 48px -16px rgba(0, 0, 0, .1), 0 4px 16px rgba(0, 0, 0, .04);
-
+  --brand-yellow: #FFB800;
+  --brand-yellow-hover: #E6A600;
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255, 255, 255, 0.85);
+  --bg-color: #12182B; /* 从 #0A0F1E 调亮 */
+  
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-}
-.consult-cover {
-  position: relative;
-  flex: 1;
-  background-color: #F5F5F7;
-  overflow: hidden;
+  height: 100vh;
+  overflow-y: auto; /* 开启页面级滚动 */
+  overflow-x: hidden;
   font-family: var(--font-sans);
-  color: #1D1D1F;
-  padding-top: 50px;
+  background: var(--bg-light);
 }
 
-.background-grid {
+/* 动态导航栏：在顶部时透明，向下滚动后恢复实色 */
+:deep(.site-header.dynamic-header) {
+  position: fixed;
+  top: 0;
+  width: 100%;
+  transition: all 0.3s ease;
+  background: transparent !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+:deep(.site-header.dynamic-header *) {
+  color: #fff !important;
+  transition: color 0.3s ease;
+}
+
+/* 滚动后的导航栏状态 */
+:deep(.site-header.dynamic-header.is-scrolled) {
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid rgba(0,0,0,0.05) !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.03) !important;
+}
+:deep(.site-header.dynamic-header.is-scrolled *) {
+  color: var(--text-primary) !important;
+}
+
+.consult-cover {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ==================
+   Section 1: Hero
+================== */
+.hero-section {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #000;
+}
+
+/* 背景图与遮罩 */
+.hero-bg {
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
-  background-size: 24px 24px;
   z-index: 0;
-  pointer-events: none;
 }
 
-.header {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 32px 48px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 5px;
-  text-transform: uppercase;
-  color: #86868B;
+.bg-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
 }
-.header-left { display: flex; align-items: center; gap: 12px; }
-.logo-line { width: 24px; height: 2px; background-color: var(--brand); }
-.header-right .collection-text { color: var(--brand); }
 
-.main-content {
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 24, 43, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* 主要内容区 */
+.hero-content {
   position: relative;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 80px 64px;
-  min-height: calc(100vh - 100px);
-}
-
-.hero-section {
-  flex: 1;
-  max-width: 620px;
+  padding: 120px 64px 60px;
+  display: flex;
+  justify-content: space-between;
+  box-sizing: border-box;
   opacity: 0;
   transform: translateY(20px);
-  transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 1s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.consult-cover.loaded .hero-section { opacity: 1; transform: translateY(0); }
 
-/* 显式写 font-family：App.vue 里有一条全局 `h1..h6 { font-family: var(--font-serif) }` */
-.hero-title {
-  font-family: var(--font-sans);
-  font-size: 56px;
+.hero-content.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 左侧排版 - 杂志化重构 */
+.hero-left.editorial-layout {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 800px;
+  padding-bottom: 80px;
+}
+
+.hero-kicker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.kicker-line {
+  width: 48px;
+  height: 2px;
+  background: var(--brand-yellow);
+}
+
+.kicker-text {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--brand-yellow);
+}
+
+.main-title {
+  font-size: 88px;
   font-weight: 800;
-  line-height: 1.22;
-  letter-spacing: -1px;
-  margin-bottom: 36px;
-}
-.text-black { color: #1D1D1F; }
-.text-accent { color: var(--brand); }
-.underline { position: relative; display: inline-block; }
-.underline::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: -4px;
-  width: 100%;
-  height: 8px;
-  background-color: var(--brand);
-  border-radius: 4px;
-  opacity: .9;
+  color: #fff;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  margin: 0 0 40px;
+  text-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }
 
-.hero-subtitle {
-  font-size: 17px;
-  line-height: 1.95;
-  color: #434344;
-  font-weight: 500;
-  margin-bottom: 48px;
+.hero-desc-wrapper {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 56px;
 }
 
-.actions { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.vertical-accent {
+  width: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
 
-.btn-start {
+.sub-title {
+  font-size: 20px;
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0;
+  line-height: 1.8;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+}
+
+/* 黄色按钮 */
+.actions {
+  margin-bottom: auto;
+}
+
+.btn-yellow {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  background: var(--brand);
-  color: #fff;
-  padding: 16px 32px;
-  border-radius: 9999px;
+  background: var(--brand-yellow);
+  color: #111;
+  padding: 16px 36px;
+  border-radius: 999px;
   font-size: 16px;
   font-weight: 700;
   text-decoration: none;
-  box-shadow: 0 8px 24px rgba(11, 74, 111, 0.22);
-  transition: box-shadow .3s, background .3s;
-}
-.btn-start:hover {
-  box-shadow: 0 16px 36px rgba(11, 74, 111, 0.32);
-  background: var(--brand-ink);
-}
-.btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  padding: 16px 28px;
-  border-radius: 9999px;
-  font-size: 16px;
-  font-weight: 700;
-  text-decoration: none;
-  color: var(--brand);
-  background: rgba(255, 255, 255, .6);
-  border: 2px solid var(--brand);
-  transition: box-shadow .3s, background .3s, color .3s;
-}
-.btn-ghost:hover { background: var(--brand); color: #fff; box-shadow: var(--shadow-lg); }
-.btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: #fff;
-  color: var(--brand);
-  border-radius: 50%;
-  font-size: 12px;
-  padding-left: 2px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.25);
 }
 
-/* 右侧卡片区 */
-.cards-section {
-  flex: 1;
-  position: relative;
-  height: 600px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  perspective: 1200px;
+.btn-yellow:hover {
+  background: var(--brand-yellow-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(255, 184, 0, 0.35);
 }
-.cards-wrapper {
-  position: relative;
-  width: 380px;
-  height: 520px;
-  transform-style: preserve-3d;
-  transform: rotateX(5deg) rotateY(-5deg);
-  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+
+.btn-yellow:active {
+  transform: translateY(0) scale(0.98);
 }
-.cards-wrapper:hover { transform: rotateX(0deg) rotateY(0deg); }
 
-.poster-card {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border-radius: 16px;
-  border: 1px solid rgba(0, 0, 0, 0.07);
-  box-shadow: -20px 20px 60px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.04);
-  padding: 12px;
-  transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-  opacity: 0;
-}
-/* 最上面那张（企业知识库）挂 4px 品牌顶边 —— 工作台里的主卡片是同一个记号 */
-.card-1 { border-top: 4px solid var(--brand); }
-.consult-cover.loaded .poster-card { opacity: 1; }
-
-.card-inner {
-  width: 100%;
-  height: 100%;
-  border: 1px solid rgba(11, 74, 111, 0.14);
-  border-radius: 8px;
-  padding: 30px 24px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, .85) 0%, rgba(231, 240, 246, .5) 100%);
-  display: flex;
-  flex-direction: column;
-}
-.card-tag {
-  color: var(--brand);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  margin-bottom: 20px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.card-tag::before { content: ''; width: 2px; height: 12px; background: var(--brand); flex: 0 0 auto; }
-.card-title { font-family: var(--font-sans); font-size: 25px; font-weight: 800; color: #1D1D1F; margin-bottom: 10px; line-height: 1.34; letter-spacing: .3px; }
-.card-desc { font-size: 13px; color: #434344; line-height: 1.75; }
-
-.card-4 { transform: translateX(120px) translateY(80px) translateZ(-150px) rotateZ(12deg); z-index: 1; transition-delay: 0.3s; }
-.card-3 { transform: translateX(60px) translateY(40px) translateZ(-100px) rotateZ(8deg); z-index: 2; transition-delay: 0.2s; }
-.card-2 { transform: translateX(0px) translateY(0px) translateZ(-50px) rotateZ(4deg); z-index: 3; transition-delay: 0.1s; }
-.card-1 { transform: translateX(-60px) translateY(-40px) translateZ(0) rotateZ(0deg); z-index: 4; transition-delay: 0s; }
-
-.cards-wrapper:hover .card-4 { transform: translateX(160px) translateY(100px) translateZ(-150px) rotateZ(16deg); }
-.cards-wrapper:hover .card-3 { transform: translateX(80px) translateY(50px) translateZ(-80px) rotateZ(10deg); }
-.cards-wrapper:hover .card-2 { transform: translateX(0px) translateY(0px) translateZ(-10px) rotateZ(4deg); }
-.cards-wrapper:hover .card-1 { transform: translateX(-80px) translateY(-50px) translateZ(60px) rotateZ(-2deg); }
-
-/* Card 3 · 飞轮示意 */
-.card-graphic { position: relative; margin-top: 32px; flex: 1; display: flex; align-items: center; justify-content: center; }
-.circle-node {
-  position: absolute;
-  font-size: 12px;
-  font-weight: 600;
-  background: #fff;
-  border: 1px solid rgba(11, 74, 111, .18);
-  padding: 8px 12px;
-  border-radius: 20px;
-  color: var(--brand);
-  box-shadow: 0 4px 12px rgba(11, 74, 111, 0.08);
-}
-.center-node { background: var(--brand); color: #fff; z-index: 2; padding: 12px 16px; font-size: 14px; }
-.top-node { transform: translateY(-60px); }
-.bottom-node { transform: translateY(60px); }
-.left-node { transform: translateX(-70px); }
-.right-node { transform: translateX(70px); }
-
-/* Card 2 · 四看清单 */
-.card-list { margin-top: 26px; display: flex; flex-direction: column; gap: 14px; }
-.list-item { display: flex; align-items: center; gap: 12px; font-size: 13.5px; font-weight: 600; color: #1D1D1F; }
-.list-item span {
+.icon-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  background: var(--brand-soft);
-  color: var(--brand);
+  background: #fff;
   border-radius: 50%;
-  font-size: 12px;
-  flex: 0 0 auto;
+  color: var(--brand-yellow);
 }
 
-/* Card 1 · 知识库示意 */
-.kb-mock { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
-.kb-row {
+.icon-arrow svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 左下角轮播点 */
+.slider-dots {
   display: flex;
-  justify-content: space-between;
+  gap: 12px;
   align-items: center;
-  padding: 10px 12px;
-  border: 1px solid var(--brand-soft);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .7);
-  font-size: 13px;
-  font-weight: 600;
-  color: #1D1D1F;
 }
-.kb-name { font-family: var(--font-sans); }
-.kb-dot { font-size: 12px; color: #98A2B3; }
 
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transition: all 0.3s;
+  cursor: pointer;
+}
+
+.dot.active {
+  width: 24px;
+  border-radius: 4px;
+  background: var(--brand-yellow);
+}
+
+/* 右侧排版 */
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: 40px;
+}
+
+.stats-block {
+  text-align: right;
+}
+
+.stats-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0 0 8px;
+  letter-spacing: 0.05em;
+}
+
+.stats-number {
+  font-family: var(--font-mono);
+  font-size: 88px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-shadow: 0 8px 24px rgba(0,0,0,0.2);
+}
+
+/* 底部居中滚动指示器 */
+.scroll-indicator {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.7;
+}
+
+.mouse-icon {
+  width: 26px;
+  height: 40px;
+  border: 2px solid #fff;
+  border-radius: 14px;
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.wheel {
+  width: 4px;
+  height: 8px;
+  background: #fff;
+  border-radius: 2px;
+  margin-top: 6px;
+  animation: scroll 2s cubic-bezier(0.15, 0.41, 0.69, 0.94) infinite;
+}
+
+@keyframes scroll {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(12px); opacity: 0; }
+}
+
+/* ==================
+   Section 2 & 3: Content
+================== */
+.feature-section {
+  padding: 140px 0;
+  background: #111; /* 深色背景提升高级感 */
+  color: #fff;
+}
+
+.clients-section {
+  padding: 80px 0 120px;
+  background: #000;
+  overflow: hidden;
+}
+
+.section-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 64px;
+}
+
+/* 核心功能：双栏布局 */
+.feature-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 80px;
+}
+
+.feature-text-side {
+  flex: 0 0 40%;
+  position: sticky;
+  top: 140px;
+}
+
+.section-title {
+  font-size: 56px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0 0 32px;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.section-desc {
+  font-size: 20px;
+  color: rgba(255,255,255,0.7);
+  line-height: 1.6;
+  margin: 0 0 48px;
+}
+
+.feature-decoration-line {
+  width: 60px;
+  height: 4px;
+  background: var(--brand-yellow);
+  border-radius: 2px;
+}
+
+/* 核心功能：右侧卡片瀑布流 */
+.feature-cards-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.feature-card {
+  padding: 48px;
+  border-radius: 24px;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0;
+  transform: translateY(40px);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-8px) !important; /* 覆盖默认 transform */
+}
+
+.feature-card.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.offset-card {
+  margin-left: 80px; /* 错落排版 */
+}
+
+.fc-number {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--brand-yellow);
+  font-weight: 700;
+  margin-bottom: 24px;
+  letter-spacing: 2px;
+}
+
+.fc-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0 0 20px;
+  letter-spacing: -0.02em;
+}
+
+.fc-desc {
+  font-size: 18px;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* 客户 Logo 墙 */
+.clients-kicker {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: rgba(255,255,255,0.4);
+  margin-bottom: 64px;
+}
+
+.logo-carousel {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  /* 左右边缘渐变遮罩，制造空间感 */
+  mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+}
+
+.logo-track {
+  display: flex;
+  gap: 80px;
+  align-items: center;
+  width: max-content;
+  animation: carousel-scroll 30s linear infinite;
+}
+
+.logo-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes carousel-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(calc(-50% - 40px)); /* 一半的宽度减去gap的一半 */ }
+}
+
+.logo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 800;
+  color: rgba(255,255,255,0.3);
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+  transition: color 0.3s;
+  cursor: default;
+}
+
+.logo-item:hover {
+  color: #fff;
+}
+
+.lg-icon {
+  font-size: 32px;
+  color: rgba(255,255,255,0.2);
+  transition: color 0.3s;
+}
+
+.logo-item:hover .lg-icon {
+  color: var(--brand-yellow);
+}
+
+/* 响应式 */
 @media (max-width: 1024px) {
-  .main-content { flex-direction: column; padding: 40px 32px; text-align: center; }
-  .hero-section { max-width: 100%; margin-bottom: 64px; }
-  .hero-title { font-size: 38px; }
-  .actions { justify-content: center; }
-  .cards-wrapper { transform: scale(0.8) rotateX(0) rotateY(0); }
-  .cards-wrapper:hover { transform: scale(0.85) rotateX(0) rotateY(0); }
+  .main-title { font-size: 64px; }
+  .hero-content { padding: 100px 40px 40px; }
+  
+  .feature-layout { flex-direction: column; gap: 40px; }
+  .feature-text-side { position: relative; top: 0; }
+  .offset-card { margin-left: 0; }
+}
+
+@media (max-width: 768px) {
+  .hero-content {
+    flex-direction: column;
+    padding: 100px 24px 40px;
+  }
+  .hero-left.editorial-layout { padding-bottom: 40px; }
+  .main-title { font-size: 48px; }
+  
+  .section-container { padding: 0 24px; }
+  .feature-card { padding: 32px; }
+  .fc-title { font-size: 24px; }
 }
 </style>

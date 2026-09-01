@@ -23,6 +23,10 @@ const AI_SPEND_ROUTES: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ['POST'], path: /^\/projects\/[^/]+\/stages\/[^/]+\/chat$/ },
   { methods: ['POST'], path: /^\/projects\/[^/]+\/stages\/[^/]+\/search$/ },
   { methods: ['POST'], path: /^\/projects\/[^/]+\/intake$/ },
+  // 上传资料的 AI 整理（`consult:embed` 放行了它，见 `auth/scopeGuard.ts`）。
+  // 它不在 projects 子树下 —— 新建页还没有项目 id。`/extract-file` 不在这张表里是
+  // 因为它纯程序解析、不调 AI。
+  { methods: ['POST'], path: /^\/tidy-text$/ },
 ];
 
 export function isAiSpendRoute(method: string, path: string): boolean {
@@ -109,6 +113,26 @@ export function consultSdkLimits(req: Request, res: Response, next: NextFunction
     pk
   );
   next();
+}
+
+/**
+ * 一个请求实际打了不止一次模型时，把差额补扣上（`/tidy-text` 分段整理）。
+ *
+ * 中间件是**每个请求扣 1** 的 —— 它跑在解析 body 之前，不可能知道这次要分几段。
+ * 不补的话那条路对第三方相当于打了 N 折，而后台显示的用量是一个完全正常的数字。
+ * 只加不减，也不在这里拦（这几次钱已经花掉了，拦下来只是让他看不到结果）。
+ */
+export function chargeExtraSdkAiCalls(pk: string, extra: number): void {
+  if (!(extra > 0)) return;
+  const today = new Date().toISOString().split('T')[0];
+  const db = getDatabase();
+  // 当天第一次就分段的情况：ai_used_date 可能还是昨天，所以按日期归零后再加。
+  db.prepare(
+    `UPDATE consult_sdk_keys
+        SET ai_used_today = CASE WHEN ai_used_date = ? THEN ai_used_today + ? ELSE ? END,
+            ai_used_date = ?
+      WHERE pk = ?`
+  ).run(today, extra, extra, today, pk);
 }
 
 // ==================== iframe 宿主名单 ====================

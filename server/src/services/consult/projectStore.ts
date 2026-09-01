@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
-import { STAGES, stageByKey, unlockState, downstreamOf, type StageLane, type StageGroup } from './stages.js';
+import { STAGE_DEFAULTS, stages, stageByKey, unlockState, downstreamOf, type StageLane, type StageGroup } from './stages.js';
 
 // 咨询项目的读写。所有查询都带 user_id —— 项目里是客户的经营数据，
 // 只按 id 取的话换个账号带上别人的项目 id 就能读到整份诊断。
@@ -139,7 +139,7 @@ export function listProjects(owner: ProjectOwner) {
   }>;
   // total_stages 一并返回：前端不该自己写死 12，改了阶段清单之后
   // 「3/12」会变成一个永远对不上的分母。
-  return rows.map((r) => ({ ...r, total_stages: STAGES.length }));
+  return rows.map((r) => ({ ...r, total_stages: STAGE_DEFAULTS.length }));
 }
 
 export function createProject(owner: ProjectOwner, brandName: string, brief: string): ConsultProject {
@@ -413,7 +413,7 @@ export function saveEntry(
 }
 
 /**
- * 阶段栏。**以代码里的 STAGES 为准**去左连 consult_stages，
+ * 阶段栏。**以代码里的阶段清单为准**去左连 consult_stages，
  * 不是按表里有哪些行渲染 —— 反过来的话以后新增的阶段对老项目永远不可见，
  * 报告照样能出，只是缺那一节，没有任何一处报错。
  */
@@ -426,7 +426,7 @@ export function buildStageRail(projectId: string): StageRailItem[] {
   const entries = new Map(listEntries(projectId).map((e) => [e.stage_key, e]));
   const decided = new Set(entries.keys());
 
-  return STAGES.map((s) => {
+  return stages().map((s) => {
     const row = byKey.get(s.key);
     const entry = entries.get(s.key);
     const { unlocked, missing } = unlockState(s, decided);
