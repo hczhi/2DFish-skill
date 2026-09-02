@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1365" width="1024" height="1365" role="img" aria-label="图槽位 3:4">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2=".9" y2="1">
+      <stop offset="0" stop-color="#98a2ac"/><stop offset=".55" stop-color="#586068"/><stop offset="1" stop-color="#2f363d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1365" fill="url(#g)"/>
+  <path d="M0 1365L1024 0M0 0L1024 1365" fill="none" stroke="#ffffff" stroke-opacity=".14" stroke-width="2"/>
+  <text x="512" y="700" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="42" font-weight="600" letter-spacing="8" fill="#ffffff" fill-opacity=".7">图槽位 3 : 4</text>
+</svg>

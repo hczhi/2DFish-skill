@@ -47,13 +47,23 @@ interface BatchResult {
   truncated: boolean;
 }
 
-/** 截断的说法：条数、思维链占用、以及「单条也装不下」时该去改什么。 */
-function truncationProblem(count: number, got: number, reasoningTokens?: number): string {
+/**
+ * 截断的说法：条数、思维链占用、以及「单条也装不下」时该去改什么。
+ *
+ * `noThinkingRequested` = 这次真的带上了关思维链的参数（调用方写死的 true 和接入点后台
+ * 那个开关取或的结果）。要求过、而 `reasoningTokens` 仍然大于 0 时必须明说「发过去了但
+ * 上游没照办」：后台那一行写着「已关闭」，只说「换一个不输出思维链的模型」的话用户会先
+ * 回去核那个开关，反复勾几遍都没有反应，而真正的解法是换模型。
+ */
+function truncationProblem(count: number, got: number, reasoningTokens?: number, noThinkingRequested?: boolean): string {
   const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
   const base = `模型返回被截断（finish_reason=length，max_tokens=${MAX_OUTPUT_TOKENS}${cot}），只救回 ${got}/${count} 条`;
+  const ignored = noThinkingRequested && (reasoningTokens ?? 0) > 0
+    ? `（已经把「不使用深度思考」发给上游了，它没照办 —— 后台再勾一遍没有用，只能换模型）`
+    : '';
   return count === 1 && got === 0
-    ? `${base} —— 单条也装不下，请在 AI 配置里换一个不输出思维链的模型`
-    : base;
+    ? `${base} —— 单条也装不下，请在 AI 配置里换一个不输出思维链的模型${ignored}`
+    : `${base}${ignored}`;
 }
 
 function getExtractPromptTemplate(): string | null {
@@ -166,7 +176,7 @@ async function extractBatch(
     // 一批 3 条的完整 JSON 要 1300+ 输出 token，而思维链算进 MAX_OUTPUT_TOKENS 却不出现在
     // content 里 —— 于是数组括号配不平、整批变成「提取到 0 条」，而 max_tokens 怎么调都够不上
     // （下面那段拆批重试就是为它写的）。开了之后这笔额度才真的全给 JSON。
-    const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
       () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.2, max_tokens: MAX_OUTPUT_TOKENS }),
       { userId, source: 'tender', operation: 'extract-batch', noThinking: true },
       { mode: 'array', attempts: 2 }
@@ -179,7 +189,7 @@ async function extractBatch(
     const list: any[] = parsed ?? (truncated ? parseJsonArrayItems(raw) : []);
     if (list.length === 0) {
       problem = truncated
-        ? truncationProblem(items.length, 0, reasoningTokens)
+        ? truncationProblem(items.length, 0, reasoningTokens, noThinkingRequested)
         : `模型返回无法解析成 JSON 数组（finish_reason=${finish || '未知'}）`;
       return { data: results, prompt, response: responseContent, problem, truncated };
     }
@@ -219,7 +229,7 @@ async function extractBatch(
     } else if (results.size < items.length) {
       // 截断和「模型少写了几条」是两回事：前者拆批重试就能补齐，后者重试也一样。
       problem = truncated
-        ? truncationProblem(items.length, results.size, reasoningTokens)
+        ? truncationProblem(items.length, results.size, reasoningTokens, noThinkingRequested)
         : `模型只返回了 ${results.size}/${items.length} 条可用结果`;
     }
   } catch (e: any) {

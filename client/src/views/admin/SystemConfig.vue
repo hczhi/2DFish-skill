@@ -9,7 +9,11 @@
     <p class="desc">
       每条 provider 是一个模型接入点。<br />
       · <b>kind=llm</b>：文本模型，按 <b>tier</b> 分 default/strong/fast，代码里的任务已归好档（如小红书搭结构/校验走 strong，成文走 fast）。<br />
-      · <b>kind=image</b>：生图模型（地基已就位，extra_json 里填 <code>{"protocol":"dashscope"}</code> 之类，具体适配器接入后即可用）。<br />
+      · <b>kind=image</b>：生图模型。协议默认按 Base URL 猜（OpenAI 兼容 <code>/images/generations</code>，
+      阿里百炼原生走异步任务制），要指定就在 extra_json 里填 <code>{"protocol":"openai"}</code> 或
+      <code>{"protocol":"dashscope"}</code>。<b>配好后点「测试」会真生成一张图并显示出来</b> ——
+      注意必须是<b>生图</b>模型（如 doubao-seedream / qwen-image），视频模型（doubao-seedance）接口也返回
+      200，但拿回来的是视频。<br />
       同一 tier 有多条时取最近更新的启用项；某档没配则回落到 default 档；一条都没配则回落到下方旧配置。<br />
       · 这里只列<b>平台级</b>接入点。要给某个用户配独立接口，去「用户管理 → 专属 AI」——
       那里配的接入点只属于该用户，不会出现在本列表。<br />
@@ -41,12 +45,22 @@
             <td class="row-actions">
               <button class="link-btn" @click="editProvider(p)">编辑</button>
               <button class="link-btn" @click="testProvider(p)" :disabled="testingId === p.id">
-                {{ testingId === p.id ? '测试中…' : '测试' }}
+                {{ testingId === p.id ? `测试中… ${testElapsed}s` : '测试' }}
               </button>
               <button class="link-btn danger" @click="removeProvider(p.id)">删除</button>
+              <!-- 生图慢（30~120 秒很常见），必须有个跳动的秒数 + 说清在等什么：
+                   一个不动的「测试中…」和「请求早断了」在屏幕上是同一个样子。 -->
+              <p v-if="testingId === p.id" class="test-result">
+                正在真的生成一张图，通常 30~120 秒；超过 {{ Math.round(IMG_TEST_CAP_MS / 1000) }} 秒会中止并报出来。
+              </p>
               <p v-if="testResults[p.id]" class="test-result" :class="testResults[p.id].ok ? 'ok' : 'err'">
                 {{ testResults[p.id].msg }}
               </p>
+              <!-- 生图测试的结果图。加载失败也要出声：URL 返回了但图打不开
+                   （落在本机磁盘却换了机器、上游给的是限时链接）在文字上和成功一样。 -->
+              <a v-if="testResults[p.id]?.img" class="test-img" :href="testResults[p.id].img" target="_blank">
+                <img :src="testResults[p.id].img" alt="生图结果" @error="onTestImgError(p.id)" />
+              </a>
             </td>
           </tr>
         </tbody>
@@ -223,18 +237,45 @@ const providers = ref<Provider[]>([])
 const apps = ref<Array<{ id: string; name: string }>>([])
 const appLabel = (id: string) => apps.value.find(a => a.id === id)?.name || id
 const testingId = ref('')
-const testResults = ref<Record<string, { ok: boolean; msg: string }>>({})
+const testResults = ref<Record<string, { ok: boolean; msg: string; img?: string }>>({})
+
+// 前端这道闸比服务端那 180 秒略宽：服务端超时会回一句说得清成因的错误，
+// 走到前端这条才是「连服务端都没回话」（反代掐了 / 服务重启了），得分开说。
+const IMG_TEST_CAP_MS = 180_000
+const testElapsed = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | undefined
 
 async function testProvider(p: Provider) {
   testingId.value = p.id
   delete testResults.value[p.id]
+  testElapsed.value = 0
+  clearInterval(elapsedTimer)
+  elapsedTimer = setInterval(() => { testElapsed.value += 1 }, 1000)
   try {
-    const r = await apiPost<{ duration_ms: number; model: string }>(`/api/admin/providers/${p.id}/test`, {})
-    testResults.value[p.id] = { ok: true, msg: `连通 ✓ ${r.model} · ${r.duration_ms}ms` }
+    const r = await apiPost<{
+      duration_ms: number; model: string;
+      image_url?: string; protocol?: string; protocol_inferred?: boolean;
+      storage?: string; storage_hint?: string; url_warning?: string;
+    }>(`/api/admin/providers/${p.id}/test`, {})
+    let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
+    if (r.protocol) msg += ` · 协议 ${r.protocol}${r.protocol_inferred ? '（按 Base URL 猜的，extra_json 里没写 protocol）' : ''}`
+    if (r.storage) msg += ` · 存储 ${r.storage === 'cos' ? 'COS' : '本机磁盘'}`
+    if (r.storage_hint) msg += `\n${r.storage_hint}`
+    if (r.url_warning) msg += `\n⚠ ${r.url_warning}`
+    // 生图必须把那张图显示出来：只显示「连通 ✓」的话，回了个 mp4、回了张
+    // 纯黑图、回错了模型这几种在文字上都长得一样。
+    testResults.value[p.id] = { ok: true, msg, img: r.image_url }
   } catch (e: any) {
-    testResults.value[p.id] = { ok: false, msg: e.message || '测试失败' }
+    testResults.value[p.id] = { ok: false, msg: `${e.message || '测试失败'}（等了 ${testElapsed.value}s）` }
   }
+  clearInterval(elapsedTimer)
   testingId.value = ''
+}
+
+function onTestImgError(id: string) {
+  const r = testResults.value[id]
+  if (!r) return
+  testResults.value[id] = { ok: false, msg: `生成成功但图片打不开（${r.img}）—— 检查 COS 是否公有读，或本机 data/uploads 是否可访问。` }
 }
 
 function emptyEditor() {
@@ -375,7 +416,9 @@ onMounted(() => { loadConfig(); loadProviders() })
 .link-btn { border: none; background: none; color: #3B5BDB; cursor: pointer; font-size: 13px; padding: 0; }
 .link-btn.danger { color: #dc2626; }
 .link-btn:disabled { opacity: .5; cursor: not-allowed; }
-.test-result { flex-basis: 100%; font-size: 11px; margin: 2px 0 0; white-space: normal; line-height: 1.4; }
+.test-result { flex-basis: 100%; font-size: 11px; margin: 2px 0 0; white-space: pre-line; line-height: 1.4; }
+.test-img { flex-basis: 100%; display: block; margin-top: 6px; }
+.test-img img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb; }
 .test-result.ok { color: #16a34a; }
 .test-result.err { color: #dc2626; }
 

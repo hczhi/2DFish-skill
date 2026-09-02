@@ -83,10 +83,33 @@ async function patchKey(pk: string, body: Record<string, unknown>) {
   }
 }
 
-function editOrigins(k: any) {
-  const val = prompt('域名白名单（每行一个，如 https://example.com）', (k.allowed_origins || []).join('\n'))
-  if (val === null) return
-  patchKey(k.pk, { allowedOrigins: val })
+// 白名单**不能用 `prompt()`** 改：那个对话框只有一行，浏览器会把多行的默认值压成一条
+// 空格分隔的长字符串，点确定就把「三个域名」存成了一条谁都匹配不上的条目 —— 接口回
+// success、表里那一行看着有内容，而这把 key 的每个域名都换不到 token（现象是第三方
+// 页面上一块白，他只会去核对自己那个没写错的域名）。所以这里是行内 textarea。
+const editingPk = ref('')
+const originsText = ref('')
+const savingOrigins = ref(false)
+
+function startEditOrigins(k: any) {
+  editingPk.value = k.pk
+  originsText.value = (k.allowed_origins || []).join('\n')
+  err.value = ''
+}
+
+async function saveOrigins(pk: string) {
+  err.value = ''
+  savingOrigins.value = true
+  try {
+    await apiPatch(`/api/consult/admin/sdk-keys/${pk}`, { allowedOrigins: originsText.value })
+    editingPk.value = ''
+    await load()
+  } catch (e: any) {
+    // 失败要**留在编辑态**：关掉的话他刚敲的那几行没了，而列表里显示的还是旧名单。
+    err.value = e.message || '保存失败'
+  } finally {
+    savingOrigins.value = false
+  }
 }
 
 function editLimit(k: any, field: 'dailyAiLimit' | 'maxProjects') {
@@ -183,10 +206,27 @@ onMounted(() => { load(); loadUsers() })
           <td><code>{{ k.pk.slice(0, 18) }}…</code> <button class="link" @click="copy(k.pk)">复制</button></td>
           <td>{{ k.username || k.user_id }}</td>
           <td>{{ k.name || '-' }}</td>
-          <td>
-            <span v-if="!k.allowed_origins.length" class="warn">未配置（换不到 token）</span>
-            <span v-else>{{ k.allowed_origins.join(', ') }}</span>
-            <button class="link" @click="editOrigins(k)">编辑</button>
+          <td class="origins-cell">
+            <template v-if="editingPk === k.pk">
+              <textarea
+                v-model="originsText" rows="4" spellcheck="false" class="origins-edit"
+                placeholder="https://partner.com&#10;https://www.partner.com"
+              ></textarea>
+              <p class="origins-hint">一行一个，要带 <code>https://</code>、不带路径。</p>
+              <div>
+                <button class="link" :disabled="savingOrigins" @click="saveOrigins(k.pk)">
+                  {{ savingOrigins ? '保存中…' : '保存' }}
+                </button>
+                <button class="link" @click="editingPk = ''">取消</button>
+              </div>
+            </template>
+            <template v-else>
+              <span v-if="!k.allowed_origins.length" class="warn">未配置（换不到 token）</span>
+              <!-- 一行一条地列，不用逗号拼：拼成一句的话「三个域名」和「一条塞了三个域名
+                   的坏条目」在屏幕上长得一模一样，而后者每个域名都是 403。 -->
+              <ul v-else class="origins"><li v-for="o in k.allowed_origins" :key="o">{{ o }}</li></ul>
+              <button class="link" @click="startEditOrigins(k)">编辑</button>
+            </template>
           </td>
           <td :class="{ warn: k.ai_used_today >= k.daily_ai_limit }">
             {{ k.ai_used_today }} / {{ k.daily_ai_limit }}
@@ -242,6 +282,15 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { border-bottom: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
 th { background: #f8fafc; font-weight: 600; color: #475569; }
 code { background: #f1f5f9; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.origins-cell { min-width: 220px; }
+.origins { margin: 0; padding-left: 16px; }
+.origins li { word-break: break-all; }
+.origins-edit {
+  width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; font-family: inherit; line-height: 1.6; resize: vertical;
+}
+.origins-edit:focus { outline: none; border-color: #2563eb; }
+.origins-hint { margin: 4px 0; font-size: 11px; color: #94a3b8; }
 .link { background: none; border: none; color: #2563eb; cursor: pointer; font-size: 12px; padding: 0 2px; }
 .link.danger { color: #dc2626; }
 .warn { color: #b45309; }

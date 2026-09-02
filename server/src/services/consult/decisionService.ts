@@ -189,7 +189,7 @@ export async function buildDecisions(
   const { stage, entries } = requireOpenStage(project.id, stageKey, { lanes: ['slow'] });
 
   const discussion = discussionBlock(project.id, stageKey);
-  const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+  const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
     () => ({
       messages: buildMessages(project, stage, entries, discussion),
       ...SAMPLING.analytic,
@@ -212,7 +212,7 @@ export async function buildDecisions(
 
   if (!parsed) {
     throw new StageError(
-      jsonFailMessage('待定方向', { raw, finish, reasoningTokens, budget: MAX_TOKENS_DECISIONS }),
+      jsonFailMessage('待定方向', { raw, finish, reasoningTokens, noThinkingRequested, budget: MAX_TOKENS_DECISIONS }),
       502
     );
   }

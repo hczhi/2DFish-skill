@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L12 bio-portrait-card · 版式演示</title>
+<style>
+  :root {
+    --c-brand: #C8202A;         /* 归一后的品牌色（截图原红） */
+    --c-brand-deep: #A81824;
+    --c-brand-soft: rgba(200,32,42,.08);
+    --c-accent: #3B6FA0;        /* 辅助强调（浅蓝灰，与红形成冷热平衡） */
+    --c-bg: #F5F3EF;            /* 外层浅米底 */
+    --c-bg-alt: #EEEAE3;
+    --c-ink-deep: #1F1F23;
+    --c-ink: #2A2A2E;
+    --c-ink-soft: #9A9AA2;
+    --c-card: #FFFFFF;
+    --c-hairline: rgba(0,0,0,.06);
+    --font-serif: "Noto Serif SC","Source Han Serif SC","Songti SC",serif;
+    --font-sans: "Noto Sans SC","PingFang SC","Helvetica Neue",sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: var(--font-sans);
+    background: #1a1a1f;
+    display:flex; justify-content:center; align-items:flex-start;
+    padding:32px 16px; min-height:100vh;
+  }
+
+  /* ===== 16:9 幻灯片容器 ===== */
+  .slide {
+    width:1280px; height:720px;
+    background: var(--c-bg);
+    position:relative; overflow:visible;  /* overflow:visible 允许色带出血 */
+    box-shadow: 0 24px 80px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== 浮卡外层 ===== */
+  .bio-card-wrap {
+    position:absolute;
+    inset:56px;              /* 外层 padding，卡浮在底色上 */
+  }
+
+  /* ===== Card 主体 ===== */
+  .bio-card {
+    position:relative;
+    width:100%; height:100%;
+    background: var(--c-card);
+    border-radius:24px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.08), 0 2px 8px rgba(0,0,0,.04);
+    padding:62px 72px 90px;  /* 底部多留出色带空间 */
+    display:grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap:48px;
+    align-items:center;
+  }
+
+  /* 文本区 */
+  .bio-text { position:relative; z-index:3; }
+
+  /* kicker 灰色小标 */
+  .bio-kicker {
+    font-size:24px; font-weight:800;
+    color: var(--c-ink-soft);
+    letter-spacing:5px;
+    margin-bottom:4px;
+  }
+
+  /* super-word 巨型品牌色主词 */
+  .bio-mega {
+    font-family: var(--font-serif);
+    font-size:116px; font-weight:900;
+    color: var(--c-brand);
+    line-height:.88;
+    letter-spacing:-3px;
+    margin:0 0 20px;
+    text-shadow: 0 4px 24px rgba(200,32,42,.12);
+  }
+
+  /* 中文主标题 */
+  .bio-title-cn {
+    font-family: var(--font-serif);
+    font-size:38px; font-weight:800;
+    color: var(--c-ink-deep);
+    margin-bottom:18px;
+    letter-spacing:1px;
+  }
+
+  /* 灰色英文描述段 */
+  .bio-desc {
+    font-size:15px; line-height:1.8;
+    color: var(--c-ink-soft);
+    max-width:460px;
+    margin-bottom:8px;
+  }
+
+  /* 红色短线收尾 */
+  .bio-accent-line {
+    width:64px; height:5px;
+    background: var(--c-brand);
+    border-radius:3px;
+    margin-top:24px;
+  }
+
+  /* ===== 圆形头像 ===== */
+  .bio-portrait-wrap {
+    position:relative;
+    display:flex; justify-content:center; align-items:center;
+    z-index:3;
+  }
+  .bio-portrait {
+    position:relative;
+    width:320px; height:320px;
+    border-radius:50%;
+    overflow:hidden;
+    box-shadow: 0 16px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.08);
+    border:6px solid var(--c-card);
+  }
+  .bio-portrait img {
+    width:100%; height:100%;
+    object-fit:cover; display:block;
+  }
+  /* 头像底部品牌色光环 */
+  .bio-portrait::after {
+    content:''; position:absolute;
+    inset:-6px;
+    border-radius:50%;
+    border:2px solid var(--c-brand);
+    opacity:.35;
+    z-index:-1;
+  }
+
+  /* 头像角标 */
+  .bio-badge {
+    position:absolute;
+    bottom:-10px; right:-10px;
+    background: var(--c-brand);
+    color:#fff;
+    font-size:13px; font-weight:700;
+    letter-spacing:2px;
+    padding:8px 16px;
+    border-radius:20px;
+    box-shadow: 0 6px 20px rgba(200,32,42,.35);
+    z-index:4;
+  }
+
+  /* ===== 底部出血色带（灵魂手法）===== */
+  .bio-bleed {
+    position:absolute;
+    bottom:-28px;
+    left:-24px; right:-24px;
+    height:64px;
+    background: linear-gradient(90deg, var(--c-brand-deep) 0%, var(--c-brand) 50%, var(--c-brand-deep) 100%);
+    border-radius:0 0 24px 24px;
+    z-index:2;
+    box-shadow: 0 12px 36px rgba(200,32,42,.25);
+  }
+  .bio-bleed .bleed-text {
+    position:absolute;
+    top:50%; left:72px;
+    transform:translateY(-50%);
+    color:rgba(255,255,255,.85);
+    font-size:13px; font-weight:600;
+    letter-spacing:6px;
+    font-family: var(--font-sans);
+  }
+  .bio-bleed .bleed-dots {
+    position:absolute;
+    top:50%; right:72px;
+    transform:translateY(-50%);
+    display:flex; gap:8px;
+  }
+  .bio-bleed .bleed-dots span {
+    width:8px; height:8px; border-radius:50%;
+    background:rgba(255,255,255,.4);
+  }
+  .bio-bleed .bleed-dots span:first-child {
+    background:rgba(255,255,255,.9);
+  }
+
+  /* ===== 右上角装饰小标 ===== */
+  .corner-tag {
+    position:absolute;
+    top:28px; right:32px;
+    font-size:11px; font-weight:700;
+    color: var(--c-ink-soft);
+    letter-spacing:3px;
+    z-index:5;
+    display:flex; align-items:center; gap:10px;
+  }
+  .corner-tag::before {
+    content:''; width:24px; height:2px;
+    background: var(--c-brand);
+  }
+
+  /* ===== 左下角页码 ===== */
+  .page-num {
+    position:absolute;
+    bottom:-28px; left:-24px;
+    width:64px; height:64px;
+    background: var(--c-ink-deep);
+    border-radius:0 0 0 24px;
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--font-serif);
+    font-size:22px; font-weight:700;
+    color:rgba(255,255,255,.9);
+    z-index:5;
+  }
+</style>
+</head>
+<body>
+
+<div class="slide">
+  <div class="bio-card-wrap">
+    <div class="bio-card">
+
+      <!-- 右上角装饰标 -->
+      <div class="corner-tag">EXPERT PROFILE</div>
+
+      <!-- 文本区 -->
+      <div class="bio-text">
+        <div class="bio-kicker">PERSONAL PROFILE</div>
+        <div class="bio-mega">洪成智</div>
+        <div class="bio-title-cn">想象数科 · 首席AI转型顾问</div>
+        <p class="bio-desc">
+          十年企业数字化实践经验，专注品牌占位系统与AI转型路径设计。
+          创立「四看·四问·四大成」品牌咨询方法论，以 WorkBuddy 为底层平台，
+          帮助企业在基础设施、流程重构、价值创造三阶段实现 AI 原生进化。
+        </p>
+        <div class="bio-accent-line"></div>
+      </div>
+
+      <!-- 头像区 -->
+      <div class="bio-portrait-wrap">
+        <div class="bio-portrait">
+          <img src="https://picsum.photos/seed/expert-portrait-hcz/640/640" alt="头像占位">
+        </div>
+        <div class="bio-badge">主讲人</div>
+      </div>
+
+      <!-- 底部出血色带 -->
+      <div class="bio-bleed">
+        <span class="bleed-text">BRAND × AI × TRANSFORMATION</span>
+        <div class="bleed-dots">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <!-- 左下角页码 -->
+      <div class="page-num">03</div>
+
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

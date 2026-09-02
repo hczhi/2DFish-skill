@@ -55,6 +55,11 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   // 走 protected 的话 authMiddleware 会先回一句 401 «Invalid or expired token»，
   // 下游只会以为自己那把 key 废了，而真正的校验（relayService）压根没跑到。
   { path: /^\/api\/v1\//, level: 'public' },
+  // 版式 demo（/ppt 案例库里的 iframe）：`<iframe src>` 带不了 Authorization 头，
+  // 判成 protected 的话每张卡片里显示的是一句 `{"error":"Authentication required"}`，
+  // 而 /api/ppt/layouts 那次（带 token）是 200 —— 读起来像 demo 没做出来。
+  // 它只回仓库里那份案例 html，没有任何用户数据、不花 AI 额度。
+  { path: '/api/ppt/demo-deck.html', method: 'GET', level: 'public' },
 
   // OPTIONAL — 匿名可访问。匿名主体由 auth/requester.ts 按 IP+UA 指纹派生独立 id
   // 并单独限额（不再借用 admin 身份和额度）。

@@ -169,6 +169,23 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
+    // HTML 展示稿。/ppt 现在就是版式案例库（后面加「新建演示稿」再拆首页）
+    {
+      path: '/ppt',
+      redirect: '/ppt/layouts',
+    },
+    {
+      path: '/ppt/layouts',
+      name: 'ppt-layouts',
+      component: () => import('../views/ppt/PptLayouts.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/ppt/plan',
+      name: 'ppt-plan',
+      component: () => import('../views/ppt/PptPlan.vue'),
+      meta: { requiresAuth: true, requiresAI: true },
+    },
     // xhs 是登录后写作台工具，无对外英文站点；/en/xhs* 统一重定向到中文路径
     {
       path: '/en/xhs/:pathMatch(.*)*',

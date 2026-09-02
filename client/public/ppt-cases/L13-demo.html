@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>L13 · 全幅图叠字·居中垂直堆叠 · Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #1a1a1a;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    min-height: 100vh; padding: 40px; gap: 24px;
+  }
+  .stage {
+    width: 1280px; height: 720px;
+    position: relative; overflow: hidden;
+    border-radius: 6px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5);
+  }
+  /* 全幅背景 + 中心径向亮边缘暗渐变（结构核心手法） */
+  .bg { position: absolute; inset: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .bg::after {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(ellipse 80% 70% at center,
+      rgba(0,0,0,0) 0%, rgba(0,0,0,.18) 45%, rgba(0,0,0,.68) 100%);
+  }
+  /* 顶部右上胶囊小标签（"出戏"元信息） */
+  .pill {
+    position: absolute; top: 48px; right: 48px;
+    padding: 8px 20px;
+    background: rgba(255,255,255,.13);
+    color: #fff;
+    border-radius: 999px;
+    font-size: 14px; letter-spacing: 1px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.2);
+    z-index: 3;
+  }
+  /* 文字垂直居中堆叠（中文场景罕见，强仪式感） */
+  .stack {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; gap: 20px;
+    padding: 0 12%;
+    z-index: 2;
+  }
+  .year {
+    font-size: 96px; font-weight: 200;
+    color: #fff; opacity: .8;
+    line-height: 1; letter-spacing: -1px;
+  }
+  .mega-title {
+    font-size: 76px; font-weight: 800;
+    color: #fff; line-height: 1.15;
+    max-width: 88%;
+    letter-spacing: -1px;
+  }
+  .mega-title em {
+    color: #E8A735; /* 暖金色强调（V4 变体：引号区改色） */
+    font-style: normal;
+  }
+  .sub-cn {
+    font-size: 21px; color: #fff; opacity: .75;
+    max-width: 72%; line-height: 1.6;
+    font-weight: 400;
+  }
+  .bilingual {
+    margin-top: 32px;
+    color: #fff;
+  }
+  .bilingual .zh {
+    font-size: 16px; opacity: .82;
+    letter-spacing: 1px;
+  }
+  .bilingual .en {
+    font-size: 14px; opacity: .6; margin-top: 6px;
+    font-style: italic;
+    letter-spacing: .5px;
+  }
+  /* === 设计加法（截图原本没有） === */
+  .corner-tag {
+    position: absolute; top: 48px; left: 48px;
+    color: rgba(255,255,255,.5);
+    font-size: 11px; letter-spacing: 4px;
+    text-transform: uppercase;
+    z-index: 3;
+  }
+  .corner-tag::before {
+    content: ''; display: inline-block;
+    width: 24px; height: 1px;
+    background: rgba(255,255,255,.5);
+    margin-right: 10px; vertical-align: middle;
+  }
+  .footer-num {
+    position: absolute; bottom: 36px; left: 48px;
+    color: rgba(255,255,255,.55);
+    font-size: 12px; letter-spacing: 2px;
+    z-index: 3;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .footer-num .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #E8A735;
+  }
+  /* === meta 信息 === */
+  .meta {
+    color: rgba(255,255,255,.45);
+    font-size: 12px; letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="bg">
+    <img src="https://picsum.photos/seed/l13-mountain-dawn/1280/720" alt="">
+  </div>
+
+  <!-- 设计加法：左上角版式标签 -->
+  <div class="corner-tag">L13 · Fullbleed Stack Center</div>
+
+  <!-- 顶部胶囊小标签 -->
+  <div class="pill">想象数科 · 年度战略发布</div>
+
+  <!-- 文字垂直居中堆叠 -->
+  <div class="stack">
+    <div class="year">2026</div>
+    <div class="mega-title">「<em>智能共生</em>」品牌升级计划</div>
+    <div class="sub-cn">响应 AI 行业进入价值落地阶段，以「智能共生」方法论推动品牌战略升级</div>
+    <div class="bilingual">
+      <div class="zh">让每一次 AI 落地，都成为品牌资产的一部分</div>
+      <div class="en">Let every AI deployment become part of the brand asset.</div>
+    </div>
+  </div>
+
+  <!-- 设计加法：底部章节序号 -->
+  <div class="footer-num">
+    <span class="dot"></span>
+    CHAPTER 01 / 06
+  </div>
+</div>
+
+<div class="meta">L13 demo · 暖金色系（与 L11 蓝 / L12 红 区分，展示「颜色不固定」原则）</div>
+</body>
+</html>

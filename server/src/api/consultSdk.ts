@@ -7,6 +7,7 @@ import {
   requestOrigin,
   originAllowed,
   normalizeOriginsInput,
+  invalidOrigins,
   safeParseArray,
   checkExchangeRateLimit,
   applySdkCors,
@@ -42,6 +43,16 @@ const TOKEN_TTL_SECONDS = 15 * 60;
 
 const MAX_EXTERNAL_UID_CHARS = 64;
 const EXTERNAL_UID_RE = /^[A-Za-z0-9_.:@-]+$/;
+
+/** 存得进去但永远匹配不上的白名单条目要**拒**，不能存。存下来的话后台那一行显示得和
+ *  配对了的一模一样，而接入方那边是稳定 403 —— 他只会反复核对自己那个没写错的域名。
+ *  话术里带上那几条原文：不带的话「哪一条不对」得靠猜（最常见的是漏了 https://）。 */
+function originFormatError(bad: string[]): string {
+  return (
+    `这几条不是合法的域名，存进去只会稳定 403（要 https://example.com 这种形式：带 http/https、不带路径）：${bad.join('、')}。` +
+    '一行一个，或者用逗号/空格分隔。'
+  );
+}
 
 /** 新 key 的缺省上限（086）。和 `ai_app_quota` 的「没配就不限」相反 —— 理由见那份迁移。 */
 export const DEFAULT_DAILY_AI_LIMIT = 50;
@@ -200,6 +211,10 @@ export function registerConsultSdkAdminRoutes(router: Router): void {
         error: '至少配一个 allowedOrigins（第三方页面的域名，如 https://example.com）—— 空白名单的 key 换不到 token，而后台看起来是建好的',
       });
     }
+    const bad = invalidOrigins(origins);
+    if (bad.length) {
+      return res.status(400).json({ error: originFormatError(bad) });
+    }
 
     const aiLimit = limitOr(dailyAiLimit, DEFAULT_DAILY_AI_LIMIT);
     const projectCap = limitOr(maxProjects, DEFAULT_MAX_PROJECTS);
@@ -245,6 +260,10 @@ export function registerConsultSdkAdminRoutes(router: Router): void {
       const origins = normalizeOriginsInput(allowedOrigins);
       if (!origins.length) {
         return res.status(400).json({ error: '白名单不能清空 —— 空清单的 key 换不到 token，要停用就用 enabled=false' });
+      }
+      const bad = invalidOrigins(origins);
+      if (bad.length) {
+        return res.status(400).json({ error: originFormatError(bad) });
       }
       db.prepare('UPDATE consult_sdk_keys SET allowed_origins = ? WHERE pk = ?')
         .run(JSON.stringify(origins), req.params.pk);

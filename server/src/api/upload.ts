@@ -23,6 +23,16 @@ const upload = multer({
   },
 });
 
+/**
+ * 本机静态图片的根目录。**写图的地方和 `/uploads` 静态挂载必须读同一个函数**
+ * （app.ts 那句 express.static 也用它）：各写一份 `path.resolve(...)` 的话，
+ * 生图成功、URL 也返回了，而浏览器一访问就 404 —— 后台显示的是「已生成」。
+ * 每次调用重新读 env，测试里能改 cwd/覆盖路径而不用重启进程。
+ */
+export function uploadsRoot(): string {
+  return process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'data/uploads');
+}
+
 export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: string; Region: string } | null {
   const db = getDatabase();
   const rows = db.prepare("SELECT key, value FROM system_config WHERE key IN ('cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region')").all() as Array<{ key: string; value: string }>;
@@ -47,6 +57,41 @@ export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: s
     Bucket: config.cos_bucket,
     Region: config.cos_region,
   };
+}
+
+/**
+ * COS 对象的公网地址。**只有这一份**（生图转存和后台图片上传共用）。
+ *
+ * 必须是 `https://`：这个 CDN 域名只服务 HTTPS，`http://` 连不上（连接直接超时，
+ * 不是 4xx），而浏览器那边表现只是一张裂图 —— 上传/生图接口全都返回成功。
+ * 后台页面本身走 https 时更隐蔽：`http://` 的图会被当混合内容**静默**拦掉，
+ * 控制台之外什么都看不到。
+ * 域名可用 COS_PUBLIC_BASE 覆盖（换 CDN / 直连 bucket 域名时不用改代码）。
+ */
+export function cosPublicUrl(key: string): string {
+  const base = (process.env.COS_PUBLIC_BASE || 'https://file.qiaonan.vip').replace(/\/+$/, '');
+  return `${base}/${key}`;
+}
+
+/**
+ * `getCosConfig()` 返回 null 时，说清是哪一种 null。
+ *
+ * 「没配」和「配了但解不开」（`CONFIG_ENCRYPTION_KEY` 换了或丢了）解法完全相反：
+ * 前者去填四个框，后者去找回那把 key —— 而两种都只表现成「退回本机磁盘」。
+ * 合成一句「未配置 COS」会让人把已经存在的密文覆盖掉，那才是真的丢了。
+ */
+export function cosUnavailableReason(): string {
+  const db = getDatabase();
+  const rows = db
+    .prepare("SELECT key, value FROM system_config WHERE key IN ('cos_secret_id','cos_secret_key','cos_bucket','cos_region')")
+    .all() as Array<{ key: string; value: string }>;
+  const filled = rows.filter((r) => (r.value || '').trim()).map((r) => r.key);
+  if (!filled.length) return '未配置腾讯云 COS（后台 > 系统配置 > 腾讯云 COS 里填四项）';
+
+  const missing = ['cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region'].filter((k) => !filled.includes(k));
+  if (missing.length) return `腾讯云 COS 配置不全，缺：${missing.join(' / ')}`;
+
+  return 'COS 四项都配了，但 SecretId/SecretKey 解密失败 —— 通常是 CONFIG_ENCRYPTION_KEY 变了或没设。别急着重填（重填会覆盖掉库里那份密文），先把原来那把 key 找回来。';
 }
 
 uploadRouter.post('/image', (req: Request, res: Response) => {
@@ -101,7 +146,7 @@ uploadRouter.post('/image', (req: Request, res: Response) => {
         });
       });
 
-      const url = `http://file.qiaonan.vip/${key}`;
+      const url = cosPublicUrl(key);
       res.json({ url, key });
     } catch (e: any) {
       console.error('[upload] COS upload failed:', e.message);

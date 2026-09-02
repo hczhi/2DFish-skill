@@ -1,0 +1,618 @@
+<!--
+  版式 demo 的 22 个 <section> 片段。每个片段前面必须有一行 `<!-- @demo L<编号> -->`，
+  demoDeck.ts 靠它切分（顺序 = 页码顺序）。
+
+  三条约束，改这个文件时逐条对：
+  ① **只用 template.html 里已有的 class**（demoDeck.test.ts 逐个 token 核对）。写错一个类名
+     不报错，只是那一块回到默认流式布局 —— 而这份 demo 的全部作用就是「照我们的骨架跑出来
+     长这样」，塌了的那一版看起来就是版式本身不行。要临时调整用 inline style。
+  ② CSS 一律不写在这里，来自 template.html（demoDeck 在请求时把两边拼起来）。各存一份的话
+     改了 template 的版式 CSS，demo 照旧好看，而生成出来的页面已经变了。
+  ③ 图统一用 /ppt-cases/ph-*.svg 占位。案例只关注排版结构（见 layout-library.md 的核心原则），
+     配上真照片反而会让人按那张照片的调性去期待产出。
+  颜色一律走 var(--c-*)：demo 和真 deck 共用一套变量，换配色时这里跟着变。
+-->
+
+<!-- @demo L1 -->
+<section class="slide" data-demo="L1">
+  <div class="p5-visual" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="page-badge"><b>01</b> / 22</div>
+  <div class="corners"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+  <div class="slide-inner">
+    <div class="p5-content">
+      <div class="kicker">KEY POINT</div>
+      <h1 class="page-title">能力的演进不是叠功能，<br>而是换底座</h1>
+      <div class="title-bar"></div>
+      <div class="quote-card">过去十年做的是<b>把流程搬上线</b>，接下来十年做的是<b>把判断交出去</b>。</div>
+      <p style="font-size:21px;line-height:1.9;max-width:640px">同一套业务动作，决策权从人转到系统之后，组织要重排的是审批链和责任边界，而不是再加一个模块。</p>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L2 -->
+<section class="slide has-bg tinted" data-demo="L2">
+  <div class="case-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+  <div class="page-badge"><b>02</b> / 22</div>
+  <div class="slide-inner" style="align-items:center;justify-content:center;text-align:center">
+    <div class="kicker">SECTION 02</div>
+    <h1 class="page-title" style="font-size:88px;margin-top:14px">从试点走向规模化</h1>
+    <div class="title-bar" style="margin:26px auto 22px"></div>
+    <p style="font-size:24px;color:var(--c-ink-soft);letter-spacing:2px">三个试点跑通之后，真正的难题才开始</p>
+  </div>
+</section>
+
+<!-- @demo L3 -->
+<section class="slide" data-demo="L3">
+  <div class="hero-case" style="background-image:url(/ppt-cases/ph-16x9.svg)"></div>
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="page-badge"><b>03</b> / 22</div>
+  <div class="slide-inner" style="width:54%;justify-content:center;gap:26px">
+    <div class="kicker">CASE 01 · 精密制造</div>
+    <div class="hc-name">恒益<b>精密</b></div>
+    <div class="point-bar"><span class="ic">1</span>排产从 3 人 2 天，压到 1 人 40 分钟</div>
+    <div class="point-bar"><span class="ic">2</span>换型损耗下降 18%，靠的是历史工单而非新设备</div>
+    <div class="point-bar"><span class="ic">3</span>第一版只上了一条线，第 7 周才铺开</div>
+  </div>
+</section>
+
+<!-- @demo L4 -->
+<section class="slide" data-demo="L4">
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="page-badge"><b>04</b> / 22</div>
+  <div class="wm">04</div>
+  <div class="slide-inner">
+    <h1 class="page-title">两种落地路径，代价不一样</h1>
+    <div class="title-bar"></div>
+    <div class="two-col" style="flex:1;align-content:center">
+      <div class="card orange">
+        <h3 style="font-size:30px;color:var(--c-ink-deep);margin-bottom:18px">自上而下：先定标准</h3>
+        <p style="font-size:19px;line-height:1.9">口径统一、能横向比；但第一版要等 3–4 个月，业务部门在这期间看不到东西，配合度会掉。</p>
+      </div>
+      <div class="card blue">
+        <h3 style="font-size:30px;color:var(--c-ink-deep);margin-bottom:18px">自下而上：先跑一个点</h3>
+        <p style="font-size:19px;line-height:1.9">两周就有人在用；代价是三个月后有四套口径，合并时要重做一遍数据层。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L5 -->
+<section class="slide cool" data-demo="L5">
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+  <div class="page-badge"><b>05</b> / 22</div>
+  <div class="wm">05</div>
+  <div class="slide-inner">
+    <h1 class="page-title">上线 9 个月的四个数</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:46px 64px;align-content:center">
+      <div class="data-card"><div class="v">62%</div><p style="font-size:20px;margin-top:12px">重复性工单由系统直接闭环</p></div>
+      <div class="data-card"><div class="v">2.4h</div><p style="font-size:20px;margin-top:12px">平均响应时长（原 11.6 小时）</p></div>
+      <div class="data-card"><div class="v">18</div><p style="font-size:20px;margin-top:12px">进入常态运行的业务场景</p></div>
+      <div class="data-card"><div class="v">0.7‰</div><p style="font-size:20px;margin-top:12px">人工复核后的纠错率</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L6 -->
+<section class="slide" data-demo="L6">
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="page-badge"><b>06</b> / 22</div>
+  <div class="slide-inner">
+    <h1 class="page-title">四个阶段，各自的坎不同</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:34px">
+      <div style="height:3px;background:linear-gradient(90deg,var(--c-brand),var(--c-accent));border-radius:2px"></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:26px">
+        <div class="prog-item"><span class="yr">2022</span><b style="font-size:22px;color:var(--c-ink-deep)">工具期</b><p style="font-size:17px;line-height:1.75">个人自发使用，没有口径</p></div>
+        <div class="prog-item"><span class="yr">2023</span><b style="font-size:22px;color:var(--c-ink-deep)">试点期</b><p style="font-size:17px;line-height:1.75">三个场景验证，数据要人工搬</p></div>
+        <div class="prog-item"><span class="yr">2024</span><b style="font-size:22px;color:var(--c-ink-deep)">平台期</b><p style="font-size:17px;line-height:1.75">统一接入，开始有运营成本</p></div>
+        <div class="prog-item"><span class="yr">2025</span><b style="font-size:22px;color:var(--c-ink-deep)">常态期</b><p style="font-size:17px;line-height:1.75">进考核，责任边界要重写</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L7 -->
+<section class="slide tinted" data-demo="L7">
+  <div class="slide-header"><div class="kicker">过渡</div></div>
+  <div class="page-badge"><b>07</b> / 22</div>
+  <div class="corners"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+  <div class="slide-inner" style="align-items:center;justify-content:center;text-align:center">
+    <div class="quote-card" style="font-size:58px;line-height:1.5;max-width:1240px;padding:64px 80px 58px">真正卡住规模化的从来不是模型，<br>是<b>没人愿意为它的输出签字</b>。</div>
+    <p style="margin-top:44px;font-size:22px;color:var(--c-ink-soft);letter-spacing:3px">—— 第二部分 · 组织与责任</p>
+  </div>
+</section>
+
+<!-- @demo L8 -->
+<section class="slide" data-demo="L8">
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="page-badge"><b>08</b> / 22</div>
+  <div class="slide-inner">
+    <h1 class="page-title">三家客户的同一块界面</h1>
+    <div class="title-bar"></div>
+    <div class="gallery g3" style="flex:1;align-content:center">
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">恒益精密 · 排产看板</p>
+      </div>
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">南岸物流 · 异常派单</p>
+      </div>
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">明泉零售 · 门店巡检</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L9 -->
+<section class="slide cool" data-demo="L9">
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+  <div class="page-badge"><b>09</b> / 22</div>
+  <div class="slide-inner">
+    <h1 class="page-title">同一张工单，改造前后</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:1fr 96px 1fr;align-items:center;gap:18px">
+      <div>
+        <div class="kicker" style="margin-bottom:14px">改造前 · 11.6 小时</div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;border-radius:12px;border:1px solid var(--c-hairline)">
+        <p style="font-size:18px;margin-top:14px;line-height:1.8">四个系统之间人工转抄，每次转抄都要重新描述一遍现场。</p>
+      </div>
+      <div style="text-align:center;font-size:76px;font-weight:800;color:var(--c-brand)">→</div>
+      <div>
+        <div class="kicker" style="margin-bottom:14px">改造后 · 2.4 小时</div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;border-radius:12px;border:1px solid var(--c-hairline)">
+        <p style="font-size:18px;margin-top:14px;line-height:1.8">现场一次录入，后续三个环节读同一条记录，人只做确认。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L10 -->
+<section class="slide" data-demo="L10">
+  <div class="slide-header"><div class="kicker">第四部分 · 我们能做什么</div></div>
+  <div class="page-badge"><b>10</b> / 22</div>
+  <div class="slide-inner">
+    <h1 class="page-title">四项能力，可单独交付</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:26px;align-content:center">
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">现状盘点</b>
+        <p style="font-size:17px;line-height:1.8;margin-top:10px">两周内出一份可执行的场景清单</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">场景共建</b>
+        <p style="font-size:17px;line-height:1.8">和业务一起写验收标准，不替他们写</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">数据接入</b>
+        <p style="font-size:17px;line-height:1.8">先接三个系统，其余按需要再加</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">运营托管</b>
+        <p style="font-size:17px;line-height:1.8">头三个月我们盯着，之后交回去</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L11 -->
+<section class="slide" data-demo="L11">
+  <div class="tri-narrative">
+    <div class="tri-title">三条轨道同时推进，<span class="em">先后顺序不能换</span></div>
+    <div class="tri-cols">
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>01</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q1–Q2</div>
+          <div class="tri-subtitle">先立口径</div>
+          <ul class="tri-list">
+            <li>三个核心指标定义收口</li>
+            <li>只接已有系统，不新建表</li>
+            <li>验收人写进项目章程</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>02</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q3</div>
+          <div class="tri-subtitle">再铺场景</div>
+          <ul class="tri-list">
+            <li>从排产、派单两条线起</li>
+            <li>每个场景配一名业务负责人</li>
+            <li>两周一次现场复盘</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>03</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q4 起</div>
+          <div class="tri-subtitle">最后进考核</div>
+          <ul class="tri-list">
+            <li>纳入部门月度指标</li>
+            <li>责任边界与免责条款成文</li>
+            <li>预算从项目转运营</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第四部分 · 推进节奏</div></div>
+  <div class="page-badge"><b>11</b> / 22</div>
+</section>
+
+<!-- @demo L12 -->
+<section class="slide has-card tinted" data-demo="L12">
+  <div class="slide-header"><div class="kicker">第二部分 · 团队</div></div>
+  <div class="page-badge"><b>12</b> / 22</div>
+  <div class="bio-wrap">
+    <div class="bio-card">
+      <div class="bio-corner-tag">PROJECT LEAD</div>
+      <div class="bio-text">
+        <div class="bio-kicker">项目负责人</div>
+        <div class="bio-mega">陈叙</div>
+        <div class="bio-title-cn">解决方案总监 · 制造业方向</div>
+        <p class="bio-desc">带过 11 个制造业落地项目，其中 7 个进了客户的年度考核。习惯先砍需求再排期：第一版只做一条产线，第七周才铺开。</p>
+        <p class="bio-desc">在这个项目里负责口径评审和验收标准，不负责开发排期。</p>
+        <div class="bio-accent-line"></div>
+      </div>
+      <!-- badge 必须是 .bio-portrait 的**兄弟**：portrait 自己 overflow:hidden（圆形裁切），
+           放进去会被裁掉，而那一格看起来只是「这版没有徽章」。 -->
+      <div class="bio-portrait-wrap">
+        <div class="bio-portrait"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="bio-badge">12 YRS</div>
+      </div>
+      <div class="bio-bleed">
+        <span class="bleed-text">CORE TEAM</span>
+        <span class="bleed-dots"><span></span><span></span><span></span><span></span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L13 -->
+<section class="slide" data-demo="L13">
+  <div class="l13-wrap">
+    <div class="l13-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l13-pill">2025 年度回顾</div>
+    <div class="l13-stack">
+      <div class="l13-year">2025</div>
+      <div class="l13-mega">把「<em>能用</em>」做成「每天都在用」</div>
+      <div class="l13-sub">18 个场景进入常态运行，其中 11 个已经没有人再看它的日志</div>
+      <div class="l13-bilingual">
+        <div class="zh">云启数科 · 年度成效发布</div>
+        <div class="en">Annual Review · From Pilot to Practice</div>
+      </div>
+    </div>
+  </div>
+  <div class="page-badge"><b>13</b> / 22</div>
+</section>
+
+<!-- @demo L14 -->
+<section class="slide" data-demo="L14">
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="page-badge"><b>14</b> / 22</div>
+  <div class="slide-inner">
+    <div class="l14-wrap">
+      <div class="l14-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l14-hero-text">
+          <div class="l14-kicker">CASE 02 · 冷链物流</div>
+          <div class="l14-mega-en">Cold Chain, Warm Numbers</div>
+          <div class="l14-mega-cn">南岸物流的异常派单</div>
+        </div>
+      </div>
+      <div class="l14-info">
+        <div class="l14-info-col">
+          <h3>他们原来怎么干</h3>
+          <p class="l14-cn-p">温控报警先进值班群，再由值班人电话找车队，找到人之后手工补一张工单。夜班平均要 40 分钟才有人接手。</p>
+          <p class="l14-en-p">Alerts landed in a chat group; the night shift averaged 40 minutes to first response.</p>
+        </div>
+        <div class="l14-info-col">
+          <h3>现在怎么干</h3>
+          <p class="l14-cn-p">报警直接生成派单并指到人，值班人只做一次确认。夜班首响 6 分钟，但代价是前两周误派了 30 多单。</p>
+          <p class="l14-en-p">Six minutes to first response — after two noisy weeks of mis-routing.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L15 -->
+<section class="slide" data-demo="L15">
+  <div class="slide-header"><div class="kicker">第四部分 · 我们的主张</div></div>
+  <div class="page-badge"><b>15</b> / 22</div>
+  <div class="slide-inner">
+    <div class="l15-wrap">
+      <div class="l15-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l15-hero-tl">
+          <div class="logo">云启数科</div>
+          先把边界画清楚，<br>再谈效率
+        </div>
+        <div class="l15-hero-tr">三条原则来自 11 个落地项目的复盘，不是行业白皮书的摘录。</div>
+      </div>
+      <div class="l15-text">
+        <div class="l15-col">
+          <h3>不替业务定义成功</h3>
+          <p class="l15-cn">验收标准由业务部门自己写，我们只负责让它可度量。我们写的那份，最后总会变成「技术上达标、业务上没人用」。</p>
+          <p class="l15-en">The acceptance bar is written by the business, not by us.</p>
+        </div>
+        <div class="l15-col">
+          <h3>先砍范围再排期</h3>
+          <p class="l15-cn">第一版只做一条产线、一个班次。范围小到能在两周内被真实使用，比覆盖全厂的三个月方案更容易活下来。</p>
+          <p class="l15-en">One line, one shift, two weeks — scope first, schedule second.</p>
+        </div>
+        <div class="l15-col">
+          <h3>把责任写进文件</h3>
+          <p class="l15-cn">系统给的结论谁签字、错了谁承担，在上线之前成文。没有这一页，规模化会停在「大家都说好用」的阶段。</p>
+          <p class="l15-en">Who signs off — and who owns the error — before go-live.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L16 -->
+<section class="slide" data-demo="L16">
+  <div class="slide-header"><div class="kicker">第二部分 · 服务网络</div></div>
+  <div class="page-badge"><b>16</b> / 22</div>
+  <div class="slide-inner">
+  <div class="l16-wrap">
+    <div class="l16-title">
+      <h2>四个交付中心，就近响应</h2>
+      <p>现场问题 4 小时内到人，不靠远程截图来回问</p>
+    </div>
+    <div class="l16-grid">
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">深圳</div>
+        <div class="l16-cell-title-en">SHENZHEN</div>
+        <div class="l16-cell-desc">制造业交付主力，14 人常驻<div class="en">Manufacturing delivery hub</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">成都</div>
+        <div class="l16-cell-title-en">CHENGDU</div>
+        <div class="l16-cell-desc">西南区现场支持，9 人<div class="en">On-site support, southwest</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">上海</div>
+        <div class="l16-cell-title-en">SHANGHAI</div>
+        <div class="l16-cell-desc">零售与快消，11 人<div class="en">Retail &amp; FMCG</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">天津</div>
+        <div class="l16-cell-title-en">TIANJIN</div>
+        <div class="l16-cell-desc">港口与冷链，6 人<div class="en">Port &amp; cold chain</div></div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L17 -->
+<section class="slide" data-demo="L17">
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="page-badge"><b>17</b> / 22</div>
+  <div class="slide-inner">
+    <div class="l17-wrap">
+      <div class="l17-left">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l17-logo">云启数科</div>
+        <div class="l17-pill">2025</div>
+        <div class="l17-cn">在路上</div>
+        <div class="l17-en">On the way</div>
+      </div>
+      <div class="l17-right">
+        <div class="l17-head">CONTENTS<span class="accent">目录</span></div>
+        <div class="l17-list">
+          <div class="l17-item">
+            <div class="l17-num">01</div>
+            <div>
+              <div class="title">趋势判断</div>
+              <div class="desc">这一轮变化落在决策权上，不在功能清单上</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">02</div>
+            <div>
+              <div class="title">标杆案例</div>
+              <div class="desc">三家客户，三种起步方式，各自的代价</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">03</div>
+            <div>
+              <div class="title">成效盘点</div>
+              <div class="desc">九个月的四个数，以及没做成的那两件</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">04</div>
+            <div>
+              <div class="title">推进节奏</div>
+              <div class="desc">三条轨道同时推，但先后顺序不能换</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">05</div>
+            <div>
+              <div class="title">下一步</div>
+              <div class="desc">两周内需要你们决定的三件事</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L18 -->
+<section class="slide" data-demo="L18">
+  <div class="l18-wrap">
+    <div class="l18-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l18-headline">
+      <div class="l18-en">Nobody Signs<br>The Output</div>
+      <div class="l18-cn">没人愿意<br>为它签字
+        <svg viewBox="0 0 600 14" preserveAspectRatio="none"><path d="M0 9 Q 50 0 100 8 T 200 8 T 300 8 T 400 8 T 500 8 T 600 8" fill="none" stroke="var(--c-accent)" stroke-width="4"/></svg>
+      </div>
+    </div>
+    <div class="l18-cards">
+      <div class="l18-card">
+        <div class="quote">“</div>
+        <div class="title">责任没人接</div>
+        <div class="desc">系统给的结论，出错时算谁的。这一页不写清楚，业务部门永远只把它当参考。</div>
+      </div>
+      <div class="l18-card">
+        <div class="num">62%</div>
+        <div class="title">复核变成二次录入</div>
+        <div class="desc">怕担责就全量复核，于是省下来的时间又还回去了，账面上看不出问题。</div>
+      </div>
+      <div class="l18-card">
+        <div class="num">3</div>
+        <div class="title">口径各自一套</div>
+        <div class="desc">三个部门各跑一个试点，三个月后合并时要把数据层重做一遍。</div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第三部分 · 三个真实障碍</div></div>
+  <div class="page-badge"><b>18</b> / 22</div>
+</section>
+
+<!-- @demo L19 -->
+<section class="slide" data-demo="L19">
+  <div class="l19-wrap">
+    <div class="l19-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l19-logo">云启数科<small>PRODUCT SPEC</small></div>
+    <div class="l19-title">
+      <h1>现场巡检终端 P3</h1>
+      <div class="sub">离线可用 | 手套可操作 | -20℃ 至 55℃ | 整机 2 年保</div>
+    </div>
+    <div class="l19-product"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l19-desc">为冷库和产线现场做的一版：断网时本地留 500 条记录，回到有网的位置自动补传；戴手套按得动，摘手套的那几秒是漏检最多的地方。</div>
+    <div class="l19-specs">
+      <div class="l19-spec"><div class="v">11.5h</div><div class="k">连续作业续航（-18℃ 实测）</div></div>
+      <div class="l19-spec"><div class="v">500 条</div><div class="k">断网离线留存上限</div></div>
+      <div class="l19-spec"><div class="v">IP66</div><div class="k">防尘防水等级</div></div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第四部分 · 交付物</div></div>
+  <div class="page-badge"><b>19</b> / 22</div>
+</section>
+
+<!-- @demo L20 -->
+<section class="slide" data-demo="L20">
+  <div class="slide-header"><div class="kicker">第一部分 · 我们是谁</div></div>
+  <div class="page-badge"><b>20</b> / 22</div>
+  <div class="slide-inner">
+    <div class="l20-wrap">
+      <div class="l20-textband">
+        <div class="l20-en">Built On<br>Site</div>
+        <div class="l20-cn">从现场长出来的方案</div>
+        <div class="l20-stat">
+          <span class="num">11</span>
+          <span class="lab">个已交付项目<small>其中 7 个进了客户年度考核</small></span>
+        </div>
+        <p class="l20-body">我们不做通用平台。每一版都是在客户的产线、库房、门店里改出来的，所以能说清哪些地方它做不到。</p>
+        <div class="l20-icons">
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-8h6v8"/></svg></div>
+            <div class="lab">制造</div>
+          </div>
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 7h13v10H1z"/><path d="M14 10h5l4 4v3h-9z"/><circle cx="5" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg></div>
+            <div class="lab">物流</div>
+          </div>
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9h18l-2 12H5z"/><path d="M8 9V5a4 4 0 018 0v4"/></svg></div>
+            <div class="lab">零售</div>
+          </div>
+        </div>
+      </div>
+      <div class="l20-hero"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L21 -->
+<section class="slide" data-demo="L21">
+  <div class="l21-wrap">
+    <div class="l21-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l21-left">
+      <div class="l21-en">One Pipe,<br>Three Numbers</div>
+      <div class="l21-cn">一条链路，三个指标</div>
+      <div class="l21-rule"></div>
+      <p class="l21-body">从现场录入到结算，中间原本有四次转抄。收拢成一条链路之后，能被度量的只剩三个数 —— 也正因为只剩三个，业务部门愿意把它写进考核。</p>
+    </div>
+    <div class="l21-right">
+      <div class="l21-stat">
+        <div class="num">2.4h</div>
+        <div class="lab">平均首响</div>
+        <div class="lab-en">First response</div>
+      </div>
+      <div class="l21-stat">
+        <div class="num">62%</div>
+        <div class="lab">系统直接闭环</div>
+        <div class="lab-en">Auto-closed</div>
+      </div>
+      <div class="l21-stat">
+        <div class="num">18</div>
+        <div class="lab">常态运行场景</div>
+        <div class="lab-en">Live scenarios</div>
+      </div>
+    </div>
+    <div class="l21-nav"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+  </div>
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+  <div class="page-badge"><b>21</b> / 22</div>
+</section>
+
+<!-- @demo L22 -->
+<section class="slide" data-demo="L22">
+  <div class="l22-wrap">
+    <div class="l22-upper">
+      <div class="l22-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l22-hero-txt">
+          <div class="cn">先看得见，再谈自动<span class="en">SEE IT FIRST</span></div>
+        </div>
+      </div>
+      <div class="l22-info">
+        <h3>Brand summary</h3>
+        <div class="row"><strong>成立</strong>　2016 年 · 深圳</div>
+        <div class="row"><strong>方向</strong>　制造 / 物流 / 零售的现场数字化</div>
+        <div class="row"><strong>规模</strong>　40 人，其中 31 人常驻客户现场</div>
+        <div class="row"><strong>不做</strong>　通用平台、纯咨询交付、按人头外包</div>
+      </div>
+    </div>
+    <div class="l22-lower">
+      <div class="l22-lower-col">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
+        <h3>我们怎么起步</h3>
+        <p>第一次上门不谈方案，只跟着班组走一遍完整流程。四次转抄、两个 Excel、一个微信群 —— 这些在需求文档里从来不会出现。</p>
+      </div>
+      <div class="l22-lower-col">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20h-20"/></svg>
+        <h3>品牌定位</h3>
+        <p>不是最快出方案的那家，是敢在验收会上说「这三件我们做不到」的那家。11 个项目里有 7 个进了客户的年度考核，靠的是这一句。</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第一部分 · 我们是谁</div></div>
+  <div class="page-badge"><b>22</b> / 22</div>
+</section>

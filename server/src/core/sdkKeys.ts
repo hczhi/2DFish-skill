@@ -49,17 +49,36 @@ export function originAllowed(allowedOriginsJson: string, origin: string | null)
   return safeParseArray(allowedOriginsJson).map(normalizeOrigin).includes(origin);
 }
 
-/** 接受数组或换行/逗号分隔字符串，归一化为去重、去尾斜杠、小写的 origin 数组。 */
+/** 接受数组或换行/逗号/分号/空白分隔字符串，归一化为去重、去尾斜杠、小写的 origin 数组。
+ *
+ *  **空白也算分隔符**：origin 里不可能有空格，而管理员手拼时用空格分隔很自然。只按
+ *  换行和逗号切的话，「三个域名」会变成一条谁都匹配不上的长字符串 —— 接口回 success、
+ *  后台那一行看着是配了内容的，而这把 key 的每个域名都换不到 token。 */
 export function normalizeOriginsInput(input: unknown): string[] {
   let arr: string[];
   if (Array.isArray(input)) {
     arr = input.map((x) => String(x));
   } else if (typeof input === 'string') {
-    arr = input.split(/[\n,]/);
+    arr = input.split(/[\s,;]+/);
   } else {
     arr = [];
   }
   return Array.from(new Set(arr.map(normalizeOrigin).filter(Boolean)));
+}
+
+/** 挑出**永远匹配不上**的条目。Origin 头一定是 `scheme://host[:port]`，所以少了 scheme
+ *  （`partner.com`）、带了路径（`https://partner.com/app`）的那几条存进去只会稳定 403，
+ *  而后台那一行和配对了的一模一样 —— 接入方拿到的是「域名明明配了却不生效」。 */
+export function invalidOrigins(origins: string[]): string[] {
+  return origins.filter((o) => {
+    try {
+      const u = new URL(o);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+      return !u.host || u.pathname !== '/' || !!u.search || !!u.hash;
+    } catch {
+      return true;
+    }
+  });
 }
 
 // ---- 每分钟换取 token 的限流（内存计数，按 pk）----

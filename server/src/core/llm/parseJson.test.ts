@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFirstJson, parseFirstJsonArray, parseFirstJsonAny } from './parseJson.js';
+import { parseFirstJson, parseFirstJsonArray, parseFirstJsonAny, jsonFailMessage } from './parseJson.js';
 
 describe('parseFirstJson', () => {
   it('解析裸 JSON 对象', () => {
@@ -61,6 +61,26 @@ describe('parseFirstJsonArray', () => {
 
   it('数组元素字符串里含 ] 不提前截断', () => {
     expect(parseFirstJsonArray('["a]b","c"]')).toEqual(['a]b', 'c']);
+  });
+});
+
+// 这两条守的是「指错方向」：思维链吃光额度这一种失败，在后台开关已经勾上「不使用深度
+// 思考」时和没勾时解法相反（换模型 / 去勾那个开关），而两种情况的 usage 长得一模一样。
+// 合成同一句话的话，用户会反复回后台核那个写着「已关闭」的开关，每次重试都真花一次额度。
+describe('jsonFailMessage', () => {
+  const empty = { raw: '', finish: 'length', reasoningTokens: 4000, budget: 4000 };
+
+  it('要求过关思维链而模型照旧在想时，说清是上游没照办、别再去勾那个开关', () => {
+    const msg = jsonFailMessage('这条标讯的 AI 评分', { ...empty, noThinkingRequested: true });
+    expect(msg).toContain('没照办');
+    expect(msg).toContain('再勾一遍');
+    expect(msg).toContain('4000 token');
+  });
+
+  it('没要求关思维链时，指的是「去换一个不带思维链的模型」', () => {
+    const msg = jsonFailMessage('这条标讯的 AI 评分', empty);
+    expect(msg).toContain('换一个不带思维链的模型');
+    expect(msg).not.toContain('没照办');
   });
 });
 

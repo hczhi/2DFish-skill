@@ -140,9 +140,24 @@ export function parseFirstJsonAny<T = any>(text: string): T | null {
  */
 export function jsonFailMessage(
   what: string,
-  info: { raw: string; finish?: string; reasoningTokens?: number; budget: number }
+  info: {
+    raw: string;
+    finish?: string;
+    reasoningTokens?: number;
+    budget: number;
+    /**
+     * 这次调用**要求过**关思维链（`JsonGatewayCtx.noThinking`，或后台那条接入点勾了
+     * `no_thinking`）。原样从 `jsonGateway` 的返回里带过来。
+     *
+     * 它决定的是这句话往哪儿指：要求过而 `reasoningTokens` 仍然大于 0，说明那四个键
+     * 发出去了但上游**既不报错也不照办**（宽松网关的常态），这时候「去把思维链关掉」
+     * 是一条走不通的路 —— 用户已经在后台勾上了，界面上那一行写着「已关闭」，他只会
+     * 反复回去核那个开关，而唯一的解法是换模型。不带这个标记的话两种成因合成同一句话。
+     */
+    noThinkingRequested?: boolean;
+  }
 ): string {
-  const { raw, finish, reasoningTokens, budget } = info;
+  const { raw, finish, reasoningTokens, budget, noThinkingRequested } = info;
   const burnedByThinking = reasoningTokens && reasoningTokens >= budget * 0.9;
   const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
   const why = !raw.trim()
@@ -150,11 +165,17 @@ export function jsonFailMessage(
     : finish === 'length'
       ? `模型返回被截断（finish_reason=length${cot}）`
       : '模型没有按 JSON 格式返回';
-  const how = burnedByThinking
-    // 不写死是哪个档位：调这个函数的地方 default / strong / fast 都有（评分走 default），
-    // 说错档位比不说更糟 —— 用户会去改一个跟这次调用无关的配置，然后发现还是这样。
-    ? `这次 ${budget} token 的额度基本全花在思维链上了，正文没写出来。再点一次通常就好；老是这样就去「专属 AI / 系统配置」换一个不带思维链的模型`
-    : '再试一次或换个模型';
+  // 要求关了却照旧在想 = 那个开关对这条接入点无效。必须单独说，且要明说「别再去勾它」。
+  const ignored = noThinkingRequested && (reasoningTokens ?? 0) > 0;
+  const how = ignored
+    ? `这次已经把「不使用深度思考」发给上游了，但它没照办（照样想了 ${reasoningTokens} token${burnedByThinking ? `，${budget} token 的额度基本全花在这上面，正文没写出来` : ''}）——` +
+      `这个开关对这条接入点/这个模型无效，后台再勾一遍也没有用。` +
+      `唯一管用的是去「专属 AI / 系统配置」把这一档换成一个本身不带思维链的模型（模型名里带 thinking / reasoning / R1 的那些都会这样）`
+    : burnedByThinking
+      // 不写死是哪个档位：调这个函数的地方 default / strong / fast 都有（评分走 default），
+      // 说错档位比不说更糟 —— 用户会去改一个跟这次调用无关的配置，然后发现还是这样。
+      ? `这次 ${budget} token 的额度基本全花在思维链上了，正文没写出来。再点一次通常就好；老是这样就去「专属 AI / 系统配置」换一个不带思维链的模型`
+      : '再试一次或换个模型';
   return `${why}，${what}没生成。${how}（这次的 AI 额度已经扣了）`;
 }
 
@@ -195,6 +216,12 @@ export interface JsonGatewayResult<T> {
   reasoningTokens?: number;
   /** 最后一次尝试的 token 用量（前端「记」面板这类地方要显示）。 */
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  /**
+   * 这次请求真的带上了关思维链的参数（`ctx.noThinking` 和接入点那个开关取或的结果，
+   * 由 aiGateway 回的）。**原样传给 `jsonFailMessage`** —— 它靠这个才分得出
+   * 「没关思维链」和「关了但上游没照办」，后者去后台再勾一遍是没有用的。
+   */
+  noThinkingRequested?: boolean;
 }
 
 /**
@@ -219,9 +246,11 @@ export async function jsonGateway<T = any>(
   let lastFinish: string | undefined;
   let lastReasoning: number | undefined;
   let lastUsage: JsonGatewayResult<T>['usage'];
+  let noThinkingRequested = false;
 
   for (let i = 0; i < attempts; i++) {
-    const { response } = await aiGateway(buildBody(), ctx);
+    const { response, noThinking } = await aiGateway(buildBody(), ctx);
+    noThinkingRequested = noThinking;
     lastRaw = response.choices[0]?.message?.content || '';
     lastFinish = response.choices[0]?.finish_reason;
     lastReasoning = (response.usage as any)?.completion_tokens_details?.reasoning_tokens;
@@ -235,7 +264,7 @@ export async function jsonGateway<T = any>(
 
     if (lastRaw.trim()) {
       const parsed = pick(lastRaw) as T | null;
-      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage };
+      if (parsed) return { parsed, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage, noThinkingRequested };
       console.error(
         `[${ctx.source}] ${ctx.operation} JSON parse fail (try ${i + 1}/${attempts}). raw=`,
         lastRaw.slice(0, 300)
@@ -256,5 +285,5 @@ export async function jsonGateway<T = any>(
     if (lastFinish === 'length') break;
   }
 
-  return { parsed: null, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage };
+  return { parsed: null, raw: lastRaw, finish: lastFinish, reasoningTokens: lastReasoning, usage: lastUsage, noThinkingRequested };
 }

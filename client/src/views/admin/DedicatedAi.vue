@@ -25,7 +25,7 @@
           <b>{{ dedStatus?.ready ? '配置已齐全' : '配置不完整' }}</b>
           <span v-if="dedStatus?.missingTiers?.length"> — 缺少档位：{{ dedStatus.missingTiers.join(' / ') }}</span>
           <span v-if="dedStatus?.ready && !dedStatus?.hasImage" class="ded-sub">
-            （未配生图；生图适配器尚未实现，不影响文本功能）
+            （未配生图；不影响文本功能，但该用户用到生图的功能会直接报错，不会回落平台）
           </span>
           <!-- 后端只在「开启时」卡完备性，删/停用接入点不会自动关开关。
                所以删掉最后一条 strong 之后，开关还开着而该用户一调 strong 就 503。

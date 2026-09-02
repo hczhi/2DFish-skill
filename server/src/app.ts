@@ -30,10 +30,11 @@ import { discoverRouter } from './api/discover.js';
 import { topicsRouter } from './api/topics.js';
 import { analyticsRouter } from './api/analytics.js';
 import { adSlotsRouter } from './api/adSlots.js';
-import { uploadRouter } from './api/upload.js';
+import { uploadRouter, uploadsRoot } from './api/upload.js';
 import { uiReviewRouter, seedUiReviewDefaults } from './api/uiReview.js';
 import { tenderRouter } from './api/tender.js';
 import { xhsRouter } from './api/xhs.js';
+import { pptRouter } from './api/ppt.js';
 import { feishuAssistantRouter } from './api/feishuAssistant.js';
 import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
@@ -174,8 +175,15 @@ app.use((req, res, next) => {
   // ② 名单为空（没有任何启用的 key）时**照旧 DENY**：这不是「顺便开着」的能力。
   const embeddable = req.path === '/consult' || req.path.startsWith('/consult/');
   const ancestors = embeddable ? consultFrameAncestors() : [];
+  // /ppt 版式案例库把版式 demo 套在**同源** iframe 里（每张卡一个缩略图 + 抽屉里一张大图）。
+  // 上面那句 DENY 连同源 iframe 一起拦，而现象是卡片位置一块白 + 控制台一行 CSP/XFO 警告，
+  // 接口自己是 200 —— 读起来像 demo 没生成出来。所以这一条路径单独放行，且只放行 self。
+  const selfFrame = req.path === '/api/ppt/demo-deck.html';
   if (ancestors.length) {
     res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors ${ancestors.join(' ')}`);
+  } else if (selfFrame) {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors 'self'`);
   } else {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Content-Security-Policy', BASE_CSP);
@@ -211,7 +219,8 @@ app.use((req, res, next) => {
 });
 
 // Static uploads (public, before auth)
-app.use('/uploads', express.static(path.resolve(process.cwd(), 'data/uploads')));
+// 路径只有 uploadsRoot() 一份 —— 生图落盘那边读的是同一个函数（见 core/image/imageGateway.ts）。
+app.use('/uploads', express.static(uploadsRoot()));
 
 // Tender SDK bundle (public, CORS-open so any third-party page can <script src> it)
 const sdkDistPath = path.resolve(process.cwd(), '../sdk/dist');
@@ -312,6 +321,13 @@ app.use('/api/xhs', xhsRouter);
 // 品牌咨询工作台（四看/四问/四大成，一步一步聊出结论）
 app.use('/api/consult', rateLimit(60, 60_000));
 app.use('/api/consult', consultRouter);
+
+// HTML 展示稿（版式案例库 + 整页生成）
+// 限额给到 300：案例库那一页光缩略图就是 22 个 iframe（每个 iframe 一次
+// `demo-deck.html?only=…`），60 的话翻两三次页就被 429 挡住 —— 而 iframe 里的 429 是一块
+// 白，卡片上照样挂着「有效果 demo」，读起来像 demo 坏了。这条路径不花 AI 额度、只回仓库文件。
+app.use('/api/ppt', rateLimit(300, 60_000));
+app.use('/api/ppt', pptRouter);
 
 // 飞书助理（在飞书里 @ 机器人下达自然语言指令）。
 // 只有管理接口，事件走长连接进来，没有对外的回调端点。

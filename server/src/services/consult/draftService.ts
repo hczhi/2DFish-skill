@@ -592,7 +592,7 @@ export async function draftFastStage(
   }
 
   const discussion = discussionBlock(project.id, stageKey);
-  const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+  const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
     () => ({
       messages: buildMessages(project, stage, entries, discussion, decided),
       ...SAMPLING.analytic,
@@ -614,7 +614,7 @@ export async function draftFastStage(
 
   if (!parsed) {
     throw new StageError(
-      gateFailMessage('草稿', { raw, finish, reasoningTokens, budget: MAX_TOKENS_DRAFT }),
+      gateFailMessage('草稿', { raw, finish, reasoningTokens, noThinkingRequested, budget: MAX_TOKENS_DRAFT }),
       502
     );
   }
@@ -898,7 +898,7 @@ export async function draftDirections(
   const { stage, entries } = requireOpenStage(project.id, stageKey, { lanes: ['slow'] });
 
   const discussion = discussionBlock(project.id, stageKey);
-  const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+  const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
     () => ({
       messages: directionMessages(project, stage, entries, discussion),
       ...SAMPLING.analytic,
@@ -919,7 +919,7 @@ export async function draftDirections(
 
   if (!parsed) {
     throw new StageError(
-      gateFailMessage('方向', { raw, finish, reasoningTokens, budget: MAX_TOKENS_DIRECTIONS }),
+      gateFailMessage('方向', { raw, finish, reasoningTokens, noThinkingRequested, budget: MAX_TOKENS_DIRECTIONS }),
       502
     );
   }

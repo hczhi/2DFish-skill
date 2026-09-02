@@ -105,6 +105,19 @@ async function onFile(e: Event) {
     // 不走 apiPost —— 它会 JSON.stringify body。api() 认得 FormData（不写 Content-Type）。
     const res = await api('/api/consult/extract-file', { method: 'POST', body: fd })
     if (!res.ok) {
+      // 413 是**反代**（Nginx 的 `client_max_body_size`，缺省 1MB）拦下来的，请求压根没到
+      // Node：所以没有我们那句带上限数字的 JSON，`res.json()` 拿到的是一坨 HTML，
+      // 落到下面就是一句「HTTP 413」。那句话读起来像接口挂了 —— 用户会反复传同一个文件、
+      // 或者去改 `MAX_FILE_BYTES`（那一层根本没被走到），而后端日志里一个字都没有。
+      if (res.status === 413) {
+        throw new Error(
+          `这个文件 ${(file.size / 1024 / 1024).toFixed(1)}MB，被服务器前面的反向代理挡下了（HTTP 413），` +
+          `请求没有到达后端，所以后端日志里看不到它。\n` +
+          `两条出路：① 把文件改小再传（PPT 里的图片压一下，或只留要用的那几页；` +
+          `.pptx 里内嵌的视频最占体积）；② 让运维在 Nginx 那份配置里加大 ` +
+          `client_max_body_size（见 docs/RELEASE.md 第六节，要和后端的上限对上），改完 reload。`
+        )
+      }
       const data = await res.json().catch(() => ({}))
       throw new Error(data.error || `HTTP ${res.status}`)
     }

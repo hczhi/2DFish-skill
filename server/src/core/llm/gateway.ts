@@ -350,7 +350,17 @@ export function getQuotaStatus(userId: string): { used: number; limit: number; r
 export async function aiGateway(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'>,
   options: GatewayOptions
-): Promise<{ response: OpenAI.Chat.Completions.ChatCompletion; usage: { input_tokens: number; output_tokens: number; total_tokens: number }; duration_ms: number }> {
+): Promise<{
+  response: OpenAI.Chat.Completions.ChatCompletion;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+  duration_ms: number;
+  /**
+   * 这次请求**带上了**关思维链那四个键（调用方传的值和接入点那个开关取或之后的结果）。
+   * 回给调用方是为了让报错话术分得出「没关」和「关了但上游没照办」—— 后者用户在后台
+   * 看到的是「已关闭」，再劝他去关一次就是把他往一条走不通的路上指（见 jsonFailMessage）。
+   */
+  noThinking: boolean;
+}> {
   // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
   // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
   // 那条接入点 —— 花的是另一把 key，而返回完全正常。
@@ -412,6 +422,7 @@ export async function aiGateway(
     response,
     usage: { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
     duration_ms: duration,
+    noThinking,
   };
 }
 

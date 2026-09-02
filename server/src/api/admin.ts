@@ -16,6 +16,7 @@ import { relayUsage } from '../services/relayService.js';
 import { AI_APPS, isValidAppScope } from '../core/llm/apps.js';
 import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
 import { getAppQuotaStatus } from '../core/llm/gateway.js';
+import { generateImage } from '../core/image/imageGateway.js';
 import { parsePagination, patchRow } from '../core/http.js';
 import { encryptSecret, maskSecret } from '../core/secrets.js';
 
@@ -489,8 +490,12 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
   const provider = getProvider(req.params.id);
   if (!provider) { res.status(404).json({ error: 'Provider not found' }); return; }
   if (!provider.api_key) { res.status(400).json({ error: 'API Key 未设置或无法解密' }); return; }
+  if (provider.kind === 'image') {
+    await testImageProvider(provider, res);
+    return;
+  }
   if (provider.kind !== 'llm') {
-    res.status(400).json({ error: '生图 provider 的适配器尚未实现，暂不支持连通性测试' });
+    res.status(400).json({ error: `未知的 provider kind「${provider.kind}」，无法测试` });
     return;
   }
 
@@ -559,6 +564,69 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * 生图接入点的连通性测试：真的生成一张图并把它显示出来。
+ *
+ * 「只检查 HTTP 200」在这条链路上等于没测：视频模型（火山 seedance 系列）、
+ * 只回 base64 的中转站、回了 200 但 data 为空的网关，三种都是 200，而后台会显示
+ * 「连通 ✓」—— 真正的失败要到生成整份演示稿时才暴露成一堆裂图。所以这里走的是
+ * 和业务完全同一条路（generateImage → 转存 → 可访问 URL），拿不到一张能打开的图
+ * 就是失败。
+ *
+ * providerId 绑死这一行：不绑的话按 kind 解析会挑「最近更新的那条」，管理员点的是
+ * 这一行的测试按钮，实际测的是另一行，而结果显示成功（同 migration 082 的教训）。
+ */
+async function testImageProvider(provider: { id: string; model: string }, res: Response) {
+  const started = Date.now();
+  try {
+    const images = await generateImage('一个极简的蓝色圆形图标，纯白背景，无文字', {
+      size: '1024x1024',
+      n: 1,
+      providerId: provider.id,
+      timeoutMs: 180_000,
+    });
+    const first = images[0];
+    // 生成成功 ≠ 那个地址打得开。图上传成功、接口返回 200、后台显示「已生成」，
+    // 而 CDN 只服务 https / 域名绑到了另一个 bucket 时，线上全是裂图。
+    // 这里只报警告不判失败：服务器和浏览器的网络路径不一样，有可能服务器读不到而浏览器能读
+    // （前端 <img> 的 onerror 是最终裁判）。
+    let urlWarning: string | undefined;
+    if (first.storage === 'cos') {
+      try {
+        const head = await fetch(first.url, { method: 'HEAD', signal: AbortSignal.timeout(10_000) });
+        if (!head.ok) urlWarning = `图已上传，但从服务器读这个地址是 HTTP ${head.status} —— 检查 bucket 是否公有读、CDN 域名是否绑对。`;
+      } catch (e: any) {
+        urlWarning = `图已上传，但服务器连不上这个地址（${String(e?.message || e)}）—— 检查 CDN 域名和协议（这个域名只服务 https）。`;
+      }
+    }
+    res.json({
+      success: true,
+      url_warning: urlWarning,
+      duration_ms: Date.now() - started,
+      model: provider.model,
+      image_url: first.url,
+      protocol: first.protocol,
+      // 猜出来的协议必须说出来：extra_json 是自由文本框，`protocol` 拼错完全静默，
+      // 而猜对的那次和填对的那次结果一模一样 —— 只有这一行能让人发现自己拼错了。
+      protocol_inferred: first.protocolInferred || undefined,
+      storage: first.storage,
+      // 「没走 COS」的成因由 gateway 给（没配 / 配不全 / 凭据解不开），不在这里写死一句
+      // 「未配置 COS」—— 配了但解不开时那句话会让人去重填，一填就覆盖掉库里那份密文。
+      storage_hint: first.storage === 'local'
+        ? `图落在本机磁盘（data/uploads），换机器或多实例部署后会 404。原因：${first.storageReason || '未知'}`
+        : undefined,
+    });
+  } catch (e: any) {
+    res.status(400).json({
+      success: false,
+      duration_ms: Date.now() - started,
+      // 上游原文原样带出去（截到 500 字）：模型名不对 / 余额不足 / 配的是视频模型 /
+      // 这个网关不支持 images 端点，四种解法完全不同。
+      error: String(e?.message || e).slice(0, 500),
+    });
+  }
+}
 
 // --- Module Configs ---
 

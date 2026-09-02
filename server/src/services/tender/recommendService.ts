@@ -348,7 +348,7 @@ ${feedbackSection}
   // 每条多花三十秒思维链就是管理员盯着进度条等半小时。而 MAX_SCORE_TOKENS 那 4000
   // 本来是给 analysis/strategy 那几百字的，思维链一占就断在半句话上 —— 那正是
   // 下面 jsonFailMessage 要报的那种失败。
-  const { parsed, raw, finish, reasoningTokens } = await jsonGateway<any>(
+  const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
     () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: MAX_SCORE_TOKENS }),
     { userId, source: 'tender', operation: 'score-business', noThinking: true }
   );
@@ -358,7 +358,7 @@ ${feedbackSection}
     // 合成一句「解析失败」的话，看到的人只会去改评分 prompt 或反复重评，
     // 而真凶是这个模型带思维链、把额度花在了没人看得见的地方。
     throw new ScoreParseError(
-      jsonFailMessage('这条标讯的 AI 评分', { raw, finish, reasoningTokens, budget: MAX_SCORE_TOKENS }),
+      jsonFailMessage('这条标讯的 AI 评分', { raw, finish, reasoningTokens, noThinkingRequested, budget: MAX_SCORE_TOKENS }),
       `📤 Prompt:\n${prompt.slice(0, 600)}...\n\n📥 Response(${raw.length} 字, finish=${finish || '未知'}${reasoningTokens ? `, 思维链 ${reasoningTokens} token` : ''}):\n${raw.slice(0, 600)}`
     );
   }

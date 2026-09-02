@@ -445,13 +445,13 @@ xhsRouter.post('/structure', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({ messages: [{ role: 'user', content: struct.buildStructurePrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.structure }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure', tier: 'strong' }
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('结构', { raw, finish, reasoningTokens, budget: JSON_BUDGET.structure }),
+        error: jsonFailMessage('结构', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.structure }),
         finish_reason: finish,
         raw,
       });
@@ -485,13 +485,13 @@ xhsRouter.post('/structure/node-chat', async (req, res) => {
   if (!message) return res.status(400).json({ error: 'message is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({ messages: [{ role: 'user', content: struct.buildNodeChatPrompt(node, nodes, message, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.nodeChat }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure-node-chat', tier: 'strong' }
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('这次修改建议', { raw, finish, reasoningTokens, budget: JSON_BUDGET.nodeChat }),
+        error: jsonFailMessage('这次修改建议', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.nodeChat }),
         raw,
       });
     }
@@ -517,13 +517,13 @@ xhsRouter.post('/structure/validate', async (req, res) => {
   if (!nodes.length) return res.status(400).json({ error: 'nodes is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({ messages: [{ role: 'user', content: struct.buildValidatePrompt(nodes, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.validate }),
       { userId: req.user!.id, source: 'xhs', operation: 'structure-validate', tier: 'strong' }
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('自检结果', { raw, finish, reasoningTokens, budget: JSON_BUDGET.validate }),
+        error: jsonFailMessage('自检结果', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.validate }),
         raw,
       });
     }
@@ -557,7 +557,7 @@ xhsRouter.post('/brainstorm', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       // 要发散但仍需合法 JSON：中高温、不带 penalty（DashScope 流式/JSON 下 penalty 不稳）。
       // 高温也是这个端点比别处更容易撞额度的原因之一：发散任务本身就让模型想得更久。
       () => ({ messages: [{ role: 'user', content: struct.buildBrainstormPrompt(brief, baseSkill) }], temperature: 0.95, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.brainstorm }),
@@ -565,7 +565,7 @@ xhsRouter.post('/brainstorm', async (req, res) => {
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('观点', { raw, finish, reasoningTokens, budget: JSON_BUDGET.brainstorm }),
+        error: jsonFailMessage('观点', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.brainstorm }),
         raw,
       });
     }
@@ -602,13 +602,13 @@ xhsRouter.post('/research', async (req, res) => {
   }
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({ messages: [{ role: 'user', content: struct.buildResearchPrompt(brief, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.research }),
       { userId: req.user!.id, source: 'xhs', operation: 'research', tier: 'strong' }
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('用户洞察', { raw, finish, reasoningTokens, budget: JSON_BUDGET.research }),
+        error: jsonFailMessage('用户洞察', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.research }),
         raw,
       });
     }
@@ -639,13 +639,13 @@ xhsRouter.post('/diagnose', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'body is required' });
   try {
     const baseSkill = getSkillForSlot('xhs-structure');
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({ messages: [{ role: 'user', content: struct.buildDiagnosePrompt(text, baseSkill) }], ...SAMPLING.analytic, response_format: { type: 'json_object' }, max_tokens: JSON_BUDGET.diagnose }),
       { userId: req.user!.id, source: 'xhs', operation: 'diagnose', tier: 'strong' }
     );
     if (!parsed) {
       return res.status(502).json({
-        error: jsonFailMessage('诊断', { raw, finish, reasoningTokens, budget: JSON_BUDGET.diagnose }),
+        error: jsonFailMessage('诊断', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.diagnose }),
         raw,
       });
     }
@@ -745,7 +745,7 @@ xhsRouter.post('/revise', async (req, res) => {
   if (!selection) return res.status(400).json({ error: 'selection is required' });
   if (!message) return res.status(400).json({ error: 'message is required' });
   try {
-    const { parsed, raw, finish, reasoningTokens } = await jsonGatewayWithRetry(
+    const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGatewayWithRetry(
       () => ({
         messages: [{
           role: 'user',
@@ -771,7 +771,7 @@ xhsRouter.post('/revise', async (req, res) => {
     );
     if (!parsed || typeof parsed.revised !== 'string') {
       return res.status(502).json({
-        error: jsonFailMessage('改写', { raw, finish, reasoningTokens, budget: JSON_BUDGET.revise }),
+        error: jsonFailMessage('改写', { raw, finish, reasoningTokens, noThinkingRequested, budget: JSON_BUDGET.revise }),
         raw,
       });
     }

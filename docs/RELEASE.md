@@ -45,6 +45,10 @@ Nginx 直接提供前端静态文件，只将 API 请求转发给 Node。
 
 **两种方案都要求前端先编译**。本文档以方案 A 为主。
 
+两种方案下 `/sdk/*`（对外接入的 SDK 产物）都由 Node 发 —— 它给 `.cjs` 设的 MIME 是
+`application/javascript`，Nginx 直发会是 `application/octet-stream` 而浏览器拒绝执行（见六）。
+`/consult*` 同理必须走 Node（frame-ancestors 名单是动态算的）。
+
 ---
 
 ## 目录结构（部署后）
@@ -59,6 +63,11 @@ Nginx 直接提供前端静态文件，只将 API 请求转发给 Node。
 │   ├── dist/             # 后端编译产物（tsc 输出）
 │   ├── node_modules/     # 生产依赖
 │   └── package.json
+├── sdk/
+│   └── dist/             # 对外接入 SDK 的构建产物（Node 按 `../sdk/dist` 相对 cwd 找它）
+│       ├── tender-sdk.umd.cjs    # 标讯 SDK（UMD，window.TenderSDK）
+│       ├── consult-sdk.umd.cjs   # 品牌咨询嵌入 SDK（UMD，window.ConsultSDK）
+│       └── consult-demo.html     # 接入方能直接打开的样例页
 ├── skills/               # AI 技能定义
 ├── workspaces/           # 用户工作区数据（运行时生成）
 ├── data/                 # SQLite 数据库（运行时生成）
@@ -99,7 +108,31 @@ npm run build               # vite build → dist/
 
 带 hash 的 assets 可设置永久缓存（`Cache-Control: public, immutable, max-age=2592000`）。
 
-### 1.3 验证构建
+### 1.3 对外接入 SDK 构建（漏了这一步 = 第三方页面上一块白）
+
+```bash
+# 在仓库根（不是 client/，也不是 server/）
+npm run build:sdk           # = cd sdk && npm install && npm run build
+```
+
+一条命令里是**两次 vite lib 构建 + 一次 tsc 声明**：UMD 不支持多入口，所以标讯和品牌咨询
+各构建一次（第二次 `emptyOutDir: false`，否则它会把第一次的 `tender-sdk.*` 抹掉，而两次
+构建都打印成功 —— 线上那些 `<script src=".../tender-sdk.umd.cjs">` 从此 404）。
+
+| 文件 | 说明 |
+|------|------|
+| `sdk/dist/tender-sdk.umd.cjs` | 标讯 SDK（`window.TenderSDK`） |
+| `sdk/dist/consult-sdk.umd.cjs` | 品牌咨询嵌入 SDK（`window.ConsultSDK`），后台「咨询接入」那段接入代码引的就是它 |
+| `sdk/dist/consult-demo.html` | 假的第三方站点外壳 + 那几行 `mountConsult`，接入方直接打开 `<域名>/sdk/consult-demo.html` |
+
+**这一步不能跳，而跳过之后没有一处会报错**：`server` 和 `client` 的构建都成功、后台那行
+key 好好地列着、接入代码也复制得出来，只有接入方页面上是一块白 + 控制台一句
+`ConsultSDK is not defined`。根目录 `npm run build` 的第一步就是它，单独发布前端/后端时容易漏。
+
+还有一条只在**重启时**生效的判断：`app.ts` 启动时 `fs.existsSync('../sdk/dist')`，不存在就
+整个 `/sdk` 挂载都不注册。所以「先起 Node 再构建 SDK」等于 `/sdk` 全部 404，直到下次重启。
+
+### 1.4 验证构建
 
 ```bash
 # 后端类型检查
@@ -111,6 +144,7 @@ cd client && npx vue-tsc --noEmit
 # 确认产物存在
 ls server/dist/app.js
 ls client/dist/index.html
+ls sdk/dist/tender-sdk.umd.cjs sdk/dist/consult-sdk.umd.cjs
 ```
 
 ---
@@ -214,12 +248,17 @@ rm -rf node_modules && npm ci --production
 cd /opt/mmPla/source/client
 npm ci && npm run build
 
+# 4.5 构建对外接入 SDK（见 1.3 —— 漏了它第三方页面上是一块白，而别处一切正常）
+cd /opt/mmPla/source && npm run build:sdk
+
 # 5. 部署产物（保持相对路径关系）
-mkdir -p /opt/mmPla/server /opt/mmPla/client
+mkdir -p /opt/mmPla/server /opt/mmPla/client /opt/mmPla/sdk
 cp -r /opt/mmPla/source/server/dist /opt/mmPla/server/dist
 cp -r /opt/mmPla/source/server/node_modules /opt/mmPla/server/node_modules
 cp /opt/mmPla/source/server/package.json /opt/mmPla/server/
 cp -r /opt/mmPla/source/client/dist /opt/mmPla/client/dist
+# Node 找的是相对 cwd(=/opt/mmPla/server) 的 `../sdk/dist`，所以必须落在这个位置
+cp -r /opt/mmPla/source/sdk/dist /opt/mmPla/sdk/dist
 cp -r /opt/mmPla/source/skills /opt/mmPla/skills
 
 # 6. 配置环境变量
@@ -325,6 +364,13 @@ server {
     # CSP frame-ancestors（按后台启用中的 key 动态算的域名名单）。Nginx 再补一个 DENY 的话
     # 浏览器按 DENY 拦掉整个 iframe —— 第三方页面上是一块白，而 pk、白名单、后台那行 key
     # 全都是好的，每个接口都返回 200，看起来只会像「嵌入功能没做好」。
+    # ⚠️ 这个 nosniff 和对外 SDK 的 `.cjs` 是一对：浏览器只有在收到 nosniff 时才**严格**
+    # 检查 `<script>` 的 MIME。方案 A 下 `/sdk/*` 由 Node 发（它专门给 `.cjs` 发
+    # `application/javascript`），所以没事；但只要在 Nginx 上给 `/sdk` 加一个静态
+    # location（root/alias 到 sdk/dist），`.cjs` 默认就是 `application/octet-stream` ——
+    # 请求 200、文件内容也对，浏览器**拒绝执行**，控制台只有一句 MIME 警告加
+    # `ConsultSDK is not defined`，读起来像 SDK 没构建出来。真要在 Nginx 上直发，
+    # 必须补一句 `types { application/javascript cjs; }`；否则把 /sdk 交给 Node。
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -355,6 +401,18 @@ server {
 
     location /uploads/ {
         proxy_pass http://127.0.0.1:3001;
+    }
+
+    # 对外接入 SDK。**交给 Node**，不要在这里 root 到 sdk/dist：
+    # `.cjs` 在 Nginx 缺省的 mime.types 里没有对应类型，直发就是
+    # `application/octet-stream`，配上上面那句 nosniff 之后浏览器拒绝执行
+    # （200 + 控制台一句 MIME 警告 + `ConsultSDK is not defined`，像是没构建出来）。
+    # 一定要 Nginx 直发的话，在 server 块里补 `types { application/javascript cjs; }`，
+    # 并且记住那个目录要跟着每次发布更新 —— 不更新的表现是新 SDK 一直 404，
+    # 而旧的那个照样 200，看不出目录是陈的。
+    location /sdk/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
     }
 
     # 品牌咨询的页面必须由 Node 出响应头（084 的 iframe 嵌入）。
@@ -388,11 +446,16 @@ rm -rf node_modules && npm ci --production
 # 3. 重新构建前端
 cd ../client && npm ci && npm run build
 
+# 3.5 重新构建 SDK（见 1.3）。**每次发布都要跑**：它不跟着 client/server 的构建走，
+#     漏掉的表现是第三方页面上一块白，而我们这边每个接口都 200。
+cd /opt/mmPla/source && npm run build:sdk
+
 # 4. 替换产物
-rm -rf /opt/mmPla/server/dist /opt/mmPla/client/dist
+rm -rf /opt/mmPla/server/dist /opt/mmPla/client/dist /opt/mmPla/sdk/dist
 cp -r /opt/mmPla/source/server/dist /opt/mmPla/server/dist
 cp -r /opt/mmPla/source/server/node_modules /opt/mmPla/server/node_modules
 cp -r /opt/mmPla/source/client/dist /opt/mmPla/client/dist
+cp -r /opt/mmPla/source/sdk/dist /opt/mmPla/sdk/dist
 cp -r /opt/mmPla/source/skills /opt/mmPla/skills
 
 # 5. 重启服务
@@ -401,6 +464,9 @@ sudo systemctl restart mmPla
 # 6. 验证
 curl -s http://localhost:3001/api/health
 curl -s http://localhost:3001/ | head -5   # 应返回 HTML
+# 两条 SDK 都要 200，且 Content-Type 必须是 application/javascript（见六的 MIME 说明）
+curl -sI http://localhost:3001/sdk/tender-sdk.umd.cjs | head -3
+curl -sI http://localhost:3001/sdk/consult-sdk.umd.cjs | head -3
 ```
 
 **仅更新前端（无后端变更）：**

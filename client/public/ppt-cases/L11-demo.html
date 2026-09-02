@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>L11 tri-narrative · 版式演示</title>
+<style>
+  :root {
+    --c-accent: #3DB4D9;       /* 归一后的强调色（截图原青蓝） */
+    --c-accent-deep: #1E9FD4;
+    --c-brand: #F0861A;        /* 品牌橙，仅 header 装饰用 */
+    --c-bg: #FAF8F4;
+    --c-bg-alt: #F0F4F8;       /* header 浅底 */
+    --c-ink: #2A2A2E;
+    --c-ink-soft: #5A5A62;
+    --c-card: #FFFFFF;
+    --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+    --font-sans: "Noto Sans SC", "PingFang SC", "Helvetica Neue", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-sans);
+    background: #1a1a1f;
+    display: flex; justify-content: center; align-items: flex-start;
+    padding: 32px 16px;
+    min-height: 100vh;
+  }
+
+  /* ===== 16:9 幻灯片容器 ===== */
+  .slide {
+    width: 1280px; height: 720px;
+    background: var(--c-bg);
+    position: relative; overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  /* ===== 顶 header 区 ===== */
+  .header {
+    position: relative; z-index: 6;
+    height: 108px;
+    background: linear-gradient(135deg, var(--c-bg-alt) 0%, #E6EEF5 100%);
+    display: flex; align-items: center;
+    padding: 0 64px;
+    border-bottom: 1px solid rgba(0,0,0,.06);
+  }
+  .header .kicker {
+    color: var(--c-accent-deep);
+    font-size: 13px; font-weight: 700;
+    letter-spacing: 3px;
+    margin-right: 18px;
+    padding: 5px 12px;
+    border: 1.5px solid var(--c-accent);
+    border-radius: 2px;
+  }
+  .header h1 {
+    font-size: 30px; font-weight: 800;
+    color: var(--c-ink); letter-spacing: .5px;
+  }
+  .header h1 .em { color: var(--c-accent-deep); }
+  .header .meta {
+    margin-left: auto;
+    font-size: 13px; color: var(--c-ink-soft);
+    text-align: right; line-height: 1.5;
+  }
+  .header .meta b { color: var(--c-ink); }
+
+  /* ===== 三栏并列叙事 ===== */
+  .tri-narrative {
+    position: absolute;
+    top: 108px; left: 0; right: 0; bottom: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .tri-col {
+    position: relative; overflow: hidden;
+  }
+  .tri-col .photo {
+    position: absolute; inset: 0;
+    background-size: cover; background-position: center;
+    filter: saturate(.92) contrast(1.05);
+  }
+  /* 底部黑色渐变遮罩，保证白字可读 */
+  .tri-col::after {
+    content: ''; position: absolute; inset: 0;
+    background:
+      linear-gradient(to top, rgba(6,14,24,.85) 0%, rgba(6,14,24,.35) 50%, rgba(6,14,24,.1) 80%, rgba(6,14,24,0) 100%),
+      linear-gradient(to right, rgba(6,14,24,.25) 0%, rgba(6,14,24,0) 35%);
+    z-index: 2;
+  }
+  /* 列间细分隔 */
+  .tri-col + .tri-col::before {
+    content: ''; position: absolute;
+    top: 0; bottom: 0; left: 0; width: 1px;
+    background: rgba(255,255,255,.18);
+    z-index: 3;
+  }
+
+  /* 大号数字锚点 */
+  .tri-num {
+    position: absolute;
+    top: 28px; right: 28px;
+    font-family: var(--font-serif);
+    font-size: 196px; font-weight: 700; line-height: .85;
+    color: rgba(255,255,255,.94);
+    z-index: 4;
+    text-shadow: 0 6px 32px rgba(0,0,0,.4);
+    letter-spacing: -4px;
+  }
+  .tri-num .step {
+    display: block;
+    font-family: var(--font-sans);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 4px;
+    color: var(--c-accent);
+    margin-bottom: 4px;
+  }
+
+  /* 文本块 */
+  .tri-text {
+    position: absolute;
+    bottom: 40px; left: 36px; right: 30px;
+    color: #fff; z-index: 4;
+  }
+  .tri-label {
+    font-size: 14px; font-weight: 500;
+    letter-spacing: 1.5px; opacity: .88;
+    text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .tri-label::before {
+    content: ''; width: 18px; height: 1.5px;
+    background: var(--c-accent);
+  }
+  .tri-subtitle {
+    font-size: 28px; font-weight: 800;
+    color: var(--c-accent);
+    margin: 10px 0 18px;
+    line-height: 1.2;
+    letter-spacing: .5px;
+  }
+  .tri-list {
+    font-size: 14px; line-height: 1.9;
+    list-style: none;
+  }
+  .tri-list li {
+    padding-left: 20px; position: relative;
+    color: rgba(255,255,255,.92);
+  }
+  .tri-list li::before {
+    content: ''; position: absolute;
+    left: 0; top: 11px;
+    width: 8px; height: 8px;
+    background: var(--c-accent);
+    transform: rotate(45deg);
+  }
+
+  /* 顶部进度条（叙事流：1→2→3） */
+  .progress-bar {
+    position: absolute;
+    top: 108px; left: 0; right: 0; height: 3px;
+    background: linear-gradient(to right,
+      var(--c-accent) 0%, var(--c-accent) 33.3%,
+      rgba(61,180,217,.3) 33.3%, rgba(61,180,217,.3) 66.6%,
+      rgba(61,180,217,.15) 66.6%, rgba(61,180,217,.15) 100%);
+    z-index: 5;
+  }
+</style>
+</head>
+<body>
+
+<div class="slide">
+  <!-- 顶 header -->
+  <div class="header">
+    <span class="kicker">/// 路径规划</span>
+    <h1>企业AI转型 <span class="em">三阶段路径</span></h1>
+    <div class="meta">
+      <b>想象数科 · AI 转型方法论</b><br>
+      v2.0 · 2026 路线图
+    </div>
+  </div>
+
+  <!-- 顶部进度条 -->
+  <div class="progress-bar"></div>
+
+  <!-- 三栏并列叙事 -->
+  <div class="tri-narrative">
+
+    <!-- 栏 1 -->
+    <div class="tri-col">
+      <div class="photo" style="background-image:url('https://picsum.photos/seed/ai-infra-datacenter/720/1000')"></div>
+      <div class="tri-num"><span class="step">PHASE</span>1</div>
+      <div class="tri-text">
+        <div class="tri-label">阶段一 · 基础设施</div>
+        <div class="tri-subtitle">数字化底座</div>
+        <ul class="tri-list">
+          <li>统一数据中台与资产沉淀</li>
+          <li>云原生算力与可观测体系</li>
+          <li>权限、合规与安全基线</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 栏 2 -->
+    <div class="tri-col">
+      <div class="photo" style="background-image:url('https://picsum.photos/seed/ai-process-team/720/1000')"></div>
+      <div class="tri-num"><span class="step">PHASE</span>2</div>
+      <div class="tri-text">
+        <div class="tri-label">阶段二 · 流程重构</div>
+        <div class="tri-subtitle">智能化升级</div>
+        <ul class="tri-list">
+          <li>核心业务流程 AI 嵌入</li>
+          <li>人机协同工作流编排</li>
+          <li>效果度量与持续优化闭环</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 栏 3 -->
+    <div class="tri-col">
+      <div class="photo" style="background-image:url('https://picsum.photos/seed/ai-value-innovation/720/1000')"></div>
+      <div class="tri-num"><span class="step">PHASE</span>3</div>
+      <div class="tri-text">
+        <div class="tri-label">阶段三 · 价值创造</div>
+        <div class="tri-subtitle">AI 原生业务</div>
+        <ul class="tri-list">
+          <li>新产品与新商业模式孵化</li>
+          <li>AI 能力外溢与生态共建</li>
+          <li>组织心智与文化重塑</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
