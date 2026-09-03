@@ -23,6 +23,8 @@
 
         <div class="header-actions">
           <router-link class="btn-ghost" to="/ppt/layouts">版式案例库（22 个）</router-link>
+          <!-- 没有入口的话生成过的图只存在于各页 html 里，他不知道自己有一堆花过钱的图可以重用 -->
+          <router-link class="btn-ghost" to="/ppt/assets">配图素材库</router-link>
           <button class="btn-create" @click="router.push('/ppt/decks/new')">
             <span class="btn-text">新建演示稿</span>
           </button>
@@ -191,7 +193,7 @@ function fmt(ts: string) {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
+  background-image: url('https://file.qiaonan.vip/uploads/2026/09/03/01bf04c8-8d07-4af2-b94a-4261ee342576.png');
   background-size: cover;
   background-position: center;
 }

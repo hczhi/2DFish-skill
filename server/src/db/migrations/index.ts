@@ -89,6 +89,12 @@ import { migration_086 } from './086_consult_sdk_limits.js';
 import { migration_087 } from './087_provider_no_thinking.js';
 import { migration_088 } from './088_consult_stage_prompts.js';
 import { migration_089 } from './089_ppt_decks.js';
+import { migration_090 } from './090_ppt_assets.js';
+import { migration_091 } from './091_ppt_pending_images.js';
+import { migration_092 } from './092_ppt_page_setup.js';
+import { migration_093 } from './093_ppt_deck_notes.js';
+import { migration_094 } from './094_ppt_drop_ratio_problems.js';
+import { migration_095 } from './095_ppt_page_eids.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -179,4 +185,10 @@ export const allMigrations: Migration[] = [
   migration_087,
   migration_088,
   migration_089,
+  migration_090,
+  migration_091,
+  migration_092,
+  migration_093,
+  migration_094,
+  migration_095,
 ];

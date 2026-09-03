@@ -163,9 +163,14 @@ async function create() {
 
             <div class="create-actions">
               <button class="btn-primary" :disabled="creating" @click="create">
-                {{ creating ? '创建中…' : '创建并进工作台' }}
+                {{ creating ? '创建中…' : '创建并开始规划' }}
               </button>
-              <span class="muted">创建只落库、不花 AI 额度。进去之后再点「开始规划」。</span>
+              <!-- 这句话是硬的：进去会**自动**跑一次规划（一次真实调用）。写成「不花额度」
+                   的话他会连着建三份试试看，而那是三次调用，界面上一句提示都没有。 -->
+              <span class="muted">
+                创建后进工作台会<b>自动规划一次</b>（一次真实 AI 调用，通常 10–40 秒）。
+                规划结果存着，之后每次进来都直接用，不会重复花钱。
+              </span>
             </div>
           </div>
         </div>
@@ -200,7 +205,7 @@ async function create() {
 
 .bg-elements {
   position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
+  background-image: url('https://file.qiaonan.vip/uploads/2026/09/03/01bf04c8-8d07-4af2-b94a-4261ee342576.png');
   background-size: cover; background-position: center;
 }
 .bg-overlay {

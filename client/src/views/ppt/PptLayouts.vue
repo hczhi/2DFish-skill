@@ -11,7 +11,7 @@
       </div>
       <div class="head-right" v-if="!loading && !error">
         <div class="head-btns">
-          <router-link class="btn-ghost" to="/ppt/plan">贴提纲试试排版规划 →</router-link>
+          <router-link class="btn-ghost" to="/ppt/decks">贴提纲试试排版规划 →</router-link>
           <a class="btn-ghost" :href="deckUrl" target="_blank">看整份 demo（{{ layouts.length }} 页）↗</a>
         </div>
         <div class="stat">

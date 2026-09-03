@@ -32,6 +32,16 @@ describe('排版规划', () => {
     expect(r.pages.map((p) => p.page)).toEqual([1, 2]);
   });
 
+  it('备选版式编出来的丢掉、和主版式重复的丢掉，丢了要说', async () => {
+    // 留着编出来的那个：他在下拉里挑中之后是一句 400，读起来像「这个版式坏了」。
+    // 静默丢掉：那一页下拉最前面只剩一条，读起来像「模型认为只有这个版式合适」，
+    // 于是他照规划那条生成 —— 而备选整个功能就是给他换的。
+    gateway.mockResolvedValue(reply([{ ...page('L1'), alts: ['L5', 'hero-split', 'L1', 'L7'] }]));
+    const r = await planDeck('提纲', 'u1');
+    expect(r.pages[0].alts).toEqual(['L5', 'L7']);
+    expect(r.problems.join('\n')).toContain('hero-split');
+  });
+
   it('连续 3 页同版式要喊出来（翻起来单调，但每一页单看都合理）', async () => {
     gateway.mockResolvedValue(reply([page('L1'), page('L5'), page('L5'), page('L5'), page('L7')]));
     const r = await planDeck('提纲', 'u1');
@@ -48,6 +58,43 @@ describe('排版规划', () => {
     // 不说的话界面上是一份「完整」的两页规划，而他的提纲有二十页
     expect(r.problems[0]).toContain('只规划到第 2 页');
     expect(r.problems[0]).toContain('3200');
+  });
+
+  it('图的规格照库里的枚举归一，张数按规格条数算，改动过的都要说出来', async () => {
+    // 静默归一的话：本来要信息图的那一格拿到概念插画、竖图位拿到横图被裁掉两边，
+    // 每张单看都不错、一处不报错；张数另算的话面板上写着「要 2 张」而下面列了 3 条。
+    gateway.mockResolvedValue(
+      reply([
+        {
+          ...page('L1'),
+          images: [
+            { subject: '等距的城市算力机房', mode: 'infographic', ratio: '16:9' },
+            { subject: '一位工程师侧影', mode: 'case', ratio: '9:16' },
+            { subject: '', mode: 'data', ratio: '1:1' },
+          ],
+        },
+      ])
+    );
+    const r = await planDeck('提纲', 'u1');
+    expect(r.pages[0].imageSpecs).toEqual([
+      { subject: '等距的城市算力机房', mode: 'concept', ratio: '16:9' },
+      { subject: '一位工程师侧影', mode: 'case', ratio: '16:9' },
+    ]);
+    expect(r.pages[0].images).toBe(2);
+    const said = r.problems.join('\n');
+    expect(said).toContain('infographic');
+    expect(said).toContain('9:16');
+    expect(said).toMatch(/没写画什么/);
+  });
+
+  it('模型只给了图片张数、没说画什么时要出声（这一页没法提前备图）', async () => {
+    // 不说的话「先备图再生成页面」那条路对这一页无声地失效，界面上只是又变回了
+    // 「先出 HTML，图位全是占位图」，看起来像备图功能坏了。
+    gateway.mockResolvedValue(reply([{ ...page('L1'), images: 2 }]));
+    const r = await planDeck('提纲', 'u1');
+    expect(r.pages[0].images).toBe(2);
+    expect(r.pages[0].imageSpecs).toEqual([]);
+    expect(r.problems.join('\n')).toMatch(/没说画什么/);
   });
 
   it('拿不到 JSON 抛错而不是回空规划', async () => {

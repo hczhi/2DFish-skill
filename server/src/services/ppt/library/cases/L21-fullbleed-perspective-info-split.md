@@ -59,7 +59,7 @@
 ```html
 <section class="slide" data-layout="L21">
   <div class="l21-wrap">
-    <div class="l21-bg"><img src="cases/pXX_hero.jpg" alt=""></div>
+    <div class="l21-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
     <div class="l21-left">
       <div class="l21-en">Powerful supply<br>chain system</div>
       <div class="l21-cn">中国市场发展</div>

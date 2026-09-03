@@ -195,6 +195,13 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresAI: true },
     },
     {
+      // 素材库：每张生成过的配图（花过钱的）都在这儿，以后可以重用
+      path: '/ppt/assets',
+      name: 'ppt-assets',
+      component: () => import('../views/ppt/PptAssets.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/ppt/layouts',
       name: 'ppt-layouts',
       component: () => import('../views/ppt/PptLayouts.vue'),

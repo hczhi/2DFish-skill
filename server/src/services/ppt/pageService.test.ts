@@ -53,15 +53,17 @@ describe('生成一页 HTML', () => {
     expect(r.problems.join(' ')).toMatch(/截断/);
   });
 
-  it('页码由代码写，模型写死的数字被换掉', async () => {
-    // 模型写的 `07 / 9` 看起来完全正常，只是和这一页在 deck 里的位置对不上（硬规则 3）。
+  it('模型写的页码角标被摘掉（页面上不显示页码）', async () => {
+    // 那两个类已经从 template 里删了，留着的话它掉回默认流式布局 —— 正文里凭空多出
+    // 一行「07 / 9」，读起来像这一页的设计（不报错），而它和这一页在 deck 里的位置无关。
     reply(
       '<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2>' +
-        '<div class="page-badge"><b>07</b> / 9</div></div></section>'
+        '<div class="page-badge"><b>07</b> / 9</div><div class="wm">{{PAGE_NUM}}</div></div></section>'
     );
     const r = await generatePage({ ...base, layoutId: 'L1' }, 'u1');
-    expect(r.html).toContain('<b>03</b> / 12');
+    expect(r.html).not.toContain('page-badge');
     expect(r.html).not.toContain('07');
+    expect(r.html).not.toContain('{{');
   });
 
   it('全幅版式被包进 .slide-inner 时点名说出来', async () => {
@@ -69,6 +71,21 @@ describe('生成一页 HTML', () => {
     reply('<section class="slide"><div class="slide-inner"><h2>标题</h2></div></section>');
     const r = await generatePage({ ...base, layoutId: 'L2' }, 'u1');
     expect(r.problems.join(' ')).toMatch(/L2 是全幅版式/);
+  });
+
+  it('整份那段和这一页那段的要求都进了 prompt，而且排在版式骨架和配色 token 之后', async () => {
+    // 两件事：夹在近 8000 字的版式骨架前面的话模型照旧按版式建议排；页级那段顶掉整份那段
+    // 的话，他在这一页补一句话，整份定的语气就在这一页悄悄失效了 —— 两种出来都是一页
+    // 完整正常的幻灯片，只是要求没生效，没有一处会说（他只会再写一遍、再花一次额度）。
+    reply('<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2></div></section>');
+    await generatePage(
+      { ...base, layoutId: 'L1', deckNotes: '语气克制，不要感叹号', notes: '这一页的数字用等宽字体' },
+      'u1'
+    );
+    const prompt = (aiGateway as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('语气克制，不要感叹号');
+    expect(prompt).toContain('这一页的数字用等宽字体');
+    expect(prompt.indexOf('语气克制')).toBeGreaterThan(prompt.indexOf('## 配色与排版 token'));
   });
 
   it('用了 template 里没有的类名要点名，且预览是套好外壳的整页', async () => {
@@ -89,6 +106,15 @@ describe('拼整份 deck', () => {
   it('缺页不给拼，并点名缺哪几页', () => {
     // 缺页的 deck 翻起来和完整的一模一样（页码是按规划总页数写的），只是内容跳了一段。
     expect(() => buildDeck([{ page: 1, html: sec(1) }, { page: 3, html: sec(3) }], 3, meta)).toThrow(/第 2 页/);
+  });
+
+  it('整份 deck 带页脚，制作过程中的单页预览不带', async () => {
+    // 反了都不报错：单页预览里那条页脚压在画面底部 54px 上，挡掉的一行看起来像
+    // 「这一页排版就是这样」；而导出的文件丢了页脚就没有进度条和目录，双击打开一切正常。
+    expect(buildDeck([{ page: 1, html: sec(1) }], 1, meta)).not.toContain('#footer{display:none}');
+    reply('<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2></div></section>');
+    const r = await generatePage({ ...base, layoutId: 'L1' }, 'u1');
+    expect(r.previewHtml).toContain('#footer{display:none}');
   });
 
   it('按页码排，不按传进来的顺序', () => {

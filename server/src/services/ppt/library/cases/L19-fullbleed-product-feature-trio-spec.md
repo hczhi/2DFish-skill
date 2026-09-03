@@ -77,13 +77,13 @@
 | 截图原色 | 归一变量 | 出现位置 |
 |----------|----------|----------|
 | 暗灰 bg（山谷） | `var(--c-bg)` 或图本身 | 全幅 bg |
-| 浅色标题（白） | `#fff` 或 `var(--c-text)` | 主标"产品类别名" |
-| 浅灰副标 | `rgba(255,255,255,.78)` 或 `var(--c-text-2)` | 技术副标 + 长段描述 |
+| 浅色标题（白） | `#fff` | 主标"产品类别名" |
+| 浅灰副标 | `rgba(255,255,255,.78)` | 技术副标 + 长段描述 |
 | 白色卡片底 | `var(--c-card)` | 底部 3 白卡 |
-| 深色卡片主标 | `var(--c-text)` | 卡片"24mm"等参数 |
-| 浅灰卡片小标 | `var(--c-text-2)` | 卡片小标 |
+| 深色卡片主标 | `var(--c-ink-deep)` | 卡片"24mm"等参数 |
+| 浅灰卡片小标 | `var(--c-ink-soft)` | 卡片小标 |
 
-> **铁律**：暗 bg 上文字必须浅色；亮卡上文字必须深色。两套色系分别由 `var(--c-text)` / `var(--c-text-2)` 控制。
+> **铁律**：暗 bg 上文字必须浅色；亮卡上文字必须深色。亮卡那一套是 `var(--c-ink-deep)` / `var(--c-ink-soft)`（暗底上的字直接写 `#fff` / `rgba(255,255,255,.78)`，不走变量）。
 
 ---
 
@@ -104,8 +104,8 @@
 .l19-desc{position:absolute;bottom:18%;left:5%;max-width:48%;font-size:16px;color:rgba(255,255,255,.85);line-height:1.6;z-index:2;}
 .l19-specs{position:absolute;bottom:5%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;z-index:3;}
 .l19-spec{background:var(--c-card);padding:18px 22px;border-radius:4px;min-height:84px;}
-.l19-spec .v{font-size:30px;font-weight:700;color:var(--c-text);line-height:1;letter-spacing:-.01em;}
-.l19-spec .k{font-size:12px;color:var(--c-text-2);margin-top:8px;letter-spacing:.04em;}
+.l19-spec .v{font-size:30px;font-weight:700;color:var(--c-ink-deep);line-height:1;letter-spacing:-.01em}
+.l19-spec .k{font-size:12px;color:var(--c-ink-soft);margin-top:8px;letter-spacing:.04em}
 ```
 
 ---
@@ -115,8 +115,8 @@
 ```html
 <section class="slide l19-wrap">
   <!-- 全幅 bg + 产品图 -->
-  <div class="l19-bg"><img src="{{pXX_hero}}" alt=""></div>
-  <div class="l19-product"><img src="{{pXX_product}}" alt=""></div>
+  <div class="l19-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
+  <div class="l19-product"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
 
   <!-- 顶部 logo -->
   <div class="l19-logo">{{brand_text}}<small>{{series_text}}</small></div>

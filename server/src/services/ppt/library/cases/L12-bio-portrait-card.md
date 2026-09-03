@@ -107,9 +107,7 @@
 .bio-corner-tag{position:absolute;top:28px;right:32px;font-size:11px;font-weight:700;
   color:var(--c-ink-soft);letter-spacing:3px;z-index:5;display:flex;align-items:center;gap:10px}
 .bio-corner-tag::before{content:"";width:24px;height:2px;background:var(--c-brand)}
-.bio-page-num{position:absolute;bottom:-28px;left:-24px;width:64px;height:64px;
-  background:var(--c-ink-deep);border-radius:0 0 0 24px;display:flex;align-items:center;justify-content:center;
-  font-family:var(--serif);font-size:22px;font-weight:700;color:rgba(255,255,255,.9);z-index:5}
+/* .bio-page-num 已删除：页面上不显示页码（当前页和总页数都不要）。 */
 ```
 
 > **注**：CSS 类名 `.bio-*` 为实现标识，不限定内容。`.bio-portrait` 里可以放产品图，`.bio-mega` 可以放产品名。
@@ -122,8 +120,6 @@
 <!-- L12 · circle-float-card（浮卡版式，不包 .slide-inner） -->
 <section class="slide has-card" data-layout="L12">
   <div class="corners"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
-  <div class="wm">{{PAGE_NUM}}</div>
-
   <div class="bio-wrap">
     <div class="bio-card">
       <div class="bio-corner-tag">{{CORNER_TAG}}</div>
@@ -138,7 +134,7 @@
 
       <div class="bio-portrait-wrap">
         <div class="bio-portrait">
-          <img src="cases/{{pXX_visual}}.jpg" alt="{{VISUAL_ALT}}">
+          <img src="/ppt-cases/ph-1x1.svg" data-img-prompt="这一格要什么图（中文一句话）" alt="{{VISUAL_ALT}}">
         </div>
         <div class="bio-badge">{{BADGE_TEXT}}</div>
       </div>
@@ -147,8 +143,6 @@
         <span class="bleed-text">{{BLEED_TEXT}}</span>
         <div class="bleed-dots"><span></span><span></span><span></span><span></span><span></span></div>
       </div>
-
-      <div class="bio-page-num">{{PAGE_NUM}}</div>
     </div>
   </div>
 </section>

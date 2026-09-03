@@ -8,7 +8,7 @@
 
 ## 一、适用场景
 
-- **章节扉页 / 目录页**（强气质版）：5 个以内的章节，每章给一个圆圈数字 + 标题 + 一段引言
+- **章节扉页 / 目录页**（强气质版）：**5 个以内**的章节（多了装不下，且多出来的会被静默裁掉），每章给一个圆圈数字 + 标题 + 一段引言
 - **品牌系列入口**：5 款产品/5 条主张/5 个故事
 - **跨主题导览页**：左图定调 + 右目录导览
 - ❌ 不适合：单主题深挖（用 L14）、数据展示（用 L4）、封面（用 L13）
@@ -57,8 +57,9 @@
 | 蓝色毛笔字 | `var(--c-brand)` | 中文毛笔字 |
 | 红色 "目录" | `var(--c-accent)` | 右半大标题"目录"二字 + 圆圈描边 |
 | 浅米背景 | `var(--c-card)` | 右半底色 |
-| 深色描述字 | `var(--c-text-2)` | 描述段小字 |
-| 白色毛笔字（按图色温） | `#fff` 或 `var(--c-text)` | 中文毛笔字（深色背景时） |
+| 分隔细线 | `var(--c-hairline)` | 目录项 border-top |
+| 深色描述字 | `var(--c-ink-soft)` | 描述段小字 |
+| 白色毛笔字（按图色温） | `#fff` 或 `var(--c-ink-deep)` | 中文毛笔字（深色背景时） |
 
 > **铁律**：截图原色 = 一次性的"灵感"；归一变量 = 可换肤的"工具"。**禁止硬编码色值。**
 
@@ -66,25 +67,31 @@
 
 ## 五、CSS 骨架
 
+> 下面这段和 `template.html` 里 `.l17-*` 那一段**必须一模一样**（`caseLibrary.test.ts` 会核类名和
+> 变量名）。变量名尤其不能自己编：`var(--c-text)` / `var(--c-text-2)` / `var(--c-line)` 在
+> `:root` 里压根不存在，浏览器会把那一条声明整条丢掉 —— 字色掉回继承色、pill 的填充直接透明，
+> 而页面照样渲染，看起来只是「这一版配色淡了点」。深字用 `--c-ink-deep`、正文 `--c-ink`、
+> 浅灰 `--c-ink-soft`、细线 `--c-hairline`。
+
 ```css
 /* L17 · 50/50 左图右圆圈目录 */
-.l17-wrap{position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr;overflow:hidden;}
-.l17-left{position:relative;overflow:hidden;}
-.l17-left img{width:100%;height:100%;object-fit:cover;}
-.l17-left::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.05) 0%,rgba(0,0,0,.35) 70%,rgba(0,0,0,.6) 100%);}
-.l17-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:2;}
-.l17-pill{position:absolute;top:32px;right:32px;background:var(--c-text);color:#fff;padding:6px 14px;border-radius:99px;font-size:12px;letter-spacing:.2em;z-index:2;}
-.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi',serif;letter-spacing:.04em;z-index:2;line-height:.95;mix-blend-mode:screen;}
-.l17-en{position:absolute;bottom:14%;left:8%;color:#fff;font-size:clamp(40px,5vw,64px);font-weight:300;letter-spacing:.32em;text-transform:uppercase;z-index:2;opacity:.85;}
-.l17-right{background:var(--c-card);padding:80px 72px;display:flex;flex-direction:column;}
-.l17-head{font-size:clamp(40px,4.4vw,60px);font-weight:800;color:var(--c-text);letter-spacing:.02em;line-height:1;margin-bottom:48px;}
-.l17-head .accent{color:var(--c-accent);font-weight:500;margin-left:14px;font-family:serif;}
-.l17-list{flex:1;display:flex;flex-direction:column;gap:14px;}
-.l17-item{display:flex;align-items:flex-start;gap:22px;padding:10px 0;border-top:1px solid var(--c-line);}
-.l17-item:last-child{border-bottom:1px solid var(--c-line);}
-.l17-num{width:56px;height:56px;border-radius:50%;border:1.5px solid var(--c-accent);color:var(--c-text);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;flex-shrink:0;}
-.l17-item .title{font-size:18px;font-weight:700;color:var(--c-text);margin-bottom:6px;}
-.l17-item .desc{font-size:13px;color:var(--c-text-2);line-height:1.7;max-width:480px;}
+.l17-wrap{position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr;overflow:hidden}
+.l17-left{position:relative;overflow:hidden}
+.l17-left img{width:100%;height:100%;object-fit:cover}
+.l17-left::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.05) 0%,rgba(0,0,0,.35) 70%,rgba(0,0,0,.6) 100%)}
+.l17-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:2}
+.l17-pill{position:absolute;top:32px;right:32px;background:var(--c-ink);color:#fff;padding:6px 14px;border-radius:99px;font-size:12px;letter-spacing:.2em;z-index:2}
+.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95;mix-blend-mode:screen}
+.l17-en{position:absolute;bottom:14%;left:8%;color:#fff;font-size:clamp(40px,5vw,64px);font-weight:300;letter-spacing:.32em;text-transform:uppercase;z-index:2;opacity:.85}
+.l17-right{background:var(--c-card);padding:80px 72px;display:flex;flex-direction:column}
+.l17-head{font-size:clamp(40px,4.4vw,60px);font-weight:800;color:var(--c-ink-deep);letter-spacing:.02em;line-height:1;margin-bottom:48px}
+.l17-head .accent{color:var(--c-accent);font-weight:500;margin-left:14px;font-family:var(--serif)}
+.l17-list{flex:1;display:flex;flex-direction:column;gap:0}
+.l17-item{display:flex;align-items:flex-start;gap:22px;padding:14px 0;border-top:1px solid var(--c-hairline)}
+.l17-item:last-child{border-bottom:1px solid var(--c-hairline)}
+.l17-num{width:56px;height:56px;border-radius:50%;border:1.5px solid var(--c-accent);color:var(--c-ink);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;flex-shrink:0}
+.l17-item .title{font-size:18px;font-weight:700;color:var(--c-ink-deep);margin-bottom:6px}
+.l17-item .desc{font-size:13px;color:var(--c-ink-soft);line-height:1.7;max-width:480px}
 ```
 
 ---
@@ -92,36 +99,53 @@
 ## 六、build-part 结构模板
 
 ```html
-<section class="slide l17-wrap">
-  <!-- 顶部通栏（跨全宽） -->
-  <div class="l17-logo">{{logo_text}}</div>
-  <div class="l17-pill">{{pill_text}}</div>
+<section class="slide">
+  <div class="slide-header"><div class="kicker">第一部分 · 项目背景</div></div>
+  <div class="slide-inner">
+    <div class="l17-wrap">
+      <!-- 左半全幅图（logo / pill 浮在图上，都是绝对定位，不占列） -->
+      <div class="l17-left">
+        <img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" data-img-mode="case" alt="">
+        <div class="l17-logo">品牌名</div>
+        <div class="l17-pill">2025</div>
+        <div class="l17-cn">在路上</div>
+        <div class="l17-en">ON THE ROAD</div>
+      </div>
 
-  <!-- 左半全幅图 -->
-  <div class="l17-left">
-    <img src="{{pXX_hero}}" alt="">
-    <div class="l17-cn">{{cn_brush_title}}</div>
-    <div class="l17-en">{{en_title}}</div>
-  </div>
-
-  <!-- 右半浅米底圆圈目录 -->
-  <div class="l17-right">
-    <h2 class="l17-head">CONTENTS <span class="accent">目录</span></h2>
-    <ul class="l17-list">
-      <li class="l17-item">
-        <span class="l17-num">01</span>
-        <div>
-          <div class="title">{{item_title}}</div>
-          <div class="desc">{{item_desc}}</div>
+      <!-- 右半浅米底圆圈目录 -->
+      <div class="l17-right">
+        <div class="l17-head">CONTENTS<span class="accent">目录</span></div>
+        <div class="l17-list">
+          <div class="l17-item">
+            <div class="l17-num">01</div>
+            <div>
+              <div class="title">这一章讲什么</div>
+              <div class="desc">一句话说清这一章的落点</div>
+            </div>
+          </div>
+          <!-- 重复，最多 5 条 -->
         </div>
-      </li>
-      <!-- 重复 5 次，items 数量 = 5 -->
-    </ul>
+      </div>
+    </div>
   </div>
 </section>
 ```
 
-> **design 提示**：左半毛笔字建议用 `font-family: 'STKaiti', 'KaiTi', serif`（macOS / Windows 自带楷体）来还原截图的笔触感。`mix-blend-mode: screen` 让毛笔字自动适配底图明暗。
+> ⚠️ 三条硬的（这一页被「截断」过一次，三条各能单独造成它）：
+> 1. **`l17-wrap` 只能出现在一个地方：`.slide-inner` 里那个 div 上。** 千万不要写成
+>    `<section class="slide l17-wrap">` —— `.l17-wrap` 带着 `display:grid;grid-template-columns:1fr 1fr`，
+>    加到 `<section>` 上等于把整张 `.slide` 变成两列，`.slide-inner` 掉进左边那一列，
+>    左右两半再各砍一半宽 → 右半只剩 ~25% 宽，「CONTENTS」和目录项被 `overflow:hidden` 裁掉，
+>    而画面里图还在、字也还在，看起来像「模型排版没排好」。**也不要两处都写**（外层 section
+>    加一份、里面再套一个 div），那是同一个事故。
+> 2. **目录项最多 5 条。** 圆圈 56px + 上下 14px + 分隔线 ≈ 每条 85px，加上 `.l17-head`（60+48）和
+>    `.l17-right` 的 80px 上下内边距，第 6 条起就顶出 `.l17-wrap` 的 `overflow:hidden` ——
+>    多出来的那几条**一个字都不显示、一处都不报错**，页面读起来就是一份「只有 5 章」的目录。
+>    章节多于 5 个就合并同类项，或者换 L14。
+> 3. 图片只写 `/ppt-cases/ph-16x9.svg` 占位 + `data-img-prompt`，配图是后面独立一步由代码换的。
+
+> **design 提示**：左半毛笔字用 `font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif`（macOS / Windows
+> 自带楷体）还原截图的笔触感。`mix-blend-mode: screen` 让毛笔字自动适配底图明暗。
 
 ---
 
@@ -140,17 +164,18 @@
 - **V5 横排卡片**：5 项从纵列改成横排（适合每项 1–2 行短描述）
 - **V6 加 1px 竖线**：左右 50/50 中间加细线分界
 - **V7 圆圈填充**：用 brand 色填充圆圈，数字白色
-- **V8 目录项数变 3/4/6**：项数不绑死 5
+- **V8 目录项数变 3/4**：项数不绑死 5，但**不能多于 5**（第 6 条起被裁掉且不报错，见「结构模板」下面那三条）
 
 ---
 
 ## 九、design 提示
 
 - **视觉**：中重（毛笔字 + 大图并置，气场强）
-- **是否全幅**：否（在 `.slide-inner` 内，grid 50/50）
+- **是否全幅**：否（`.l17-wrap` 放在 `.slide-inner` **里面**，grid 50/50；`l17-wrap` 加到 `<section>` 上会把整页挤进左半列）
 - **build-part 决策**：section 不加 `fullbleed` 类，不加 `has-card` 类，按默认排版
 - **关键约束**：
   - 圆圈数字 01/02/03 必须从 1 开始递增
+  - 目录项 ≤ 5 条（第 6 条起顶出 `overflow:hidden`，一个字都不显示也不报错）
   - 中文毛笔字必须用衬线/楷体（`STKaiti` / `KaiTi`），不能换无衬线
   - 圆圈描边 ≥ 1.5px，数字字重 ≥ 700（描边太细会糊）
   - 描述段行数控制在 3–4 行（多了会破坏右半视觉平衡）

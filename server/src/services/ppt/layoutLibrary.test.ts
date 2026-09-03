@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { loadLibrary, layoutById } from './layoutLibrary.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { statSync, utimesSync } from 'fs';
+import { join } from 'path';
+import { loadLibrary, layoutById, libraryRoot, libraryVersion } from './layoutLibrary.js';
+import { templateClasses } from './deckShell.js';
 
 // 这个解析器的每种失败都伪装成成功：漏掉几条案例、某条的 buildText 是空的、
 // fullbleed 判反了 —— 三种都不报错，生成阶段照样出一份完整的 HTML，
@@ -42,4 +45,27 @@ describe('版式案例库', () => {
     expect(layoutById('L5')?.hasDetail).toBe(false);
     expect(layoutById('L5')?.buildText).toContain('stat-grid');
   });
+
+  it('library 目录里的文件一改就重读，派生缓存跟着作废', () => {
+    // 原来是「读一次缓存住，改了 md 要重启服务」。那条约定的代价是一次真实调用：
+    // 改完某条案例的结构模板去点「重新生成这一页」，拿到的是**一模一样的旧版** ——
+    // 页面渲染正常、接口 200、problems 里还是原来那几条，没有一处说「这个进程读的
+    // 还是旧那份 md」。他只会以为是模型不听话，一遍遍重试（每次扣一次额度）。
+    const file = join(libraryRoot(), 'template.html');
+    const before = statSync(file);
+    const v1 = libraryVersion();
+    const classes1 = templateClasses();
+    try {
+      utimesSync(file, before.atime, new Date(before.mtimeMs + 5000));
+      // 一秒内不重复扫目录（`stamp` 的节流），所以把时间往后拨过那道门槛
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5000);
+      expect(libraryVersion()).toBeGreaterThan(v1);
+      // 派生缓存（这里用类名表代表）也要重算，不然「md 改了一半生效」
+      expect(templateClasses()).not.toBe(classes1);
+    } finally {
+      utimesSync(file, before.atime, before.mtime);
+    }
+  });
 });
+
+afterEach(() => vi.restoreAllMocks());

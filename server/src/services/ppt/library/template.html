@@ -62,11 +62,14 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .corners i::after{top:8px;left:0;height:1.5px;width:18px}
 .corners .tl{left:64px;top:46px}.corners .tr{right:64px;top:46px}
 .corners .bl{left:64px;bottom:74px}.corners .br{right:64px;bottom:74px}
-/* 水印=脚本页码 */
-.wm{position:absolute;right:96px;bottom:70px;font-family:var(--num);font-size:400px;font-weight:800;line-height:.8;color:transparent;-webkit-text-stroke:1.5px rgba(240,134,26,.10);pointer-events:none;z-index:1;font-feature-settings:"tnum"}
-.slide.cool .wm{-webkit-text-stroke:1.5px rgba(45,185,237,.12)}
-.page-badge{position:absolute;top:78px;right:140px;font-family:var(--num);font-size:20px;font-weight:700;color:var(--c-ink-soft);letter-spacing:2px;font-feature-settings:"tnum";z-index:3}
-.page-badge b{color:var(--c-brand);font-weight:800}
+/* page-badge（右上角页码）和 wm（右下角大号页码水印）两个类已废弃、规则整条删掉：
+   页面上**不显示页码**（当前页和总页数都不要）。
+   写成 display:none 不行 —— 那样 templateClasses() 照旧认这两个类名，模型写一个角标出来
+   checkPage 一句话都不说，只是"看不见"，而任何人改回样式或者别的容器带上 overflow 之后
+   那个数字又回来了；L13 那类版式右上角本来就有一个 pill，两个东西会叠在一起（截图上就是）。
+   页码只留在播放器页脚的 #page-ind 和目录面板里，那两处都是代码按 section 顺序算的。
+   （templateClasses() 现在会先去掉 CSS 注释再收类名，所以注释掉的规则真的算"没定义"，
+   模型再写这几个类会被 checkPage 点名。） */
 /* 统一页眉：固定左上角；build-part 必须为非封面页生成 .slide-header */
 .slide-header{position:absolute;top:78px;left:140px;z-index:30;max-width:760px;pointer-events:none}
 .slide-header .kicker{font-size:17px;font-weight:700;letter-spacing:.08em;color:var(--c-accent-deep)}
@@ -101,7 +104,8 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .gallery.g3{grid-template-columns:repeat(3,1fr)}
 .gallery.g2x2{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
 .gallery img{width:100%;border-radius:12px;border:1px solid var(--c-hairline);display:block}
-/* 三栏并列叙事 (L11) · 全幅图叠字 + 顶 header 浅带 — 详情见 cases/L11-tri-narrative-photo.md */
+/* 三栏并列叙事 (L11) · 全幅图叠字（标题白字叠在图上，模块名走 .slide-header，没有 header 带）
+   — 详情见 cases/L11-tri-narrative-photo.md，那份 md 是喂给模型的说明，两边必须对得上 */
 .tri-narrative{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;overflow:hidden}
 .tri-title{position:absolute;top:188px;left:80px;right:80px;z-index:5;color:#fff;font-family:var(--serif);font-size:40px;font-weight:800;letter-spacing:.5px;text-shadow:0 2px 18px rgba(0,0,0,.4)}
 .tri-title .em{color:var(--c-accent)}
@@ -397,7 +401,11 @@ function go(n){
   ind.textContent=(cur+1)+' / '+slides.length;
   bar.style.width=((cur+1)/slides.length*100)+'%';
   document.querySelectorAll('.toc-item').forEach(b=>b.classList.toggle('active',+b.dataset.i===cur));
-  history.replaceState(null,'','#n'+(cur+1));
+  /* 制作页那个预览是 srcdoc iframe（URL 是 about:srcdoc），replaceState 在那里必抛
+     SecurityError。它是 go() 的最后一行，所以幻灯片其实已经切好了 —— 现象只是每次翻页、
+     每次点目录都往控制台扔一条红。真会咬人的是往后加东西：写在这一行后面的任何一句在
+     预览里永远不执行，而在导出的文件里一切正常，两边行为不一样且没有一处会说。 */
+  try{ history.replaceState(null,'','#n'+(cur+1)); }catch(e){}
 }
 if(bar)bar.style.width=(1/slides.length*100)+'%';
 
@@ -412,8 +420,10 @@ if(bar)bar.style.width=(1/slides.length*100)+'%';
     let part=k?k.textContent.trim():(i===0?'封面':'(其他)');
     const key=(part.split('：')[0]||part).trim()||part;
     (groups[key]=groups[key]||{full:part,items:[]});
-    const badge=sec.querySelector('.page-badge b');
-    const label=badge?badge.textContent.trim():(i===0?'封面':'—');
+    /* 目录里那个序号按 section 的位置算（页面上已经没有页码角标了）。
+       原来读的是角标里的数字 —— 角标一取消，整个目录的序号全变成「—」，
+       而目录照旧打得开、点得动，看不出是哪里少了东西。 */
+    const label=i===0?'封面':String(i+1).padStart(2,'0');
     const t=sec.querySelector('h1.page-title');
     let title=t?t.textContent.trim():'';
     if(!title){ if(i===0)title='封面'; else if(part==='致谢')title='致谢'; }

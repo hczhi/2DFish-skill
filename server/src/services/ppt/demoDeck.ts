@@ -10,7 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { libraryRoot } from './layoutLibrary.js';
+import { libraryRoot, libraryVersion } from './layoutLibrary.js';
 import { assembleDeck } from './deckShell.js';
 
 /** 页脚那三个占位符的 demo 取值（真 deck 由生成流程填客户品牌）。 */
@@ -21,13 +21,23 @@ const TOPIC = '版式 demo · 22 个 L 版式的骨架效果';
 export class DemoNotFoundError extends Error {}
 
 let cached: Map<string, string> | null = null;
+// 跟着 library 的版本号一起作废（`demo-slides.html` 也在那个目录里）：不跟的话改完片段
+// 之后案例库卡片上还是旧那一版，而生成出来的页面已经换了 —— 而这些卡片存在的全部理由
+// 就是「照我们的骨架跑出来长这样」，漂开的那一刻它就在骗人，两边都不报错。
+let cachedAt = -1;
 
 /** 测试里改了文件之后用。 */
 export function resetDemoDeckCache(): void {
   cached = null;
+  cachedAt = -1;
 }
 
 export function demoFragments(): Map<string, string> {
+  const v = libraryVersion();
+  if (v !== cachedAt) {
+    cached = null;
+    cachedAt = v;
+  }
   if (!cached) cached = loadFragments();
   return cached;
 }
@@ -57,9 +67,12 @@ export function demoDeck(only?: string): string {
   }
 
   // 外壳走 deckShell 那一份（生成产出的预览也走它）—— 各拼一遍的话 demo 和产出会漂。
+  // `?only=Lk` 是案例库那张卡里的缩略图（一页）：不要页脚 —— 它压在画面底部
+  // 那 54px 上，缩到卡片大小之后只剩一条挡住内容的白带。整份 demo 要带（靠它翻页）。
   return assembleDeck(
     ids.map((id) => frags.get(id)!),
-    { brandCn: BRAND_CN, brandEn: BRAND_EN, topic: TOPIC }
+    { brandCn: BRAND_CN, brandEn: BRAND_EN, topic: TOPIC },
+    { footer: !only }
   );
 }
 

@@ -26,7 +26,7 @@
   - 英文品牌名（`.en`，18px，margin-top 8px，letter-spacing 0.32em，weight 300）
 
 **上半右 · `.l22-info`**（浅米底，padding 48px 56px，flex column center gap 14px）
-- 小标题（`h3`，18px，weight 600，padding-bottom 8px，`border-bottom: 1px solid var(--c-line)`）
+- 小标题（`h3`，18px，weight 600，padding-bottom 8px，`border-bottom: 1px solid var(--c-hairline)`）
 - 多行品牌信息（`.row`，14px，行高 1.8，可带 `<strong>` 加粗字段名）
 
 ### 下半 50%（`.l22-lower`，grid 1fr 1fr，`var(--c-card)` 底）
@@ -34,9 +34,9 @@
 **下半左 · `.l22-lower-col`**（padding 48px 56px）
 - 顶部小图标（`.icon`，24×24px，`var(--c-brand)`，margin-bottom 14px）
 - 副标题（`h3`，18px，weight 600，margin-bottom 14px）
-- 文字段（`p`，14px，`var(--c-text-2)`，行高 1.85）
+- 文字段（`p`，14px，`var(--c-ink-soft)`，行高 1.85）
 
-**下半右 · `.l22-lower-col`**（padding 48px 56px，`border-left: 1px solid var(--c-line)`）
+**下半右 · `.l22-lower-col`**（padding 48px 56px，`border-left: 1px solid var(--c-hairline)`）
 - 标题（"品牌定位"等，`h3`，18px，weight 600）
 - 描述段（`p`，14px，行高 1.85）
 
@@ -55,15 +55,15 @@
 .l22-hero-txt .cn{font-size:36px;font-weight:300;letter-spacing:.04em}
 .l22-hero-txt .en{display:block;font-size:18px;margin-top:8px;letter-spacing:.32em;font-weight:300}
 .l22-info{background:var(--c-card);padding:48px 56px;display:flex;flex-direction:column;justify-content:center;gap:14px}
-.l22-info h3{font-size:18px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--c-line);color:var(--c-text)}
-.l22-info .row{font-size:14px;color:var(--c-text);line-height:1.8}
+.l22-info h3{font-size:18px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--c-hairline);color:var(--c-ink-deep)}
+.l22-info .row{font-size:14px;color:var(--c-ink);line-height:1.8}
 .l22-info .row strong{font-weight:600}
 .l22-lower{flex:1;display:grid;grid-template-columns:1fr 1fr;background:var(--c-card);min-height:0}
 .l22-lower-col{padding:48px 56px}
-.l22-lower-col+.l22-lower-col{border-left:1px solid var(--c-line)}
+.l22-lower-col+.l22-lower-col{border-left:1px solid var(--c-hairline)}
 .l22-lower-col .icon{width:24px;height:24px;color:var(--c-brand);margin-bottom:14px}
-.l22-lower-col h3{font-size:18px;font-weight:600;margin-bottom:14px;color:var(--c-text)}
-.l22-lower-col p{font-size:14px;color:var(--c-text-2);line-height:1.85}
+.l22-lower-col h3{font-size:18px;font-weight:600;margin-bottom:14px;color:var(--c-ink-deep)}
+.l22-lower-col p{font-size:14px;color:var(--c-ink-soft);line-height:1.85}
 ```
 
 ---
@@ -75,7 +75,7 @@
   <div class="l22-wrap">
     <div class="l22-upper">
       <div class="l22-hero">
-        <img src="cases/pXX_hero.jpg" alt="">
+        <img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt="">
         <div class="l22-hero-txt">
           <div class="cn">{{中文品牌名}}</div>
           <span class="en">{{ENGLISH BRAND}}</span>

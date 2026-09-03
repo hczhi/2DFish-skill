@@ -11,11 +11,14 @@
 //      版式渲染塌了）；
 //   ② 截断要喊（`</section>` 没写出来的页面在浏览器里照样渲染，只是下半页没了 ——
 //      和「这一版设计得比较空」分不开）；
-//   ③ 用了 template 里没有的类名要喊（那一块回到默认流式布局，看起来是版式本身不行）。
+//   ③ **内部元素**用了 template 里没有的类名要喊（那一块回到默认流式布局，看起来是版式
+//      本身不行）；根 `<section>` 上多写的那种不算，见 `checkPage` ①。
 
 import { aiGateway } from '../../core/llm/gateway.js';
 import { layoutById, library, type PptLayout } from './layoutLibrary.js';
-import { assembleDeck, templateClasses, type DeckMeta } from './deckShell.js';
+import { type PlannedImage } from './imageSpec.js';
+import { assembleDeck, templateClasses, stripPageNumber, type DeckMeta } from './deckShell.js';
+import { injectEids } from './pageEdit.js';
 
 /** 一页正文 2-4KB，剩下的是留给思维链的空间（硬规则 2）。`noThinking` 也一起发。 */
 const MAX_PAGE_TOKENS = 6000;
@@ -35,6 +38,27 @@ export interface PageInput {
   points: string[];
   layoutId: string;
   images: number;
+  /**
+   * 规划里定下的「这几张图画什么」（顺序就是图位顺序）。**带进 prompt 是承重的**：
+   * 备好的图是**按序号**贴进图位的（`applyPreparedImages`），模型自己另写一套图位说明
+   * 的话，第 1 格的图会贴到一格讲别的事情的位置上 —— 图文不符，而页面渲染完全正常。
+   * 老规划没有这个字段（那时只有张数），那就退回「先出 HTML 再照它写的说明配图」。
+   */
+  imageSpecs?: PlannedImage[];
+  /**
+   * 他自己写的那段额外要求（字体 / 排版 / 语气，092 `setup_notes`）。**放在 prompt 最后
+   * 并写明它优先于上面的建议**——夹在中间的话模型基本照旧按版式建议排，而出来是一页
+   * 完整正常的幻灯片，他只会觉得「这个要求好像没什么用」，再写一遍、再花一次额度。
+   * 但输出格式那几条硬规则（一个 section / 不写页码 / 不自己写 style）不受它影响：
+   * 让它盖掉的话「字体大一点」会换来一段 `<style>`，那玩意儿改的是整份 deck 的每一页。
+   */
+  notes?: string;
+  /**
+   * 整份统一的那段要求（093 `ppt_decks.notes`）。**和页级那段一起发，不是二选一**：
+   * 页级有就顶掉整份那段的话，他在某一页补一句「这里的表格用等宽字体」，整份定的
+   * 「语气克制」就在这一页悄悄失效了 —— 只有那一页语气不一样，没有一处会说。
+   */
+  deckNotes?: string;
   brandCn?: string;
   brandEn?: string;
   topic?: string;
@@ -81,18 +105,26 @@ export async function generatePage(input: PageInput, userId: string): Promise<Pa
     noThinkingRequested: noThinking,
   });
 
-  const fixed = applyPageNumber(html, input);
+  // 每一段文字打上 `data-eid`（就地编辑靠它定位，见 pageEdit）。**在这里做、跟着 html 一起
+  // 存**：编辑时再算一遍的话，前端手上那份预览里的 t3 和库里的 t3 可能是两个不同的元素，
+  // 于是他改的是这一块、变的是隔壁那一块 —— 两块都是正常的文字，一处都不报错。
+  const fixed = injectEids(stripPageNumber(html));
   problems.push(...checkPage(fixed, layout, input));
 
   return {
     page: input.page,
     layoutId: layout.id,
     html: fixed,
-    previewHtml: assembleDeck([fixed], {
-      brandCn: input.brandCn || '示例企业',
-      brandEn: input.brandEn || 'SAMPLE',
-      topic: input.topic || input.section || input.title,
-    }),
+    // 制作过程中的单页预览不要页脚（它压在画面底部，挡住的是这一页自己的内容）。
+    previewHtml: assembleDeck(
+      [fixed],
+      {
+        brandCn: input.brandCn || '示例企业',
+        brandEn: input.brandEn || 'SAMPLE',
+        topic: input.topic || input.section || input.title,
+      },
+      { footer: false }
+    ),
     problems,
     usage,
   };
@@ -189,35 +221,38 @@ function extractSection(raw: string, info: FailInfo): { html: string; problems: 
   return { html, problems };
 }
 
-/**
- * 页码由代码写（硬规则 3）。模型写的 `01 / 22` 看起来完全正常，而它算错的时候
- * 那一页在 deck 里的位置和角上那个数字对不上，没有任何一处会报错。
- */
-function applyPageNumber(html: string, input: PageInput): string {
-  const num = String(input.page).padStart(2, '0');
-  const badge = `<div class="page-badge"><b>${num}</b> / ${input.total}</div>`;
-  const re = /<div[^>]*class="[^"]*\bpage-badge\b[^"]*"[^>]*>[\s\S]*?<\/div>/;
-  const out = re.test(html) ? html.replace(re, () => badge) : html;
-  // 兜一遍散落在别处的占位符：漏掉的话页面上会明晃晃印着 {{PAGE}}。
-  // 版式本身没有页码（封面/章节页）时不硬塞一个进去 —— 会破掉全幅版式的构图。
-  return out.replace(/\{\{PAGE\}\}/g, () => num).replace(/\{\{TOTAL\}\}/g, () => String(input.total));
-}
-
 /** 每一条都是「页面照样渲染出来了，只是不对」——手测时看不出来的那些。 */
 function checkPage(html: string, layout: PptLayout, input: PageInput): string[] {
   const problems: string[] = [];
 
   // ① 类名。不在 template 里的类不报错，那一块只是回到默认流式布局。
+  //    **根 `<section>` 自己那一行不算**：那一层的尺寸和定位全由 `.slide` 给，模型顺手
+  //    多写的 `l13-cover` / `fullbleed` 这类语义标签一个字都不影响画面 —— 报出来的话
+  //    界面上是一条「用了没定义的类名」而那一页完全正常，用户只能盯着它猜自己错在哪。
+  //    内部元素上的照旧要报：那才是真的掉回默认流式布局。
   const known = templateClasses();
   const unknown = new Set<string>();
-  for (const m of html.matchAll(/class="([^"]*)"/g)) {
+  const inner = html.replace(/^[\s\S]*?<section[^>]*>/, '');
+  for (const m of inner.matchAll(/class="([^"]*)"/g)) {
     for (const tok of m[1].trim().split(/\s+/)) {
       if (tok && !known.has(tok)) unknown.add(tok);
     }
   }
   if (unknown.size) {
+    // 措辞里不出现 template.html / 类名这些词：他能做的只有「重新生成一次」。
     problems.push(
-      `用了 template.html 里没有定义的类名：${[...unknown].join(' / ')}。这几块会掉回默认流式布局（不报错，看起来像版式塌了）。`
+      `这一页有 ${unknown.size} 块内容没套上模板的样式（${[...unknown].join(' / ')}），` +
+        '那几块会变成没排版的文字或错位的方块 —— 重新生成一次通常就好了。'
+    );
+  }
+
+  // ①b 自己用文字写的页码。`stripPageNumber` 只摘得掉那几个类名和占位符 ——
+  //     模型把 `01 / 17` 直接写进某个 pill / 角标里时，代码分不出它是页码还是内容，
+  //     而页面上那个数字看起来完全像设计的一部分（这一页在 deck 里换个位置就对不上了）。
+  const pageNumLike = html.match(/>\s*0\d\s*\/\s*\d{1,3}\s*</);
+  if (pageNumLike) {
+    problems.push(
+      `这一页里有一处看起来是页码的文字（${pageNumLike[0].replace(/[><]/g, '').trim()}）。页面上不显示页码 —— 它不会跟着这一页在 deck 里的位置变，请删掉或改成别的文案。`
     );
   }
 
@@ -259,7 +294,63 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
   if (imgs > 0 && slots < imgs) {
     problems.push(`这一页有 ${imgs} 个图元素，但只有 ${slots} 个带 data-img-prompt —— 缺的那几格生图那一步会跳过，永远停在占位图上。`);
   }
+  // 图位条数没照规格来：备好的图是**按序号**贴的，条数一变就有图没地方贴、或者有格子空着，
+  // 而这一页看起来完全正常（占位图读起来就是「设计上留白」）。
+  const specs = input.imageSpecs?.length || 0;
+  if (specs && slots !== specs) {
+    problems.push(
+      `规划里这一页有 ${specs} 个图位，生成出来是 ${slots} 个 —— 备好的图按序号贴，` +
+        `${slots < specs ? '多出来的那几张没地方贴' : '多出来的那几格贴不到图（会停在占位图上）'}。` +
+        '要按规划来就重新生成这一页。'
+    );
+  }
   return problems;
+}
+
+/**
+ * 规格那一段的硬要求，接在图槽位那条规则后面。
+ *
+ * 「条数和顺序照规格」是承重的：备好的图**按序号**贴进图位（`applyPreparedImages`），
+ * 模型多写一个图位、或者把三格的顺序换一下，贴出来就是「第 1 张图配在讲另一件事的那一格」
+ * —— 图文不符，而页面渲染、类名校验、张数统计全部正常。
+ */
+function imageSpecBlock(input: PageInput): string {
+  if (!input.imageSpecs?.length) return '';
+  return (
+    `\n   - **图位的条数和顺序照下面「图位」那一段来**（正好 ${input.imageSpecs.length} 个，多写少写都不行）：` +
+    `第 n 个图元素就是那一段的第 n 条，\`data-img-prompt\` 照抄它那句话，占位图按它给的比例挑。` +
+    `这几张图可能已经提前生成好了，是**按序号**贴进图位的 —— 顺序换了就会贴到讲别的事情的那一格。`
+  );
+}
+
+/**
+ * 他手写的那段要求，**接在整份 prompt 最后**（上面那些是建议，这一段压它们）。
+ *
+ * 顺序是承重的：夹在版式骨架前面的话，后面近 8000 字的骨架说明会把它盖过去 —— 模型照旧
+ * 按版式建议排，出来是一页完整正常的幻灯片，而他写的「语气克制、别用感叹号」一处都没生效，
+ * 也没有一处会说（他只会再写一遍、再花一次额度）。
+ *
+ * 同时要挡住「顺着他的要求破坏输出格式」那一路：他写「字体大一点」时模型很容易回一段
+ * `<style>`，而那玩意儿改的是整份 deck 的每一页（`checkPage` 会喊，但那时这次调用已经花了）。
+ */
+function notesBlock(input: PageInput): string {
+  const notes = input.notes?.trim();
+  const deckNotes = input.deckNotes?.trim();
+  if (!notes && !deckNotes) return '';
+  // 两段分开写、各带标签：合成一段的话「整份统一」和「这一页额外」在模型眼里没有轻重，
+  // 两条冲突时（整份说「不要图标」、这一页说「用图标分栏」）它挑哪条全凭运气，
+  // 而出来是一页完整正常的幻灯片。
+  const lines = [
+    deckNotes ? `整份统一：${deckNotes}` : '',
+    notes ? `这一页额外（和上一条冲突时按这一条）：${notes}` : '',
+  ].filter(Boolean);
+  return `
+## 额外要求（他自己写的，**优先于上面所有建议**）
+${lines.join('\n')}
+
+上面「输出格式（硬规则）」那 7 条不受这一段影响：还是只输出一个 \`<section>\`、不写页码、
+不写 \`<style>\` / \`<script>\`、颜色只用 \`var(--…)\`。要改字号/间距/字重就写 inline \`style="…"\`。
+`;
 }
 
 function buildPrompt(input: PageInput, layout: PptLayout): string {
@@ -270,13 +361,13 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
 1. 只输出一个 \`<section class="slide" …>…</section>\`，前后不要任何解释、不要 markdown 围栏。
 2. **不要**输出 \`<html>\` / \`<head>\` / \`<style>\` / \`<script>\` —— 骨架 CSS 已经在 deck 外壳里了，这一页只能**用已有的类名**。要微调用 inline \`style="…"\`。
 3. 颜色只能用 \`var(--c-*)\` / \`var(--bg-*)\` 这些变量，不要写死色值 —— 同一个版式要能在橙/蓝/双色系的 deck 里都成立。
-4. 页码写成 \`<div class="page-badge"><b>{{PAGE}}</b> / {{TOTAL}}</div>\`，程序会替换成真页码；**不要自己写数字**。
+4. **不要写页码**：不要当前页码、不要总页数、不要 \`01 / 17\` 这种角标，也不要 \`page-badge\` / \`wm\` / \`hc-no\` / \`bio-page-num\`（这几个类已经删了，写了只会在正文里多出一行数字）。放映器页脚会显示进度。
 5. ${layout.fullbleed
       ? `${layout.id} 是**全幅**版式：内容**不要**包进 \`.slide-inner\`（包进去会变成一张四边留白的「全幅」图）。`
       : `${layout.id} 不是全幅版式：正文必须包在 \`<div class="slide-inner">…</div>\` 里（不包的话内容会贴到画面边缘）。`}${layout.hasCard ? `\n   另外 section 上要加 \`has-card\` 类（色带要溢出卡片边缘）。` : ''}
 6. 图槽位：一律先用占位图 ${PLACEHOLDERS.join(' / ')}（按构图比例挑），并给每个图元素加两个属性：
    - \`data-img-prompt="这一格要什么图（中文一句话）"\` —— 真图是下一步按这句话生成后替换进来的，**漏了这个属性那一格就永远配不上图**；
-   - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。
+   - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。${imageSpecBlock(input)}
 7. 文案照给定的内容写，不要编数字、不要编客户名。要点可以润色成更适合上屏的短句。
 
 ## 这一页的内容
@@ -284,12 +375,19 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
 标题：${input.title}
 要点：
 ${input.points.length ? input.points.map((p) => `- ${p}`).join('\n') : '（没有给要点，按标题自己组织，宁可少写也不要编事实）'}
-建议配图张数：${input.images}
+${input.imageSpecs?.length
+      ? `图位（**必须按这个顺序、就这 ${input.imageSpecs.length} 个**）：\n${input.imageSpecs
+          .map(
+            (s, i) =>
+              `${i + 1}. ${s.ratio} / ${s.mode} / data-img-prompt 就写「${s.subject}」`
+          )
+          .join('\n')}`
+      : `建议配图张数：${input.images}`}
 
 ## 版式（照它的结构和 CSS 骨架排）
 ${layout.buildText}
 
 ## 配色与排版 token
 ${lib.designTokens}
-`;
+${notesBlock(input)}`;
 }

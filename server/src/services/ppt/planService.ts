@@ -9,6 +9,8 @@
 
 import { jsonGateway, jsonFailMessage, parseJsonArrayItems } from '../../core/llm/parseJson.js';
 import { layouts, layoutById, type PptLayout } from './layoutLibrary.js';
+import { normalizeImageSpecs, IMAGE_RATIOS, MAX_SLOTS_PER_PAGE, type PlannedImage } from './imageSpec.js';
+import { IMAGE_MODES } from './styleLibrary.js';
 
 /** 提纲上限。只拒不截 —— 截掉后半截的话用户以为整份都规划过了。 */
 export const MAX_OUTLINE_CHARS = 12000;
@@ -19,6 +21,12 @@ export const MAX_PAGES = 40;
 // （硬规则 2）：`noThinking: true` 之后它才真的全给 JSON。调小不省钱，只是把偶发的
 // 长思维链变成确定性截断。
 const MAX_PLAN_TOKENS = 8000;
+
+/**
+ * 一页最多留几条备选版式。多于这个数等于把整份清单又抄了一遍，「排在最前面的是规划挑的」
+ * 就不再是信息了 —— 而下拉看起来完全正常。
+ */
+const MAX_ALTS = 3;
 
 export interface PlannedPage {
   /** 页码由**代码**按数组顺序给（硬规则 3：会算错的格式不交给模型）。 */
@@ -31,8 +39,28 @@ export interface PlannedPage {
   layoutId: string;
   /** 挑它的理由 —— 用户核「挑得准不准」只能靠这句话 */
   why: string;
-  /** 这一页要几张图（生成阶段按它去生图） */
+  /**
+   * 2-3 条备选版式 id（生成前那个对话框里排在下拉最前面）。**代码校验过**：不在库里的
+   * 丢掉、和 `layoutId` 重复的丢掉、最多 `MAX_ALTS` 条 —— 一个编出来的编号留在下拉里，
+   * 他挑中之后是一句 400，而他会以为「这个版式坏了」。老 deck 的 plan_json 里没有这个
+   * 字段（前端那边是可选的，缺了就只有全部 22 条）。
+   */
+  alts: string[];
+  /**
+   * 这一页要几张图。**由 `imageSpecs.length` 算出来**（模型给的那个数字只在它没给规格
+   * 时才用）—— 两个数各自存的话，「规划要 2 张」和下面列出来的 3 张规格会对不上，
+   * 而界面上两处都读起来正常。
+   */
   images: number;
+  /**
+   * 每张图画什么。**这一步就要定下来**，不然配图那一步唯一的输入是生成 HTML 那一次
+   * 写出来的 `data-img-prompt` —— 也就是必须先出 HTML 才知道要画什么，于是页面第一次
+   * 显示出来必然是缺图的占位版，而「重新生成这一页」会把图连带清掉、要再花一遍钱。
+   *
+   * 空数组有两种含义，要靠 `images` 区分：`images === 0` = 这一页真的不配图；
+   * `images > 0` = 模型只给了张数没说画什么（那时 problems 里有一条）。
+   */
+  imageSpecs: PlannedImage[];
   /** 版式名 / 中文标题 / 是否全幅，从库里补上（模型不许自己说这些） */
   layoutName: string;
   layoutTitle: string;
@@ -95,6 +123,7 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
   }
 
   const pages: PlannedPage[] = [];
+  const badAlts: string[] = [];
   rows.forEach((row, i) => {
     const rawId = String(row?.layoutId ?? row?.layout ?? '').trim().toUpperCase();
     const layout = layoutById(rawId);
@@ -106,14 +135,21 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
       problems.push(`第 ${i + 1} 页「${title}」：模型给的版式 ${rawId || '(空)'} 不在案例库里，这一页没有版式。`);
       return;
     }
+    const page = pages.length + 1;
+    const img = normalizeImageSpecs(row?.images, `第 ${page} 页「${title}」`);
+    problems.push(...img.problems);
+    const alt = normalizeAlts(row?.alts ?? row?.alternatives, layout.id);
+    badAlts.push(...alt.bad);
     pages.push({
-      page: pages.length + 1,
+      page,
       section: clean(row?.section) || clean(row?.kicker),
       title,
       points: Array.isArray(row?.points) ? row.points.map((p: any) => clean(p)).filter(Boolean) : [],
       layoutId: layout.id,
       why: clean(row?.why) || clean(row?.reason),
-      images: Number.isFinite(Number(row?.images)) ? Math.max(0, Math.floor(Number(row.images))) : 0,
+      alts: alt.ids,
+      images: img.count,
+      imageSpecs: img.specs,
       layoutName: layout.name,
       layoutTitle: layout.title,
       fullbleed: layout.fullbleed,
@@ -125,8 +161,49 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     throw new PlanError(`模型规划的 ${rows.length} 页全都用了案例库里没有的版式（${problems.join('；')}）。`);
   }
 
-  problems.push(...repeatWarnings(pages), ...missingWhy(pages));
+  problems.push(...repeatWarnings(pages), ...missingWhy(pages), ...altWarnings(pages, badAlts));
   return { pages, problems, usage };
+}
+
+/**
+ * 备选版式归一。**不在库里的丢掉、和主版式重复的丢掉**：编出来的编号留在下拉里的话，
+ * 他挑中之后是一句 400（读起来像「这个版式坏了」）；和主版式重复的留着的话，前面那组里
+ * 「规划挑的」出现两遍，看起来像模型只给了一条备选。
+ */
+function normalizeAlts(raw: any, mainId: string): { ids: string[]; bad: string[] } {
+  const ids: string[] = [];
+  const bad: string[] = [];
+  for (const v of Array.isArray(raw) ? raw : []) {
+    const given = String(v ?? '').trim();
+    const id = given.toUpperCase();
+    if (!id) continue;
+    if (!layoutById(id)) {
+      // 报错里放**模型原样给的那个串**（不是大写过的）：调 prompt 时唯一有用的就是它到底写了什么。
+      if (!bad.includes(given)) bad.push(given);
+      continue;
+    }
+    if (id === mainId || ids.includes(id)) continue;
+    if (ids.length < MAX_ALTS) ids.push(id);
+  }
+  return { ids, bad };
+}
+
+/**
+ * 备选少了/没有都要说一句。两种都不报错，而下拉里的表现是「这一页只有一个版式合适」——
+ * 他于是照规划那条生成，而备选本来就是给他换的。整份汇总成一条，不逐页刷（40 页会把
+ * 真正要看的那几条 problems 冲下去）。
+ */
+function altWarnings(pages: PlannedPage[], badAlts: string[]): string[] {
+  const out: string[] = [];
+  if (badAlts.length) {
+    out.push(
+      `模型给的备选版式里有 ${badAlts.length} 个不在案例库里（${badAlts.slice(0, 6).join(' / ')}），已经丢掉 ——` +
+        `那几页的下拉里备选会少几条，不是「只有这一个版式合适」。`
+    );
+  }
+  const n = pages.filter((p) => !p.alts.length).length;
+  if (n) out.push(`有 ${n} 页没给备选版式，换版式时只能自己从 ${layouts().length} 条里挑。`);
+  return out;
 }
 
 function clean(v: any): string {
@@ -169,6 +246,12 @@ function buildPrompt(outline: string, lib: PptLayout[]): string {
 4. 每页只有一个视觉主角：图多的版式不要配大段文字，文字密的版式不要塞满图。
 5. \`why\` 要写出**为什么这一页配这个版式**（这一页的内容结构是什么、版式的哪一处正好装得下），一句话，不要复述版式描述。
 6. 不要输出页码 —— 顺序就是页码，由程序自己算。
+7. \`images\` 是**这一页要哪几张图**的清单（不配图就给 \`[]\`）。每张写清三样：
+   - \`subject\`：**画什么**，一句话、具体到能直接照着画（「等距视角的城市算力机房，蓝紫冷色」），不要写「一张配图」「相关插图」这类空话；
+   - \`mode\`：\`concept\`（抽象概念插画）/ \`case\`（具体场景、产品、人物）/ \`data\`（信息图、图表感）；
+   - \`ratio\`：\`16:9\`（横幅、全幅背景）/ \`1:1\`（方块图标位）/ \`3:4\`（竖图、人物卡）—— 按你挑的那个版式里图位的形状选，选错的图会被裁掉两边。
+   张数要和版式装得下的图位数一致，一页最多 ${MAX_SLOTS_PER_PAGE} 张。
+8. \`alts\` 是这一页的**备选版式**：从清单里再挑 2-3 个也装得下这一页内容的编号，按「越合适排越前」的顺序给。不许重复 \`layoutId\`、不许给清单里没有的编号（清单里没有的会被丢掉）。
 
 ## 版式清单（${lib.length} 个）
 ${lib.map((l) => l.selectText).join('\n\n')}
@@ -178,6 +261,6 @@ ${outline}
 
 ## 输出格式
 只输出一个 JSON 数组，不要任何解释文字。每个元素：
-{"section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","points":["要点1","要点2"],"layoutId":"L7","why":"挑它的理由（一句话）","images":1}
+{"section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","points":["要点1","要点2"],"layoutId":"L7","alts":["L3","L9"],"why":"挑它的理由（一句话）","images":[{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}]}
 `;
 }

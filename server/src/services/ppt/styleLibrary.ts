@@ -14,7 +14,7 @@
 // ③ **一份 deck 只能一个 styleId**，而且换了画风之后已经配好的那几页**不会自动重做** ——
 //    调用方必须把这件事说出来（见 imageService / PptPlan.vue）。
 
-import { library } from './layoutLibrary.js';
+import { library, libraryVersion } from './layoutLibrary.js';
 
 export type ImageMode = 'concept' | 'case' | 'data';
 export const IMAGE_MODES: ImageMode[] = ['concept', 'case', 'data'];
@@ -46,8 +46,21 @@ const HARD_TAIL = 'No text, no letters, no numbers, no watermark, no UI chrome.'
 
 let cachedStyles: PptStyle[] | null = null;
 let cachedColors: DeckColors | null = null;
+// 这两份是 library 的派生物，所以跟着它的版本号一起作废：不跟的话改了
+// illustration-style.md / template.html 的 `:root` 之后生成用的是新骨架、生图提示词
+// 还是旧画风旧色值，「md 改了一半生效」而两边都不报错。
+let cachedAt = -1;
+
+function freshen(): void {
+  const v = libraryVersion();
+  if (v === cachedAt) return;
+  cachedAt = v;
+  cachedStyles = null;
+  cachedColors = null;
+}
 
 export function styles(): PptStyle[] {
+  freshen();
   if (!cachedStyles) cachedStyles = parseStyles(library().illustrationStyle);
   return cachedStyles;
 }
@@ -122,6 +135,7 @@ function field(body: string, label: string): string {
  * 取不到就抛错：把 `{{BRAND}}` 原样发出去的话，图的配色和 deck 不是一套（见文件头 ②）。
  */
 export function deckColors(): DeckColors {
+  freshen();
   if (cachedColors) return cachedColors;
   const css = library().template;
   const pick = (name: string): string => {

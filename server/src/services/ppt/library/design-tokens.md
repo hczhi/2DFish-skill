@@ -119,5 +119,6 @@
 - 顶部 5px 渐变色带（主色→点缀）
 
 ## 组件类（模板已内置）
-`.slide` `.slide-inner` `.corners` `.wm` `.page-badge` `.page-title` `.title-bar` `.kicker`
+`.slide` `.slide-inner` `.corners` `.page-title` `.title-bar` `.kicker`
+（`.page-badge` / `.wm` 已删除：页面上不显示页码，当前页和总页数都不要写）
 `.case-bg`(+`::after`) `.has-bg` `.p5-visual` `.gallery(.g2/.g3/.g2x2)` `.hero-case`(L3) `.card(.orange/.blue)`

@@ -1,4 +1,10 @@
-# L16 · quad-city-matrix（顶 header + 四栏等宽「图+中英标题+双语描述」单元）
+# L16 · quad-city-matrix（四栏等宽「图+中英标题+双语描述」单元）
+
+> 本文件里的 CSS 和结构**必须和 `library/template.html` 里那一段完全对得上**（那份才是真的渲染
+> 用的骨架，本文件只是喂给模型的说明）。对不上的后果不是编译错误：模型照本文件写出一个
+> `<div class="l16-head">`，template 里没有这个类，那一块掉回默认流式布局 —— 页面照样渲染、
+> 接口 200，看起来是「这个版式塌了」，而重新生成一次拿到的是同样的一版（`caseLibrary.test.ts`
+> 逐个 token 核这件事）。效果 demo 是 `library/demo-slides.html` 里 `<!-- @demo L16 -->` 那个片段。
 
 - 适用内容类型：城市/办公地分布；客户案例矩阵；产品矩阵（4 款同屏）；业务四大板块；门店/分公司矩阵；合作伙伴矩阵；四季/四节内容；四类用户/四类场景。
 - 来源：用户截图（2026-08-27 16:11），原内容为蔚来 NIO 官网"我们一起，将梦想实现"城市分布页。
@@ -6,13 +12,13 @@
 
 ## 一句话定位
 
-**「极小顶 header（8%）+ 中文大标题+中文一行副标 + 四栏等宽『图+中英标题+双语描述』单元」** —— 一个干净利落的"项目矩阵陈列"版式。视觉重在图集而非叙事，适合"看图说话"型内容。
+**「中文大标题+中文一行副标 + 四栏等宽『图+中英标题+双语描述』单元」** —— 一个干净利落的"项目矩阵陈列"版式。视觉重在图集而非叙事，适合"看图说话"型内容。
 
 ## 结构拆解
 
 ```
-┌──── 顶 header（极小，约 8%）────────────────┐
-│  NIO | The Future Starts Here               │ ← 左上 logo + tagline
+┌── .slide-header（左上角固定页眉，全平台统一）──┐
+│  第二部分 · 服务网络                          │ ← 只有一句 kicker
 ├────────────────────────────────────────────┤
 │                                            │ ← 标题区（约 18%）
 │  我们一起，将梦想实现  (中文大字)             │
@@ -31,8 +37,8 @@
 
 | 维度 | 取值 |
 |------|------|
-| 顶 header | **极小**（约 8% 高度），仅 logo + tagline，**无图、无胶囊、无大标题** |
-| 标题区 | 中文大标(粗) + 中文一行副标(浅灰)，**无 kicker** |
+| 页眉 | 只有 `.slide-header` 里那一句 kicker（**不要在 `.l16-wrap` 里另造一条 header 带**：那一层没有 CSS，会掉回默认流式布局把矩阵往下顶，而接口 200、界面上像是这个版式塌了） |
+| 标题区 | 中文大标(粗) + 中文一行副标(浅灰) |
 | 矩阵比例 | 标题区 18% + 矩阵 74%（矩阵占绝对主体） |
 | 列数 | **4 等宽** |
 | 每栏结构 | 图(占主体) + `\|`竖线+中文标题(粗) +英文标题(浅) + 双语描述 |
@@ -41,7 +47,7 @@
 
 ## 视觉手法（结构层面）
 
-1. **顶 header 极克制**：8% 高度仅 logo + tagline，**几乎不抢戏**——把视觉完全让给矩阵。
+1. **页眉极克制**：只有 `.slide-header` 那一句 kicker，**几乎不抢戏**——把视觉完全让给矩阵。
 2. **矩阵单元"上图下文"**：图占 70%，文字仅占 30%。**图是主角**，文字是辅助说明。
 3. **`\|` 竖线 + 中英标题**：与 L15 同款竖线锚点手法，但用在每栏标题前（中英标题是 `|` 短线，不拉通）。
 4. **竖向节奏一致**：四栏必须严格等宽、严格同结构，**统一感是灵魂**。任何一栏高度不一致就破功。
@@ -51,7 +57,7 @@
 
 | 结构角色 | 实现方式 |
 |---------|----------|
-| 顶 header 文字 | `var(--c-ink)`浅 |
+| 页眉 kicker | `.slide-header .kicker` 自带 `var(--c-accent-deep)`，不用另写 |
 | 标题区中文大标 | `var(--c-ink-deep)` 极深 |
 | 标题区中文副标 | `var(--c-ink-soft)` 浅灰 |
 | 每栏图片 | ImageGen 按 deck palette |
@@ -64,10 +70,8 @@
 ## CSS 骨架
 
 ```css
-/* 顶 header 极小 + 四栏矩阵陈列 */
+/* 四栏矩阵陈列（模块名走全平台统一的 .slide-header，这一版没有自己的顶 header） */
 .l16-wrap{position:absolute;inset:0;padding:40px 64px;display:flex;flex-direction:column;background:var(--c-card)}
-.l16-head{font-size:12px;color:var(--c-ink-soft);letter-spacing:1px;margin-bottom:28px}
-.l16-head .brand{font-weight:700;color:var(--c-ink)}
 .l16-title{margin-bottom:32px}
 .l16-title h2{font-family:var(--serif);font-size:40px;font-weight:800;color:var(--c-ink-deep);line-height:1.1;margin-bottom:10px}
 .l16-title p{font-size:14px;color:var(--c-ink-soft)}
@@ -85,17 +89,15 @@
 
 ```html
 <section class="slide l16">
+  <div class="slide-header"><div class="kicker">第二部分 · 服务网络</div></div>
   <div class="l16-wrap">
-    <div class="l16-head">
-      <span class="brand">品牌 / 章节标签</span> | <span>The Future Starts Here</span>
-    </div>
     <div class="l16-title">
       <h2>我们一起，将梦想实现</h2>
       <p>自 2014 年创立，蔚来便在全球招募……</p>
     </div>
     <div class="l16-grid">
       <div class="l16-cell">
-        <div class="l16-cell-img"><img src="cases/pXX_c1.jpg" alt=""></div>
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
         <div class="l16-cell-title">上海</div>
         <div class="l16-cell-title-en">SHANGHAI</div>
         <div class="l16-cell-desc">
@@ -137,7 +139,7 @@
 | 维度 | L11 | L15 | L16 |
 |------|-----|-----|-----|
 | 主体 | 三栏并列叙事 | 三栏文字 | 四栏矩阵 |
-| 顶部 | header 带 | 上 40% hero | header 极小（8%） |
+| 顶部 | 标题白字叠在图上 | 上 40% hero | 只有 `.slide-header` 那句 kicker |
 | 单元结构 | 图叠字+大数字 | 中文+英文段 | 图+中英标题+双语描述 |
 | 文字与图比 | 图 100% | 图 0% | 图 70%/文字 30% |
 | 气质 | 商业广告/路演 | 商务克制 | 纸面陈列/杂志风 |
@@ -147,11 +149,12 @@
 
 ## build-part 注意事项
 
-- **不需 fullbleed**：在 `.slide-inner` 内排版
+- **不要包 `.slide-inner`**：`.l16-wrap` 自己是 `absolute inset:0` 且带了 padding，再套一层
+  140px padding 出来是一块缩在中间的小矩阵，而页面渲染完全正常
 - 四栏严格等宽 `repeat(4, 1fr)`，**严禁自定义列宽**（破坏矩阵感）
 - 图色调统一是关键——所有图走 `filter: saturate(.92) contrast(1.05)` 等统一处理
 - 单元高度差最多 8px，否则视觉不齐
-- 顶 header 字号必须 ≤ 14px，是"克制"气质的核心
+- 模块名只写在 `.slide-header` 里，不在 `.l16-wrap` 里再写一条
 
 ## design 提示
 

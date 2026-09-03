@@ -4,6 +4,11 @@
 
 **截图原件**：`cases/img/L18-ref.png`（GNYS 品牌介绍页 · 数字排毒章节扉页）
 
+> 本文件里的 CSS 和结构**必须和 `library/template.html` 里那一段完全对得上**（那份才是真的渲染
+> 用的骨架，本文件只是喂给模型的说明）。对不上时页面照样渲染、接口 200，只是那一块掉回默认
+> 流式布局 —— 看起来是「这个版式塌了」，而重新生成一次拿到的是同样的一版
+> （`caseLibrary.test.ts` 逐个 token 核这件事）。
+
 ---
 
 ## 一、适用场景
@@ -20,7 +25,9 @@
 ### 整体 16:9 全幅图（不包 `.slide-inner`）
 
 1. 全幅背景图（**深色 / 神秘氛围**——森林光束、深山、星空、暗色海面等）
-2. 顶部通栏：左侧小 logo（GNYS） · 右侧胶囊 pill（如 "01"）
+2. 左上角 `.slide-header` 一句 kicker（全平台统一的页眉；**不要另写 logo / 胶囊 pill**，那两个类
+   已经不在 `template.html` 里了 —— 写出来的那两块没有 CSS，会掉回默认流式布局堆在页面顶上，
+   而接口 200、看起来像这个版式塌了）
 3. 顶部 1/3：横向双标题（左英右中）
 4. 中部 1/3：右中文标题中央穿过一条**红色波浪线**（手绘感/丝带感）
 5. 底部 1/3：暗蒙版覆盖 + 3 栏卡片
@@ -67,10 +74,10 @@
 | 红色波浪线 | `var(--c-accent)` | 波浪线 |
 | 红色数字 01/02/03 | `var(--c-accent)` | 序号 |
 | 红色引号 "" | `var(--c-accent)` | 卡片引号 |
-| 白色标题/正文 | `#fff` 或 `var(--c-text)` | 标题描述 |
+| 白色标题/正文 | `#fff` / `rgba(255,255,255,.78)` | 标题描述 |
 | 暗蒙版 | `rgba(0,0,0,.65–.85)` | 底部蒙版 |
 
-> **铁律**：暗 bg 排版时，所有文字必须浅色（白色/brand/accent），禁止用 `var(--c-text-2)` 浅灰——在暗底上会糊。
+> **铁律**：暗 bg 排版时，所有文字必须浅色（白色/brand/accent），禁止用 `var(--c-ink-soft)` 浅灰——在暗底上会糊。
 
 ---
 
@@ -81,8 +88,7 @@
 .l18-wrap{position:absolute;inset:0;overflow:hidden;}
 .l18-bg img{width:100%;height:100%;object-fit:cover;}
 .l18-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,rgba(0,0,0,.4) 35%,rgba(0,0,0,.75) 70%,rgba(0,0,0,.9) 100%);}
-.l18-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:3;}
-.l18-pill{position:absolute;top:32px;right:32px;background:var(--c-accent);color:#fff;padding:6px 14px;border-radius:99px;font-size:12px;letter-spacing:.2em;z-index:3;}
+/* 左上角的模块名走全平台统一的 .slide-header，这一版没有自己的 logo / pill */
 .l18-headline{position:absolute;top:14%;left:5%;right:5%;display:grid;grid-template-columns:1fr 1fr;gap:60px;z-index:2;}
 .l18-en{font-size:clamp(60px,7vw,96px);font-weight:800;color:#fff;line-height:1.0;letter-spacing:-.01em;}
 .l18-cn{position:relative;font-size:clamp(76px,9vw,112px);font-weight:300;color:#fff;line-height:1.05;letter-spacing:.04em;}
@@ -101,10 +107,9 @@
 
 ```html
 <section class="slide l18-wrap">
-  <!-- 顶部通栏 -->
-  <div class="l18-bg"><img src="{{pXX_hero}}" alt=""></div>
-  <div class="l18-logo">{{logo_text}}</div>
-  <div class="l18-pill">{{pill_text}}</div>
+  <!-- 全幅背景图 + 左上角统一页眉 -->
+  <div class="l18-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
+  <div class="slide-header"><div class="kicker">第三部分 · 三个真实障碍</div></div>
 
   <!-- 顶部双标题 -->
   <div class="l18-headline">
@@ -165,7 +170,7 @@
 - **是否全幅**：是（**不包 `.slide-inner`**，与 L2/L3/L11/L13/L21/L22 同级 fullbleed）
 - **build-part 决策**：section 标注 `fullbleed:true`，build-part 决定性跳过 `.slide-inner` 包裹
 - **关键约束**：
-  - 暗 bg 上禁止用浅灰字（`var(--c-text-2)`），所有正文必须用 `rgba(255,255,255,.78)` 这种带透明度的白色
+  - 暗 bg 上禁止用浅灰字（`var(--c-ink-soft)`），所有正文必须用 `rgba(255,255,255,.78)` 这种带透明度的白色
   - 双语双标题必须中英对仗工整（行数对齐、字号比例约 1:1.2）
   - 波浪线穿过中文的位置必须在标题中央（top:50%-60% 区间），不能贴边
   - 3 栏卡片间距 ≥ 40px（暗底上卡片靠得近会糊在一起）

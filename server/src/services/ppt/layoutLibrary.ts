@@ -68,11 +68,58 @@ export function libraryRoot(): string {
 }
 
 let cached: PptLibrary | null = null;
+let cachedStamp = '';
+let stampCheckedAt = 0;
+let version = 0;
 
-/** 读一次缓存住。改了 md 要重启服务（和 skills 目录一个脾气）。 */
+/**
+ * library 目录里每个文件的 mtime + 大小拼成的指纹。
+ *
+ * **改了 md 不用重启服务** —— 原来是「读一次缓存住」，于是改完一条案例的结构模板之后
+ * 点「重新生成这一页」拿到的是**一模一样的旧版**：那是一次真实调用（花了钱），页面
+ * 渲染正常、接口 200、problems 里还是原来那几条，而没有任何一处说「你改的那份 md
+ * 这个进程压根没读过」。上一次 L11 的顶 header 白带就是这么白花了一次调用。
+ * 线上部署本来就会重启，所以这个指纹只在开发时起作用，代价是每次最多一次目录 stat。
+ */
+function stamp(): string {
+  // 一秒内不重复扫：`library()` 在一次请求里会被调很多次（templateClasses → checkPage）。
+  const now = Date.now();
+  if (cachedStamp && now - stampCheckedAt < 1000) return cachedStamp;
+  stampCheckedAt = now;
+  const root = libraryRoot();
+  const parts: string[] = [];
+  try {
+    for (const rel of fs.readdirSync(root, { recursive: true }) as string[]) {
+      const st = fs.statSync(path.join(root, String(rel)));
+      if (st.isFile()) parts.push(`${rel}:${st.mtimeMs}:${st.size}`);
+    }
+  } catch {
+    // 目录读不到时不要在这里静默返回空串（那会让下面每次都重读一遍库、每次都抛
+    // loadLibrary 那句错），交给 loadLibrary 去抛那句说得清的错。
+    return cachedStamp || 'unreadable';
+  }
+  return parts.sort().join('|');
+}
+
+/** 读一次缓存住，但 library 目录里的文件一改就重读（见 `stamp`）。 */
 export function library(): PptLibrary {
-  if (!cached) cached = loadLibrary();
+  const s = stamp();
+  if (!cached || s !== cachedStamp) {
+    cached = loadLibrary();
+    cachedStamp = s;
+    version += 1;
+  }
   return cached;
+}
+
+/**
+ * 每重读一次 +1。派生缓存（画风 / template 的色值 / demo 片段）照它判要不要重算 ——
+ * 少了这一步的话库重读了而它们还是旧的，现象是「md 改了一半生效」：生成用的是新骨架，
+ * demo 卡片和画风提示词还是旧的，两边都不报错。
+ */
+export function libraryVersion(): number {
+  library();
+  return version;
 }
 
 export function layouts(): PptLayout[] {
@@ -87,6 +134,8 @@ export function layoutById(id: string): PptLayout | undefined {
 /** 测试里改了文件之后用。 */
 export function resetLibraryCache(): void {
   cached = null;
+  cachedStamp = '';
+  stampCheckedAt = 0;
 }
 
 export function loadLibrary(): PptLibrary {

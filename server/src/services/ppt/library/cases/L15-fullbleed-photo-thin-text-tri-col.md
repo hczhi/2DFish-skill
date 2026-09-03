@@ -81,7 +81,7 @@
 <section class="slide l15 has-image">
   <div class="l15-wrap">
     <div class="l15-hero">
-      <img src="cases/pXX_hero.jpg" alt="">
+      <img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt="">
       <div class="l15-hero-tl">
         <div class="logo">品牌/章节标签</div>
         <div>中文大标语 1-2 行</div>

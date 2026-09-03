@@ -98,7 +98,7 @@
     <div class="l14-wrap">
       <!-- 上半 hero -->
       <div class="l14-hero">
-        <img src="cases/pXX_hero.jpg" alt="">
+        <img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt="">
         <div class="l14-hero-text">
           <div class="l14-kicker">KICKER TEXT</div>
           <div class="l14-mega-en">English Title</div>

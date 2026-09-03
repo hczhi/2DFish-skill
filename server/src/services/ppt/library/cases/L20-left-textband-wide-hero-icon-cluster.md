@@ -23,11 +23,11 @@
 2. **中文副标**一行（`.l20-cn`，32–40px，weight 500）
 3. **大数字锚点** + 行内小标签（`.l20-stat`，flex baseline gap 10px，margin-top 36px）
    - 数字（`.num`，衬线 96–120px，weight 700，`var(--c-brand)`，line-height 1）
-   - 标签（`.lab`，16px，`var(--c-text-2)`；可带 `<small>` 二级标签 13px）
-4. **双行正文**（`.l20-body`，14–16px，`var(--c-text-2)`，行高 1.7，max-width 92%）
+   - 标签（`.lab`，16px，`var(--c-ink-soft)`；可带 `<small>` 二级标签 13px）
+4. **双行正文**（`.l20-body`，14–16px，`var(--c-ink-soft)`，行高 1.7，max-width 92%）
 5. **底部三圆图标横排**（`.l20-icons`，flex gap 32px，margin-top auto + padding-top 48px）
    - 每组（`.l20-icon`，flex column center gap 8px）：圆点 56–72px + 中间 24px brand 图标 + 下方 13px 中文标签
-   - 圆点背景 `rgba(255,255,255,.85)`，1px `var(--c-line)` 描边
+   - 圆点背景 `rgba(255,255,255,.85)`，1px `var(--c-hairline)` 描边
 
 ### 右 70% 全幅 hero 图（`.l20-hero`，overflow hidden）
 
@@ -41,19 +41,19 @@
 ```css
 /* L20 左浮文带 + 宽 hero + 三圆图标 — 详情见 cases/L20-left-textband-wide-hero-icon-cluster.md */
 .l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;z-index:1;overflow:hidden}
-.l20-textband{padding:80px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 70%,transparent);display:flex;flex-direction:column;color:var(--c-text)}
-.l20-en{font-size:64px;font-weight:800;color:var(--c-text);line-height:1.05;letter-spacing:-.01em}
-.l20-cn{font-size:34px;font-weight:500;color:var(--c-text);margin-top:14px}
+.l20-textband{padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
+.l20-en{font-size:64px;font-weight:800;color:var(--c-ink-deep);line-height:1.05;letter-spacing:-.01em}
+.l20-cn{font-size:34px;font-weight:500;color:var(--c-ink-deep);margin-top:14px}
 .l20-stat{display:flex;align-items:baseline;gap:10px;margin-top:36px}
 .l20-stat .num{font-size:104px;font-weight:700;color:var(--c-brand);font-family:var(--serif);line-height:1}
-.l20-stat .lab{font-size:16px;color:var(--c-text-2)}
+.l20-stat .lab{font-size:16px;color:var(--c-ink-soft)}
 .l20-stat .lab small{display:block;font-size:13px;margin-top:4px}
-.l20-body{font-size:15px;color:var(--c-text-2);line-height:1.7;margin-top:24px;max-width:92%}
+.l20-body{font-size:15px;color:var(--c-ink-soft);line-height:1.7;margin-top:24px;max-width:92%}
 .l20-icons{display:flex;gap:32px;margin-top:auto;padding-top:48px}
 .l20-icon{display:flex;flex-direction:column;align-items:center;gap:8px}
-.l20-icon .dot{width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid var(--c-line);display:flex;align-items:center;justify-content:center}
+.l20-icon .dot{width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid var(--c-hairline);display:flex;align-items:center;justify-content:center}
 .l20-icon .dot svg{width:24px;height:24px;color:var(--c-brand)}
-.l20-icon .lab{font-size:13px;color:var(--c-text);font-weight:500}
+.l20-icon .lab{font-size:13px;color:var(--c-ink-deep);font-weight:500}
 .l20-hero{position:relative;overflow:hidden}
 .l20-hero img{width:100%;height:100%;object-fit:cover;display:block}
 ```
@@ -79,7 +79,7 @@
         <div class="l20-icon"><span class="dot">{{SVG图标}}</span><span class="lab">{{标签3}}</span></div>
       </div>
     </div>
-    <div class="l20-hero"><img src="cases/pXX_hero.jpg" alt=""></div>
+    <div class="l20-hero"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
   </div>
 </section>
 ```

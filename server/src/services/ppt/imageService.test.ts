@@ -20,10 +20,13 @@ vi.mock('../../services/aiProviderService.js', () => ({
     id: 'img-1', model: 'wanx-v1', owner_user_id: null, kind: 'image', enabled: 1,
   })),
 }));
+vi.mock('./assetStore.js', () => ({ rememberAsset: vi.fn(() => true) }));
 
 const { generateImage } = await import('../../core/image/imageGateway.js');
+const { rememberAsset } = await import('./assetStore.js');
 const { checkAndDeductQuota } = await import('../../core/llm/gateway.js');
-const { fillPageImages, findImageSlots, PptImageError } = await import('./imageService.js');
+const { fillPageImages, findImageSlots, applyPreparedImages, pasteIntoBuiltPage, PptImageError } =
+  await import('./imageService.js');
 
 const ctx = { userId: 'u1', title: '三阶段路径', meta: { brandCn: '云启', brandEn: 'YQ', topic: 'AI 转型' } };
 
@@ -125,8 +128,76 @@ describe('给一页配图', () => {
     expect(r.images[1].mode).toBe('concept'); // 没写 mode 的按 concept 算
   });
 
+  it('进素材库那一行记的是槽位那句提示词和它的比例', async () => {
+    // 记成渲染完的整段画风提示词的话，素材库里每张卡的文字都长得一模一样（90% 是画风
+    // 模板），挑图时分不出哪张是哪张；比例丢了的话 3:4 的图会被塞进 16:9 的槽位，
+    // cover 裁掉两边 —— 两种都不报错。
+    (generateImage as any).mockResolvedValue(ok('https://cos/a.png'));
+    await fillPageImages(twoSlots, { ...ctx, styleId: 'S-C', deckId: 'd1', page: 3 });
+    const [, row] = (rememberAsset as any).mock.calls[1];
+    expect(row.prompt).toBe('一位工程师侧影');
+    expect(row.ratio).toBe('3:4 portrait');
+    expect(row).toMatchObject({ url: 'https://cos/a.png', styleId: 'S-C', deckId: 'd1', page: 3 });
+  });
+
+  it('图进不了素材库时这一页照样成功，但要说出来', async () => {
+    // 图已经生成、钱已经花了，所以不能让这一页报错；而静默的话素材库里少了这几张，
+    // 他只会以为「本来就这样」，下次想重用时再花一次钱生成一张几乎一样的图。
+    (generateImage as any).mockResolvedValue(ok('https://cos/a.png'));
+    (rememberAsset as any).mockImplementation(() => { throw new Error('database is locked'); });
+    const r = await fillPageImages(twoSlots, ctx);
+    expect(r.html).toContain('src="https://cos/a.png"');
+    expect(r.problems.join(' ')).toMatch(/没进素材库.*database is locked/);
+    (rememberAsset as any).mockImplementation(() => true);
+  });
+
   it('槽位没有可写回的地址时不生成（生成了也贴不上去 = 白花钱）', () => {
     const slots = findImageSlots('<section><span data-img-prompt="一张图"></span></section>');
     expect(slots[0].via).toBe('none');
+  });
+});
+
+function prep(index: number, url: string, ratio: string) {
+  return { index, url, ratio, prompt: '备好的那张', mode: 'concept' as const, from: 'ai' as const, at: '' };
+}
+
+describe('把备好的图贴进这一页', () => {
+  it('按序号贴，不按「哪一格还空着」', () => {
+    // 挑空格子的话第 2 格备的图会掉进第 1 格 —— 图文不符，而页面渲染完全正常。
+    const r = applyPreparedImages(twoSlots, [prep(2, 'https://cos/p2.png', '16:9')]);
+    expect(r.html).toContain('url(https://cos/p2.png)');
+    expect(r.html).toContain('src="/ppt-cases/ph-16x9.svg"');
+    expect(r.used.map((u) => u.index)).toEqual([2]);
+    expect(r.problems.join(' ')).toMatch(/第 1 个图位还是占位图/);
+    // 比例对不上（这里 3:4 的格子贴了张 16:9）**不进 problems**：那是他挑图时自己看着
+    // 比例点下去的，报成「要注意」会把版式塌了那种真问题冲下去（改由那一格的标签显示）。
+    expect(r.problems.join(' ')).not.toMatch(/裁掉/);
+  });
+
+  it('贴进已经配过图的那一页：只换同序号那一格，别的格子的配图记录留着', () => {
+    // 整份覆盖的话，第 2 格那张真花钱生成的图在界面上凭空变成「没配图」，他会再点一次
+    // 「换一批图」—— 那是重花一遍。而两处都读起来正常（画面里图还在）。
+    const built = twoSlots
+      .replace('/ppt-cases/ph-16x9.svg', 'https://cos/old1.png')
+      .replace('/ppt-cases/ph-3x4.svg', 'https://cos/paid2.png');
+    const r = pasteIntoBuiltPage(built, [prep(1, 'https://cos/new1.png', '16:9')], {
+      images: [
+        { index: 1, prompt: '等距的算力机房', mode: 'concept', ratio: '16:9 landscape', url: 'https://cos/old1.png' },
+        { index: 2, prompt: '一位工程师侧影', mode: 'concept', ratio: '3:4 portrait', url: 'https://cos/paid2.png' },
+      ] as any,
+    });
+    expect(r.html).toContain('src="https://cos/new1.png"');
+    expect(r.images.map((i) => i.url)).toEqual(['https://cos/new1.png', 'https://cos/paid2.png']);
+    // 第 2 格早就配过真图了，说成「还是占位图」的话他会去点「补齐这一页的图」（白花钱）
+    expect(r.problems.join(' ')).not.toMatch(/占位图/);
+  });
+
+  it('多出来的那张要点名说没地方贴（模型少排了一个图位）', () => {
+    // 静默丢掉的话那张图的钱一处都不说，他只看到这一页图少了一张。
+    const r = applyPreparedImages(twoSlots, [prep(1, 'https://cos/p1.png', '16:9'), prep(3, 'https://cos/p3.png', '1:1')]);
+    expect(r.html).toContain('src="https://cos/p1.png"');
+    expect(r.html).not.toContain('https://cos/p3.png');
+    expect(r.problems.join(' ')).toMatch(/第 3 格备好的图没地方贴.*只排出了 2 个图位/);
+    expect(r.problems.join(' ')).toContain('素材库');
   });
 });
