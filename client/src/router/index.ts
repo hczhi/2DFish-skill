@@ -169,10 +169,30 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
-    // HTML 展示稿。/ppt 现在就是版式案例库（后面加「新建演示稿」再拆首页）
+    // HTML 展示稿。/ppt 是演示稿列表（一份稿子一行，落库），案例库降成它的一个入口。
     {
       path: '/ppt',
-      redirect: '/ppt/layouts',
+      redirect: '/ppt/decks',
+    },
+    {
+      path: '/ppt/decks',
+      name: 'ppt-decks',
+      component: () => import('../views/ppt/PptDecks.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // new 必须写在 :id 之前 —— 反过来的话 /ppt/decks/new 会被当成一个 deck id，
+      // 界面上是一句「这份演示稿不存在」，读起来像新建功能坏了。
+      path: '/ppt/decks/new',
+      name: 'ppt-deck-create',
+      component: () => import('../views/ppt/PptDeckCreate.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/ppt/decks/:id',
+      name: 'ppt-deck',
+      component: () => import('../views/ppt/PptPlan.vue'),
+      meta: { requiresAuth: true, requiresAI: true },
     },
     {
       path: '/ppt/layouts',
@@ -181,10 +201,10 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // 老的 /ppt/plan 是**不落库**的那个工作台。留着它等于留一个「干半天关掉就全没了」
+      // 的入口，而在那儿干活和在 deck 里干活界面上一模一样 —— 所以直接送去列表。
       path: '/ppt/plan',
-      name: 'ppt-plan',
-      component: () => import('../views/ppt/PptPlan.vue'),
-      meta: { requiresAuth: true, requiresAI: true },
+      redirect: '/ppt/decks',
     },
     // xhs 是登录后写作台工具，无对外英文站点；/en/xhs* 统一重定向到中文路径
     {

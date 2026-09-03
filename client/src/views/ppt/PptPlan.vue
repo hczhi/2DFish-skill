@@ -2,7 +2,18 @@
   <div class="page">
     <div class="head">
       <div>
-        <h1>排版规划</h1>
+        <div class="crumb">
+          <router-link to="/ppt/decks">← 演示稿列表</router-link>
+        </div>
+        <h1>
+          <input
+            v-model="title"
+            class="title-input"
+            maxlength="80"
+            placeholder="这份演示稿的名字"
+            @blur="saveMeta()"
+          />
+        </h1>
         <p class="sub">
           贴一份提纲，AI 把它拆成逐页、并从<router-link to="/ppt/layouts">案例库那 22 个版式</router-link>里给每页挑一个。
           这一步<b>只挑版式、不生成 HTML</b> —— 先看它挑得准不准（每页都有理由和效果 demo），挑准了再往下生成。
@@ -11,10 +22,26 @@
       <a class="btn-ghost" href="/api/ppt/demo-deck.html" target="_blank">看全部版式 demo ↗</a>
     </div>
 
+    <!-- 打不开这份稿子（换了账号 / 已删掉 / id 抄错）必须说清并给一条回列表的路：
+         只留一个空的提纲框的话，读起来像「这份稿子里什么都没有」，他会当场重打一遍提纲。 -->
+    <p v-if="loadErr" class="err">{{ loadErr }} <router-link to="/ppt/decks">回演示稿列表</router-link></p>
+
+    <!-- 「哪些东西存下来了」必须写在界面上。这一版只存提纲/名字/品牌/画风：
+         不说的话他会以为规划和已生成的页也存着，关掉页面回来发现只剩提纲，
+         而那十几次调用的额度已经花掉了。 -->
+    <p class="save-note" :class="{ bad: metaErr }">
+      <template v-if="metaErr">{{ metaErr }}</template>
+      <template v-else>
+        {{ savingMeta ? '保存中…' : metaSavedAt ? `名字 / 提纲 / 品牌 / 画风已存（${metaSavedAt}）` : '名字 / 提纲 / 品牌 / 画风会存进这份稿子' }}
+        · <b>规划结果和已生成的页这一版还没落库</b> —— 刷新会丢，这一片正在接。
+      </template>
+    </p>
+
     <div class="input-box">
       <textarea
         v-model="outline"
         :disabled="running"
+        @blur="saveMeta()"
         placeholder="贴提纲。一行一条，带层级最好，例如：
 
 云启数科 · AI 转型方案汇报
@@ -36,11 +63,11 @@
         <div class="actions">
           <!-- 品牌名只影响 deck 外壳（页脚/封面那几个占位符），逐页 HTML 里没有它。
                留空就是「示例企业」—— 拼出来的整份 deck 页脚会印着它。 -->
-          <input v-model="brandCn" class="brand" :disabled="running" placeholder="品牌中文名（可空）" maxlength="24" />
-          <input v-model="brandEn" class="brand en" :disabled="running" placeholder="英文名" maxlength="24" />
+          <input v-model="brandCn" class="brand" :disabled="running" placeholder="品牌中文名（可空）" maxlength="24" @blur="saveMeta()" />
+          <input v-model="brandEn" class="brand en" :disabled="running" placeholder="英文名" maxlength="24" @blur="saveMeta()" />
           <!-- 画风只在生图那一步用得上，但放在这里：整份 deck 只能一个画风，配了两页图
                再回头换的话前面那几页不会自动重做（见下面那句提示）。 -->
-          <select v-model="styleId" class="brand style" :title="styleHint">
+          <select v-model="styleId" class="brand style" :title="styleHint" @change="saveMeta()">
             <option v-for="s in styleList" :key="s.id" :value="s.id">{{ s.id }} {{ s.name }}</option>
           </select>
           <button class="btn" :disabled="!canRun" @click="run">
@@ -213,7 +240,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { apiGet, apiPost } from '../../lib/api'
+import { useRoute } from 'vue-router'
+import { apiGet, apiPost, apiPatch } from '../../lib/api'
 
 interface PlannedPage {
   page: number; section: string; title: string; points: string[]
@@ -239,6 +267,57 @@ const showSrc = ref<Record<number, boolean>>({})
 
 const brandCn = ref('')
 const brandEn = ref('')
+
+// ── 这份稿子（落库，migration 089）────────────────────────────
+const route = useRoute()
+const deckId = computed(() => String(route.params.id || ''))
+const title = ref('')
+const loadErr = ref('')
+const savingMeta = ref(false)
+const metaErr = ref('')
+const metaSavedAt = ref('')
+/** 上一次真的存进库里的那份值。相同就不再发请求 —— 每次失焦都发一遍的话，
+ *  「已存」那句话会在什么都没改的时候不停刷新，读起来像一直在存东西。 */
+let savedSnapshot = ''
+
+function metaSnapshot() {
+  return JSON.stringify([title.value.trim(), outline.value, brandCn.value, brandEn.value, styleId.value])
+}
+
+/**
+ * 存这份稿子的元信息（名字 / 提纲 / 品牌 / 画风）。
+ *
+ * 失败**必须出声**：静默失败的话他改完提纲关掉页面，下次回来是上一版，
+ * 而这中间界面上什么都没说 —— 他会以为自己记错了改没改。
+ */
+async function saveMeta(): Promise<boolean> {
+  if (!deckId.value || loadErr.value) return false
+  const snap = metaSnapshot()
+  if (snap === savedSnapshot) return true
+  if (!title.value.trim()) {
+    metaErr.value = '名字不能为空（这一次没保存）。'
+    return false
+  }
+  savingMeta.value = true
+  metaErr.value = ''
+  try {
+    await apiPatch(`/api/ppt/decks/${deckId.value}`, {
+      title: title.value.trim(),
+      outline: outline.value,
+      brandCn: brandCn.value,
+      brandEn: brandEn.value,
+      styleId: styleId.value,
+    })
+    savedSnapshot = snap
+    metaSavedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    return true
+  } catch (e: any) {
+    metaErr.value = `没保存上：${e?.message || '请求失败'} —— 这次改的东西还只在这个页面里，别关掉。`
+    return false
+  } finally {
+    savingMeta.value = false
+  }
+}
 
 /**
  * 配图画风。清单从 `GET /api/ppt/styles` 来，**不在前端写死** —— md 里加了一套之后
@@ -531,9 +610,36 @@ onMounted(async () => {
   } catch {
     // 画风清单拿不到不挡生图（服务端有自己的默认那套），下拉留空就是「用默认」。
   }
+  await loadDeck()
 })
 
+/**
+ * 读这份稿子。画风必须**在拿到清单之后**再按库里那条覆盖 —— 反过来的话
+ * `/styles` 那个缺省值会盖掉他存过的画风，而下拉里显示的是缺省那套，
+ * 看起来像他自己选的（下一批图于是换了笔触，没有一处报错）。
+ */
+async function loadDeck() {
+  if (!deckId.value) {
+    loadErr.value = '这个地址里没有演示稿 id。'
+    return
+  }
+  try {
+    const { deck } = await apiGet<{ deck: any }>(`/api/ppt/decks/${deckId.value}`)
+    title.value = deck.title || ''
+    outline.value = deck.outline || ''
+    brandCn.value = deck.brand_cn || ''
+    brandEn.value = deck.brand_en || ''
+    if (deck.style_id) styleId.value = deck.style_id
+    savedSnapshot = metaSnapshot()
+  } catch (e: any) {
+    loadErr.value = `打不开这份演示稿：${e?.message || '请求失败'}`
+  }
+}
+
 async function run() {
+  // 规划前先把提纲存下来（他常常是改完提纲直接点规划，没失焦过）：不存的话
+  // 花了一次调用之后关掉页面，回来提纲还是上一版，而规划本身这一片也还没落库。
+  await saveMeta()
   running.value = true
   error.value = ''
   try {
@@ -570,6 +676,21 @@ async function run() {
 .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
 .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
 h1 { font-size: 26px; margin: 0 0 8px; }
+.crumb { margin-bottom: 10px; }
+.crumb a { font-size: 12px; color: #6b7280; text-decoration: none; }
+.crumb a:hover { color: #2563eb; }
+/* 名字就地改（失焦即存）。做成看起来像标题的输入框，而不是一个「编辑」按钮：
+   两段式的话他改完不点保存就走了，而界面上那行已经是新名字。 */
+.title-input {
+  font: inherit; font-size: 26px; font-weight: 600; color: #111827;
+  border: 1px solid transparent; border-radius: 8px; padding: 2px 8px; margin-left: -8px;
+  width: min(560px, 100%); background: transparent; outline: none;
+}
+.title-input:hover { border-color: #e5e7eb; }
+.title-input:focus { border-color: #111827; background: #fff; }
+.save-note { font-size: 12px; line-height: 1.7; color: #6b7280; margin: 12px 0 0; }
+.save-note b { color: #92400e; }
+.save-note.bad { color: #dc2626; }
 .sub { color: #6b7280; font-size: 13px; line-height: 1.7; max-width: 780px; margin: 0; }
 .sub a { color: #2563eb; }
 

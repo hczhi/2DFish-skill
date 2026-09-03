@@ -7,8 +7,132 @@ import { generatePage, buildDeck, PageError } from '../services/ppt/pageService.
 import { fillPageImages, PptImageError } from '../services/ppt/imageService.js';
 import { exportDeck, ExportError } from '../services/ppt/exportService.js';
 import { styles, defaultStyleId, deckColors } from '../services/ppt/styleLibrary.js';
+import {
+  listDecks,
+  createDeck,
+  getDeck,
+  updateDeckMeta,
+  deleteDeck,
+  MAX_TITLE_CHARS,
+  MAX_BRAND_CHARS,
+  MAX_DECK_OUTLINE_CHARS,
+} from '../services/ppt/deckStore.js';
 
 export const pptRouter = Router();
+
+/** 当前登录用户；没有就 401（deck 是按人存的，拿不到 id 时不能落到某个缺省桶里）。 */
+function userIdOf(req: Request, res: Response): string | null {
+  const id = (req as any).user?.id as string | undefined;
+  if (!id) {
+    res.status(401).json({ error: '请先登录' });
+    return null;
+  }
+  return id;
+}
+
+// ── 演示稿（落库，migration 089）────────────────────────────
+// 一份 deck 是十几次真实 AI 调用，不落库的话刷新一次就全没了而界面上一句错都没有。
+
+pptRouter.get('/decks', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  res.json({ decks: listDecks(userId) });
+});
+
+pptRouter.post('/decks', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  const b = req.body || {};
+  const outline = String(b.outline ?? '');
+  // 名字缺省取提纲第一行（那通常就是主题），但**存下来**而不是每次现算 ——
+  // 现算的话改一次提纲第一行，列表里那份稿子就换了名字，读起来像另一份。
+  const title = String(b.title ?? '').trim() || outline.trim().split('\n')[0]?.trim().slice(0, MAX_TITLE_CHARS) || '';
+  if (!title) {
+    res.status(400).json({ error: '请填写演示稿名字（或先贴一份提纲，第一行会当名字）' });
+    return;
+  }
+  if (title.length > MAX_TITLE_CHARS) {
+    res.status(400).json({ error: `名字最多 ${MAX_TITLE_CHARS} 字` });
+    return;
+  }
+  // 超长只拒不截：截掉的是提纲后半段，而规划出来的那份「完整」规划里压根没有那几页，
+  // 界面上看不出少了什么（他的提纲有二十页，规划只到第 12 页）。
+  if (outline.length > MAX_DECK_OUTLINE_CHARS) {
+    res.status(400).json({
+      error: `提纲最多 ${MAX_DECK_OUTLINE_CHARS} 字，当前 ${outline.length} 字。请自己删减后再提交（不会自动截断）`,
+    });
+    return;
+  }
+  const deck = createDeck(userId, {
+    title,
+    outline,
+    brandCn: b.brandCn ? String(b.brandCn).slice(0, MAX_BRAND_CHARS) : '',
+    brandEn: b.brandEn ? String(b.brandEn).slice(0, MAX_BRAND_CHARS) : '',
+    styleId: b.styleId ? String(b.styleId) : '',
+  });
+  res.json({ deck });
+});
+
+pptRouter.get('/decks/:id', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  const deck = getDeck(req.params.id, userId);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  res.json({ deck });
+});
+
+/**
+ * 改元信息（名字 / 提纲 / 品牌 / 画风）。**只改传了的那几个字段** —— 缺省成空串的话，
+ * 任何一次只改名字的保存都会把提纲清空，而两边都回「已保存」。
+ */
+pptRouter.patch('/decks/:id', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  const b = req.body || {};
+  if (b.title !== undefined) {
+    const t = String(b.title).trim();
+    if (!t) {
+      res.status(400).json({ error: '名字不能为空' });
+      return;
+    }
+    if (t.length > MAX_TITLE_CHARS) {
+      res.status(400).json({ error: `名字最多 ${MAX_TITLE_CHARS} 字` });
+      return;
+    }
+  }
+  if (b.outline !== undefined && String(b.outline).length > MAX_DECK_OUTLINE_CHARS) {
+    res.status(400).json({
+      error: `提纲最多 ${MAX_DECK_OUTLINE_CHARS} 字，当前 ${String(b.outline).length} 字（不会自动截断）`,
+    });
+    return;
+  }
+  const ok = updateDeckMeta(req.params.id, userId, {
+    title: b.title === undefined ? undefined : String(b.title).trim(),
+    outline: b.outline === undefined ? undefined : String(b.outline),
+    brandCn: b.brandCn === undefined ? undefined : String(b.brandCn).slice(0, MAX_BRAND_CHARS),
+    brandEn: b.brandEn === undefined ? undefined : String(b.brandEn).slice(0, MAX_BRAND_CHARS),
+    styleId: b.styleId === undefined ? undefined : String(b.styleId),
+  });
+  if (!ok) {
+    // 一个字段都没传也走这里：静默回 200 的话前端那句「已保存」是假的。
+    res.status(404).json({ error: '没保存上：这份演示稿不存在（或这次没有要改的字段）' });
+    return;
+  }
+  res.json({ deck: getDeck(req.params.id, userId) });
+});
+
+pptRouter.delete('/decks/:id', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  if (!deleteDeck(req.params.id, userId)) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  res.json({ ok: true });
+});
 
 /**
  * 版式效果 demo。整份 deck，`?only=L7` 只出那一页（版式库的卡片缩略图和抽屉都 iframe 它）。
