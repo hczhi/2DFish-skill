@@ -25,7 +25,8 @@
 ### 整体 16:9 全幅图（不包 `.slide-inner`）
 
 1. 全幅背景图（**深色 / 神秘氛围**——森林光束、深山、星空、暗色海面等）
-2. 左上角 `.slide-header` 一句 kicker（全平台统一的页眉；**不要另写 logo / 胶囊 pill**，那两个类
+2. 左上角一句 kicker（`.slide-header`，全平台统一的页眉，**由代码贴、你不要写**；也**不要另写
+   logo / 胶囊 pill**，那两个类
    已经不在 `template.html` 里了 —— 写出来的那两块没有 CSS，会掉回默认流式布局堆在页面顶上，
    而接口 200、看起来像这个版式塌了）
 3. 顶部 1/3：横向双标题（左英右中）
@@ -106,36 +107,38 @@
 ## 六、build-part 结构模板
 
 ```html
-<section class="slide l18-wrap">
-  <!-- 全幅背景图 + 左上角统一页眉 -->
-  <div class="l18-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
-  <div class="slide-header"><div class="kicker">第三部分 · 三个真实障碍</div></div>
+<section class="slide">
+  <!-- 包装层是 section 里的第一个 div，不要把 l18-wrap 加到 <section> 上 -->
+  <div class="l18-wrap">
+    <!-- 全幅背景图（左上角那行模块名由代码统一贴，这里不要写） -->
+    <div class="l18-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
 
-  <!-- 顶部双标题 -->
-  <div class="l18-headline">
-    <div class="l18-en">{{en_title_line1}}<br>{{en_title_line2}}</div>
-    <div class="l18-cn">{{cn_title_line1}}<br>{{cn_title_line2}}</div>
-  </div>
+    <!-- 顶部双标题 -->
+    <div class="l18-headline">
+      <div class="l18-en">{{en_title_line1}}<br>{{en_title_line2}}</div>
+      <div class="l18-cn">{{cn_title_line1}}<br>{{cn_title_line2}}</div>
+    </div>
 
-  <!-- 底部 3 栏卡片（暗蒙版自然覆盖） -->
-  <div class="l18-cards">
-    <div class="l18-card">
-      <div class="quote">&ldquo;</div>
-      <div class="num">01</div>
-      <div class="title">{{item1_title}}</div>
-      <div class="desc">{{item1_desc}}</div>
-    </div>
-    <div class="l18-card">
-      <div class="quote">&ldquo;</div>
-      <div class="num">02</div>
-      <div class="title">{{item2_title}}</div>
-      <div class="desc">{{item2_desc}}</div>
-    </div>
-    <div class="l18-card">
-      <div class="quote">&ldquo;</div>
-      <div class="num">03</div>
-      <div class="title">{{item3_title}}</div>
-      <div class="desc">{{item3_desc}}</div>
+    <!-- 底部 3 栏卡片（暗蒙版自然覆盖） -->
+    <div class="l18-cards">
+      <div class="l18-card">
+        <div class="quote">&ldquo;</div>
+        <div class="num">01</div>
+        <div class="title">{{item1_title}}</div>
+        <div class="desc">{{item1_desc}}</div>
+      </div>
+      <div class="l18-card">
+        <div class="quote">&ldquo;</div>
+        <div class="num">02</div>
+        <div class="title">{{item2_title}}</div>
+        <div class="desc">{{item2_desc}}</div>
+      </div>
+      <div class="l18-card">
+        <div class="quote">&ldquo;</div>
+        <div class="num">03</div>
+        <div class="title">{{item3_title}}</div>
+        <div class="desc">{{item3_desc}}</div>
+      </div>
     </div>
   </div>
 </section>
@@ -167,7 +170,7 @@
 ## 九、design 提示
 
 - **视觉**：重（暗 bg + 大字 + 暗蒙版三栏，气场最强之一）
-- **是否全幅**：是（**不包 `.slide-inner`**，与 L2/L3/L11/L13/L21/L22 同级 fullbleed）
+- **是否全幅**：是（**不包 `.slide-inner`**，与 L11/L13/L19/L21/L22 同级 fullbleed）
 - **build-part 决策**：section 标注 `fullbleed:true`，build-part 决定性跳过 `.slide-inner` 包裹
 - **关键约束**：
   - 暗 bg 上禁止用浅灰字（`var(--c-ink-soft)`），所有正文必须用 `rgba(255,255,255,.78)` 这种带透明度的白色

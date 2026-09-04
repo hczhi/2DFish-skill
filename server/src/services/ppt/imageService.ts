@@ -21,9 +21,12 @@ import { checkAndDeductAppQuota, checkAndDeductQuota, QuotaExceededError } from 
 import { logAIUsage } from '../../core/llm/client.js';
 import { generateImage } from '../../core/image/imageGateway.js';
 import { resolveImageProvider } from '../../services/aiProviderService.js';
-import { assembleDeck, type DeckMeta } from './deckShell.js';
+import { assemblePreview, type DeckMeta } from './deckShell.js';
 import { rememberAsset } from './assetStore.js';
-import { MAX_SLOTS_PER_PAGE, type PlannedImage, type PreparedImage } from './imageSpec.js';
+import { type DesignSpec } from './designSpec.js';
+import {
+  MAX_SLOTS_PER_PAGE, IMAGE_RATIOS, type ImageRatio, type PlannedImage, type PreparedImage,
+} from './imageSpec.js';
 import { PLACEHOLDERS } from './pageService.js';
 import {
   styles, styleById, defaultStyleId, renderStylePrompt, leftoverPlaceholders,
@@ -91,6 +94,8 @@ export interface FillImagesContext {
   /** 出处（写进素材库那一行）。不给也照样进库，只是列表上看不出这张是哪份稿子的。 */
   deckId?: string;
   page?: number;
+  /** 这一页的蒙版透明度（097）。配完图那一眼的预览要带上它，否则「配了图之后蒙版没了」。 */
+  veil?: number;
 }
 
 /**
@@ -102,22 +107,79 @@ export function findImageSlots(html: string): ImageSlot[] {
   // 开标签里不会出现裸 `>`（属性值都在引号里），所以按标签切就够。
   for (const m of html.matchAll(/<[a-zA-Z][^>]*\sdata-img-prompt="([^"]*)"[^>]*>/g)) {
     const tag = m[0];
-    const src = tag.match(/\ssrc="([^"]*)"/)?.[1];
-    const bg = tag.match(/url\(\s*['"]?([^'")\s]+)/)?.[1];
+    const at = m.index ?? 0;
     const rawMode = tag.match(/\sdata-img-mode="([^"]*)"/)?.[1]?.trim().toLowerCase();
+    // 图贴在哪：先看带 `data-img-prompt` 的这个标签自己（`<img src>` / `background-image:url()`），
+    // 它自己没有的话**往里找第一张占位图**（见 `innerTarget`）。
+    const target = tagTarget(tag, at) || innerTarget(html, tag, at);
     out.push({
       index: out.length + 1,
       prompt: m[1].trim(),
       // 认不出的 mode 按 concept 算（模板缺一路的话这一格会静默换成另一路的画法）。
       mode: (IMAGE_MODES as string[]).includes(rawMode || '') ? (rawMode as ImageMode) : 'concept',
-      src: src ?? bg ?? '',
-      via: src !== undefined ? 'src' : bg !== undefined ? 'bg' : 'none',
-      ratio: ratioOf(src ?? bg ?? ''),
-      tag,
-      at: m.index ?? 0,
+      src: target?.src ?? '',
+      via: target?.via ?? 'none',
+      ratio: ratioOf(target?.src ?? ''),
+      // **替换的目标可能不是带 `data-img-prompt` 那个标签**，所以 tag/at 记的是目标那一个
+      // （`replaceSlotUrls` 按它切）—— 记外层的话换出来的 html 会把里面那张 img 整个吃掉。
+      tag: target?.tag ?? tag,
+      at: target?.at ?? at,
     });
   }
   return out;
+}
+
+/** 这个标签自己就是图（`<img src>` 或 `background-image:url()`）时的替换目标。 */
+function tagTarget(tag: string, at: number): { src: string; via: 'src' | 'bg'; tag: string; at: number } | null {
+  const src = tag.match(/\ssrc="([^"]*)"/)?.[1];
+  if (src !== undefined) return { src, via: 'src', tag, at };
+  const bg = tag.match(/url\(\s*['"]?([^'")\s]+)/)?.[1];
+  if (bg !== undefined) return { src: bg, via: 'bg', tag, at };
+  return null;
+}
+
+/**
+ * `data-img-prompt` 写在**外层容器**上、真正的占位图在里面那个 `<img>` 上时，往里找它。
+ *
+ * 这是踩过的那个坑：模型写出
+ * `<div class="p5-visual" style="background-size:cover" data-img-prompt="…"><img src="/ppt-cases/ph-3x4.svg"></div>`
+ * —— 外层有 `background-size` 但**没有 `background-image:url()`**，于是这一格被判成
+ * `via:'none'`，**备好的图和配好的图永远贴不上去**：接口 200、备图面板上那一格挂着缩略图、
+ * problems 里只有一句「既没有 src 也没有 background-image」，而画面里从头到尾是占位图 ——
+ * 清掉再挑一张、重新生成一次都一样（`prepare-images` 和 `POST /images` 认的是同一个扫描）。
+ * 库里真出现过这样的一页（那一页的 `images_json` 是 `[]`，而 `pending_images_json` 里有图）。
+ *
+ * 只往**这个元素里面**找（按同名标签配平算出它的闭合位置），且只取第一张：
+ * 不配平的话会找到隔壁那一块的图上去，第 1 格的图贴进第 2 格 —— 图文不符而页面渲染完全正常。
+ */
+function innerTarget(
+  html: string,
+  openTag: string,
+  at: number
+): { src: string; via: 'src' | 'bg'; tag: string; at: number } | null {
+  const name = openTag.match(/^<([a-zA-Z][\w-]*)/)?.[1]?.toLowerCase();
+  // 自闭合 / void 标签没有「里面」
+  if (!name || /\/\s*>$/.test(openTag) || name === 'img') return null;
+  const inner = at + openTag.length;
+  // 找到这个元素的闭合位置（中间可能嵌着同名标签）。
+  let depth = 1;
+  let end = html.length;
+  const re = new RegExp(`<(/?)${name}(?=[\\s/>])`, 'gi');
+  re.lastIndex = inner;
+  for (let m = re.exec(html); m; m = re.exec(html)) {
+    depth += m[1] === '/' ? -1 : 1;
+    if (depth === 0) {
+      end = m.index;
+      break;
+    }
+  }
+  const scope = html.slice(inner, end);
+  for (const m of scope.matchAll(/<[a-zA-Z][^>]*>/g)) {
+    const t = tagTarget(m[0], inner + (m.index ?? 0));
+    // 里面那张图上通常不写 `data-img-prompt`（它在外层），所以这里不挑标签，谁先有图算谁。
+    if (t) return t;
+  }
+  return null;
 }
 
 function ratioOf(url: string): string {
@@ -125,6 +187,110 @@ function ratioOf(url: string): string {
   if (url.includes('ph-1x1')) return '1:1 square';
   if (url.includes('ph-3x4')) return '3:4 portrait';
   return '16:9 landscape';
+}
+
+/** `16:9 landscape` → `16:9`（`ratioText` 的反向）。备好的图那一列存的是规划那套字面。 */
+function ratioKey(text: string): string {
+  return (text || '').trim().split(/\s+/)[0] || '16:9';
+}
+
+/**
+ * 把规划里的图位清单对齐成**这一页 HTML 里真的排出来的那几个图位**（纯代码，不调 AI）。
+ *
+ * 两边会对不上的路有两条，而**两条都不报错**：他在「生成前改一下」里换了版式（规划那条
+ * L5 是 0 图，换成 L11 之后案例里有图位）、或者生成时按真实内容多排了一块（`buildPrompt`
+ * 第 8 条：4 块分类就排 4 栏，每栏一个图位）。清单没跟上的后果全落在**看不见的那一半**：
+ * `imageSpecs` 是空的话「这一页详情」里连「规划要 N 张图」那一块都不画（界面上写着
+ * 「这一页还没配过图」），`prepare-images` 又按 `specs.length` 卡 index，于是那 4 格
+ * **备图/素材库挑/换图一个入口都没有** —— 而画面上就是 4 张占位图，页面渲染完全正常，
+ * 他唯一还能点的是「配全部图」（那是真花钱的那条路，且换一张要重花一次）。
+ *
+ * 三件事是承重的：
+ * ① **已有那几格原样留着**（连他改过的 subject 一起）：照 html 的 `data-img-prompt` 覆盖回去
+ *    的话，他刚在面板里改的那句提示词会被模型写的那句悄悄换掉（面板上照旧是一句正常的话）。
+ * ② **只按条数变化动清单**（`changed`）：条数一样时就算文字不一样也不动 —— 那种情况是他
+ *    改了提示词还没重新生成，覆盖等于把他的修改吞掉。
+ * ③ **改了必须出声**，并且说清是「按页面实际的图位」改的：静默改的话他上一次看到的 3 格
+ *    变成 4 格，会以为自己记错了；而空的 `data-img-prompt` 那几格要单独点名（空提示词生不出
+ *    图，那一格会一直停在占位图上，而备图面板上它和别的格子长得一样）。
+ */
+export function specsFromSlots(
+  prev: PlannedImage[],
+  slots: ImageSlot[]
+): { specs: PlannedImage[]; problems: string[]; changed: boolean } {
+  const problems: string[] = [];
+  const use = slots.slice(0, MAX_SLOTS_PER_PAGE);
+  if (slots.length > use.length) {
+    problems.push(
+      `这一页排出了 ${slots.length} 个图位，超过一页 ${MAX_SLOTS_PER_PAGE} 格的上限 —— ` +
+        `第 ${use.length + 1} 格往后的那几格备不了图（只能走「配全部图」那条真花钱的路），要么重新生成一版少几格的。`
+    );
+  }
+  const specs: PlannedImage[] = use.map((s, i) => {
+    if (prev[i]) return prev[i]; // ①
+    const key = ratioKey(s.ratio);
+    return {
+      subject: s.prompt,
+      mode: s.mode,
+      ratio: ((IMAGE_RATIOS as readonly string[]).includes(key) ? key : '16:9') as ImageRatio,
+    };
+  });
+  const changed = specs.length !== prev.length; // ②
+  if (changed) {
+    problems.push(
+      `规划里这一页是 ${prev.length} 个图位，页面上实际排出 ${slots.length} 个 —— ` +
+        `已按页面上的图位把清单改成 ${specs.length} 格（备图、换图、素材库都认这份清单）。`
+    );
+    const blank = specs.map((s, i) => (s.subject ? 0 : i + 1)).filter(Boolean);
+    if (blank.length) {
+      problems.push(
+        `新加的第 ${blank.join(' / ')} 格页面上没写要什么图 —— 在「生成前改一下」里给它补一句，` +
+          '空着的话那一格生不出图，会一直停在占位图上。'
+      );
+    }
+  }
+  return { specs, problems, changed };
+}
+
+/**
+ * 把**照槽位配好的图**（`POST /images`，真花过钱）记进这一页「备好的图」里。
+ *
+ * 不记的话：重新生成这一页会把 html 换成一版新的占位图，而回填只认 `pending_images_json`
+ * —— 那几张付费图于是**静默消失**，界面上只是「这一页又要配图了」，他只能再花一遍钱
+ * （`savePageHtml` 特意不清 `pending_images_json` 就是为了这条路，可这条路上一直没人往里写）。
+ *
+ * 三件事是承重的：
+ * ① **url 相同就原样留着那一条**：素材库挑来的那张（`from:'library'`，没花钱、可能是别的
+ *    画风）被覆盖成 `from:'ai'` 的话，「这一页笔触为什么不统一」在界面上就没有线索了。
+ * ② **这一次没动到的那几格留着**（失败的、超出图位数的）：那几张也是花过钱的。
+ * ③ **跳过的那几格记的是那一页原来的画风**（`prevStyleId`，即 `image_style_id` 那一列），
+ *    不是这一次解析出来的那套：换过画风之后旧图会被标成新画风，而它俩长得不一样。
+ */
+export function keepAsPrepared(
+  prev: PreparedImage[],
+  filled: FilledImage[],
+  ctx: { styleId: string; prevStyleId?: string }
+): PreparedImage[] {
+  const byIndex = new Map<number, PreparedImage>();
+  for (const p of prev) if (p?.url) byIndex.set(Number(p.index), p);
+  const at = new Date().toISOString();
+  for (const f of filled) {
+    if (!f.url || f.error) continue;
+    if (byIndex.get(f.index)?.url === f.url) continue; // ①
+    byIndex.set(f.index, {
+      index: f.index,
+      url: f.url,
+      prompt: f.prompt,
+      mode: f.mode,
+      ratio: ratioKey(f.ratio),
+      styleId: f.skipped ? ctx.prevStyleId || ctx.styleId : ctx.styleId, // ③
+      model: f.model,
+      storage: f.storage,
+      from: 'ai',
+      at,
+    });
+  }
+  return [...byIndex.values()].sort((a, b) => a.index - b.index);
 }
 
 /**
@@ -171,7 +337,12 @@ function resolveProvider(userId: string) {
  */
 async function runOneImage(
   job: { subject: string; mode: ImageMode; ratio: string; label: string },
-  ctx: { userId: string; title: string; section?: string; topic?: string; deckId?: string; page?: number },
+  ctx: {
+    userId: string; title: string; section?: string; topic?: string; deckId?: string; page?: number;
+    /** 这份稿子的设计规范（096）。**不传的话图的配色是默认那套** —— 蓝色系的稿子配出一堆橙图，
+     *  每张单看都不错、一处都不报错（见 `styleLibrary.deckColors`）。 */
+    design?: DesignSpec;
+  },
   style: PptStyle,
   provider: { id: string; model: string },
   owner: 'platform' | 'dedicated'
@@ -187,6 +358,7 @@ async function runOneImage(
     theme,
     scene: `${job.subject}. Single focal subject, safe margins.`,
     ratio: job.ratio,
+    design: ctx.design,
   });
   // 模板里的 `<…>` / `{{…}}` 是给人看的填空说明，漏换的那几个会原样发给模型
   // （它会照着「本页主题，1句」画），而回来的图看着就是「这张不太对」。
@@ -249,6 +421,8 @@ export async function generateSpecImage(
     styleId?: string;
     deckId?: string;
     page?: number;
+    /** 这份稿子的设计规范（096）：图的配色跟着它走，不传就是默认那套。 */
+    design?: DesignSpec;
   }
 ): Promise<{ image: PreparedImage; problems: string[] }> {
   if (!spec.subject.trim()) {
@@ -340,7 +514,9 @@ export async function fillPageImages(html: string, ctx: FillImagesContext): Prom
     try {
       const r = await runOneImage(
         { subject: slot.prompt, mode: slot.mode, ratio: slot.ratio, label: `第 ${slot.index} 张` },
-        ctx,
+        // 设计规范搭 `meta` 走（外壳也要它）—— 不往下传的话这条路生出来的图是默认配色，
+        // 而「先备图」那条路是对的：同一份稿子里两批图不是一套色，谁都不报错。
+        { ...ctx, design: ctx.meta.design },
         style,
         provider,
         owner
@@ -383,7 +559,7 @@ export async function fillPageImages(html: string, ctx: FillImagesContext): Prom
   return {
     html: filled,
     // 单页预览不带页脚（同 pageService）。
-    previewHtml: assembleDeck([filled], ctx.meta, { footer: false }),
+    previewHtml: assemblePreview(filled, ctx.meta, ctx.veil || 0),
     images,
     problems,
     quotaExceeded,

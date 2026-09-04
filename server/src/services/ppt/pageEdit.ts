@@ -154,7 +154,8 @@ export function applyTextEdit(
   const next = norm(edit.newText.replace(/\r?\n/g, ' '));
   if (!next) {
     throw new PageEditError(
-      '改成空的话这一块会缩成一条看不见的线，而页面照样渲染 —— 看起来像这个版式本来就这样。要去掉整块请走「重新生成」。这次没存。'
+      '改成空的话这一块会缩成一条看不见的线，而页面照样渲染 —— 看起来像这个版式本来就这样。' +
+        '要去掉整块请选中它、点浮动条上的 🗑（那个是把这一块整段删掉，不留空壳）。这次没存。'
     );
   }
   if (next.length > MAX_EDIT_TEXT) {
@@ -565,5 +566,97 @@ export function applyRegionStyle(
     style: patch,
     region: region.name,
     prev,
+  };
+}
+
+// ── 删掉一整块 ────────────────────────────────────────────────────
+
+/** 这段 html 里还有没有「看得见的东西」（有字的文本节点，或者一张图）。 */
+function hasVisibleContent(html: string): boolean {
+  if (/<img[\s/>]/i.test(html)) return true;
+  return /\S/.test(html.replace(/<!--[\s\S]*?-->/g, '').replace(TAG_RE, ''));
+}
+
+/**
+ * 把他选中的那一整块（含单独一段文字）从这一页里整段剪掉。**不调 AI、不花钱。**
+ *
+ * 定位和 `applyRegionStyle` 同一套（从 `<section>` 数下来的孩子下标路径 + 调用方拿那串 eid
+ * 交叉核对），所以「浏览器和库里差一层」这种情况在那一层就被挡住了 —— 不挡的话删掉的是
+ * 隔壁那一块：页面照样渲染、接口 200，只是他框的那块还在、另一块没了。
+ *
+ * **剩下的 eid 一个都不重编号**（这里绝不调 `injectEids`）：重编一遍的话前端手上那份预览里的
+ * t5 和库里的 t5 会指向两个不同的元素，下一次双击改字落到隔壁那一块上，而两块都是正常的文字。
+ *
+ * 四条拒绝，每一条不拒都是「界面上一句『已删掉』，而错在几步之后才露出来」：
+ * ① **块里有 `<img>`（或图槽位）一律拒。** 图的序号是 `findImageSlots` 按 html 顺序扫出来的，
+ *    `images_json`、备好的图（`pending_images_json` 按 index 对齐 `plan_json` 的 `imageSpecs`）、
+ *    `pasteIntoBuiltPage` 全按这个序号贴 —— 删掉第 1 格所在的那一块之后，下一次「换一批图」
+ *    会把第 2 张贴进第 1 格：图文不符，而页面渲染完全正常、接口 200，面板上还照旧写着「3/3 张有图」。
+ * ② **`<section>` 自己（空路径）拒。** 剪掉整页在 iframe 里是一块白，和「这个版式渲染塌了」
+ *    分不开，而拼整份那边只会说「缺第 N 页」。
+ * ③ **删完这一页没有任何看得见的内容了就拒**（同 ②：空 `<section>` = 一块白）。
+ * ④ **删完一个 `data-eid` 都不剩就拒**：前端的 `canEditText` 是按「html 里有没有 data-eid」算的，
+ *    于是界面会谎报「这一页是加这个功能之前生成的，重新生成一次才能改文字」—— 他会去点一次
+ *    真实调用，而真正的成因是他自己把最后一段字删了。
+ *
+ * `<script>` / `<style>` 那一块也不给删：那是**整份 deck 的样式**（`checkPage` 已经为它报过一条
+ * problem），从这里剪掉的话画面上是「这一页忽然好看了/塌了」，而成因在另一页上也会跟着变。
+ */
+export function applyDelete(
+  html: string,
+  edit: { path: number[] }
+): { html: string; removed: { name: string; cls: string; eids: string[]; text: string } } {
+  if (!edit.path.length) {
+    throw new PageEditError(
+      '这样是把整页剪掉 —— 剩下一个空 <section>，在预览里就是一块白，和「这个版式渲染塌了」分不开。' +
+        '要换掉整页请走「重新生成这一页」。这次没删。'
+    );
+  }
+  const region = findRegionByPath(html, edit.path);
+  if (/<img[\s/>]/i.test(region.html) || /data-img-prompt=/i.test(region.html)) {
+    throw new PageEditError(
+      '这一块里有图，删不了 —— 图的序号是按这一页 html 里的出现顺序算的，删掉一个图位之后，' +
+        '下一次「换一批图」或重贴备好的图会把第 2 张贴进第 1 格：图文不符，而页面渲染完全正常、' +
+        '面板上照旧写着「几张有图」。要去掉这一块请走「重新生成这一页」。这次没删。'
+    );
+  }
+  if (/(?<![\w-])slide-header(?![\w-])/.test(region.html)) {
+    // 页眉是整份统一、由代码贴的那一行模块名（096 `applyHeader`）。删掉之后**只有这一页**
+    // 左上角是空的，而它在预览里只是「这一页看着比别的干净」—— 翻整份时也只觉得有点怪，
+    // 没有一处会说。要整份都不要页眉，那是设计规范的事，不是删一页上的一块。
+    throw new PageEditError(
+      '这一块是统一页眉（左上角那行模块名，整份每一页都有，由代码贴上去的）—— 只删这一页的话，' +
+        '整份里只有这一页左上角是空的，而它看起来只是「这一页比别的干净」，没有一处会提示。' +
+        '模块名要改就在「提纲与设置」里改这一页的所属模块，再重新生成这一页。这次没删。'
+    );
+  }
+  if (/<(script|style)[\s>]/i.test(region.html)) {
+    throw new PageEditError(
+      '这一块里有 <script> 或 <style> —— 那段 CSS 改的是整份 deck 的每一页，从这里剪掉的话' +
+        '别的页也会跟着变样，而这里只显示「已删掉」。这次没删。'
+    );
+  }
+  const next = `${html.slice(0, region.from)}${html.slice(region.to)}`;
+  if (!hasVisibleContent(next)) {
+    throw new PageEditError(
+      '删完这一页就什么都不剩了 —— 空的 <section> 在预览里是一块白，读起来像这个版式渲染塌了。这次没删。'
+    );
+  }
+  if (eidsIn(html).length && !eidsIn(next).length) {
+    throw new PageEditError(
+      '这是这一页最后一段可以编辑的文字 —— 删掉之后界面会说「这一页还没有编辑标记，重新生成一次才能改文字」' +
+        '（那是假话，成因是这一块被删了），而他会为此花掉一次真实调用。这次没删。'
+    );
+  }
+  const cls = (region.html.match(/^<[a-zA-Z][\w-]*[^>]*\sclass=["']([^"']*)["']/) || [, ''])[1] || '';
+  return {
+    html: next,
+    removed: {
+      name: region.name,
+      cls: cls.trim().split(/\s+/)[0] || '',
+      eids: eidsIn(region.html),
+      // 删掉的那几个字（界面上要说出「删的是这一块」—— 只说 `<div>` 的话他分不出删对了没有）。
+      text: norm(region.html.replace(/<!--[\s\S]*?-->/g, '').replace(TAG_RE, ' ')).slice(0, 60),
+    },
   };
 }

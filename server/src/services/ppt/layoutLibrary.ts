@@ -18,6 +18,20 @@
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * 页型（库文件里每条的 `归属`）：这一条能当**什么页**用。
+ *
+ * 这份词表是**代码这一份说了算**：md 里写了个词表外的字（「过渡」「尾页」）一律抛错 ——
+ * 静默忽略的话那一条就从某个分组里消失了，而规划清单看着还是 22 条、规划出来的每一页
+ * 都合法，只是封面页再也挑不到它。
+ */
+export const PAGE_ROLES = ['封面', '目录', '章节', '内容', '结尾'] as const;
+export type PageRole = (typeof PAGE_ROLES)[number];
+
+/** 内容的骨架形状（每条的 `形状`，单选）。规划那一步按内容结构对形状挑版式。 */
+export const LAYOUT_SHAPES = ['聚焦', '分屏', '并列', '对比', '数据', '时序'] as const;
+export type LayoutShape = (typeof LAYOUT_SHAPES)[number];
+
 export interface PptLayout {
   /** 'L11' */
   id: string;
@@ -27,15 +41,40 @@ export interface PptLayout {
   /** 中文括注，如「三栏并列叙事 · 全幅图叠字」 */
   title: string;
   applicable: string;
+  /**
+   * 这一条能当什么页用（库文件里那行 `归属`，可多选）。规划那一步拿它做两件事：
+   * 按页型给模型分组列清单、核对模型给每页标的 `kind` 和它挑的版式对不对得上。
+   *
+   * 少写一个词不报错，表现是「这一条从此不出现在某个分组里」——清单看着还是 22 条，
+   * 只是封面页再也挑不到它，而规划出来的每一页都合法。
+   */
+  roles: PageRole[];
+  /** 内容的骨架形状（`形状`，单选）：并列 / 对比 / 数据 / 时序 / 分屏 / 聚焦。 */
+  shape: LayoutShape;
   structure: string;
   /** 图槽位说明原文（「3 个（pXX_col1/col2/col3…）」）—— 张数和构图要求都在里面，别拆 */
   imageSlots: string;
   designHint: string;
   variants: string;
-  /** build-part 不包 `.slide-inner`。见库文件末尾的「全幅版式集合」 */
+  /**
+   * build-part 不包 `.slide-inner`。见库文件末尾的「全幅版式集合」。
+   *
+   * **「背景图铺满整页」不算全幅**：L2/L3 的图是绝对定位铺满的，文字照旧在 `.slide-inner`
+   * 里（demo 片段里有没有 `.slide-inner` 是唯一判据，`demoDeck.test.ts` 拿它对账）。
+   * 把那种也标成 true 的话，那几条生成出来的文字贴着画面边缘、疏密档也不动一个像素，
+   * 而它仍是一页完整的幻灯片，一处都不报错。
+   */
   fullbleed: boolean;
   /** section 需加 `has-card`（目前只有 L12）：色带要溢出卡片边缘 */
   hasCard: boolean;
+  /**
+   * 这一条**不贴**左上角那行统一页眉（只有 L2 / L13 这两条封面）。
+   *
+   * 和 `fullbleed` 是两回事：全幅的 L11/L18/L19/L21/L22 在 demo 里每一页都有页眉。
+   * 拿 `fullbleed` 当这个用的话，那 6 条的模块名会静默消失（模型写的被 `applyHeader`
+   * 摘掉、代码又不贴），而画面完全正常。
+   */
+  noHeader: boolean;
   /** 有没有详情 md（12 条有，L1–L10 索引条目自足） */
   hasDetail: boolean;
   /** 原始参考截图（客户端静态资源，client/public/ppt-cases/） */
@@ -126,6 +165,11 @@ export function layouts(): PptLayout[] {
   return library().layouts;
 }
 
+/** 能当某种页用的那几条（规划 prompt 里「页型 → 可用版式」那几行、和核对都用它）。 */
+export function layoutsForRole(role: PageRole): PptLayout[] {
+  return layouts().filter((l) => l.roles.includes(role));
+}
+
 export function layoutById(id: string): PptLayout | undefined {
   const key = id.trim().toUpperCase();
   return layouts().find((l) => l.id === key);
@@ -150,15 +194,36 @@ export function loadLibrary(): PptLibrary {
 
   const fullbleedSet = parseMarkedSet(index, '全幅版式集合');
   const hasCardSet = parseMarkedSet(index, '出血版式');
+  const noHeaderSet = parseMarkedSet(index, '不贴统一页眉的版式');
+  if (!noHeaderSet.size) {
+    // 空集合的表现是「每一页都贴页眉」—— 封面上多出一行模块名，那一页照样是一页完整的
+    // 幻灯片，没有一处会说。所以这一句改名/删掉必须炸在这里。
+    throw new Error(
+      `版式案例库里找不到「★ 不贴统一页眉的版式（L… / L…）」那一行（${indexPath}）—— ` +
+        '缺了它每一页都会贴左上角那行模块名，封面上会凭空多一行字而不报错。'
+    );
+  }
 
   const layouts = splitEntries(index).map((entry) =>
-    buildLayout(entry, root, fullbleedSet, hasCardSet)
+    buildLayout(entry, root, fullbleedSet, hasCardSet, noHeaderSet)
   );
 
   if (!layouts.length) {
     // 解析出 0 条和「案例库为空」在接口上长得一样（返回 200 + 空列表），
     // 而下游会照空列表继续生成。所以这里必须炸。
     throw new Error(`版式案例库解析出 0 条案例（${indexPath}）—— 检查条目标题是不是还写成「## L<编号> · <名>」。`);
+  }
+
+  // 某个页型一条版式都没有的话，规划 prompt 里那一行会是空的 —— 模型于是给那种页
+  // 随便挑一条，而它给的编号在库里，`layoutId` 校验一路放行，界面上是一份挑得「都对」
+  // 的规划。所以哪个页型空了必须在这里炸。
+  for (const role of PAGE_ROLES) {
+    if (!layouts.some((l) => l.roles.includes(role))) {
+      throw new Error(
+        `版式案例库里没有一条的「归属」写了「${role}」（${indexPath}）—— ` +
+          `规划时那一类页会从 22 条里随便挑一条，而挑出来的编号是合法的，一处都不报错。`
+      );
+    }
   }
 
   return {
@@ -243,25 +308,77 @@ function parseMarkedSet(md: string, label: string): Set<number> {
   return set;
 }
 
+/**
+ * 那行 `归属` → 页型集合。**认不出来的词一律抛错**（不是跳过）：
+ * 静默跳过的话那一条就从某个分组里消失了，而规划照样出一份挑得「都对」的清单。
+ */
+function parseRoles(entry: RawEntry, raw: string): PageRole[] {
+  const out: PageRole[] = [];
+  for (const part of raw.split(/[\/、,，\s·]+/)) {
+    const word = part.trim();
+    if (!word) continue;
+    const hit = PAGE_ROLES.find((r) => r === word);
+    if (!hit) {
+      throw new Error(
+        `${entry.id} 的「归属」里有认不出来的页型「${word}」（只能是 ${PAGE_ROLES.join(' / ')}）—— ` +
+          '跳过它的话这一条会从某个页型的清单里消失，而规划出来的每一页都合法、一处都不报错。'
+      );
+    }
+    if (!out.includes(hit)) out.push(hit);
+  }
+  if (!out.length) {
+    throw new Error(
+      `${entry.id} 缺「- **归属**：…」这一行（只能是 ${PAGE_ROLES.join(' / ')}，可多选）—— ` +
+        '缺了它这一条哪个页型都挑不到，等于案例库少一条，而列表上它还在。'
+    );
+  }
+  return out;
+}
+
+/** 那行 `形状` → 单个骨架形状。同上，认不出来就抛。 */
+function parseShape(entry: RawEntry, raw: string): LayoutShape {
+  const word = raw.trim();
+  const hit = LAYOUT_SHAPES.find((s) => s === word);
+  if (!hit) {
+    throw new Error(
+      `${entry.id} 的「形状」是「${word || '(缺这一行)'}」，只能是 ${LAYOUT_SHAPES.join(' / ')} 里的一个 —— ` +
+        '缺了它规划时「四块并列的内容」和「两块对立的内容」在模型眼里没有区别，挑出来的版式装不下这一页而不报错。'
+    );
+  }
+  return hit;
+}
+
 function buildLayout(
   entry: RawEntry,
   root: string,
   fullbleedSet: Set<number>,
-  hasCardSet: Set<number>
+  hasCardSet: Set<number>,
+  noHeaderSet: Set<number>
 ): PptLayout {
   const { body } = entry;
   const applicable = field(body, '适用');
+  const roles = parseRoles(entry, field(body, '归属'));
+  const shape = parseShape(entry, field(body, '形状'));
   const structure = field(body, '结构');
   const imageSlots = field(body, '图槽位');
   const designHint = field(body, 'design 提示');
   const variants = field(body, '变体');
   const source = field(body, '来源');
 
-  // fullbleed 有两个来源：条目自己的「是否全幅」和文末那句集合。
-  // 条目里明写的优先（L12 写着「否」但要 has-card），没写的按集合判 ——
-  // L2/L3 那几条老条目压根没有这一行，只靠字段的话它们会被当成普通页，
-  // 被包进 `.slide-inner`，出来的是一张四边留白的「全幅」图，不报错。
-  const declared = field(body, '是否全幅');
+  // fullbleed 有两个来源：条目自己的「是否全幅」和文末那句集合。条目里明写的优先
+  // （L12 写着「否」但要 has-card），没写的按集合判 —— 只靠集合的话新加的条目漏进集合
+  // 就会被包进 `.slide-inner`，出来的是一张四边留白的「全幅」图，不报错。
+  //
+  // 先剥掉 markdown 的 `**`：写成 `**是**（…）` 时 `startsWith('是')` 是 false，
+  // 于是那一条**静默变成普通页**（库文件上明明白白写着「是」）。剥完还不是「是」/「否」
+  // 开头的一律抛错 —— 「视情况」这种写法会被当成「否」，同样一个字都不报。
+  const declared = field(body, '是否全幅').replace(/^[*_\s]+/, '');
+  if (declared && !/^[是否]/.test(declared)) {
+    throw new Error(
+      `${entry.id} 的「是否全幅」写的是「${declared}」，必须以「是」或「否」开头 —— ` +
+        '认不出来时会当成「否」，那一条于是被包进 `.slide-inner`，出来是一张四边留白的「全幅」图，一处都不报错。'
+    );
+  }
   const fullbleed = declared ? declared.startsWith('是') : fullbleedSet.has(entry.num);
 
   const detailPath = findDetail(root, entry.id);
@@ -273,19 +390,22 @@ function buildLayout(
     name: entry.name,
     title: entry.title,
     applicable,
+    roles,
+    shape,
     structure,
     imageSlots,
     designHint,
     variants,
     fullbleed,
     hasCard: hasCardSet.has(entry.num),
+    noHeader: noHeaderSet.has(entry.num),
     hasDetail: !!detail,
     refImage: assetUrl(source, /cases\/img\/(L\d+-ref\.\w+)/),
     // demo 一律指向拼出来的那份 deck，不指静态文件。库文件的「来源」里那几个
     // `cases/L11-demo.html` 是当初随案例一起抄来的独立 html，它们各自复制了一份版式
     // CSS —— 改了 template 之后那几页照旧好看，而生成出来的页面已经变了。
     demoUrl: `/api/ppt/demo-deck.html?only=${entry.id}`,
-    selectText: selectText(entry, { applicable, structure, imageSlots, designHint, fullbleed }),
+    selectText: selectText(entry, { applicable, roles, shape, structure, imageSlots, designHint, fullbleed }),
     buildText: detail || entry.raw,
   };
 }
@@ -311,9 +431,20 @@ function assetUrl(source: string, re: RegExp): string | undefined {
 
 function selectText(
   entry: RawEntry,
-  f: { applicable: string; structure: string; imageSlots: string; designHint: string; fullbleed: boolean }
+  f: {
+    applicable: string;
+    roles: PageRole[];
+    shape: LayoutShape;
+    structure: string;
+    imageSlots: string;
+    designHint: string;
+    fullbleed: boolean;
+  }
 ): string {
   const lines = [`${entry.id} ${entry.name}${entry.title ? `（${entry.title}）` : ''}`];
+  // 归属/形状放在最前面：选版式那一次是按「这是什么页 + 内容是什么形状」挑的，
+  // 埋在「适用」后面的话模型只按那一串场景词匹配，于是章节扉页拿到四栏矩阵。
+  lines.push(`归属：${f.roles.join(' / ')} · 形状：${f.shape}`);
   if (f.applicable) lines.push(`适用：${f.applicable}`);
   // 结构留一句话就够（选型阶段只需要知道它长什么样），完整结构在 buildText 里。
   if (f.structure) lines.push(`结构：${oneLine(f.structure, 160)}`);

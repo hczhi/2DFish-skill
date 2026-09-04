@@ -16,8 +16,9 @@
 
 import { aiGateway } from '../../core/llm/gateway.js';
 import { layoutById, library, type PptLayout } from './layoutLibrary.js';
+import { designPromptBlock, DEFAULT_DESIGN, type DesignSpec } from './designSpec.js';
 import { type PlannedImage } from './imageSpec.js';
-import { assembleDeck, templateClasses, stripPageNumber, type DeckMeta } from './deckShell.js';
+import { assembleDeck, assemblePreview, templateClasses, stripPageNumber, type DeckMeta } from './deckShell.js';
 import { injectEids } from './pageEdit.js';
 
 /** 一页正文 2-4KB，剩下的是留给思维链的空间（硬规则 2）。`noThinking` 也一起发。 */
@@ -62,6 +63,17 @@ export interface PageInput {
   brandCn?: string;
   brandEn?: string;
   topic?: string;
+  /**
+   * 这份稿子的设计规范（096）。**不传就是默认那套**：模型于是照案例库和通用令牌那份排 ——
+   * 颜色确实还是对的（靠 `:root` 覆盖），但紧凑/舒展那一档它不知道，排出来的容量是标准档的，
+   * 紧凑档下面空一块、舒展档被 `overflow:hidden` 切掉一行，两种都不报错。
+   */
+  design?: DesignSpec;
+  /**
+   * 这一页的蒙版透明度（097）。**要跟着进这份预览** —— 不带的话刚生成完那一眼是没有
+   * 蒙版的那一版，而刷新之后（listPages 那条路）是压暗的，他会以为「蒙版时好时不好」。
+   */
+  veil?: number;
 }
 
 export interface PageResult {
@@ -108,22 +120,28 @@ export async function generatePage(input: PageInput, userId: string): Promise<Pa
   // 每一段文字打上 `data-eid`（就地编辑靠它定位，见 pageEdit）。**在这里做、跟着 html 一起
   // 存**：编辑时再算一遍的话，前端手上那份预览里的 t3 和库里的 t3 可能是两个不同的元素，
   // 于是他改的是这一块、变的是隔壁那一块 —— 两块都是正常的文字，一处都不报错。
-  const fixed = injectEids(stripPageNumber(html));
-  problems.push(...checkPage(fixed, layout, input));
+  // 统一页眉由**代码**贴（`applyHeader`）：模块名是提纲里那一条，交给模型写的话它会顺手
+  // 改写成「案例」「第二章」，于是每一页左上角那行字都不太一样（硬规则 3）。
+  const head = applyHeader(injectEids(stripPageNumber(html)), input, layout);
+  const fixed = head.html;
+  problems.push(...head.problems, ...checkPage(fixed, layout, input));
 
   return {
     page: input.page,
     layoutId: layout.id,
     html: fixed,
     // 制作过程中的单页预览不要页脚（它压在画面底部，挡住的是这一页自己的内容）。
-    previewHtml: assembleDeck(
-      [fixed],
+    previewHtml: assemblePreview(
+      fixed,
       {
         brandCn: input.brandCn || '示例企业',
         brandEn: input.brandEn || 'SAMPLE',
         topic: input.topic || input.section || input.title,
+        // 规范要跟着进这份预览（096）：不带的话刚生成完那一眼看到的是默认配色，
+        // 而库里那份和刷新之后都是对的 —— 他会以为「配色只对一半」。
+        design: input.design,
       },
-      { footer: false }
+      input.veil || 0
     ),
     problems,
     usage,
@@ -133,6 +151,8 @@ export async function generatePage(input: PageInput, userId: string): Promise<Pa
 export interface DeckPageInput {
   page: number;
   html: string;
+  /** 这一页的蒙版透明度（097）。缺省 0。**按 page 取，不按数组下标** —— 见下面那条 ②。 */
+  veil?: number;
 }
 
 /**
@@ -148,9 +168,9 @@ export function buildDeck(pages: DeckPageInput[], total: number, meta: DeckMeta)
   if (!Number.isInteger(total) || total < 1) {
     throw new PageError(`总页数不对（${total}），拼不出 deck。`);
   }
-  const have = new Map<number, string>();
+  const have = new Map<number, DeckPageInput>();
   for (const p of pages) {
-    if (p.html?.includes('<section')) have.set(p.page, p.html);
+    if (p.html?.includes('<section')) have.set(p.page, p);
   }
   const missing: number[] = [];
   for (let i = 1; i <= total; i++) if (!have.has(i)) missing.push(i);
@@ -160,9 +180,13 @@ export function buildDeck(pages: DeckPageInput[], total: number, meta: DeckMeta)
         `缺页的 deck 翻起来和完整的一模一样，只是内容跳了一段，所以这里不给拼。`
     );
   }
+  const ordered = Array.from({ length: total }, (_, i) => have.get(i + 1)!);
   return assembleDeck(
-    Array.from({ length: total }, (_, i) => have.get(i + 1)!),
-    meta
+    ordered.map((p) => p.html),
+    meta,
+    // 蒙版也按排好的顺序给（②：传进来的顺序可能是完成顺序）—— 照数组下标取的话，
+    // 压暗的是别的那一页，而每一页单看都是正常的幻灯片。
+    { veils: ordered.map((p) => p.veil || 0) }
   );
 }
 
@@ -221,6 +245,171 @@ function extractSection(raw: string, info: FailInfo): { html: string; problems: 
   return { html, problems };
 }
 
+/**
+ * 统一页眉：`<div class="slide-header"><div class="kicker">模块名</div></div>`，**由代码贴**。
+ *
+ * 四条是承重的：
+ *
+ * ① **模块名取提纲里那一条，不用模型写的那句。** 交给模型的话它会顺手改写（「第二部分 ·
+ *    标杆案例」→「案例」/「第二章」），于是每页左上角那行字都不太一样 —— 每一页单看都正常，
+ *    只有连着翻才看出来，而没有一处会报错（硬规则 3）。
+ * ② **先把模型写的那个页眉整块摘掉**，再贴我们这一份。不摘的话页面左上角**同一个位置**叠着
+ *    两行字（`.slide-header` 是 absolute 定位的），读起来像字重叠了、像渲染错了。
+ * ③ **摘的时候要数 `<div>` 配对**，不能用非贪婪正则匹配到第一个 `</div>`：里面还嵌着
+ *    `.kicker` 那一层，切早了会剩一个孤零零的 `</div>` —— 浏览器把它丢掉，于是后面那一块
+ *    内容跑到了外层容器里，那一页的排版整段塌掉，而 HTML 照样渲染、一处都不报错。
+ * ④ **只有封面那两条不贴**（`layout.noHeader`，库文件末尾那句「不贴统一页眉的版式」）。
+ *    **不能拿 `fullbleed` 当这个用**：全幅的 L11/L18/L19/L21/L22 在 demo 里每一页都有页眉，
+ *    按全幅跳过的话这 5 条的模块名会静默消失（模型写的那份在上面第 ② 条被摘掉、代码又不贴），
+ *    而画面完全正常、`problems` 里一个字都没有。
+ * ⑤ **模型在正文里又写一遍模块名的那行 `.kicker` 要一起摘掉**（`stripEchoedKicker`）：它不在
+ *    `.slide-header` 里，第 ② 条摘不到 —— 于是左上角一行（代码贴的，17px 加宽字距）、正文里
+ *    再一行（模型自己 inline 写的，字号色号都不一样），同一句话在一页上出现两次而**两处都
+ *    渲染正常**。只报不摘不行：这条问题**每一页都会犯**，报出来是十几条一样的提示，
+ *    而他要做的是逐页就地编辑删掉 —— 报了等于没报。
+ *    `noHeader` 的那两条**留第一处**（那一页的模块名本来就该露出来，全摘掉的话章节页会变成
+ *    只剩一个标题的空页），去重和重复检查都**在 `noHeader` 的提前返回之前**跑：
+ *    放在后面的话 L2/L13 这两条一个字都不查，而它们恰好是最容易重复的那两页（页眉 + 大标题）。
+ */
+export function applyHeader(
+  html: string,
+  input: { section?: string; page?: number },
+  layout: PptLayout
+): { html: string; problems: string[] } {
+  const problems: string[] = [];
+  let stripped = stripHeaders(html);
+  const section = (input.section || '').trim();
+  if (section) {
+    // ⑤ 正文里那行重复的模块名。`noHeader` 的两条留第一处。
+    const echo = stripEchoedKicker(stripped, section, !!layout.noHeader);
+    stripped = echo.html;
+    if (echo.removed) {
+      problems.push(
+        `正文里有 ${echo.removed} 处又写了一遍「${section}」（模型自己加的那行小标签），已经摘掉 —— ` +
+          '左上角那行模块名是代码统一贴的，位置和字体每页一样，正文里再写一遍会在同一页上显示两遍。'
+      );
+    }
+  }
+  if (layout.noHeader) {
+    problems.push(...dupSectionProblem(stripped, section, true));
+    return { html: stripped, problems };
+  }
+  if (!section) {
+    // 别的页左上角都有一行模块名，这一页没有 —— 翻起来只是「这页看着有点空」。
+    problems.push(
+      `这一页在提纲里没写所属模块，左上角的页眉是空的（别的页都有一行模块名）—— ` +
+        '在「提纲与设置」里给这一页归到某个模块下面，再重新生成这一页就有了。'
+    );
+    return { html: stripped, problems };
+  }
+  const open = /<section[^>]*>/.exec(stripped);
+  if (!open) {
+    // 走不到这里（`extractSection` 已经保证有 `<section>`），但静默返回的话这一页会是
+    // 整份里唯一没有页眉的一页。
+    problems.push('这一页找不到 `<section>` 开标签，统一页眉没贴上（左上角那行模块名会缺）。');
+    return { html: stripped, problems };
+  }
+  const at = open.index + open[0].length;
+  const header = `\n  <div class="slide-header"><div class="kicker">${esc(section)}</div></div>`;
+  const out = stripped.slice(0, at) + header + stripped.slice(at);
+  problems.push(...dupSectionProblem(out, section, false));
+  return { html: out, problems };
+}
+
+/**
+ * 上面第 ⑤ 条摘不掉的那些重复（模块名写在 L16 的顶栏、L18 的 pill、或者干脆写进了标题里）——
+ * **只报不改**：那几处不是一个独立的小标签，剪掉会把那一块的结构也带走。
+ */
+function dupSectionProblem(html: string, section: string, noHeader: boolean): string[] {
+  if (!section) return [];
+  const dup = html.split(esc(section)).length - 1;
+  if (dup < 2) return [];
+  return [
+    noHeader
+      ? `「${section}」在这一页上出现了 ${dup} 次（这一页不贴统一页眉，所以这几处都是模型自己写的）—— ` +
+        '同一句话在一页里显示两遍，读起来像设计的一部分。要去掉就用就地编辑删掉多的那一处。'
+      : `「${section}」在这一页上出现了 ${dup} 次：左上角的统一页眉是代码贴的，正文里那 ${dup - 1} 处是模型自己写的 —— ` +
+        '同一句话在一页里显示两遍，读起来像设计的一部分。要去掉就用就地编辑删掉正文里那一处。',
+  ];
+}
+
+/**
+ * 摘掉正文里那行「又写了一遍模块名」的 `.kicker`（`applyHeader` 第 ⑤ 条）。
+ *
+ * 三条边界：
+ * - **只认 `.kicker`、且里面不能再嵌标签。** 认得宽一点（比如凡是文字等于模块名的元素都摘）
+ *   会把 L13 的大标题、L18 的 pill 那种承重的块整个剪掉 —— 那一页少半屏内容而 HTML 照样渲染。
+ * - **比的是「去掉序号前缀 + 去掉空白」之后的文字**：提纲里写「一、开篇」而页面上写「开篇」
+ *   是同一件事，逐字比的话摘不掉（现象就是左上角两行字，一行带序号一行不带）。
+ * - `keepFirst` 时留第一处：见第 ⑤ 条。
+ */
+function stripEchoedKicker(html: string, section: string, keepFirst: boolean): { html: string; removed: number } {
+  const key = normSection(section);
+  if (!key) return { html, removed: 0 };
+  const re = /<div[^>]*class="[^"]*(?<![\w-])kicker(?![\w-])[^"]*"[^>]*>([^<]*)<\/div>/gi;
+  let removed = 0;
+  let seen = 0;
+  const out = html.replace(re, (whole, text: string) => {
+    if (normSection(text) !== key) return whole;
+    seen += 1;
+    if (keepFirst && seen === 1) return whole;
+    removed += 1;
+    return '';
+  });
+  if (!removed) return { html, removed: 0 };
+  // 摘完留下的空行会让下一块前面多一个空白节点（`display:flex` 的容器里那是一格 gap）。
+  return { html: out.replace(/[ \t]*\n(?:[ \t]*\n)+/g, '\n'), removed };
+}
+
+/**
+ * 「一、开篇」和「开篇」算同一个模块名。序号前缀只在**开头**剥一次。
+ *
+ * **剥完什么都不剩的要退回原文**（模块名本身就叫「第二部分」「第三章」的时候）：不退的话
+ * 这个模块的 key 是空字符串 —— `''` 谁都不等于，于是这一整份稿子的去重一处都不生效，
+ * 而现象只是「怎么还是两行字」，和没改之前一模一样。
+ */
+function normSection(s: string): string {
+  const flat = s.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').trim();
+  const cut = flat.replace(/^第?[一二三四五六七八九十百千0-9]+\s*[、.．·:：]?\s*(?:部分|章|节|篇)?\s*[、.．·:：]?\s*/, '');
+  return (cut || flat).replace(/\s+/g, '').toLowerCase();
+}
+
+/** 摘掉所有 `.slide-header` 块（数 `<div>` 配对，见 `applyHeader` 的第 ③ 条）。 */
+function stripHeaders(html: string): string {
+  const re = /<div[^>]*class="[^"]*(?<![\w-])slide-header(?![\w-])[^"]*"[^>]*>/;
+  let out = html;
+  for (let guard = 0; guard < 8; guard++) {
+    const m = re.exec(out);
+    if (!m) break;
+    const from = m.index;
+    let i = from + m[0].length;
+    let depth = 1;
+    const tag = /<\/?div\b/g;
+    tag.lastIndex = i;
+    let t: RegExpExecArray | null;
+    while ((t = tag.exec(out))) {
+      depth += t[0][1] === '/' ? -1 : 1;
+      if (depth === 0) {
+        i = t.index + out.slice(t.index).indexOf('>') + 1;
+        break;
+      }
+    }
+    if (depth !== 0) {
+      // 配不上对（模型少写了一个 `</div>`）：整段留着不动 —— 从这里剪到结尾的话
+      // 这一页的下半部分会凭空消失，而剩下的那半页照样渲染。
+      break;
+    }
+    out = out.slice(0, from) + out.slice(i).replace(/^\s*\n/, '');
+  }
+  return out;
+}
+
+/** 进 html 的文字一律转义（同 pageEdit 里那份）：他的模块名里打了一个 `<`，从那里到块尾
+ *  的内容会被浏览器当成标签吃掉 —— 页面照样渲染，只是那一块少了半句话。 */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** 每一条都是「页面照样渲染出来了，只是不对」——手测时看不出来的那些。 */
 function checkPage(html: string, layout: PptLayout, input: PageInput): string[] {
   const problems: string[] = [];
@@ -268,7 +457,10 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
   if (layout.fullbleed && hasInner) {
     problems.push(`${layout.id} 是全幅版式，但这一页把内容包进了 .slide-inner —— 出来会是一张四边留白的「全幅」图。`);
   }
-  if (!layout.fullbleed && !hasInner) {
+  // 出血版式（L12）也不包 `.slide-inner`：浮卡 + 色带要脱离标准 padding（案例里就是这么写的）。
+  // 不放过它的话，每一页 L12 都会带着一条他照案例改不掉的警告 —— 而真正要靠这条抓的
+  // 「普通页贴到画面边缘」会混在这种常态噪音里被一起忽略。
+  if (!layout.fullbleed && !layout.hasCard && !hasInner) {
     problems.push(`${layout.id} 不是全幅版式，但这一页没有 .slide-inner —— 内容会贴到画面边缘。`);
   }
   if (layout.hasCard && !/class="[^"]*\bhas-card\b/.test(html)) {
@@ -301,7 +493,11 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
     problems.push(
       `规划里这一页有 ${specs} 个图位，生成出来是 ${slots} 个 —— 备好的图按序号贴，` +
         `${slots < specs ? '多出来的那几张没地方贴' : '多出来的那几格贴不到图（会停在占位图上）'}。` +
-        '要按规划来就重新生成这一页。'
+        // 现在版式的图位数只是参考、块数按真实内容排（buildPrompt 第 8 条），所以这条经常
+        // 不是「模型排错了」而是「这一页真实内容就不是 N 块」。只说「重新生成」的话他会
+        // 一直重生成同一页拿同一个数字，而每次都花一次钱 —— 必须指到重排图位那一步。
+        `如果这一页的内容本来就是 ${slots} 块，就在「生成前改一下」里点「按这个版式和这一页的内容重排图位」把规划改成 ${slots} 个；` +
+        '真是模型排错了才重新生成这一页。'
     );
   }
   return problems;
@@ -362,13 +558,22 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
 2. **不要**输出 \`<html>\` / \`<head>\` / \`<style>\` / \`<script>\` —— 骨架 CSS 已经在 deck 外壳里了，这一页只能**用已有的类名**。要微调用 inline \`style="…"\`。
 3. 颜色只能用 \`var(--c-*)\` / \`var(--bg-*)\` 这些变量，不要写死色值 —— 同一个版式要能在橙/蓝/双色系的 deck 里都成立。
 4. **不要写页码**：不要当前页码、不要总页数、不要 \`01 / 17\` 这种角标，也不要 \`page-badge\` / \`wm\` / \`hc-no\` / \`bio-page-num\`（这几个类已经删了，写了只会在正文里多出一行数字）。放映器页脚会显示进度。
+   **左上角那行模块名（\`.slide-header\`）也不要写** —— 整份统一由代码贴（版式案例里那一行是给你看整体效果的）。你写了会被摘掉，而**正文里再出现一次模块名**就会和它重复显示。${input.section && !layout.noHeader
+      ? `\n   所属模块「${input.section}」这几个字**在这一页的正文里一次都不要出现**：不要写成 \`.kicker\` 小标签、不要写进标题、不要放在顶栏或 pill 里。这一页的标题要写这一页自己的信息，不是它属于哪个模块。`
+      : ''}
 5. ${layout.fullbleed
       ? `${layout.id} 是**全幅**版式：内容**不要**包进 \`.slide-inner\`（包进去会变成一张四边留白的「全幅」图）。`
-      : `${layout.id} 不是全幅版式：正文必须包在 \`<div class="slide-inner">…</div>\` 里（不包的话内容会贴到画面边缘）。`}${layout.hasCard ? `\n   另外 section 上要加 \`has-card\` 类（色带要溢出卡片边缘）。` : ''}
+      : layout.hasCard
+        // L12 是第三种：不是全幅，但浮卡和出血色带要脱离标准 padding —— 包进 `.slide-inner`
+        // 之后色带被padding 挡住，出来是一张「卡片四周留白」的正常页，没有一处会说。
+        ? `${layout.id} 是**出血**版式：内容**不要**包进 \`.slide-inner\`（浮卡和色带要脱离标准页边距），照案例那样直接用它自己的外层容器。`
+        : `${layout.id} 不是全幅版式：正文必须包在 \`<div class="slide-inner">…</div>\` 里（不包的话内容会贴到画面边缘）。`}${layout.hasCard ? `\n   另外 section 上要加 \`has-card\` 类（色带要溢出卡片边缘）。` : ''}
 6. 图槽位：一律先用占位图 ${PLACEHOLDERS.join(' / ')}（按构图比例挑），并给每个图元素加两个属性：
    - \`data-img-prompt="这一格要什么图（中文一句话）"\` —— 真图是下一步按这句话生成后替换进来的，**漏了这个属性那一格就永远配不上图**；
    - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。${imageSpecBlock(input)}
 7. 文案照给定的内容写，不要编数字、不要编客户名。要点可以润色成更适合上屏的短句。
+8. **下面那个版式是排版参考，不是模子。** 它的结构、类名、间距节奏照它来，但**重复单元的数量按这一页的真实内容定**：案例里画 3 栏而这一页有 4 块内容，就照同一个单元的结构、同一批类名排 4 栏（**不要**自己发明类名、不要把第 4 块塞进第 3 栏、更不要把它丢掉）；只有 2 块就排 2 栏，不要为了填满案例的格子编内容。单元数量变了就用 inline \`style\` 顺手调宽度/间距（例如 4 栏时把每栏的 flex/width 收窄一点），别让它挤出画面。
+   图位那一段（第 6 条）**不受这一条影响**：图位的条数和顺序仍然照给定的规格来（备好的图是按序号贴的）—— 内容块比图位多的时候，多出来那几块就不配图。
 
 ## 这一页的内容
 所属模块：${input.section || '（无）'}
@@ -384,10 +589,11 @@ ${input.imageSpecs?.length
           .join('\n')}`
       : `建议配图张数：${input.images}`}
 
-## 版式（照它的结构和 CSS 骨架排）
+## 版式（**排版参考**：结构和类名照它，单元数量按上面第 8 条按内容定）
 ${layout.buildText}
 
 ## 配色与排版 token
 ${lib.designTokens}
+${designPromptBlock(input.design || DEFAULT_DESIGN)}
 ${notesBlock(input)}`;
 }

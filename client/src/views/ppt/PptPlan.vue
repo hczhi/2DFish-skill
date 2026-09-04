@@ -307,6 +307,28 @@
             <!-- 换了版式还没重新生成时，画面里是旧版式排的那一版 —— 两版都是一页正常的
                  幻灯片，不说的话他会以为新版式就长这样。 -->
             <p v-if="layoutMismatch" class="banner warn">{{ layoutMismatch }}</p>
+            <p v-if="specMismatch" class="banner warn">{{ specMismatch }}</p>
+
+            <!-- 这一页的黑蒙版（097）。滑块显示的是**服务端那份值**，松手才存、存完拿返回的
+                 previewHtml 换画面 —— 本地叠一层黑的话预览里它压在文字上面，而真 deck 里它在
+                 背景图上面、内容下面（照本地效果调完，导出的文件是另一副样子）。 -->
+            <div class="veil-row">
+              <div class="ins-h">
+                这一页的蒙版
+                <span class="veil-val">{{ Math.round((veil[cur.page] || 0) * 100) }}%</span>
+              </div>
+              <input
+                class="veil-range" type="range" min="0" max="100" step="5"
+                :value="Math.round((veil[cur.page] || 0) * 100)"
+                :disabled="veilBusy"
+                @change="saveVeil(cur.page, Number(($event.target as HTMLInputElement).value) / 100)"
+              />
+              <p class="muted-note">
+                盖在背景图上面、文字下面的一层黑。背景图太亮、字看不清的时候往右拖。
+                <b>不花调用</b>，也不用重新生成这一页。
+              </p>
+              <p v-if="veilErr" class="banner bad">{{ veilErr }}</p>
+            </div>
 
             <div class="ins-cols">
               <div class="ins-col">
@@ -507,6 +529,50 @@
           </label>
         </div>
 
+        <!-- 设计规范（096）：整份统一的配色/字体/疏密。改完**已经生成的页会跟着变**
+             （靠覆盖 `:root`，一次调用都不花）—— 所以它和「整份要求」那段是两回事，
+             那一段要生效得逐页重新生成。 -->
+        <div v-if="designOpts.palettes.length" class="row-fields">
+          <label class="field small">
+            <span class="label">配色</span>
+            <select v-model="design.palette" :disabled="running" @change="applyDesign()">
+              <option v-for="o in designOpts.palettes" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+            <span class="dr-note">{{ designHint(designOpts.palettes, design.palette) }}</span>
+          </label>
+          <label class="field small">
+            <span class="label">字体</span>
+            <select v-model="design.font" :disabled="running" @change="applyDesign()">
+              <option v-for="o in designOpts.fonts" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+            <span class="dr-note">{{ designHint(designOpts.fonts, design.font) }}</span>
+          </label>
+          <label class="field small">
+            <span class="label">疏密</span>
+            <select v-model="design.density" :disabled="running" @change="applyDesign()">
+              <option v-for="o in designOpts.densities" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+            <span class="dr-note">{{ designHint(designOpts.densities, design.density) }}</span>
+          </label>
+          <!-- 页眉那一档也在这里，而不是「让模型按样式生成页眉」：页眉一进 prompt 模型就会
+               顺手改写模块名、换字号，于是每页左上角那行字都不太一样（硬规则 3）。放在这里
+               它和配色走同一条路 —— 改完刷新就变，一次调用都不花。 -->
+          <label class="field small">
+            <span class="label">页眉</span>
+            <select v-model="design.header" :disabled="running" @change="applyDesign()">
+              <option v-for="o in designOpts.headers" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+            <span class="dr-note">{{ designHint(designOpts.headers, design.header) }}</span>
+          </label>
+        </div>
+        <p class="dr-note">
+          这四项是整份的<b>设计规范</b>，所有页面统一。改完<b>已经生成的页会立刻跟着变</b>（不用重新生成、不花调用）；
+          拼好的整份会作废，要重拼一次。案例库里的颜色和间距从此只算参考。
+          <b>已经生成的图不会跟着变色</b>（图是像素，不是变量）—— 要笔触和配色都统一，得在那几页点「换一批图」，
+          每张都是一次真实花费。往后新生成的图会用现在这套配色。
+        </p>
+        <p v-for="(m, i) in designProblems" :key="i" class="dr-note bad">{{ m }}</p>
+
         <!-- 整份统一的那段要求（093）。放在这里而不是每页写一遍：每页抄一遍的话改口径要
              逐页改，漏掉的那几页照旧按老口径生成，而每一页看起来都正常。 -->
         <label class="field">
@@ -583,35 +649,81 @@
           提纲跟着这次生成一起存 —— <b>点了下面那个生成按钮才存，直接关掉这个框不保存</b>。
         </p>
 
-        <label class="field">
-          <span class="label">版式</span>
-          <select v-model="draftLayout">
-            <option v-if="!layoutList.length" :value="draftLayout">{{ draftLayout }}（清单没读出来）</option>
-            <!-- 规划挑的那条和它给的备选排最前面：22 条平铺的话「换一个也合适的」等于自己认，
-                 挑一条装不下这一页内容的出来照样是一页完整的幻灯片，只是内容挤成一团。 -->
-            <optgroup v-if="suggestedItems.length" label="规划挑的 + 它给的备选">
-              <option v-for="l in suggestedItems" :key="l.id" :value="l.id">
-                {{ l.id }} {{ l.title }}{{ l.id === setupFor.layoutId ? '（规划挑的）' : '（备选）' }}
-              </option>
-            </optgroup>
-            <optgroup v-if="otherItems.length" :label="`其余 ${otherItems.length} 条`">
-              <option v-for="l in otherItems" :key="l.id" :value="l.id">{{ l.id }} {{ l.title }}</option>
-            </optgroup>
-          </select>
-        </label>
+        <!-- 版式**挑缩略图，不挑名字**：「L5 数据网格」这几个字对他没有形状，
+             挑一条装不下这一页内容的出来照样是一页完整的幻灯片（内容挤成一团），
+             而他要下一次翻到这一页才知道挑错了。缩略图就是案例库里那一份效果 demo
+             （同一份 template.html，所见即所得）。
+             规划挑的那条和它给的备选排最前面；其余的**要点一下才加载** ——
+             一次挂 22 个 iframe 会把这个框卡住，而卡住的表现只是「点了没反应」。 -->
+        <div class="field">
+          <span class="label">
+            版式
+            <em v-if="draftLayoutItem">现在是 {{ draftLayoutItem.id }} {{ draftLayoutItem.title }}</em>
+          </span>
+          <p v-if="!layoutList.length" class="muted">清单没读出来，这一页照旧用 {{ draftLayout }}。</p>
+          <div v-else class="lay-grid">
+            <!-- 停用的照旧列在「规划挑的 + 备选」里（这份规划是停用之前跑的），标一句「已停用」。
+                 悄悄摘掉的话选中的那条会跳到另一条版式上，他点「生成」拿到的是一页换了版式的
+                 幻灯片，而他压根没动过这里。 -->
+            <button
+              v-for="l in pickerItems" :key="l.id" type="button"
+              class="lay" :class="{ on: l.id === draftLayout, off: l.disabled }"
+              @click="draftLayout = l.id"
+            >
+              <span class="lay-thumb">
+                <iframe :src="l.demoUrl" loading="lazy" scrolling="no" tabindex="-1" :title="`${l.id} 效果 demo`"></iframe>
+              </span>
+              <span class="lay-cap">
+                <b>{{ l.id }}</b> {{ l.title }}
+              </span>
+              <span class="lay-tags">
+                <em v-if="l.id === setupFor.layoutId" class="plan">规划挑的</em>
+                <em v-else-if="altIds.includes(l.id)" class="alt">备选</em>
+                <em v-if="l.disabled" class="dis">已停用</em>
+                <em v-if="l.fullbleed">全幅</em>
+                <em>{{ slotBrief(l.imageSlots) }}</em>
+              </span>
+            </button>
+          </div>
+          <p v-if="layoutList.length && !showAllLayouts && suggestedItems.length && otherItems.length" class="prep-acts">
+            <button class="btn-ghost sm" type="button" @click="showAllLayouts = true">
+              展开其余 {{ otherItems.length }} 条版式（点了才加载缩略图）
+            </button>
+          </p>
+        </div>
         <!-- 老规划里没有备选。不说的话上面那组只有一条，读起来像「模型认为只有这个版式合适」。 -->
         <p v-if="layoutList.length && !setupFor.alts?.length" class="muted">
-          规划没给备选版式（重新规划一次才有），下拉里是全部 {{ layoutList.length }} 条 —— 装不装得下看 demo。
+          规划没给备选版式（重新规划一次才有），可用的一共 {{ enabledCount }} 条 —— 装不装得下看缩略图。
         </p>
         <p v-if="draftLayoutItem" class="muted">
-          <a :href="draftLayoutItem.demoUrl" target="_blank">看 {{ draftLayoutItem.id }} 的效果 demo ↗</a>
+          <a :href="draftLayoutItem.demoUrl" target="_blank">单开 {{ draftLayoutItem.id }} 的 demo 看大图 ↗</a>
           · 图位 <span :title="draftLayoutItem.imageSlots">{{ slotBrief(draftLayoutItem.imageSlots) }}</span>
+        </p>
+        <!-- 选中的这条是停用的（这份规划比停用早）。不说的话他以为自己在案例库里关掉的那条
+             还在被用，而这一页照旧按它排出来 —— 一页完整正常的幻灯片。 -->
+        <p v-if="draftLayoutItem?.disabled" class="banner warn">
+          {{ draftLayoutItem.id }} 在<router-link to="/ppt/layouts">版式案例库</router-link>里已经停用了（这份规划是停用之前跑的）。
+          照它生成没问题，只是往后规划新稿子时不会再挑它 —— 想换掉就在上面挑一张别的缩略图。
         </p>
         <!-- 换版式会连图位一起换：备好的图是按序号贴的，图位少了那几张就没地方贴。
              这句话必须在点之前说 —— 生成完再说的话那次调用已经花了。 -->
         <p v-if="draftLayoutChanged && pending[setupFor.page]?.length" class="banner warn">
           这一页备好了 {{ pending[setupFor.page].length }} 张图，换版式之后图位的数量/比例可能不一样 ——
           多出来的那几张会没地方贴（生成完会点名说是哪几张，图还在素材库里）。
+        </p>
+
+        <!-- 图位清单是**整份规划那一次**定的，而版式是他在这里换的 —— 两者从此对不上而一处都
+             不报错：这个面板照旧列着规划那几格（换到三图版式之后还是只备 1 张），生成时 prompt 里
+             「正好 N 个图位」又压着案例里的图位数，出来是一页排得下但空了两格的幻灯片。
+             **不做成「换版式就自动重排」**：那是一次真实调用，点一下下拉就扣一次额度。 -->
+        <p class="prep-acts">
+          <button class="btn-ghost sm" :disabled="replanBusy || busy[setupFor.page] || batchRunning" @click="replanImages">
+            {{ replanBusy ? '重排中…' : `按这个版式和这一页的内容重排图位（现在 ${setupFor.imageSpecs?.length || 0} 格，一次真实调用，不生图）` }}
+          </button>
+        </p>
+        <p class="muted">
+          图位数按<b>真实内容</b>定，不照案例抄：这一页有 4 块分类就是 4 张图，哪怕 {{ draftLayout }} 的案例里画的是 3 张。
+          重排只改清单 —— 已经生成过的页要重新生成才会按新清单排（备好的图会自动贴回去，不用重新花钱）。
         </p>
 
         <!-- 图放在这里而不是只在右栏：他在这个对话框里做的决定就是「这一页长什么样」，
@@ -804,6 +916,13 @@ interface BuiltPage { html: string; previewHtml: string; problems: string[] }
 const built = ref<Record<number, BuiltPage>>({})
 const busy = ref<Record<number, boolean>>({})
 const pageErr = ref<Record<number, string>>({})
+/**
+ * 每页那层黑蒙版的透明度（097，0 = 没有蒙版）。**从服务端读、存完照返回值走** ——
+ * 只在本地记的话刷新一次全部归零，而库里是他调过的值（画面上还真的是暗的）。
+ */
+const veil = ref<Record<number, number>>({})
+const veilBusy = ref(false)
+const veilErr = ref('')
 const showSrc = ref<Record<number, boolean>>({})
 
 const brandCn = ref('')
@@ -830,7 +949,10 @@ const metaSavedAt = ref('')
 let savedSnapshot = ''
 
 function metaSnapshot() {
-  return JSON.stringify([title.value.trim(), outline.value, brandCn.value, brandEn.value, styleId.value, deckNotes.value])
+  return JSON.stringify([
+    title.value.trim(), outline.value, brandCn.value, brandEn.value, styleId.value, deckNotes.value,
+    design.value.palette, design.value.font, design.value.density, design.value.header,
+  ])
 }
 
 /** 顶栏那句「存没存上」。每一页都是一次真实调用，他要能一眼确定关掉页面回来还在。 */
@@ -865,6 +987,9 @@ async function saveMeta(): Promise<boolean> {
       brandEn: brandEn.value,
       styleId: styleId.value,
       notes: deckNotes.value,
+      // 四项缺一项服务端就 400（缺的那项会悄悄回到默认那套），所以要么整段传、要么不传。
+      design: design.value.palette && design.value.font && design.value.density && design.value.header
+        ? { ...design.value } : undefined,
     })
     savedSnapshot = snap
     metaSavedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -875,6 +1000,35 @@ async function saveMeta(): Promise<boolean> {
   } finally {
     savingMeta.value = false
   }
+}
+
+/**
+ * 整份的设计规范（096：配色 / 字体 / 疏密 / 页眉）。
+ *
+ * 清单从 `GET /api/ppt/design-options` 来，**不在前端写死**（同画风那条的理由）。
+ * `designProblems` 是服务端读库时发现认不出的 id 时给的那几句，**必须显示** ——
+ * 不显示的话他打开一份「墨绿」的稿子看到的是橙的，而下拉里也显示成默认那档。
+ */
+interface DesignOpt { id: string; name: string; hint: string }
+const designOpts = ref<{ palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[] }>(
+  { palettes: [], fonts: [], densities: [], headers: [] }
+)
+const design = ref({ palette: '', font: '', density: '', header: '' })
+const designProblems = ref<string[]>([])
+const designHint = (list: DesignOpt[], id: string) => list.find(x => x.id === id)?.hint || ''
+
+/**
+ * 换了规范：存库，**然后把已经生成的那几页重新读一遍**。
+ *
+ * 那几页的 `previewHtml` 是服务端拼的（规范那段 `<style>` 在里面），不重读的话画面上
+ * 一点变化都没有 —— 而库里已经存了新规范，他会以为这个下拉是坏的，或者以为得重新生成
+ * 十几页（那是十几次真实花费）。拼好的整份同样要作废：留着的话它翻起来完全正常，
+ * 只是整份还是旧配色。
+ */
+async function applyDesign() {
+  if (!(await saveMeta())) return
+  invalidateDeck()
+  await loadPages()
 }
 
 /**
@@ -1050,6 +1204,45 @@ async function prepare(
   prepBusy.value[key] = false
 }
 
+/**
+ * 按现在挑的这条版式 + 这一页的真实内容重排图位清单（一次真实调用，**不生图**）。
+ *
+ * 三件事在这里：**整份规划里那条 `imageSpecs` 要就地换掉**（不换的话面板上还是旧那几格，
+ * 而库里已经是新的 —— 他在旧格子上备的图下一次生成时贴不进去）；**输入框里那几句也要跟着换**
+ * （留着旧的那份的话，随便一次失焦就把旧提示词写回库了，而两处都读起来正常）；
+ * **服务端顺手把这次挑的版式/要求存了**（同「开始生成」那条路），所以本地那两个标记要跟上，
+ * 不然关掉对话框之后这一页的标签写的还是旧版式。
+ */
+const replanBusy = ref(false)
+async function replanImages() {
+  const p = setupFor.value
+  if (!p) return
+  replanBusy.value = true
+  prepErr.value[p.page] = ''
+  try {
+    const data = await apiPost<{
+      page: number; layoutId: string; imageSpecs: PlannedImage[]; problems: string[]
+    }>(`/api/ppt/decks/${deckId.value}/replan-images`, {
+      page: p.page,
+      layoutId: draftLayout.value,
+      notes: draftNotes.value,
+    })
+    const row = pages.value.find(x => x.page === data.page)
+    if (row) {
+      row.imageSpecs = data.imageSpecs || []
+      row.images = row.imageSpecs.length
+      setupLayout.value[data.page] = data.layoutId === row.layoutId ? '' : data.layoutId
+    }
+    ;(data.imageSpecs || []).forEach((s, i) => { draftSubject.value[subjectKey(data.page, i + 1)] = s.subject })
+    setupNotes.value[data.page] = draftNotes.value
+    prepNote.value[data.page] = data.problems || []
+  } catch (e: any) {
+    const msg = e?.message || '重排图位失败'
+    prepErr.value[p.page] = msg === 'quota_exceeded' ? '今天的 AI 额度用完了，图位没重排（清单还是原来那份）。' : msg
+  }
+  replanBusy.value = false
+}
+
 /** 这一页有几个图槽位（生图那一步认的就是 data-img-prompt）。 */
 function slotCount(page: number): number {
   return (built.value[page]?.html.match(/data-img-prompt="/g) || []).length
@@ -1140,6 +1333,8 @@ const MAX_NOTES = 500
 interface LayoutItem {
   id: string; name: string; title: string; applicable: string
   imageSlots: string; fullbleed: boolean; demoUrl: string
+  /** 在案例库里停用了（`/ppt/layouts` 上那个开关）。这里也不给挑 —— 见下拉上的注释。 */
+  disabled?: boolean
 }
 const layoutList = ref<LayoutItem[]>([])
 const layoutsErr = ref('')
@@ -1148,6 +1343,8 @@ const layoutsErr = ref('')
 const setupFor = ref<PlannedPage | null>(null)
 const draftLayout = ref('')
 const draftNotes = ref('')
+/** 「其余 N 条」展开了没有（每次打开对话框收回去）。 */
+const showAllLayouts = ref(false)
 
 /**
  * 这一页的提纲（可改）。**只在点「生成」时随那次调用一起存**（服务端 `readPageOutline`）——
@@ -1228,6 +1425,7 @@ function saveSubject(page: number, index: number, original: string) {
 
 async function openSetup(p: PlannedPage) {
   setupFor.value = p
+  showAllLayouts.value = false
   draftLayout.value = setupLayout.value[p.page] || p.layoutId
   draftNotes.value = setupNotes.value[p.page] || ''
   // 每次打开都从库里那份规划重读（留着上一次的输入的话，他上次改完关掉不存的那版会在
@@ -1262,7 +1460,20 @@ const suggestedItems = computed(() => {
 })
 const otherItems = computed(() => {
   const ids = suggestedItems.value.map(l => l.id)
-  return layoutList.value.filter(l => !ids.includes(l.id))
+  return layoutList.value.filter(l => !ids.includes(l.id) && !l.disabled)
+})
+const enabledCount = computed(() => layoutList.value.filter(l => !l.disabled).length)
+const altIds = computed(() => setupFor.value?.alts || [])
+/**
+ * 缩略图列表。其余那十几条**要点一下才进来**：一次挂 22 个 iframe（每个都是一整份
+ * demo deck 的文档请求）会把这个框卡住几秒，而卡住的表现只是「点了没反应」——
+ * 和「这个按钮坏了」分不开。每次打开对话框都收回去（见 openSetup）。
+ */
+const pickerItems = computed(() => {
+  // 一条建议都认不出来（清单是旧的、规划那条编号不在里面）时直接摊开全部：
+  // 收着的话这一格是空的，读起来像「这一页没法换版式了」。
+  if (!suggestedItems.value.length) return otherItems.value
+  return showAllLayouts.value ? [...suggestedItems.value, ...otherItems.value] : suggestedItems.value
 })
 
 /** 「你换过版式，但画面/demo 还是另一条」——两版都是一页正常的幻灯片，所以必须写出来。 */
@@ -1276,6 +1487,24 @@ const layoutMismatch = computed(() => {
   return now === want
     ? ''
     : `这一页你换成了 ${want}，但画面里这一版还是 ${now} 排的 —— 点「重新生成…」才会按 ${want} 重排（一次真实调用）。`
+})
+/**
+ * 画面里这一版排出来的图位数 ≠ 规划里那份清单的格数。
+ *
+ * 这一条**必须显眼说**：备图 / 素材库挑 / 换图 全都按规划那份清单画（服务端也按
+ * `specs.length` 卡格子号），所以规划是 0 格时那一整块干脆不出现 —— 而画面上明明有 4 张
+ * 占位图，界面另一处还写着「配全部图（差 4 张）」。他只会以为备图坏了，或者去点那条真花钱的路。
+ * 现在重新生成会自动对齐（`specsFromSlots`），这句话就是告诉他去点哪里。
+ */
+const specMismatch = computed(() => {
+  const p = cur.value
+  if (!p || !built.value[p.page]) return ''
+  const slots = slotCount(p.page)
+  const planned = p.imageSpecs?.length || 0
+  if (slots === planned) return ''
+  return `画面里这一版有 ${slots} 个图位，而规划里是 ${planned} 格 —— 备图、换图、素材库都认规划那份清单，` +
+    `所以${slots > planned ? `多出来的那几格现在没有入口` : `多的那几格贴不进画面`}。` +
+    '点「重新生成…」会按画面上的图位自动对齐（不用额外花钱，就是这一页那一次调用）。'
 })
 /** 换版式会连图位一起换：备好的图是按序号贴的，图位少了那几张就没地方贴（服务端会点名）。 */
 const draftLayoutChanged = computed(() => !!setupFor.value && draftLayout.value !== setupFor.value.layoutId)
@@ -1292,7 +1521,7 @@ const curIssues = computed(() => {
   if (!p) return 0
   const n = p.page
   return (pageErr.value[n] ? 1 : 0) + (imgErr.value[n] ? 1 : 0) + (prepErr.value[n] ? 1 : 0) +
-    (layoutMismatch.value ? 1 : 0) +
+    (layoutMismatch.value ? 1 : 0) + (specMismatch.value ? 1 : 0) +
     (built.value[n]?.problems.length || 0) +
     (imgInfo.value[n]?.problems.length || 0) +
     (prepNote.value[n]?.length || 0) +
@@ -1374,6 +1603,10 @@ const EDITOR_JS = `
      align-items 浏览器压根不认 —— 露着的话他点下去接口 200、库里也真写着，画面一动不动。 */
   #ppt-bar .reg{display:none}
   #ppt-bar[data-mode="region"][data-flex="1"] .reg{display:block}
+  /* 🗑 两种模式下都在（一段字和一整块都能删）。含图的那一块调淡 —— 点下去只会换回一句
+     「这一块里有图」，先把这件事写在按钮上省他一次来回。 */
+  #ppt-bar .del{color:#ff9c9c}
+  #ppt-bar[data-imgs="1"] .del{opacity:.4}
   /* 鼠标停在哪一块上就描出那一块的边：不描的话「选大一点」选到了哪一层完全看不出来，
      他只能靠点下去之后那句读数去猜。 */
   [data-hov]{outline:1px dotted rgba(74,144,217,.75);outline-offset:2px}
@@ -1471,6 +1704,9 @@ const EDITOR_JS = `
       ['ralign','off','⦸','取消这一块的对齐（回到版式自己的样子）','reg off'],
       ['grow','','⤢ 选大一点','往外选一层（选中整块）',''],
       ['shrink','','⤡ 回来','退回上一层',''],
+      // 删掉这一整块（一段字也算一块）。含图的删不了：图的序号按 html 出现顺序算，
+      // 少一格之后下一次配图会把第 2 张贴进第 1 格 —— 图文不符而页面渲染完全正常。
+      ['del','','🗑','删掉这一块（含图的删不了）','del'],
     ]
     for(var j=0;j<defs.length;j++){
       var t = document.createElement('button'); t.type = 'button'
@@ -1510,6 +1746,9 @@ const EDITOR_JS = `
     var dsp = cs.display || ''
     var flex = !leaf && (dsp.indexOf('flex') >= 0 || dsp.indexOf('grid') >= 0)
     bar.setAttribute('data-flex', flex ? '1' : '0')
+    // 这一块里有没有图（🗑 调淡用）。自己就是 <img> 的也算 —— 只数 querySelectorAll 的话
+    // 选中一张图时那个键是亮的，点下去才换回一句「这一块里有图」。
+    bar.setAttribute('data-imgs', (d.imgs + (el.tagName === 'IMG' ? 1 : 0)) ? '1' : '0')
     // align-items 管的是**交叉轴**：row / grid 时是上下，column 时是左右。图标按这个改，
     // 不改的话他看着「⤒ 顶部」点下去，内容往左边靠了 —— 一次看起来完全正常的改错方向。
     var vert = flex && (cs.flexDirection || '').indexOf('column') < 0
@@ -1571,6 +1810,20 @@ const EDITOR_JS = `
       // 那条、按成拉满 —— 他点的是「取消」，得到的是第三种样子，而页面照样渲染。
       var av = v === 'off' ? null : v === 'start' ? 'flex-start' : v === 'end' ? 'flex-end' : 'center'
       post({type:'ppt-region-style', path: pp, eids: info(selEl).eids, style:{alignItems: av}})
+      return
+    }
+    // 删掉这一整块。**也要排在下面那条「容器不能改样式」之前**（同 ralign）：排后面的话
+    // 选中一整块时点 🗑 会被那条挡掉，现象是这个键点了没反应。
+    if(act === 'del'){
+      var i2 = info(selEl)
+      var nimg = i2.imgs + (selEl.tagName === 'IMG' ? 1 : 0)
+      // 三种都要出声：静默 return 的话和「按钮坏了」在屏幕上一模一样。
+      if(nimg){ post({type:'ppt-del-nope', why:'img', n:nimg}); return }
+      if(i2.whole){ post({type:'ppt-del-nope', why:'whole'}); return }
+      var pd = pathOf(selEl)
+      if(!pd){ post({type:'ppt-del-nope', why:'path'}); return }
+      post({type:'ppt-del', path: pd, eids: i2.eids, cls: i2.cls, tag: i2.tag,
+        texts: (selEl.textContent || '').replace(/\\s+/g,' ').trim().slice(0,60)})
       return
     }
     // 选中的是一整块时那几个键本来就藏着（CSS），这里再挡一次：容器没有 eid，发出去只会
@@ -1777,7 +2030,7 @@ function onFrameMsg(e: MessageEvent) {
       : null
     selPath = !selEid && r && Array.isArray(d.path) ? (d.path as unknown[]).map(Number) : null
     if (selEid) {
-      editNote.value = `选中这一句（${d.size || '?'}px / 字重 ${d.weight || '?'}）—— 浮动条上改颜色、字号、粗细、对齐（⇤ ⇔ ⇥），点一下就存；「⤢ 选大一点」往外选一整块。`
+      editNote.value = `选中这一句（${d.size || '?'}px / 字重 ${d.weight || '?'}）—— 浮动条上改颜色、字号、粗细、对齐（⇤ ⇔ ⇥），点一下就存；「⤢ 选大一点」往外选一整块；🗑 把这一句整段删掉（不留空壳，撤销还没做）。`
     } else if (r) {
       // 选中一整块时**必须说清是哪一块、里面有什么**：只描一圈线的话「选到了外层容器」和
       // 「选到了我要的那一块」在屏幕上是同一个样子（下一步 AI 编辑改的就是这个范围）。
@@ -1786,6 +2039,7 @@ function onFrameMsg(e: MessageEvent) {
       const align: Record<string, string> = { 'flex-start': '靠起始边', start: '靠起始边', center: '居中', 'flex-end': '靠结束边', end: '靠结束边', stretch: '拉满', normal: '拉满（默认）' }
       const axis = d.vert ? '上下' : '左右'
       editNote.value = `选中${r.whole ? '整页' : `这一块（${r.cls}）`}：含 ${r.eids?.length || 0} 段字${r.imgs ? ` / ${r.imgs} 张图` : ''} —— 「⤢」再往外一层、「⤡」退回来，Esc 取消。要改颜色/字号得点到具体那一句上。` +
+        (r.imgs ? '这一块里有图，🗑 删不了（图的序号按出现顺序算，少一格之后下一次配图会错位）—— 要去掉它走「重新生成这一页」。' : '🗑 把这一整块删掉（撤销还没做）。') +
         (d.flex
           ? `这一块是 ${d.display} 布局，里面的内容现在${axis}${align[String(d.alignItems)] || String(d.alignItems)} —— 浮动条上那三个键改它（align-items）。`
           : `（这一块不是 flex/grid，所以没有整块对齐可改。）`)
@@ -1807,6 +2061,25 @@ function onFrameMsg(e: MessageEvent) {
     editNote.value = d.why === 'flex'
       ? `这一块是 ${d.display || '普通'} 布局，不是 flex/grid —— align-items 在它身上浏览器根本不认（写进去也不会有任何变化）。要让它里面的内容上下居中，先让这一块变成 flex（走「AI 编辑」说一句「这一块改成 flex 垂直居中」）。`
       : '这一块不在这一页里（是页码、进度条那些外壳），改不了它的对齐。'
+    return
+  }
+  // 🗑 点不下去的三种情形。**都要说出成因**：合成一句「删不了」的话，「这一块有图」（去重新
+  // 生成）和「这是整页」（换整页）下一步完全不同，而静默 return 和「按钮坏了」一模一样。
+  if (d.type === 'ppt-del-nope') {
+    editNote.value = d.why === 'img'
+      ? `这一块里有 ${d.n || 1} 张图，删不了 —— 图的序号是按这一页里的出现顺序算的，少一格之后下一次「换一批图」会把第 2 张贴进第 1 格（图文不符，而页面看起来完全正常）。要去掉这一块请走「重新生成这一页」。`
+      : d.why === 'whole'
+        ? '这样是把整页删掉 —— 剩下一个空页，在预览里就是一块白，和「这个版式渲染塌了」分不开。要换掉整页请点「重新生成这一页」。'
+        : '这一块不在这一页里（是页码、进度条那些外壳），删不了它。'
+    return
+  }
+  if (d.type === 'ppt-del') {
+    deleteNode(
+      (Array.isArray(d.path) ? d.path : []).map(Number),
+      (Array.isArray(d.eids) ? d.eids : []).map(String),
+      `<${String(d.tag || 'div')}${d.cls ? ` class="${d.cls}"` : ''}>`,
+      String(d.texts || '')
+    )
     return
   }
   if (d.type === 'ppt-region-style') {
@@ -1927,6 +2200,55 @@ async function saveRegionStyle(path: number[], eids: string[], style: Record<str
 }
 
 /**
+ * 删掉选中的那一整块（不调 AI、不花额度）。**先二次确认**：撤销还没做，删错了唯一的出路是
+ * 「重新生成这一页」= 一次真实调用，而删掉之后画面上那一块就是「本来就没有」的样子 ——
+ * 他要能在删之前看清删的是哪一块（框里写出那几个字和有几段字）。
+ *
+ * 成功之后**必须把选中清掉**：那个元素已经不在了，留着的话浮动条吸在一块空气上，
+ * 再点一下换回一句「和库里对不上」。
+ */
+async function deleteNode(path: number[], eids: string[], label: string, texts: string) {
+  const p = cur.value
+  if (!p) return
+  const page = p.page
+  const what = texts ? `「${texts}」` : label
+  if (!window.confirm(
+    `删掉这一块 ${what}${eids.length ? `（${eids.length} 段字）` : ''}？\n\n` +
+    '撤销还没做 —— 删错了只能「重新生成这一页」，那是一次真实调用，而且会连版式和文案一起重排。'
+  )) {
+    editNote.value = '没删。'
+    return
+  }
+  editBusy.value = true
+  editErr.value[page] = ''
+  editNote.value = ''
+  try {
+    const data = await apiPost<{ html: string; previewHtml: string; removed: { name: string; cls: string; eids: string[]; text: string } }>(
+      `/api/ppt/decks/${deckId.value}/delete-node`,
+      { page, path, eids }
+    )
+    const b = built.value[page]
+    if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
+    // 选中的那一块已经不存在了（`selEid` / `selPath` 会进 srcdoc —— 留着的话重挂之后
+    // 那段脚本会按老路径选到**顶上来的另一块**，浮动条框着一块他没选的东西）。
+    selEid = ''
+    selEids = []
+    selPath = null
+    aiSel.value = null
+    const r = data.removed
+    editNote.value = `已删掉 <${r.name}${r.cls ? ` class="${r.cls}"` : ''}>` +
+      (r.text ? `：「${r.text}」` : '') +
+      (r.eids.length ? `（${r.eids.length} 段字）` : '') +
+      ' —— 剩下那几段字的编辑标记没变，接着双击就能改。'
+    invalidateDeck()
+  } catch (e: any) {
+    editErr.value[page] = `这一块没删掉：${e?.message || '请求失败'}（画面已经回到库里那一版）`
+    previewKey.value++
+  }
+  editBusy.value = false
+}
+
+/**
  * 让 AI 改选中那一块（**一次真实调用**）。文案打了码发出去，模型碰不到 —— 校验和成因
  * 全在服务端，这里只负责把那句话原样显示出来：合成一句「AI 编辑失败」的话，「它想改文案」
  * 和「它编了个类名」在界面上就成了同一句，而两种的下一步完全不同。
@@ -1984,8 +2306,17 @@ async function build(
         style?: { id: string; name: string }
         setup?: { layoutId: string; notes: string }
         outline?: { title: string; points: string[] }
+        plan?: { images: number; imageSpecs: PlannedImage[] }
       }
     >(`/api/ppt/decks/${deckId.value}/pages`, { page: p.page, ...(setup || {}) })
+    // 图位清单照服务端回的那份记：它会按这一页**真的排出来的图位**对齐（换过版式、或者按
+    // 真实内容多排了一块）。不覆盖的话备图那一整块照旧按老的格数画 —— 规划里 0 格时它干脆
+    // 不画（界面上写「这一页还没配过图」），而画面上明明有 4 张占位图、一个备图入口都没有。
+    if (data.plan) {
+      p.images = data.plan.images
+      p.imageSpecs = data.plan.imageSpecs
+      data.plan.imageSpecs.forEach((s, i) => { draftSubject.value[subjectKey(p.page, i + 1)] = s.subject })
+    }
     // 提纲照服务端回的那份记（那是库里现在那份）。不同步的话左边列表和标题栏还写着模型
     // 原来那句标题，而画面是按新提纲生成的 —— 两处各自都读得通，看不出哪个是最新的。
     if (data.outline) {
@@ -2202,6 +2533,18 @@ onMounted(async () => {
     // 画风清单拿不到不挡生图（服务端有自己的默认那套），下拉留空就是「用默认」。
   }
   try {
+    const d = await apiGet<{
+      palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[]
+      default: { palette: string; font: string; density: string; header: string }
+    }>('/api/ppt/design-options')
+    designOpts.value = { palettes: d.palettes, fonts: d.fonts, densities: d.densities, headers: d.headers }
+    design.value = { ...d.default }
+  } catch (e: any) {
+    // 出声：静默的话抽屉里那三个下拉是空的，看起来像「这一版没有设计规范这回事」，
+    // 而库里存着的那份照旧在生效（画面是那份，界面上一处都不显示）。
+    designProblems.value = [`设计规范的清单没拿到（${e?.message || '请求失败'}）—— 配色/字体/疏密/页眉这四个下拉暂时是空的，这份稿子还是按库里存着的那套渲染。`]
+  }
+  try {
     palette.value = (await apiGet<{ colors: string[] }>('/api/ppt/edit-palette')).colors || []
   } catch (e: any) {
     // 拿不到就得出声：静默的话浮动条上一个色块都没有，看起来像「这一版没有改颜色这个功能」。
@@ -2238,13 +2581,19 @@ async function loadDeck() {
     return
   }
   try {
-    const { deck } = await apiGet<{ deck: any }>(`/api/ppt/decks/${deckId.value}`)
+    const { deck, design: spec, designProblems: dp } = await apiGet<{
+      deck: any; design?: { palette: string; font: string; density: string; header: string }; designProblems?: string[]
+    }>(`/api/ppt/decks/${deckId.value}`)
     title.value = deck.title || ''
     outline.value = deck.outline || ''
     brandCn.value = deck.brand_cn || ''
     brandEn.value = deck.brand_en || ''
     deckNotes.value = deck.notes || ''
     if (deck.style_id) styleId.value = deck.style_id
+    // 规范用服务端解析过的那份（`parseDesignSpec`），不自己读 `design_json`：两处各解析一遍的话
+    // 画面按服务端那份渲染、下拉显示前端这份，认不出的 id 上两边会不一样而都不报错。
+    if (spec) design.value = { ...spec }
+    if (dp?.length) designProblems.value = dp
     savedSnapshot = metaSnapshot()
     // 上一次的规划（`plan_json` 是整份 PlanResult 原样存的）。解析失败要出声：
     // 静默当成「没规划过」的话，下面那句自动规划会直接再花一次调用，而旧规划还在库里。
@@ -2274,6 +2623,8 @@ interface StoredPage {
   setupLayoutId: string
   /** 他手写的额外要求（092）。 */
   notes: string
+  /** 这一页黑蒙版的透明度（097）。 */
+  veilOpacity: number
 }
 
 /**
@@ -2293,6 +2644,7 @@ async function loadPages() {
       // 他上次写的要求看不见（以为没保存上），而下一次生成服务端照旧会带上它。
       if (r.setupLayoutId) setupLayout.value[r.page] = r.setupLayoutId
       if (r.notes) setupNotes.value[r.page] = r.notes
+      if (r.veilOpacity) veil.value[r.page] = r.veilOpacity
       if (!r.html) continue
       builtLayout.value[r.page] = r.layoutId
       built.value[r.page] = { html: r.html, previewHtml: r.previewHtml, problems: r.problems || [] }
@@ -2311,6 +2663,41 @@ async function loadPages() {
   } catch (e: any) {
     loadErr.value = `这份稿子已经生成的页读不出来：${e?.message || '请求失败'} —— 先别点生成（那些页可能已经存在库里，重生一次是重新花钱）。`
   }
+}
+
+/**
+ * 存这一页的蒙版透明度（**不调 AI**）。
+ *
+ * 两条是承重的：
+ * ① **预览用服务端回的那份 previewHtml 换掉**，不在本地叠一层半透明黑 —— 本地那层是压在
+ *    iframe 上面的（连页眉正文一起压暗），而真 deck 里它夹在背景图和内容之间：
+ *    照本地看到的效果去调，导出的文件是另一副样子。
+ * ② **存不上要出声并把滑块退回原值**：不退的话滑块停在他拖的位置、画面也是暗的（本地渲染），
+ *    而库里还是旧值 —— 拼整份和导出用的都是旧值。
+ */
+async function saveVeil(page: number, next: number) {
+  const before = veil.value[page] || 0
+  if (veilBusy.value) return
+  veilBusy.value = true
+  veilErr.value = ''
+  veil.value[page] = next
+  try {
+    const r = await apiPatch<{ veilOpacity: number; previewHtml: string }>(
+      `/api/ppt/decks/${deckId.value}/pages/${page}/veil`, { opacity: next }
+    )
+    veil.value[page] = r.veilOpacity
+    if (r.previewHtml && built.value[page]) {
+      built.value[page] = { ...built.value[page], previewHtml: r.previewHtml }
+      if (imgInfo.value[page]) imgInfo.value[page] = { ...imgInfo.value[page], previewHtml: r.previewHtml }
+    }
+    // 整份预览和「已导出」那句话都过期了（`invalidateDeck`）—— 不作废的话他点「看整份」
+    // 看到的是没有蒙版的那一版，而每一页单看都是对的。
+    invalidateDeck()
+  } catch (e: any) {
+    veil.value[page] = before
+    veilErr.value = `蒙版没存上（这一页还是 ${Math.round(before * 100)}%）：${e?.message || '请求失败'}`
+  }
+  veilBusy.value = false
 }
 
 async function run() {
@@ -2718,6 +3105,10 @@ async function run() {
   box-shadow: -18px 0 48px rgba(0, 0, 0, 0.4);
 }
 /* 右栏只有 300-360px，两列会挤成两条 140px 的柱子（备图那三个按钮直接换行成六行）。 */
+.veil-row { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.veil-val { font-size: 13px; font-weight: 700; color: var(--brand-yellow); }
+.veil-range { width: 100%; accent-color: var(--brand-yellow); cursor: pointer; }
+.veil-range:disabled { opacity: .5; cursor: default; }
 .ins-cols { display: flex; flex-direction: column; gap: 16px; }
 .ins-col { min-width: 0; }
 .ins-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 15px; font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); margin-bottom: 10px; }
@@ -2778,6 +3169,31 @@ async function run() {
   backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
   display: flex; flex-direction: column; gap: 16px;
 }
+/* 版式缩略图。iframe 要 pointer-events:none：demo deck 自己在 document 上挂了
+   「点一下翻页」，不掐掉的话点缩略图选不中这一条（点击被 iframe 吃掉，毫无反应）。
+   也不要再叠 transform: scale()——deck 自己的 fit() 已按 iframe 视口缩放。 */
+.lay-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.lay {
+  padding: 0; text-align: left; border-radius: 12px; overflow: hidden; cursor: pointer;
+  background: rgba(255, 255, 255, 0.04); border: 2px solid transparent;
+  display: flex; flex-direction: column; transition: border-color 0.15s, background 0.2s;
+}
+.lay:hover { background: rgba(255, 255, 255, 0.1); }
+.lay.on { border-color: var(--brand-yellow); background: rgba(255, 184, 0, 0.1); }
+.lay.off { opacity: 0.6; }
+.lay-thumb { display: block; aspect-ratio: 16 / 9; background: #fff; overflow: hidden; }
+.lay-thumb iframe { width: 100%; height: 100%; border: 0; pointer-events: none; display: block; }
+.lay-cap { display: block; padding: 6px 8px 0; font-size: 11px; line-height: 1.5; color: var(--color-soft); }
+.lay-cap b { font-family: var(--font-mono); color: #fff; margin-right: 4px; }
+.lay-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 8px; }
+.lay-tags em {
+  font-style: normal; font-size: 10px; padding: 1px 5px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.55);
+}
+.lay-tags em.plan { background: rgba(255, 184, 0, 0.2); color: #FDE68A; }
+.lay-tags em.alt { background: rgba(165, 180, 252, 0.18); color: #C7D2FE; }
+.lay-tags em.dis { background: rgba(252, 165, 165, 0.18); color: #FCA5A5; }
+
 .pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
 .pick-cell {
   padding: 0; border-radius: 12px; overflow: hidden;

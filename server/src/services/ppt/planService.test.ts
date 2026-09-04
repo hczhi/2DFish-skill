@@ -10,7 +10,11 @@ vi.mock('../../core/llm/parseJson.js', async () => {
   return { ...actual, jsonGateway: (...args: any[]) => gateway(...args) };
 });
 
+const { initDatabase } = await import('../../db/index.js');
+initDatabase();
+
 const { planDeck, PlanError } = await import('./planService.js');
+const { setLayoutEnabled } = await import('./layoutState.js');
 
 function reply(rows: any[], extra: Record<string, any> = {}) {
   return { parsed: rows, raw: JSON.stringify(rows), finish: 'stop', ...extra };
@@ -47,6 +51,27 @@ describe('排版规划', () => {
     const r = await planDeck('提纲', 'u1');
     expect(r.pages).toHaveLength(5);
     expect(r.problems.join('\n')).toMatch(/第 2–4 页连续 3 页都是 L5/);
+  });
+
+  it('页型和版式归属对不上要点名（每一页单看都合法，整份少了封面和过渡）', async () => {
+    // 这是 `layoutId` 校验放行的那一类错：编号确实在库里，于是界面上是一份挑得「都对」的
+    // 规划 —— 而封面那一页排出来是四栏矩阵、章节扉页排出来是一页数据网格，翻起来只是
+    // 「这份稿子没什么节奏」。第 4 页那个「过渡页」不在词表里：**不猜**成章节（猜错就会
+    // 报一条假警告），只汇总进「没标页型」那一句。
+    gateway.mockResolvedValue(
+      reply([
+        { ...page('L16', '年度汇报'), kind: '封面' },
+        { ...page('L5', '三阶段路径'), kind: '章节' },
+        { ...page('L21'), kind: '内容' },
+        { ...page('L1'), kind: '过渡页' },
+      ])
+    );
+    const said = (await planDeck('提纲', 'u1')).problems.join('\n');
+    expect(said).toMatch(/第 1 页「年度汇报」标的是封面页，但 L16 的归属是「内容」/);
+    expect(said).toContain('封面可用的是 L2 / L13 / L20');
+    expect(said).toMatch(/第 2 页「三阶段路径」标的是章节页，但 L5 的归属是「内容」/);
+    expect(said).toMatch(/有 1 页没标页型/);
+    expect(said).not.toMatch(/第 4 页/);
   });
 
   it('截断时救回断点前那几页，并说明只规划到第几页', async () => {
@@ -95,6 +120,25 @@ describe('排版规划', () => {
     expect(r.pages[0].images).toBe(2);
     expect(r.pages[0].imageSpecs).toEqual([]);
     expect(r.problems.join('\n')).toMatch(/没说画什么/);
+  });
+
+  it('停用的版式不进给模型的那份清单，模型硬给了也要点名说这一页用的是停用的', async () => {
+    // 两种静默：清单里还留着它 = 他在案例库里关掉的那一条照旧一份份出现，开关看起来没用；
+    // 模型硬给了却不出声 = 那一页照它排出来（`layoutById` 认得它，见 layoutState 文件头
+    // 第 ① 条），读起来就是一页正常的幻灯片，而他以为再也不会看到这个版式了。
+    setLayoutEnabled('L5', false);
+    try {
+      gateway.mockResolvedValue(reply([{ ...page('L1'), alts: ['L5', 'L7'] }, page('L5', '三组数据')]));
+      const r = await planDeck('提纲', 'u1');
+      const prompt = gateway.mock.calls[0][0]().messages[0].content as string;
+      expect(prompt).not.toMatch(/(?<![\w-])L5(?![\w-])/);
+      const said = r.problems.join('\n');
+      expect(said).toMatch(/第 2 页「三组数据」用的 L5 是\*\*已停用\*\*的版式/);
+      // 备选里那条停用的静默摘掉（下拉里挑中它是他自己在案例库关的，不算「丢了东西」）
+      expect(r.pages[0].alts).toEqual(['L7']);
+    } finally {
+      setLayoutEnabled('L5', true);
+    }
   });
 
   it('拿不到 JSON 抛错而不是回空规划', async () => {

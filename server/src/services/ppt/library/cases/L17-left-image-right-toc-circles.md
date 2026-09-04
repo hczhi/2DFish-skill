@@ -100,7 +100,7 @@
 
 ```html
 <section class="slide">
-  <div class="slide-header"><div class="kicker">第一部分 · 项目背景</div></div>
+  <!-- 左上角那行模块名（.slide-header）由代码统一贴，这里不要写 -->
   <div class="slide-inner">
     <div class="l17-wrap">
       <!-- 左半全幅图（logo / pill 浮在图上，都是绝对定位，不占列） -->

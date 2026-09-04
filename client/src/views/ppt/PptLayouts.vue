@@ -7,6 +7,9 @@
           生成每一页时，AI 从这里挑一个版式照着排。案例<b>只关注排版结构</b> ——
           颜色一律走 <code>var(--c-*)</code> 变量、内容不绑死，所以同一个版式在橙/蓝/双色系的 deck 里都成立。
           卡片上是<b>我们的骨架跑出来的效果</b>（同一份 <code>template.html</code>，图是占位图）。
+          不想要哪一条就把卡片右上角的开关关掉：<b>规划下一份稿子时 AI 就挑不到它了</b>。
+          停用是<b>全站共用一份</b>（不分稿子），而且<b>只影响往后的规划</b> ——
+          已经规划好的稿子里用到它的那几页照样能重新生成。
         </p>
       </div>
       <div class="head-right" v-if="!loading && !error">
@@ -15,10 +18,17 @@
           <a class="btn-ghost" :href="deckUrl" target="_blank">看整份 demo（{{ layouts.length }} 页）↗</a>
         </div>
         <div class="stat">
-          共 {{ layouts.length }} 个版式 · 带完整 CSS 骨架 {{ detailCount }} 个 · 全幅 {{ fullbleedCount }} 个
+          可用 {{ layouts.length - disabledCount }} 个 · 停用 {{ disabledCount }} 个 · 带完整 CSS 骨架 {{ detailCount }} 个 · 全幅 {{ fullbleedCount }} 个
         </div>
       </div>
     </div>
+
+    <!-- 开关存不上、或者停用之后少了一整种形状，都必须写在页面上：静默的话他以为关掉了，
+         而下一份稿子里那一条照旧出现（或者出现一条形状不对的版式，每页看着都正常）。
+         **不能夹在下面那条 v-if / v-else-if / v-else 链里** —— 中间插一个元素，
+         `.grid` 上那个 v-else 就不认了，整页只剩标题。 -->
+    <p v-if="switchErr" class="err">{{ switchErr }}</p>
+    <p v-for="(w, i) in switchWarnings" :key="i" class="warn-line">{{ w }}</p>
 
     <p v-if="loading" class="hint">加载中…</p>
     <!-- 案例库读不到时必须整页报错，不能显示成一个空列表：空列表读起来像
@@ -26,7 +36,10 @@
     <p v-else-if="error" class="err">{{ error }}</p>
 
     <div v-else class="grid">
-      <button v-for="l in layouts" :key="l.id" class="card" @click="open(l)">
+      <div
+        v-for="l in layouts" :key="l.id" class="card" :class="{ off: l.disabled }"
+        role="button" tabindex="0" @click="open(l)" @keydown.enter.prevent="open(l)"
+      >
         <!-- 缩略图放 demo 而不是原始截图：截图是别人家 deck 的（颜色和内容都不是我们的
              产出，案例库的铁律是「只关注排版结构」），用户照着它去期待，拿到自己品牌色的
              那一版会以为生成质量不行 —— 而那正是设计意图。demo 是同一份 template.html 跑
@@ -44,12 +57,20 @@
             <span class="tag full" v-if="l.fullbleed">全幅</span>
             <span class="tag card-tag" v-if="l.hasCard">出血卡</span>
             <span class="tag detail" v-if="l.hasDetail">骨架 {{ l.buildLines }} 行</span>
+            <!-- 开关必须**显示服务端那份状态**、点完再按返回值重画：本地取反的话
+                 「某个页型最后一条不能停用」那种拒绝会变成「开关动了、下次刷新又弹回去」，
+                 而拒绝的理由一个字都看不到。 -->
+            <button
+              class="sw" :class="{ on: !l.disabled }" :disabled="savingId === l.id"
+              @click.stop="toggle(l)"
+              :title="l.disabled ? '已停用：规划时 AI 挑不到它' : '启用中：规划时 AI 可以挑它'"
+            >{{ savingId === l.id ? '…' : (l.disabled ? '已停用' : '启用中') }}</button>
           </div>
           <div class="name">{{ l.name }}</div>
           <div class="title">{{ l.title }}</div>
           <div class="applicable">{{ l.applicable }}</div>
         </div>
-      </button>
+      </div>
     </div>
 
     <!-- 详情抽屉 -->
@@ -98,7 +119,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { apiGet } from '../../lib/api'
+import { apiGet, apiPut } from '../../lib/api'
 import { renderMarkdown } from '../../lib/markdown'
 
 interface Layout {
@@ -108,6 +129,8 @@ interface Layout {
   fullbleed: boolean; hasCard: boolean; hasDetail: boolean;
   refImage?: string; demoUrl: string;
   selectText: string; buildLines: number;
+  /** 停用了（规划时给模型的清单里没有它，但老稿子里那几页照旧能重新生成）。 */
+  disabled?: boolean;
 }
 
 /** 整份 demo deck（22 页）。单页是它加上 ?only=Lk。 */
@@ -123,6 +146,11 @@ const detailHtml = ref('')
 const detailLoading = ref(false)
 const detailError = ref('')
 
+const savingId = ref('')
+const switchErr = ref('')
+const switchWarnings = ref<string[]>([])
+
+const disabledCount = computed(() => layouts.value.filter(l => l.disabled).length)
 const detailCount = computed(() => layouts.value.filter(l => l.hasDetail).length)
 const fullbleedCount = computed(() => layouts.value.filter(l => l.fullbleed).length)
 
@@ -135,6 +163,29 @@ async function load() {
     error.value = e.message || '案例库加载失败'
   }
   loading.value = false
+}
+
+/**
+ * 开 / 关一条。**照服务端返回的那份清单重画**，不在本地取反 —— 取反的话
+ * 「某个页型最后一条不能停用」那种拒绝会表现成「开关动了一下、刷新又弹回去」，
+ * 而拒绝的理由他一个字都看不到。
+ */
+async function toggle(l: Layout) {
+  if (savingId.value) return
+  savingId.value = l.id
+  switchErr.value = ''
+  switchWarnings.value = []
+  try {
+    const r = await apiPut<{ disabled: string[]; warnings: string[] }>(
+      `/api/ppt/layouts/${l.id}/enabled`, { enabled: !!l.disabled }
+    )
+    const off = new Set(r.disabled || [])
+    layouts.value = layouts.value.map(x => ({ ...x, disabled: off.has(x.id) }))
+    switchWarnings.value = r.warnings || []
+  } catch (e: any) {
+    switchErr.value = e?.message || '没改上（这一条的状态没变）'
+  }
+  savingId.value = ''
 }
 
 // 参考图 404 要写在抽屉里：破图图标和「这条案例本来就没有图」长得一样，
@@ -167,6 +218,13 @@ h1 { font-size: 26px; margin: 0 0 8px; }
 .head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .head-btns { display: flex; gap: 8px; }
 .stat { font-size: 12px; color: #6b7280; white-space: nowrap; }
+.warn-line { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 12px; font-size: 13px; line-height: 1.7; margin: 0 0 8px; }
+/* 停用的卡片压暗但**留在页面上**：藏起来的话他再也没有地方把它开回来。 */
+.card.off { opacity: .48; }
+.card.off .thumb { filter: grayscale(1); }
+.sw { margin-left: auto; border: 1px solid #d1d5db; background: #fff; color: #6b7280; font-size: 11px; padding: 2px 9px; border-radius: 99px; cursor: pointer; }
+.sw.on { border-color: #86efac; background: #f0fdf4; color: #15803d; }
+.sw:disabled { opacity: .5; cursor: default; }
 .hint { color: #6b7280; font-size: 13px; }
 .err { color: #dc2626; font-size: 13px; }
 

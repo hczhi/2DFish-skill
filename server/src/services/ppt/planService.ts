@@ -8,7 +8,16 @@
 // 这一步只挑版式、不写 HTML（HTML 是下一步，只带那一条的 buildText）。
 
 import { jsonGateway, jsonFailMessage, parseJsonArrayItems } from '../../core/llm/parseJson.js';
-import { layouts, layoutById, type PptLayout } from './layoutLibrary.js';
+import {
+  layouts,
+  layoutById,
+  PAGE_ROLES,
+  type PageRole,
+  type PptLayout,
+} from './layoutLibrary.js';
+// 停用的那几条**只在「给模型挑的清单」这一层过滤掉**（`layoutById` 照旧认它们，
+// 否则老稿子里用过停用版式的那几页重新生成会直接 400）。见 layoutState.ts 文件头。
+import { disabledLayoutIds, enabledLayouts, enabledLayoutsForRole } from './layoutState.js';
 import { normalizeImageSpecs, IMAGE_RATIOS, MAX_SLOTS_PER_PAGE, type PlannedImage } from './imageSpec.js';
 import { IMAGE_MODES } from './styleLibrary.js';
 
@@ -33,6 +42,14 @@ export interface PlannedPage {
   page: number;
   /** 所属模块（进 `.slide-header .kicker`），模型给的 */
   section: string;
+  /**
+   * 这一页是什么页（封面 / 目录 / 章节 / 内容 / 结尾），模型给的。
+   *
+   * **只用来核对版式挑得对不对**（`kindWarnings`），不参与生成 —— 有了它，「标成章节扉页
+   * 却挑了四栏矩阵」才有得可查：不核的话那一页会排成一页正文，每一页单看都合法、
+   * 整份就是少了过渡感，而没有一处会说。认不出来的词按「没标」处理（不猜）。
+   */
+  kind: PageRole | '';
   title: string;
   points: string[];
   /** 版式 id，必须是库里那 22 条之一 */
@@ -89,7 +106,7 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     );
   }
 
-  const lib = layouts();
+  const lib = enabledLayouts();
   const prompt = buildPrompt(text, lib);
 
   const { parsed, raw, finish, reasoningTokens, usage, noThinkingRequested } = await jsonGateway<any[]>(
@@ -115,6 +132,7 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
   }
 
   const problems: string[] = [];
+  const off = disabledLayoutIds();
   if (truncated) {
     problems.push(
       `模型返回被截断（finish_reason=length${reasoningTokens ? `，思维链占 ${reasoningTokens} token` : ''}），` +
@@ -138,11 +156,20 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     const page = pages.length + 1;
     const img = normalizeImageSpecs(row?.images, `第 ${page} 页「${title}」`);
     problems.push(...img.problems);
-    const alt = normalizeAlts(row?.alts ?? row?.alternatives, layout.id);
+    if (off.has(layout.id)) {
+      // 清单里压根没有它（`buildPrompt` 只给启用的那几条），模型是从别处抄来的 ——
+      // 不静默替换（替换之后这一页也好看，只是不是他挑的），照旧用它并说一句。
+      problems.push(
+        `第 ${pages.length + 1} 页「${title}」用的 ${layout.id} 是**已停用**的版式（给模型的清单里没有它）——` +
+          '这一页照旧按它排。要换掉就在这一页上换版式，或者在版式案例库里把它重新启用。'
+      );
+    }
+    const alt = normalizeAlts(row?.alts ?? row?.alternatives, layout.id, off);
     badAlts.push(...alt.bad);
     pages.push({
       page,
       section: clean(row?.section) || clean(row?.kicker),
+      kind: normalizeKind(row?.kind),
       title,
       points: Array.isArray(row?.points) ? row.points.map((p: any) => clean(p)).filter(Boolean) : [],
       layoutId: layout.id,
@@ -161,8 +188,97 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     throw new PlanError(`模型规划的 ${rows.length} 页全都用了案例库里没有的版式（${problems.join('；')}）。`);
   }
 
-  problems.push(...repeatWarnings(pages), ...missingWhy(pages), ...altWarnings(pages, badAlts));
+  problems.push(...repeatWarnings(pages), ...kindWarnings(pages), ...missingWhy(pages), ...altWarnings(pages, badAlts));
   return { pages, problems, usage };
+}
+
+/** 重排一页图位的 token 预算（6 条规格 ≈ 600 字符）。同上是留给思维链的空间（硬规则 2）。 */
+const MAX_REPLAN_TOKENS = 2000;
+
+export interface ReplanImagesInput {
+  page: number;
+  section?: string;
+  title: string;
+  points: string[];
+  /** 他现在挑的那条版式（`setup_layout_id` → 规划那条）。认不出一律抛错。 */
+  layoutId: string;
+  notes?: string;
+  deckNotes?: string;
+}
+
+/**
+ * 按**这一页的真实内容 + 他现在挑的那条版式**重排图位（`imageSpecs`）。
+ *
+ * 为什么要有这一步：图位清单是整份规划那一次定的，而版式是他后来在生成前那个对话框里换的
+ * —— 两者从此对不上，且**一处都不报错**：备图面板照旧列着规划那 1 格（他换到 L11 那种三图
+ * 版式之后还是只备 1 张），生成时 prompt 里「正好 1 个图位」又压着案例里的三个图位，
+ * 出来是一页排得下但空了两格的幻灯片，读起来就像「这个版式本来就这样」。
+ *
+ * 两条规则和 `planDeck` 里那条**故意不一样**（案例只是参考，不是模子）：
+ * ① **张数按内容定**：内容是 4 块分类就 4 张，哪怕案例里画的是 3 张。照案例的张数配的话，
+ *    第 4 块要么没有图、要么和第 3 块挤在一格，而每一版单看都是一页正常的幻灯片。
+ * ② **比例按版式那个位置的形状定**（竖槽位配 16:9 会被裁掉两边，图本身没问题、只是构图缺一块）。
+ */
+export async function replanPageImages(
+  input: ReplanImagesInput,
+  userId: string
+): Promise<{ specs: PlannedImage[]; layoutId: string; problems: string[]; usage?: PlanResult['usage'] }> {
+  const layout = layoutById(input.layoutId.trim().toUpperCase());
+  if (!layout) {
+    // 静默回落成规划那条的话，重排出来的图位是照另一个版式算的 —— 他换的那个版式一格都没生效。
+    throw new PlanError(
+      `版式 ${input.layoutId || '(空)'} 不在案例库里，没法按它重排图位（库里有 ${layouts().length} 条）。`
+    );
+  }
+  const prompt = buildReplanPrompt(input, layout);
+  const { parsed, raw, finish, reasoningTokens, usage, noThinkingRequested } = await jsonGateway<any[]>(
+    () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: MAX_REPLAN_TOKENS }),
+    { userId, source: 'ppt', operation: 'replan-images', noThinking: true },
+    { mode: 'array', attempts: 2 }
+  );
+  // 这里**不救半截数组**（和 planDeck 不同）：一页最多 6 条，断在中间意味着后面几格丢了，
+  // 而丢掉的那几格在界面上和「这一页就只要 2 张图」一模一样。
+  if (!Array.isArray(parsed)) {
+    throw new PlanError(
+      jsonFailMessage(`第 ${input.page} 页重排图位`, {
+        raw, finish, reasoningTokens, budget: MAX_REPLAN_TOKENS, noThinkingRequested,
+      })
+    );
+  }
+  const img = normalizeImageSpecs(parsed, `第 ${input.page} 页「${input.title}」`);
+  return { specs: img.specs, layoutId: layout.id, problems: img.problems, usage };
+}
+
+function buildReplanPrompt(input: ReplanImagesInput, layout: PptLayout): string {
+  const notes = [
+    input.deckNotes?.trim() ? `整份统一：${input.deckNotes.trim()}` : '',
+    input.notes?.trim() ? `这一页额外（和上一条冲突时按这一条）：${input.notes.trim()}` : '',
+  ].filter(Boolean);
+  return `你是演示稿的排版设计师。任务：给**这一页**定下要哪几张图（图位清单）。
+
+## 硬规则
+1. **张数按这一页的真实内容定，不是照版式案例抄。** 版式里那几个图位只是参考：内容分成 4 块就给 4 张，只有一个主视觉就给 1 张，纯文字页给 \`[]\`。一页最多 ${MAX_SLOTS_PER_PAGE} 张。
+2. 顺序 = 图在这一页里从上到下、从左到右出现的顺序（后面按这个序号把图贴进去，顺序换了就会贴到讲别的事情的那一格）。
+3. 每张写清三样：
+   - \`subject\`：**画什么**，一句话、具体到能直接照着画（「等距视角的城市算力机房，蓝紫冷色」），不要写「一张配图」「相关插图」这类空话；
+   - \`mode\`：\`concept\`（抽象概念插画）/ \`case\`（具体场景、产品、人物）/ \`data\`（信息图、图表感）；
+   - \`ratio\`：\`${IMAGE_RATIOS.join('` / `')}\` —— 按这个版式里那个位置的形状选（竖位配横图会被裁掉两边）。
+4. 不要写页码、不要写 HTML、不要解释。
+
+## 这一页的内容
+所属模块：${input.section || '（无）'}
+标题：${input.title}
+要点：
+${input.points.length ? input.points.map((p) => `- ${p}`).join('\n') : '（没有给要点，按标题判断）'}
+
+## 这一页用的版式（**只作排版参考**：它的图位数量不是硬要求）
+${layout.selectText}
+${notes.length ? `\n## 额外要求（他自己写的，优先于上面的建议）\n${notes.join('\n')}\n` : ''}
+## 输出格式
+只输出一个 JSON 数组，不要任何解释文字。每个元素：
+{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}
+不要图就输出 \`[]\`。
+`;
 }
 
 /**
@@ -170,13 +286,17 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
  * 他挑中之后是一句 400（读起来像「这个版式坏了」）；和主版式重复的留着的话，前面那组里
  * 「规划挑的」出现两遍，看起来像模型只给了一条备选。
  */
-function normalizeAlts(raw: any, mainId: string): { ids: string[]; bad: string[] } {
+function normalizeAlts(raw: any, mainId: string, off: Set<string>): { ids: string[]; bad: string[] } {
   const ids: string[] = [];
   const bad: string[] = [];
   for (const v of Array.isArray(raw) ? raw : []) {
     const given = String(v ?? '').trim();
     const id = given.toUpperCase();
     if (!id) continue;
+    // 停用的当「不在清单里」处理（不进 bad —— 那句话是给他调 prompt 用的，而这条不是模型的错）：
+    // 留在下拉里的话他从备选里挑中一条自己关掉的版式，那一页照样排得出来，
+    // 而案例库页面上那个开关是关着的。
+    if (off.has(id)) continue;
     if (!layoutById(id)) {
       // 报错里放**模型原样给的那个串**（不是大写过的）：调 prompt 时唯一有用的就是它到底写了什么。
       if (!bad.includes(given)) bad.push(given);
@@ -230,28 +350,99 @@ function repeatWarnings(pages: PlannedPage[]): string[] {
   return out;
 }
 
+/** 模型给的 `kind` → 页型。认不出来的（「过渡页」「尾页」）当没标，**不猜**：猜错之后
+ *  下面那条核对会拿错的页型去比，报出来的是一条假警告，比不报更糟。 */
+function normalizeKind(v: any): PageRole | '' {
+  const s = clean(v);
+  return PAGE_ROLES.find((r) => r === s) || '';
+}
+
+/**
+ * 页型和版式归属对不对得上（库文件里每条那行 `归属`）。
+ *
+ * **只报不改**：静默换一条的话，界面上是一份「模型挑的」规划而实际是代码挑的，
+ * 下次同样的提纲又是这个结果，他不知道该改提纲还是改 prompt（同 `repeatWarnings`）。
+ *
+ * 三条各治一种「翻起来完全正常」的失败：
+ * ① **标了章节扉页却挑了内容版式** —— 那一页会排成一页正文，每页单看都合法，整份就是
+ *    少了过渡感，而 `layoutId` 校验一路放行（编号确实在库里）。
+ * ② **第 1 页不是封面版式** —— 翻开第一页是一页四栏矩阵，读起来像漏了封面。
+ * ③ **压根没标页型** —— 上面两条于是一句话都不会说；不汇总一句的话「没核对」和
+ *    「核对通过」在界面上一模一样（problems 里都是空的）。
+ */
+function kindWarnings(pages: PlannedPage[]): string[] {
+  const out: string[] = [];
+  const ids = (role: PageRole) => enabledLayoutsForRole(role).map((l) => l.id).join(' / ');
+
+  for (const p of pages) {
+    if (!p.kind) continue;
+    const layout = layoutById(p.layoutId);
+    if (!layout || layout.roles.includes(p.kind)) continue;
+    out.push(
+      `第 ${p.page} 页「${p.title}」标的是${p.kind}页，但 ${layout.id} 的归属是「${layout.roles.join(' / ')}」——` +
+        `这一页会排成一页${layout.roles[0]}页（不报错，只是整份少了这一处该有的节奏）。${p.kind}页可用的是 ${ids(p.kind)}。`
+    );
+  }
+
+  const first = pages[0] && layoutById(pages[0].layoutId);
+  if (first && !first.roles.includes('封面')) {
+    out.push(
+      `第 1 页用的是 ${first.id}（归属：${first.roles.join(' / ')}），整份第一页应该是封面 —— ` +
+        `现在翻开第一页就是一页${first.roles[0]}页。封面可用的是 ${ids('封面')}。`
+    );
+  }
+
+  const n = pages.filter((p) => !p.kind).length;
+  if (n) {
+    out.push(
+      `有 ${n} 页没标页型（封面 / 目录 / 章节 / 内容 / 结尾），那几页的版式**没有核对过** ——` +
+        '「标成章节扉页却挑了内容版式」这种就查不出来了（每一页单看都合法）。'
+    );
+  }
+  return out;
+}
+
 /** 没给理由的页。理由是这一步唯一能核对的东西，缺了就只剩一个版式名。 */
 function missingWhy(pages: PlannedPage[]): string[] {
   const n = pages.filter((p) => !p.why).length;
   return n ? [`有 ${n} 页没给挑版式的理由 —— 那几页只能靠 demo 自己判断挑得对不对。`] : [];
 }
 
+/**
+ * 「页型 → 可用版式」那几行，**在代码里按库文件的 `归属` 算**（硬规则 3）。
+ *
+ * 让模型自己想「哪些版式能当封面」的话，它会挑一条读起来很像封面的内容版式（L16 那种
+ * 四栏矩阵在名字上一点也不像内容页）—— 编号合法、校验放行，翻开第一页就是一页正文。
+ * 同一份分组也是 `kindWarnings` 核对用的那一份，两边不会漂开。
+ */
+function roleBlock(): string {
+  return PAGE_ROLES.map((role) => {
+    const ids = enabledLayoutsForRole(role).map((l) => `${l.id}（形状：${l.shape}）`);
+    return `- ${role}：${ids.join(' / ')}`;
+  }).join('\n');
+}
+
 function buildPrompt(outline: string, lib: PptLayout[]): string {
   return `你是演示稿的排版设计师。任务：把下面这份提纲拆成逐页，并**从给定的版式清单里**给每页挑一个版式。
 
 ## 硬规则（违反其中任何一条，这次规划就是废的）
-1. \`layoutId\` **只能**是清单里出现过的编号（L1…L${lib.length}），**原样照抄**。清单里没有的版式一律不许用，也不要自己发明版式或写 CSS。
+1. \`layoutId\` **只能**是清单里出现过的编号（只有 ${lib.map((l) => l.id).join(' / ')} 这几个，停用的已经不在里面），**原样照抄**。清单里没有的版式一律不许用，也不要自己发明版式或写 CSS。
 2. 相邻页不要撞版式：**连续最多 2 页**用同一个版式。整份用到的版式种类越丰富越好，但每页仍要选最贴合内容的那个。
-3. 封面、章节过渡页、总结页优先用全幅版式（清单里 \`fullbleed：是\` 的那些）；正文页按内容结构挑（对比 / 数据 / 三栏并列 / 四栏矩阵 / 时间线…）。
-4. 每页只有一个视觉主角：图多的版式不要配大段文字，文字密的版式不要塞满图。
-5. \`why\` 要写出**为什么这一页配这个版式**（这一页的内容结构是什么、版式的哪一处正好装得下），一句话，不要复述版式描述。
-6. 不要输出页码 —— 顺序就是页码，由程序自己算。
-7. \`images\` 是**这一页要哪几张图**的清单（不配图就给 \`[]\`）。每张写清三样：
+3. 每页都要给 \`kind\`（这一页是什么页）：\`${PAGE_ROLES.join('\` / \`')}\`。**第 1 页固定是 \`封面\`**；每个章节开头是 \`章节\`；最后一页通常是 \`结尾\`。
+4. \`layoutId\` **只能从下面「页型 → 可用版式」里这一页页型那一行挑**。标了 \`章节\` 却挑一条只归 \`内容\` 的版式，那一页会排成一页正文 —— 每一页单看都合法，整份就是少了过渡感。
+5. \`内容\` 页按这一页内容的**形状**挑（清单里每条都写了 \`形状：…\`）：3–4 个同构小块 → \`并列\`；两块对立 → \`对比\`；大数字 / 指标 → \`数据\`；阶段推进 / 时间线 → \`时序\`；图文各占一半 → \`分屏\`；单一主角（金句 / 人物 / 产品） → \`聚焦\`。
+6. 每页只有一个视觉主角：图多的版式不要配大段文字，文字密的版式不要塞满图。
+7. \`why\` 要写出**为什么这一页配这个版式**（这一页的内容结构是什么、版式的哪一处正好装得下），一句话，不要复述版式描述。
+8. 不要输出页码 —— 顺序就是页码，由程序自己算。
+9. \`images\` 是**这一页要哪几张图**的清单（不配图就给 \`[]\`）。每张写清三样：
    - \`subject\`：**画什么**，一句话、具体到能直接照着画（「等距视角的城市算力机房，蓝紫冷色」），不要写「一张配图」「相关插图」这类空话；
    - \`mode\`：\`concept\`（抽象概念插画）/ \`case\`（具体场景、产品、人物）/ \`data\`（信息图、图表感）；
    - \`ratio\`：\`16:9\`（横幅、全幅背景）/ \`1:1\`（方块图标位）/ \`3:4\`（竖图、人物卡）—— 按你挑的那个版式里图位的形状选，选错的图会被裁掉两边。
    张数要和版式装得下的图位数一致，一页最多 ${MAX_SLOTS_PER_PAGE} 张。
-8. \`alts\` 是这一页的**备选版式**：从清单里再挑 2-3 个也装得下这一页内容的编号，按「越合适排越前」的顺序给。不许重复 \`layoutId\`、不许给清单里没有的编号（清单里没有的会被丢掉）。
+10. \`alts\` 是这一页的**备选版式**：从清单里再挑 2-3 个也装得下这一页内容的编号（**同样要在这一页页型那一行里**），按「越合适排越前」的顺序给。不许重复 \`layoutId\`、不许给清单里没有的编号（清单里没有的会被丢掉）。
+
+## 页型 → 可用版式（\`layoutId\` 和 \`alts\` 只能从这一页页型对应的那一行里挑）
+${roleBlock()}
 
 ## 版式清单（${lib.length} 个）
 ${lib.map((l) => l.selectText).join('\n\n')}
@@ -261,6 +452,6 @@ ${outline}
 
 ## 输出格式
 只输出一个 JSON 数组，不要任何解释文字。每个元素：
-{"section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","points":["要点1","要点2"],"layoutId":"L7","alts":["L3","L9"],"why":"挑它的理由（一句话）","images":[{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}]}
+{"kind":"内容","section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","points":["要点1","要点2"],"layoutId":"L7","alts":["L3","L9"],"why":"挑它的理由（一句话）","images":[{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}]}
 `;
 }

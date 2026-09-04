@@ -59,6 +59,28 @@ export interface PreparedImage {
 }
 
 /**
+ * 重排图位之后，**落在新清单外面的那几张备好的图**要点名说出来。
+ *
+ * 那几张是花过钱的（或者他挑过的），而新清单里已经没有那一格了：备图面板按新清单画，
+ * 于是它们从界面上**消失**，而 `pending_images_json` 里还留着 —— 下一次生成这一页时
+ * `applyPreparedImages` 报的是「第 N 格备好的图没地方贴」，那句话出现在别的操作之后，
+ * 他对不回「是那次重排图位弄的」。所以这一句要在重排当场说。
+ *
+ * **不删那几条**：删了那张图就只剩素材库里那一份，而他以为的是「图还备着」。
+ */
+export function orphanedPreparedNotes(prepared: Array<{ index?: unknown; url?: unknown }>, specCount: number): string[] {
+  const lost = prepared
+    .filter((p) => p?.url && Number(p.index) > specCount)
+    .map((p) => Number(p.index))
+    .sort((a, b) => a - b);
+  if (!lost.length) return [];
+  return [
+    `原来第 ${lost.join(' / ')} 格备好的图落在新清单外面了（现在只有 ${specCount} 格）——` +
+      '那几张还在素材库里（/ppt/assets），可以挑回到别的格子上；不挪的话它们既不会显示在这一页的备图里，也贴不进生成出来的页面。',
+  ];
+}
+
+/**
  * 把模型给的 `images` 字段归一成规格数组。
  *
  * 三种「读起来正常」的输入都要出声，因为它们后面全变成「图不对」而不是「报错」：

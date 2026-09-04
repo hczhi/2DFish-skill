@@ -64,6 +64,7 @@
 
 ```html
 <section class="slide" data-layout="L20">
+  <div class="slide-inner">
   <div class="l20-wrap">
     <div class="l20-textband">
       <div class="l20-en">INTEGRITY BASED<br>TRADE VOYAGE</div>
@@ -80,6 +81,7 @@
       </div>
     </div>
     <div class="l20-hero"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
+  </div>
   </div>
 </section>
 ```

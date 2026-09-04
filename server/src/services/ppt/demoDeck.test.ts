@@ -35,6 +35,23 @@ describe('版式 demo deck', () => {
     expect(missing).toEqual([]);
   });
 
+  it('片段里有没有 .slide-inner 要和 fullbleed 标记一致（L2 曾经两边相反）', () => {
+    // demo 片段是**渲染的准**，`fullbleed` 是**发给模型的说法**。两边相反的时候一处都不报错：
+    // L2/L3 的 demo 里文字在 `.slide-inner` 里，而库文件把它们算进「全幅版式集合」，于是
+    // 生成出来的每一页 L2（用得最多的那条章节封面）都被告知「不要包」—— 标题贴着画面边缘、
+    // 疏密档一个像素都不动，卡片上那张 demo 却还是好看的那一版。
+    // 反过来漏标 fullbleed 的话，全幅图被 140px padding 包成一张四边留白的图。
+    const bad: string[] = [];
+    for (const [id, body] of demoFragments()) {
+      const layout = loadLibrary().layouts.find((l) => l.id === id)!;
+      // 出血版式（L12）是第三种：不全幅，但浮卡 + 色带要脱离标准 padding，所以也不包。
+      const want = !layout.fullbleed && !layout.hasCard;
+      const has = /(?<![\w-])slide-inner(?![\w-])/.test(body);
+      if (has !== want) bad.push(`${id}:demo ${has ? '包了' : '没包'} .slide-inner，而 fullbleed=${layout.fullbleed}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('拼出来的整份 deck 有 22 页且不留占位符', () => {
     const html = demoDeck();
     expect(html.match(/<section class="slide/g)?.length).toBe(22);

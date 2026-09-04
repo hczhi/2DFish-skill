@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  injectEids, applyTextEdit, applyStyleEdit, applyRegionStyle, COLOR_PALETTE, PageEditError,
+  injectEids, applyTextEdit, applyStyleEdit, applyRegionStyle, applyDelete, eidsIn,
+  COLOR_PALETTE, PageEditError,
 } from './pageEdit.js';
 import { libraryRoot } from './layoutLibrary.js';
 
@@ -123,5 +124,43 @@ describe('ppt pageEdit', () => {
     expect(() => applyRegionStyle(off.html, { path: [0], style: { alignItems: null } })).toThrow(/没有 align-items/);
     // 那几个 CSS 关键字要指到 null 上，不能照着写进 inline。
     expect(() => applyRegionStyle(html, { path: [0], style: { alignItems: 'unset' } })).toThrow(/null/);
+  });
+
+  it('删掉一块之后剩下的 eid 一个都不变，隔壁那一块一个字没动', () => {
+    // 重编一遍号的话，他手上那份预览里的 t3 和库里的 t3 会指向两个不同的元素 —— 下一次双击
+    // 改字落到隔壁那一块上，而两块都是正常的文字，界面上一处都不说。
+    const html = injectEids(PAGE);
+    const before = eidsIn(html);
+    const r = applyDelete(html, { path: [1, 2] });
+    expect(r.html).not.toContain('一句话说清这一章的落点');
+    expect(eidsIn(r.html)).toEqual(before.slice(0, -1));
+    // 只剪那一块：多吃一个字符就是「隔壁那一块少了半句话」，而页面照样渲染。
+    expect(r.html).toContain('<div class="slide-header">');
+    expect(r.html).toContain('CONTENTS');
+    expect(r.html).toContain('data-img-prompt="山野远眺 > 有景深"');
+    expect(r.removed.text).toContain('一句话说清这一章的落点');
+  });
+
+  it('含图的那一块删不了（删了下一次配图会把第 2 张贴进第 1 格）', () => {
+    // 图的序号是按 html 里的出现顺序算的（`findImageSlots`），删掉一个图位之后 images_json /
+    // 备好的图 / pasteIntoBuiltPage 全错一位：图文不符，而页面渲染完全正常、接口 200，
+    // 界面上只有一句「已删掉」。
+    const html = injectEids(PAGE);
+    expect(() => applyDelete(html, { path: [1] })).toThrow(/有图/);
+    expect(() => applyDelete(html, { path: [1, 1] })).toThrow(PageEditError);
+  });
+
+  it('删完变成空页 / 一段可编辑文字都不剩的，一律拒', () => {
+    // 空 <section> 在 iframe 里是一块白，和「这个版式渲染塌了」分不开。
+    const only = injectEids(`<section class="slide"><div class="desc">落点</div></section>`);
+    expect(() => applyDelete(only, { path: [0] })).toThrow(/什么都不剩/);
+    // 剩一张图、一个 eid 都没有：界面的 canEditText 会谎报「这一页还没有编辑标记，重新生成
+    // 一次才能改文字」，他会为此花掉一次真实调用，而成因是他自己删了最后那段字。
+    const withImg = injectEids(
+      `<section class="slide"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="山野" alt=""><div class="desc">落点</div></section>`
+    );
+    expect(() => applyDelete(withImg, { path: [1] })).toThrow(/最后一段/);
+    // 整页（空路径）也不给删。
+    expect(() => applyDelete(only, { path: [] })).toThrow(/整页/);
   });
 });

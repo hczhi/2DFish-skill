@@ -5,6 +5,7 @@
 // 长这样」就是案例库和预览存在的全部理由，漂开的那一刻两边都在骗人。
 
 import { library, libraryVersion } from './layoutLibrary.js';
+import { designStyleBlock, type DesignSpec } from './designSpec.js';
 
 /** template.html 里 `<section>` 的插入点。 */
 export const SLOT = '<!-- partN_fragment.html 的 <section> 在此按顺序插入 -->';
@@ -13,6 +14,12 @@ export interface DeckMeta {
   brandCn: string;
   brandEn: string;
   topic: string;
+  /**
+   * 这份稿子的设计规范（096）。**跟着 meta 走，不另开一个参数**：拼装的调用点有十几处
+   * （单页预览、整份、导出、配图后的预览），漏传一处的话那一处是默认配色 —— 预览里蓝的、
+   * 导出的文件橙的，两份各自都好看。没有就是默认那套（老 deck）。
+   */
+  design?: DesignSpec;
 }
 
 export interface AssembleOptions {
@@ -28,6 +35,15 @@ export interface AssembleOptions {
    * 现象是「键盘翻页没反应」，控制台之外一点提示都没有。
    */
   footer?: boolean;
+  /**
+   * 每页的黑色蒙版透明度（097），**按 `sections` 的下标对齐**。不传 = 全 0（没有蒙版）。
+   *
+   * 长度不够就抛（见 `assembleDeck`）：短一位的话后面那些页静默按 0 拼，
+   * 而界面上它们的滑块停在他调过的位置 —— 「保存好像没生效」，而实际是这一处漏传。
+   * 单页预览一律走 `assemblePreview`（第三个参数必填），少传一处的话就是
+   * 「预览里没蒙版、整份里有」，两份各自都是正常的幻灯片。
+   */
+  veils?: number[];
 }
 
 /** 拼出可以直接丢进 iframe / 存成文件的整份 deck。 */
@@ -41,7 +57,20 @@ export function assembleDeck(sections: string[], meta: DeckMeta, opts: AssembleO
   // 隐藏页脚那句 CSS 跟着幻灯片一起插进 body（不去找 `</head>`）：找不到那个标签时
   // replace 什么都不做，页脚会悄悄回来 —— 而那正是这个参数要去掉的东西。
   const hideFooter = opts.footer === false ? '<style>#footer{display:none}</style>\n' : '';
-  const slides = hideFooter + sections.map(stripPageNumber).join('\n');
+  // 设计规范那一段同样插在这里（`designStyleBlock` 上的注释说明为什么不去找 `</head>`）。
+  // 它只覆盖 `:root` 变量和少数几条规则，所以**已经生成过的页刷新就跟着变**——
+  // 页面里的颜色写的都是 `var(--c-*)`，一次调用都不用重花。
+  const design = meta.design ? designStyleBlock(meta.design) : '';
+  if (opts.veils && opts.veils.length < sections.length) {
+    throw new Error(
+      `蒙版透明度只给了 ${opts.veils.length} 个，却要拼 ${sections.length} 页 —— ` +
+        `按下标对齐的话后面那几页会静默变成 0（没有蒙版），而界面上它们是调过的。`
+    );
+  }
+  const slides =
+    design +
+    hideFooter +
+    sections.map((s, i) => applyVeil(stripPageNumber(s), opts.veils?.[i] ?? 0)).join('\n');
   // 一律用函数形式替换：片段正文里的 `$&` / `$1` 在字符串形式下会被当成引用展开，
   // 悄悄吃掉几个字符。
   return template
@@ -49,6 +78,48 @@ export function assembleDeck(sections: string[], meta: DeckMeta, opts: AssembleO
     .replace(/\{\{BRAND_CN\}\}/g, () => meta.brandCn)
     .replace(/\{\{BRAND_EN\}\}/g, () => meta.brandEn)
     .replace(/\{\{TOPIC\}\}/g, () => meta.topic);
+}
+
+/**
+ * 制作过程中的单页预览（套外壳、不要页脚）。
+ *
+ * **单页预览只走这一个函数**：第三个参数必填，所以新加一处预览时编译器会逼你回答
+ * 「这一页的蒙版是多少」。直接调 `assembleDeck` 的话漏掉 `veils` 不报错，
+ * 现象是「预览里没蒙版、刷新/导出之后有」—— 两份各自都是一页正常的幻灯片。
+ */
+export function assemblePreview(html: string, meta: DeckMeta, veilOpacity: number): string {
+  return assembleDeck([html], meta, { footer: false, veils: [veilOpacity] });
+}
+
+/**
+ * 往一页里贴那层黑色蒙版（097）。**每一页都贴，opacity 0 也贴** —— 由代码固定写死，
+ * 不让模型写：交给模型的话它会挑着页写、还会顺手改成渐变或者半透明白，
+ * 而每一页单看都是正常的设计。
+ *
+ * 贴在 `<section>` 开标签紧后面 = DOM 里的第一个孩子：`.slide-veil` 是 `z-index:1`，
+ * 背景图那层是 0/auto、内容那层是 2 以上，所以它夹在中间（见 template.html 里
+ * `.slide-veil` 上那段注释）。同 z-index 的兄弟（`.corners`、`.l18-cn`）靠「后画的在上面」
+ * 压在它上面 —— 所以**必须是第一个孩子**，贴到末尾的话那几个元素会被压暗。
+ *
+ * 先摘掉已有的那一层：拼装在读的时候每次都跑一遍，不摘的话同一页会越叠越黑
+ * （每存一次多一层 0.4，看起来只是「这一页怎么越来越暗」）。
+ */
+export function applyVeil(html: string, opacity: number): string {
+  const cleaned = html.replace(/<div class="slide-veil"[^>]*><\/div>\s*/g, '');
+  // 夹逼 + 非数字回落到 0：NaN 写进 style 的话整条声明被浏览器丢掉，蒙版变成**全黑不透明**
+  // （opacity 缺省 1），那一页只剩一块黑，而没有一处报错。
+  const o = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0;
+  const div = `<div class="slide-veil" style="opacity:${o}"></div>`;
+  let injected = false;
+  const out = cleaned.replace(/<section\b[^>]*>/, (m) => {
+    injected = true;
+    return m + div;
+  });
+  if (!injected) {
+    // 这里静默返回原文的话，那一页就是唯一一页没有蒙版的 —— 而它在放映里翻过去只是「亮了一下」。
+    throw new Error('这一页里找不到 <section> 开标签，蒙版贴不上去（这段 HTML 不是一页幻灯片）。');
+  }
+  return out;
 }
 
 /**

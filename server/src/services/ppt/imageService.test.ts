@@ -25,8 +25,10 @@ vi.mock('./assetStore.js', () => ({ rememberAsset: vi.fn(() => true) }));
 const { generateImage } = await import('../../core/image/imageGateway.js');
 const { rememberAsset } = await import('./assetStore.js');
 const { checkAndDeductQuota } = await import('../../core/llm/gateway.js');
-const { fillPageImages, findImageSlots, applyPreparedImages, pasteIntoBuiltPage, PptImageError } =
-  await import('./imageService.js');
+const {
+  fillPageImages, findImageSlots, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared, specsFromSlots,
+  PptImageError,
+} = await import('./imageService.js');
 
 const ctx = { userId: 'u1', title: '三阶段路径', meta: { brandCn: '云启', brandEn: 'YQ', topic: 'AI 转型' } };
 
@@ -190,6 +192,99 @@ describe('把备好的图贴进这一页', () => {
     expect(r.images.map((i) => i.url)).toEqual(['https://cos/new1.png', 'https://cos/paid2.png']);
     // 第 2 格早就配过真图了，说成「还是占位图」的话他会去点「补齐这一页的图」（白花钱）
     expect(r.problems.join(' ')).not.toMatch(/占位图/);
+  });
+
+  it('data-img-prompt 写在外层容器上时，贴进它里面那张占位图（各贴各的，不串块）', () => {
+    // 库里真出现过这样的一页：外层 `<div class="p5-visual" style="…background-size:cover…"
+    // data-img-prompt="…">` 里面才是那张 `<img src="/ppt-cases/ph-3x4.svg">`。外层没有 src、
+    // 也没有 `background-image:url()`，于是这一格被判成 via:'none' —— 备好的图和真花钱配的图
+    // **永远贴不上去**：接口 200、备图那一格挂着缩略图，而画面里从头到尾是占位图，
+    // 清掉再挑一张、重新生成一次都一样。
+    const wrapped =
+      '<section class="slide"><div class="slide-inner">' +
+      '<div class="p5-visual" style="background-size:cover" data-img-prompt="等距的算力机房">' +
+      '<img src="/ppt-cases/ph-16x9.svg" alt=""><div class="cap">机房</div></div>' +
+      '<div class="p5-visual" style="background-size:cover" data-img-prompt="一位工程师侧影">' +
+      '<img src="/ppt-cases/ph-3x4.svg" alt=""></div>' +
+      '</div></section>';
+    expect(findImageSlots(wrapped).map((s) => s.via)).toEqual(['src', 'src']);
+    const r = applyPreparedImages(wrapped, [prep(1, 'https://cos/p1.png', '16:9'), prep(2, 'https://cos/p2.png', '3:4')]);
+    // 往里找不配平闭合位置的话，第 1 格会找到第 2 块那张图上去：两格都写成同一张，
+    // 图文不符而页面渲染完全正常。
+    expect(r.html).toContain('data-img-prompt="等距的算力机房"><img src="https://cos/p1.png"');
+    expect(r.html).toContain('data-img-prompt="一位工程师侧影"><img src="https://cos/p2.png"');
+    expect(r.html).not.toContain('ph-');
+    expect(r.problems).toEqual([]);
+  });
+
+  it('照槽位配好的图要记成「备好的图」，重新生成这一页才贴得回去', () => {
+    // 不记的话：重新生成这一页 → html 换成一版新的占位图 → 回填只认 pending_images_json
+    // → 那几张付费图静默消失，界面上只是「这一页又要配图了」，他只能再花一遍钱。
+    const prev = [{ ...prep(2, 'https://cos/lib2.png', '3:4'), from: 'library' as const, styleId: 'S-B' }];
+    const kept = keepAsPrepared(
+      prev,
+      [
+        // 第 1 格这一次现生了一张（真花过钱）
+        { index: 1, prompt: '等距的算力机房', mode: 'concept', ratio: '16:9 landscape', url: 'https://cos/new1.png', model: 'wanx-v1', storage: 'cos' },
+        // 第 2 格跳过了 —— 画面里就是素材库挑来的那张
+        { index: 2, prompt: '一位工程师侧影', mode: 'concept', ratio: '3:4 portrait', url: 'https://cos/lib2.png', skipped: true },
+      ],
+      { styleId: 'S-C', prevStyleId: 'S-B' }
+    );
+    // 第 2 格覆盖成 from:'ai' 的话，「这一页笔触为什么不统一」在界面上就没有线索了。
+    expect(kept.map((k) => `${k.index}:${k.from}:${k.styleId}`)).toEqual(['1:ai:S-C', '2:library:S-B']);
+    // 比例要存回规划那套字面（`16:9 landscape` 原样存进去的话，下次挑图时那一格的比例
+    // 比不上 spec.ratio，「会被裁掉一块」那句提示就永远不出现了）。
+    expect(kept[0].ratio).toBe('16:9');
+    // 真的贴得回去：重新生成之后又是一版占位图。
+    const r = applyPreparedImages(twoSlots, kept);
+    expect(r.html).toContain('src="https://cos/new1.png"');
+    expect(r.html).toContain('url(https://cos/lib2.png)');
+    expect(r.problems).toEqual([]);
+  });
+
+  it('重排图位之后，落在新清单外面的那几张备好的图要当场点名', async () => {
+    // 那几张是花过钱的，而重排之后备图面板按新清单画 —— 它们从界面上消失、库里还留着，
+    // 而这次重排的回复读起来完全正常。下一次生成这一页才会冒出一句「没地方贴」，
+    // 那时他对不回是哪一步弄的。
+    const { orphanedPreparedNotes } = await import('./imageSpec.js');
+    const prepared = [prep(1, 'https://cos/p1.png', '16:9'), prep(4, 'https://cos/p4.png', '3:4')];
+    expect(orphanedPreparedNotes(prepared, 3).join(' ')).toMatch(/第 4 格.*只有 3 格.*素材库/);
+    // 没有落在外面的就一句都不要说（每次重排都刷一条的话，真正要看的那几条会被冲下去）。
+    expect(orphanedPreparedNotes(prepared, 4)).toEqual([]);
+  });
+
+  it('规划 0 格而页面排出 4 格时，清单按页面对齐并说出来（不然那几格一个入口都没有）', () => {
+    // 库里真出现过这一页：规划挑的 L5 是 0 图，他换成 L11 之后生成出 4 个图位。规划还是
+    // 0 格 → 详情面板里备图那一整块干脆不画（写的是「这一页还没配过图」）、`prepare-images`
+    // 按 specs.length 卡格子号直接拒 → 那 4 格备图/换图/素材库全都点不到，而画面上就是
+    // 4 张占位图、顶上还写着「配全部图（差 4 张）」。
+    const html =
+      '<section class="slide"><div class="slide-inner">' +
+      '<img src="/ppt-cases/ph-3x4.svg" data-img-prompt="窄口径独家" data-img-mode="data">' +
+      '<img src="/ppt-cases/ph-3x4.svg" data-img-prompt="成熟期低增长">' +
+      '<img src="/ppt-cases/ph-3x4.svg" data-img-prompt="">' +
+      '</div></section>';
+    const r = specsFromSlots([], findImageSlots(html));
+    expect(r.changed).toBe(true);
+    expect(r.specs.map((s) => `${s.ratio}/${s.mode}/${s.subject}`)).toEqual([
+      '3:4/data/窄口径独家', '3:4/concept/成熟期低增长', '3:4/concept/',
+    ]);
+    expect(r.problems.join(' ')).toMatch(/规划里这一页是 0 个图位.*实际排出 3 个.*改成 3 格/);
+    // 空的 data-img-prompt 那一格要单独点名：面板上它和别的格子长得一样，而备图生不出东西。
+    expect(r.problems.join(' ')).toMatch(/第 3 格.*没写要什么图/);
+  });
+
+  it('格数没变时一个字都不动（他改过的提示词不能被页面上那句盖回去）', () => {
+    // 覆盖的话：他在面板里把「一张相关配图」改成想要的那句、还没重新生成，而这一次生成
+    // 别的页/重新生成这一页就把模型原来那句写回规划 —— 面板上照旧是一句正常的话。
+    const prev = [{ subject: '他改过的那句', mode: 'case' as const, ratio: '1:1' as const }];
+    const r = specsFromSlots(prev, findImageSlots(
+      '<section><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="模型写的那句"></section>'
+    ));
+    expect(r.changed).toBe(false);
+    expect(r.specs).toEqual(prev);
+    expect(r.problems).toEqual([]);
   });
 
   it('多出来的那张要点名说没地方贴（模型少排了一个图位）', () => {

@@ -12,7 +12,7 @@
 - **来源**：用户截图（2026-08-27），原内容为某赛艇/水上运动 IP 活动三阶段年度策划页。
 - **演示实现**：`library/demo-slides.html` 的 `<!-- @demo L11 -->` 片段（拼出来的效果 demo）。
 - **新组件类**：是；已注入 `template.html`（`.tri-narrative` 体系），属常用版式。
-- **是否全幅**：是（覆盖 `.slide-inner`，与 L2 fullbleed-bg-mask 同级处理，build-part 不使用 `.slide-inner`）。
+- **是否全幅**：是（覆盖 `.slide-inner`，与 L13/L18/L19/L21/L22 同级处理，build-part 不使用 `.slide-inner`）。
 
 ## 一句话定位
 **三栏等宽 · 全幅图叠字 · 大号数字锚点 · 标题白字叠在图上** —— 一个适合"三阶段/三模块/三案例并行叙事"的强版式，视觉强、叙事清晰、单页信息密度高但毫不拥挤。
@@ -49,7 +49,7 @@
 | 分栏手法 | 直线分栏 + 1px 半透明白分隔（斜切为可选变体 V-skew） |
 | 文本叠放位置 | 文本左下、大号数字右上，形成对角呼应 |
 | 数字尺寸 | 132px 衬线、半透明白 .82、text-shadow 投影、letter-spacing -3px |
-| 副标颜色 | var(--c-accent)（截图原为青蓝 #3DB4D9 → 归一为变量） |
+| 副标颜色 | var(--c-accent)（截图原为青蓝，已归一为变量） |
 
 ## 视觉手法（可复用的"灵魂"）
 1. **三栏并列叙事**：内容天然是 3 个同结构单元（阶段/模块/案例），一眼能扫完。
@@ -63,7 +63,7 @@
 
 | 截图原色 | 归一为 | 用途 |
 |---------|--------|------|
-| 青蓝 #3DB4D9 | `var(--c-accent)` / `var(--c-accent-deep)` | 副标、`.tri-title .em`、label 前缀线、列表 marker、`.slide-header` 的 kicker |
+| 青蓝（截图原色） | `var(--c-accent)` / `var(--c-accent-deep)` | 副标、`.tri-title .em`、label 前缀线、列表 marker、`.slide-header` 的 kicker |
 | 黑色（底部渐变） | `rgba(6,14,24,.x)` 渐变 | 文字可读性底（**不绑定 palette**，是中性深色） |
 | 纯白 | `rgba(255,255,255,.82)` 等 | 数字、标题、文本、分隔线 |
 
@@ -116,14 +116,14 @@
       <!-- 栏 2、3 同结构，改 num/label/subtitle/list 与图槽位 -->
     </div>
   </div>
-  <div class="slide-header"><div class="kicker">第四部分 · 推进节奏</div></div>
 </section>
 ```
 
 > ⚠️ 三条硬的：
-> 1. L11 是全幅版式，**不要包 `.slide-inner`**（与 L2/L3 同处理），否则 140px padding 会破坏全幅效果。
-> 2. **模块名走 `.slide-header`**（左上角固定页眉，全平台统一），不要在 `.tri-narrative` 里另造一条
->    header 带 —— 造出来的那一层没有 CSS，会掉回默认流式布局，把三栏图往下顶。
+> 1. L11 是全幅版式，**不要包 `.slide-inner`**（与 L13/L18/L19/L21/L22 同处理；L2/L3 那种「背景图铺满但文字仍在 `.slide-inner` 里」的不算全幅），否则 140px padding 会破坏全幅效果。
+> 2. **模块名不用你写**：左上角那行页眉（`.slide-header`）由代码统一贴（你写了会被摘掉）。
+>    也不要在 `.tri-narrative` 里另造一条 header 带 —— 造出来的那一层没有 CSS，会掉回默认
+>    流式布局，把三栏图往下顶。**正文里也不要再出现一次模块名**，那会和页眉重复显示。
 > 3. 图片只写 `/ppt-cases/ph-3x4.svg` 占位 + `data-img-prompt`，配图是后面独立一步由代码换的；
 >    自己编一个 `cases/pXX_col1.jpg` 之类的地址，屏幕上是一个和「这一格本来是空的」长得一样的破图。
 

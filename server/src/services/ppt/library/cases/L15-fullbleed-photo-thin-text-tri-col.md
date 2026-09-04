@@ -78,7 +78,8 @@
 ## build-part 结构模板
 
 ```html
-<section class="slide l15 has-image">
+<section class="slide">
+  <div class="slide-inner">
   <div class="l15-wrap">
     <div class="l15-hero">
       <img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt="">
@@ -105,6 +106,7 @@
         <p class="l15-en">English paragraph</p>
       </div>
     </div>
+  </div>
   </div>
 </section>
 ```

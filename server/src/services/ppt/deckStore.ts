@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
 import { MAX_OUTLINE_CHARS } from './planService.js';
+import { type DesignSpec } from './designSpec.js';
 
 // 演示稿的读写（migration 089）。**所有查询都带 user_id** —— 只按 id 取的话
 // 换个账号带上别人的 deck id 就能读到（甚至改到）他那份稿子，而返回的是一份
@@ -16,6 +17,11 @@ export interface PptDeck {
   style_id: string;
   /** 整份统一的那段要求（093，字体/排版/语气）。每一页生成时都带上，和页级那段一起发。 */
   notes: string;
+  /**
+   * 整份的设计规范（096：配色/字体/疏密，见 `designSpec.ts`）。空串 = 默认那一套。
+   * 它是靠覆盖 `:root` 生效的，所以改一次**已经生成的页刷新就变**，不用重新生成。
+   */
+  design_json: string;
   /** planService 的整份返回（JSON 字符串）。空串 = 还没规划过。 */
   plan_json: string;
   planned_total: number;
@@ -43,6 +49,8 @@ export interface PptDeckRow {
   imaged_count: number;
   brand_cn: string;
   style_id: string;
+  /** 列表上也要显示配色（096）：只在设置面板里的话，「这几份稿子颜色为什么不一样」得逐份点开。 */
+  design_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +59,7 @@ export function listDecks(userId: string): PptDeckRow[] {
   const db = getDatabase();
   return db
     .prepare(
-      `SELECT d.id, d.title, d.planned_total, d.brand_cn, d.style_id, d.created_at, d.updated_at,
+      `SELECT d.id, d.title, d.planned_total, d.brand_cn, d.style_id, d.design_json, d.created_at, d.updated_at,
               LENGTH(d.outline) AS outline_chars,
               (SELECT COUNT(*) FROM ppt_deck_pages p
                 WHERE p.deck_id = d.id AND p.html <> '') AS built_count,
@@ -70,16 +78,20 @@ export function listDecks(userId: string): PptDeckRow[] {
 
 export function createDeck(
   userId: string,
-  data: { title: string; outline: string; brandCn?: string; brandEn?: string; styleId?: string }
+  data: {
+    title: string; outline: string; brandCn?: string; brandEn?: string; styleId?: string;
+    /** 设计规范（096）。**建稿时就定下来**：先生成十几页再定的话，那些页是按默认那套排的。 */
+    design?: DesignSpec;
+  }
 ): PptDeck {
   const db = getDatabase();
   const now = new Date().toISOString();
   const id = uuidv4();
   db.prepare(
     `INSERT INTO ppt_decks
-       (id, user_id, title, outline, brand_cn, brand_en, style_id, plan_json, planned_total,
-        status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, '', 0, 'active', ?, ?)`
+       (id, user_id, title, outline, brand_cn, brand_en, style_id, design_json, plan_json,
+        planned_total, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 0, 'active', ?, ?)`
   ).run(
     id,
     userId,
@@ -88,6 +100,7 @@ export function createDeck(
     data.brandCn || '',
     data.brandEn || '',
     data.styleId || '',
+    data.design ? JSON.stringify(data.design) : '',
     now,
     now
   );
@@ -118,6 +131,8 @@ export function updateDeckMeta(
     styleId?: string;
     /** 整份统一的那段要求（093）。空串是合法值（= 他清掉了整份要求）。 */
     notes?: string;
+    /** 设计规范（096）。改完不用重新生成 —— 已经生成的页靠 `:root` 覆盖跟着变。 */
+    design?: DesignSpec;
   }
 ): boolean {
   const db = getDatabase();
@@ -134,6 +149,7 @@ export function updateDeckMeta(
   push('brand_en', data.brandEn);
   push('style_id', data.styleId);
   push('notes', data.notes);
+  push('design_json', data.design ? JSON.stringify(data.design) : undefined);
   if (!sets.length) return false;
   sets.push('updated_at = ?');
   args.push(new Date().toISOString(), id, userId);
@@ -229,6 +245,39 @@ export function updatePlanImageSubject(
   return { ok: true, specs };
 }
 
+/**
+ * 换掉这一页整份图位清单（`replanPageImages` 的结果写回 `plan_json`）。
+ *
+ * `images` 那个数**跟着一起写**：它是「这一页要几张图」的唯一显示来源，只改清单的话界面上
+ * 写着 1 张、清单里列着 4 条，而两处都读起来正常（见 `PlannedPage.images` 的注释）。
+ *
+ * 同 `updatePlanImageSubject`：**不能走 `savePlan`**（那个会把已生成的页全删掉 —— 重排一次
+ * 图位等于扔掉十几次已经花过的调用，而界面上只是那几页变回「还没生成」），**只动这一页**。
+ */
+export function updatePlanPageImages(
+  id: string,
+  userId: string,
+  page: number,
+  specs: Array<{ subject: string; mode: string; ratio: string }>
+): { ok: boolean } {
+  const deck = getDeck(id, userId);
+  if (!deck) return { ok: false };
+  let plan: any;
+  try {
+    plan = JSON.parse(deck.plan_json || '{}');
+  } catch {
+    return { ok: false };
+  }
+  const row = Array.isArray(plan?.pages) ? plan.pages.find((p: any) => Number(p?.page) === page) : null;
+  if (!row) return { ok: false };
+  row.imageSpecs = specs;
+  row.images = specs.length;
+  getDatabase()
+    .prepare('UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .run(JSON.stringify(plan), new Date().toISOString(), id, userId);
+  return { ok: true };
+}
+
 /** 这一页提纲的上限。超了一律**拒**（同 `MAX_PAGE_NOTES_CHARS` 的理由：截断的那几条
  *  照样生成出一页完整的幻灯片，只是他写的后半段一个字都没进去，也没有一处会说）。 */
 export const MAX_PAGE_TITLE_CHARS = 60;
@@ -295,6 +344,12 @@ export interface PptDeckPage {
   setup_layout_id: string;
   /** 他手写的额外要求（092，字体/排版/语气）。生成和重新生成都要带上。 */
   setup_notes: string;
+  /**
+   * 黑色蒙版的透明度（097，0 = 没有蒙版）。**不是 html 里的一段内联样式** ——
+   * 存在列上，所以重新生成这一页之后它还在（写进 html 的话每次重生成都被覆盖掉，
+   * 而界面上那个滑块还停在他调的位置）。拼装时由 `deckShell.applyVeil` 现贴。
+   */
+  veil_opacity: number;
   updated_at: string;
 }
 
@@ -304,7 +359,7 @@ export function listPages(deckId: string, userId: string): PptDeckPage[] {
   return db
     .prepare(
       `SELECT page, layout_id, html, images_json, image_style_id, problems_json,
-              pending_images_json, setup_layout_id, setup_notes, updated_at
+              pending_images_json, setup_layout_id, setup_notes, veil_opacity, updated_at
          FROM ppt_deck_pages WHERE deck_id = ? ORDER BY page`
     )
     .all(deckId) as PptDeckPage[];
@@ -529,6 +584,35 @@ export function savePageSetup(
     ...(args as any[]),
     now
   );
+  touchDeck(deckId);
+  return true;
+}
+
+/**
+ * 存一页的蒙版透明度（097）。
+ *
+ * upsert：这一页可能还没生成过（他先调暗再生成），插不进去的话保存那一下没声音、
+ * 生成出来的那一页没有蒙版，而滑块停在他拖的位置。
+ *
+ * **不碰 html 和配图那几列**：蒙版是拼装时贴的，改它不该让「这一页配好的图」消失。
+ */
+export function savePageVeil(
+  deckId: string,
+  userId: string,
+  data: { page: number; opacity: number }
+): boolean {
+  const db = getDatabase();
+  if (!getDeck(deckId, userId)) return false;
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO ppt_deck_pages
+       (id, deck_id, page, layout_id, html, images_json, image_style_id, problems_json,
+        pending_images_json, setup_layout_id, setup_notes, veil_opacity, created_at, updated_at)
+     VALUES (?, ?, ?, '', '', '', '', '', '', '', '', ?, ?, ?)
+     ON CONFLICT(deck_id, page) DO UPDATE SET
+       veil_opacity = excluded.veil_opacity,
+       updated_at = excluded.updated_at`
+  ).run(uuidv4(), deckId, data.page, data.opacity, now, now);
   touchDeck(deckId);
   return true;
 }

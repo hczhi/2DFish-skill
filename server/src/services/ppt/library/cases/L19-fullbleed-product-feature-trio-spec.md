@@ -113,36 +113,39 @@
 ## 六、build-part 结构模板
 
 ```html
-<section class="slide l19-wrap">
-  <!-- 全幅 bg + 产品图 -->
-  <div class="l19-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
-  <div class="l19-product"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
+<section class="slide">
+  <!-- 包装层是 section 里的第一个 div，不要把 l19-wrap 加到 <section> 上 -->
+  <div class="l19-wrap">
+    <!-- 全幅 bg + 产品图 -->
+    <div class="l19-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
+    <div class="l19-product"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
 
-  <!-- 顶部 logo -->
-  <div class="l19-logo">{{brand_text}}<small>{{series_text}}</small></div>
+    <!-- 顶部 logo -->
+    <div class="l19-logo">{{brand_text}}<small>{{series_text}}</small></div>
 
-  <!-- 左上标题 -->
-  <div class="l19-title">
-    <h1>{{feature_title}}</h1>
-    <div class="sub">{{feature_subline}}</div>
-  </div>
-
-  <!-- 左下描述 -->
-  <div class="l19-desc">{{feature_desc}}</div>
-
-  <!-- 底部 3 白卡 -->
-  <div class="l19-specs">
-    <div class="l19-spec">
-      <div class="v">{{spec1_value}}</div>
-      <div class="k">{{spec1_key}}</div>
+    <!-- 左上标题 -->
+    <div class="l19-title">
+      <h1>{{feature_title}}</h1>
+      <div class="sub">{{feature_subline}}</div>
     </div>
-    <div class="l19-spec">
-      <div class="v">{{spec2_value}}</div>
-      <div class="k">{{spec2_key}}</div>
-    </div>
-    <div class="l19-spec">
-      <div class="v">{{spec3_value}}</div>
-      <div class="k">{{spec3_key}}</div>
+
+    <!-- 左下描述 -->
+    <div class="l19-desc">{{feature_desc}}</div>
+
+    <!-- 底部 3 白卡 -->
+    <div class="l19-specs">
+      <div class="l19-spec">
+        <div class="v">{{spec1_value}}</div>
+        <div class="k">{{spec1_key}}</div>
+      </div>
+      <div class="l19-spec">
+        <div class="v">{{spec2_value}}</div>
+        <div class="k">{{spec2_key}}</div>
+      </div>
+      <div class="l19-spec">
+        <div class="v">{{spec3_value}}</div>
+        <div class="k">{{spec3_key}}</div>
+      </div>
     </div>
   </div>
 </section>
@@ -175,7 +178,7 @@
 ## 九、design 提示
 
 - **视觉**：重（暗 bg + 产品大图 + 白卡对比，气场强）
-- **是否全幅**：是（**不包 `.slide-inner`**，与 L2/L3/L11/L13/L18/L21/L22 同级 fullbleed）
+- **是否全幅**：是（**不包 `.slide-inner`**，与 L11/L13/L18/L21/L22 同级 fullbleed）
 - **build-part 决策**：section 标注 `fullbleed:true`，build-part 决定性跳过 `.slide-inner` 包裹
 - **关键约束**：
   - 3 个白卡必须等宽，间距一致

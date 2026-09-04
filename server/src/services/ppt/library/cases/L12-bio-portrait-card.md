@@ -59,12 +59,12 @@
 
 | 截图原色 | 归一为 | 用途 |
 |---------|--------|------|
-| 红 #C8202A | `var(--c-brand)` | super-word、色带、短线、角标 |
-| 深红 #A81824 | `var(--c-brand-deep)` | 色带渐变深端 |
-| 深色文字 #1F1F23 | `var(--c-ink-deep)` | 中字主标题 |
-| 浅灰 #9A9AA2 | `var(--c-ink-soft)` | kicker、描述段落 |
-| 白 #FFFFFF | `var(--c-card)` | Card 底、圆形视觉白边 |
-| 浅米底 #F5F3EF | `var(--c-bg)` | 整页外层底 |
+| 红（截图原色） | `var(--c-brand)` | super-word、色带、短线、角标 |
+| 深红 | `var(--c-brand-deep)` | 色带渐变深端 |
+| 深色文字 | `var(--c-ink-deep)` | 中字主标题 |
+| 浅灰 | `var(--c-ink-soft)` | kicker、描述段落 |
+| 白 | `var(--c-card)` | Card 底、圆形视觉白边 |
+| 浅米底 | `var(--c-bg)` | 整页外层底 |
 
 > 归一后，无论 deck palette 是橙、青、黄、蓝、双色系，这个版式都成立。super-word 和色带自动跟随 deck 品牌色。**配色完全由 design-spec.json 决定，案例不绑死任何色系。**
 

@@ -39,6 +39,18 @@ describe('配图画风库', () => {
     expect(prompt).toContain('No text');
   });
 
+  it('图的颜色跟着这份稿子的配色走，不是 template 那份默认色', () => {
+    // 一直用默认那份的话，蓝色系/墨绿系的稿子配出来的图全是橙的 —— 每张图单看都不错，
+    // 一处都不报错，他只会以为「这个模型画不了蓝色」，或者一张张重生（每张都真花钱）。
+    const s = styleById('S-A')!;
+    const input = { theme: '增长', scene: '柱状图', ratio: '16:9 landscape' };
+    const blue = renderStylePrompt(s, 'concept', { ...input, design: { palette: 'P-B', font: 'F-A', density: 'D-B', header: 'H-A' } });
+    expect(blue).toContain('#2A5DB0');
+    expect(blue).not.toContain(deckColors().brand); // 默认那套的橙不能出现
+    // 不传规范 = 默认那套（老 deck），照旧是 template 里那个色
+    expect(renderStylePrompt(s, 'concept', input)).toContain(deckColors().brand);
+  });
+
   it('三路 mode 出来的提示词不一样（不然 data 页拿到的是概念插画）', () => {
     const s = styleById('S-A')!;
     const input = { theme: '增长', scene: '柱状图与上升曲线', ratio: '16:9 landscape' };

@@ -22,6 +22,11 @@
   --serif:"Noto Serif SC",serif; --sans:"Noto Sans SC",system-ui,sans-serif;
   --num:"Sora","Noto Sans SC",system-ui,sans-serif;
   --ease:cubic-bezier(.2,.7,.3,1);
+  /* 版面：页眉那条带 + 内容区内边距。**必须是变量、且横向共用同一个** ——
+     写死的话疏密档只改得到 .slide-inner（页眉留在 140px 上），舒展档的页眉比内容左边 36px、
+     紧凑档右边 32px，而每一页都是一页正常的幻灯片；纵向更狠：紧凑档的内容起点比页眉还高，
+     两行字直接叠在一起。--pad-top 必须留在页眉带下面（designSpec.test.ts 按这个对账）。 */
+  --head-y:44px; --pad-x:140px; --pad-top:100px; --pad-bottom:118px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-ink);overflow:hidden}
@@ -53,7 +58,17 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
   background-size:48px 48px;background-position:center}
 .slide.tinted::before{background-image:radial-gradient(880px 600px at 88% 8%,rgba(240,134,26,.07),transparent 62%),radial-gradient(820px 600px at 6% 94%,rgba(45,185,237,.06),transparent 60%),linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
   background-size:auto,auto,48px 48px,48px 48px;background-position:center}
-.slide-inner{position:absolute;inset:0;padding:78px 140px 118px;z-index:2;display:flex;flex-direction:column}
+/* 统一蒙版：**每一页都有，由代码贴（`deckShell.applyVeil`），不让模型写**。
+   默认 opacity 0（等于不存在），每页在「这一页详情」里单独调。
+   z-index:1 是承重的 —— 背景图那一层是 z-index:0 或 auto（`.case-bg` / `.p5-visual` /
+   `.l13-bg` / 各 `xx-hero img`），内容那一层是 z-index:2 以上：夹在中间才做得到
+   「盖住背景图、不盖内容」。所以**不定位的内容块必须补 `position:relative;z-index:2`**
+   （下面 L14/L15/L20/L22 那几条），不补的话那一整块白底文字会跟着背景一起被压暗，
+   而它仍然是一页读得通的幻灯片，没有一处会说。
+   pointer-events:none：不掐掉的话它盖住整页，就地改文字那一套（双击选中）在没有内容的
+   地方点不动，现象是「这一页改不了字」。 */
+.slide-veil{position:absolute;inset:0;background:#000;pointer-events:none;z-index:1}
+.slide-inner{position:absolute;inset:0;padding:var(--pad-top) var(--pad-x) var(--pad-bottom);z-index:2;display:flex;flex-direction:column}
 /* 角标 */
 .corners{position:absolute;inset:0;pointer-events:none;z-index:1}
 .corners i{position:absolute;width:18px;height:18px;color:var(--c-ink-soft);opacity:.45}
@@ -70,8 +85,10 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    页码只留在播放器页脚的 #page-ind 和目录面板里，那两处都是代码按 section 顺序算的。
    （templateClasses() 现在会先去掉 CSS 注释再收类名，所以注释掉的规则真的算"没定义"，
    模型再写这几个类会被 checkPage 点名。） */
-/* 统一页眉：固定左上角；build-part 必须为非封面页生成 .slide-header */
-.slide-header{position:absolute;top:78px;left:140px;z-index:30;max-width:760px;pointer-events:none}
+/* 统一页眉：固定左上角，**独占 --head-y 到 --pad-top 之间那条带**（内容从 --pad-top 才开始）。
+   原来两个都是 78px —— 页眉和正文第一行是同一个 y，谁先谁后全看那条版式自己有没有再往下让，
+   于是「有些页面重叠、有些正常」，而每一页都是一页完整的幻灯片、problems 里一个字都没有。 */
+.slide-header{position:absolute;top:var(--head-y);left:var(--pad-x);z-index:30;max-width:760px;pointer-events:none}
 .slide-header .kicker{font-size:17px;font-weight:700;letter-spacing:.08em;color:var(--c-accent-deep)}
 /* 页眉只展示模块名（kicker），不展示标题。page-title 是正文内容，由 .slide-inner 内部版式呈现，不进页眉 */
 /* .slide-header .page-title 已废弃 */
@@ -106,7 +123,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .gallery img{width:100%;border-radius:12px;border:1px solid var(--c-hairline);display:block}
 /* 三栏并列叙事 (L11) · 全幅图叠字（标题白字叠在图上，模块名走 .slide-header，没有 header 带）
    — 详情见 cases/L11-tri-narrative-photo.md，那份 md 是喂给模型的说明，两边必须对得上 */
-.tri-narrative{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;overflow:hidden}
+.tri-narrative{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden}
 .tri-title{position:absolute;top:188px;left:80px;right:80px;z-index:5;color:#fff;font-family:var(--serif);font-size:40px;font-weight:800;letter-spacing:.5px;text-shadow:0 2px 18px rgba(0,0,0,.4)}
 .tri-title .em{color:var(--c-accent)}
 .tri-cols{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;position:relative;overflow:hidden}
@@ -171,7 +188,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l14-kicker{font-size:14px;font-weight:700;letter-spacing:3px;opacity:.85;margin-bottom:16px;padding-left:12px;border-left:2px solid var(--c-accent)}
 .l14-mega-en{font-size:56px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
 .l14-mega-cn{font-size:56px;font-weight:800;line-height:1.15;margin-top:4px;opacity:.95}
-.l14-info{flex:1;background:var(--c-bg);padding:48px 80px 64px;display:grid;grid-template-columns:1fr 1fr;gap:64px}
+.l14-info{position:relative;z-index:2;flex:1;background:var(--c-bg);padding:48px 80px 64px;display:grid;grid-template-columns:1fr 1fr;gap:64px}
 .l14-info-col h3{font-size:20px;font-weight:700;color:var(--c-ink-deep);margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--c-hairline)}
 .l14-cn-p{font-size:15px;line-height:1.85;color:var(--c-ink);margin-bottom:12px}
 .l14-en-p{font-size:13px;line-height:1.65;color:var(--c-ink-soft);font-style:italic;opacity:.85}
@@ -182,7 +199,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l15-hero-tl{position:absolute;top:48px;left:80px;color:var(--c-card);z-index:2;font-size:18px;line-height:1.4}
 .l15-hero-tl .logo{font-size:28px;font-weight:700;margin-bottom:8px}
 .l15-hero-tr{position:absolute;top:48px;right:80px;color:var(--c-card);z-index:2;font-size:12px;line-height:1.6;opacity:.85;max-width:240px;text-align:right}
-.l15-text{flex:1;background:var(--c-card);padding:64px 80px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:56px}
+.l15-text{position:relative;z-index:2;flex:1;background:var(--c-card);padding:64px 80px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:56px}
 .l15-col h3{font-size:22px;font-weight:700;color:var(--c-ink-deep);margin-bottom:24px;padding-left:14px;border-left:3px solid var(--c-accent)}
 .l15-cn{font-size:16px;line-height:1.85;color:var(--c-ink);margin-bottom:16px}
 .l15-en{font-size:11px;line-height:1.65;color:var(--c-ink-soft);opacity:.78}
@@ -255,8 +272,8 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l19-spec .k{font-size:12px;color:var(--c-ink-soft);margin-top:8px;letter-spacing:.04em}
 
 /* L20 左浮文带 + 宽 hero + 三圆图标 — 详情见 cases/L20-left-textband-wide-hero-icon-cluster.md */
-.l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;z-index:1;overflow:hidden}
-.l20-textband{padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
+.l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;overflow:hidden}
+.l20-textband{position:relative;z-index:2;padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
 .l20-en{font-size:64px;font-weight:800;color:var(--c-ink-deep);line-height:1.05;letter-spacing:-.01em}
 .l20-cn{font-size:34px;font-weight:500;color:var(--c-ink-deep);margin-top:14px}
 .l20-stat{display:flex;align-items:baseline;gap:10px;margin-top:36px}
@@ -273,7 +290,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l20-hero img{width:100%;height:100%;object-fit:cover;display:block}
 
 /* L21 全幅中央透视 + 左文字 + 右三数据栏 — 详情见 cases/L21-fullbleed-perspective-info-split.md */
-.l21-wrap{position:absolute;inset:0;overflow:hidden;z-index:1}
+.l21-wrap{position:absolute;inset:0;overflow:hidden}
 .l21-bg{position:absolute;inset:0}
 .l21-bg img{width:100%;height:100%;object-fit:cover;display:block}
 .l21-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,.5) 0%,transparent 35%,transparent 65%,rgba(0,0,0,.45) 100%);z-index:1}
@@ -292,7 +309,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l21-nav .dot.on{width:24px;border-radius:4px;background:#fff}
 
 /* L22 上下两段 + 每段各自左右分栏 — 详情见 cases/L22-stacked-hero-info-block-each-split.md */
-.l22-wrap{position:absolute;inset:0;display:flex;flex-direction:column;z-index:1;overflow:hidden}
+.l22-wrap{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden}
 .l22-upper{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0}
 .l22-hero{position:relative;overflow:hidden}
 .l22-hero img{width:100%;height:100%;object-fit:cover;display:block}
@@ -300,11 +317,11 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l22-hero-txt{position:absolute;bottom:48px;left:48px;color:#fff;z-index:2}
 .l22-hero-txt .cn{font-size:36px;font-weight:300;letter-spacing:.04em}
 .l22-hero-txt .en{display:block;font-size:18px;margin-top:8px;letter-spacing:.32em;font-weight:300}
-.l22-info{background:var(--c-card);padding:48px 56px;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.l22-info{position:relative;z-index:2;background:var(--c-card);padding:48px 56px;display:flex;flex-direction:column;justify-content:center;gap:14px}
 .l22-info h3{font-size:18px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--c-hairline);color:var(--c-ink-deep)}
 .l22-info .row{font-size:14px;color:var(--c-ink);line-height:1.8}
 .l22-info .row strong{font-weight:600}
-.l22-lower{flex:1;display:grid;grid-template-columns:1fr 1fr;background:var(--c-card);min-height:0}
+.l22-lower{position:relative;z-index:2;flex:1;display:grid;grid-template-columns:1fr 1fr;background:var(--c-card);min-height:0}
 .l22-lower-col{padding:48px 56px}
 .l22-lower-col+.l22-lower-col{border-left:1px solid var(--c-hairline)}
 .l22-lower-col .icon{width:24px;height:24px;color:var(--c-brand);margin-bottom:14px}

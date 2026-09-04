@@ -943,12 +943,15 @@ Query：`status` (`pending`/`running`/`done`/`failed`/`ignored`) · `app_id` · 
 ```
 POST /decks                    建一份（进工作台会自动规划一次）
 POST /decks/:id/plan           提纲 → 每页一个版式（1 次 AI 调用，清掉已生成的页）
+POST /decks/:id/replan-images  按真实内容 + 现在挑的版式重排图位清单（1 次 AI，不生图）
 POST /decks/:id/prepare-images 逐格备图（可选，AI 生一张 = 一次真实花费）
 POST /decks/:id/pages          生成第 N 页 HTML（1 次 AI，顺手把备好的图贴进去）
 POST /decks/:id/images         给第 N 页配图（按图位逐张生图）
 POST /decks/:id/edit-text      就地改第 N 页的一段文字（不调 AI、不花额度）
 POST /decks/:id/edit-style     改第 N 页某一块的颜色/字号/字重/对齐（不调 AI）
 POST /decks/:id/edit-region-style  改第 N 页某一整块（容器）的 align-items（不调 AI）
+POST /decks/:id/delete-node    删掉第 N 页选中的那一整块（不调 AI；含图的一律 400）
+PATCH /decks/:id/pages/:page/veil  调第 N 页那层黑蒙版的透明度（不调 AI）
 GET  /edit-palette             浮动条能用的那几个颜色（服务端白名单，前端不自己写一份）
 POST /decks/:id/ai-edit        让 AI 改选中那一块的结构（1 次真实调用，文案打码后发出去）
 POST /decks/:id/deck           拼整份（不调 AI，缺页 400）
@@ -984,7 +987,8 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 
 ### POST /api/ppt/decks `PROTECTED`
 ```json
-{ "outline": "整份提纲（≤12000 字）", "title": "可选，缺省取提纲第一行", "brandCn": "", "brandEn": "", "styleId": "S-A" }
+{ "outline": "整份提纲（≤12000 字）", "title": "可选，缺省取提纲第一行", "brandCn": "", "brandEn": "", "styleId": "S-A",
+  "design": { "palette": "P-B", "font": "F-A", "density": "D-B", "header": "H-A" } }
 ```
 回 `{ "deck": { …完整 deck… } }`。名字缺省取提纲第一行但**存下来**，不每次现算 ——
 现算的话改一次提纲第一行，列表里那份稿子就换了名字，读起来像另一份。
@@ -1001,9 +1005,16 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 `plan_json` 是 `POST /decks/:id/plan` 那次的**整份返回原样存的字符串**（空串 = 还没规划过），
 前端的规划面板读它 —— 逐页的 `layoutId` / `alts` / `why` / `imageSpecs` 都在里面。
 
+还回 `design`（这份稿子的设计规范，096 `design_json` 解析过的那份 `{palette,font,density,header}`）和
+`designProblems`（认不出的 id 回落到默认那档时的那几句话）。**前端要用这个 `design` 而不是自己
+去解析 `deck.design_json`**：两处各解析一遍的话，画面按服务端那份渲染、下拉显示前端那份，
+认不出的 id 上两边不一样而一处都不报错。`designProblems` **必须显示出来** —— 不显示的话他打开
+一份「墨绿」的稿子看到的是橙的，而下拉里也显示成默认那档，看起来像他从来没选过。
+
 ### PATCH /api/ppt/decks/:id `PROTECTED`
 ```json
-{ "title": "", "outline": "", "brandCn": "", "brandEn": "", "styleId": "S-A", "notes": "整份要求（≤500 字）" }
+{ "title": "", "outline": "", "brandCn": "", "brandEn": "", "styleId": "S-A", "notes": "整份要求（≤500 字）",
+  "design": { "palette": "P-B", "font": "F-A", "density": "D-B", "header": "H-A" } }
 ```
 回 `{ "deck": {…} }`。**只改传了的那几个字段**：缺省成空串的话，任何一次只改名字的保存都会
 把提纲清空，而两边都回「已保存」。
@@ -1013,6 +1024,12 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 两处都是拒不是截 —— 截掉的半句照样发给模型，而他写在后面那几条要求每页都不生效）。
 改 `notes` / `styleId` **不会重排或重做已经生成的页**（那是真实花过钱的），界面上要写明
 「要逐页重新生成才会按新要求排」。
+
+`design`（096）反过来：改了**已经生成的页立刻跟着变**（规范是靠拼装时覆盖 `:root` 生效的，
+一次调用都不花）—— 所以前端存完要**重读一遍那几页**（`previewHtml` 是服务端现拼的），
+不重读的话画面上一点变化都没有，他会以为这个下拉坏了、或者以为得重新生成十几页。
+三项**必须整段传**，任一项认不出或缺失一律 **400**（不回落）：回落的话下拉里写着「墨绿」而整份是
+橙的，两处对不上而一处都不报错。
 
 ### DELETE /api/ppt/decks/:id `PROTECTED`
 `{ "ok": true }`；不是自己的回 404。同一个事务里把它的页一起删（`ppt_deck_pages`），
@@ -1027,7 +1044,7 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 {
   "pages": [
     {
-      "page": 3, "section": "第二部分 · 落地路径", "title": "三阶段路径",
+      "page": 3, "kind": "内容", "section": "第二部分 · 落地路径", "title": "三阶段路径",
       "points": ["试点", "复制", "平台化"],
       "layoutId": "L7", "alts": ["L3", "L9"], "why": "挑它的理由（一句话）",
       "images": 2,
@@ -1047,10 +1064,14 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 只有模型压根没给规格时才用它给的那个数字，那时 `problems` 里有一条）。`imageSpecs` **没有
 `index` 字段** —— 「第几格」就是数组位置（从 1 起），`prepare-images` 的 `index` 对齐它。
 `alts` 是校验过的备选版式（不在库里的、和 `layoutId` 重复的已经丢掉，最多 3 条）。
+`kind` 是模型标的页型（`封面` / `目录` / `章节` / `内容` / `结尾`，认不出来的词回空串），
+只用来核对版式挑得对不对（对不上时 `problems` 里有一条，页型和版式**都不会被改**）——
+老 deck 的 `plan_json` 里没有这个字段。
 
 `problems` **必须逐条显示**，这一步的失败形态全是「一份看起来完整的规划」：
 模型给了库里没有的版式（那一页被丢掉并点名，绝不静默替换成某一条）、被截断只规划到第 N 页
-（断点前那几页救回来了）、连续 ≥3 页同版式（只报不改）、图的规格被归一、备选被丢掉。
+（断点前那几页救回来了）、连续 ≥3 页同版式（只报不改）、`kind` 和版式的 `归属` 对不上
+（封面那一页排出来是四栏矩阵，而编号完全合法）、图的规格被归一、备选被丢掉。
 
 `clearedPages` / `clearedImages` / `clearedNotes` 是这次规划**扔掉的东西**，三个都要说出来：
 已经生成的那几页、逐格备好的图、他手写的那几段要求 —— 全是花过钱或写过字的，不说的话
@@ -1076,6 +1097,7 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
       "pendingImages": [{ "index": 1, "url": "…", "from": "ai | library" }],
       "setupLayoutId": "他挑的版式（空 = 照规划）",
       "notes": "这一页那段要求",
+      "veilOpacity": 0,
       "updatedAt": "2026-09-03T…"
     }
   ]
@@ -1093,6 +1115,28 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 前端必须显眼说出来 —— 两版都是一页正常的幻灯片。
 **这条读不出来（请求挂了）也要出声**：静默当成「还没生成」的话界面上是「生成全部 12 页」，
 而那十几次调用已经花过了。
+`veilOpacity` 是那层黑蒙版（097，0 = 没有）：前端的滑块**照它画**，不在本地记 ——
+只在本地记的话刷新一次全部归零，而画面上那一页真的还是暗的。
+
+### PATCH /api/ppt/decks/:id/pages/:page/veil `PROTECTED`
+调这一页那层黑蒙版的透明度。**不调 AI、不花额度。**
+
+```json
+{ "opacity": 0.4 }
+```
+
+```json
+{ "page": 3, "veilOpacity": 0.4, "previewHtml": "重拼过的单页 deck（这一页还没生成时是空串）" }
+```
+
+`opacity` 要是 **0~1 的数**，超范围/不是数字一律 **400 且不存**（夹到边界的话他拖到 120%
+拿到的是 100%，而界面上的数字是他拖的那个 —— 下次刷新才变，看起来像「保存偶尔会跳」）。
+
+蒙版**每一页都有、由代码固定贴**（`deckShell.applyVeil`，`<section>` 里的第一个孩子，
+`z-index:1` 夹在背景图和内容之间），**html 一个字都不改** —— 写进 html 的话「重新生成这一页」
+会把它带走，而滑块还停在他调的位置。前端必须换成返回的 `previewHtml`，**不要在 iframe 上
+自己叠一层半透明黑**：本地那层压在文字上面，而真 deck 里它在文字下面，照本地效果调完导出的
+文件是另一副样子。改完整份预览和「已导出」那句话都要作废（拼整份是现拼的）。
 
 ### GET /api/ppt/layouts `PROTECTED`
 22 条版式案例。**不带 `buildText`**（12 份详情 md 近 2000 行，列表页一个也用不上），
@@ -1106,12 +1150,17 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
       "applicable": "适用场景原文", "structure": "", "imageSlots": "3 个（pXX_col1/col2/col3）",
       "designHint": "", "variants": "", "fullbleed": true, "hasCard": false,
       "hasDetail": true, "refImage": "/ppt-cases/L11-ref.png", "demoUrl": "/api/ppt/demo-deck.html?only=L11",
-      "buildLines": 220
+      "buildLines": 220, "disabled": false
     }
   ],
-  "total": 22
+  "total": 22,
+  "disabledCount": 0
 }
 ```
+
+`disabled` = 在案例库里被停用了（**规划时给模型的清单里没有它**，但它照旧在这个列表里、
+`GET /layouts/:id` 也照旧认它 —— 老稿子里用过它的那几页要能重新生成）。列表里**不过滤掉
+停用的**：过滤掉的话他再也没有地方把它开回来。
 
 `imageSlots` 是原文（张数和构图要求都在里面，**别在前端拆**）。`demoUrl` 是那条版式的效果
 demo，卡片缩略图和「生成前改一下」那个下拉都用它 —— 原始截图（`refImage`）只能标成
@@ -1123,6 +1172,32 @@ demo，卡片缩略图和「生成前改一下」那个下拉都用它 —— �
 列表和这条都带 `selectText`（挑版式那次 22 条一起进 prompt 的短文本），`buildText` 只有这条有 ——
 生成某一页时只带**那一条**（单条近 8000 字，22 条一起带会把客户内容挤到上下文末尾，
 出来照样是一份完整的 HTML，只是内容开始跑偏）。
+
+### PUT /api/ppt/layouts/:id/enabled `PROTECTED`
+开 / 关一条版式。`{ "enabled": true | false }`（不是布尔回 400）。
+回 `{ "disabled": ["L5", "L10"], "warnings": [] }` —— **停用后的完整清单**，前端照它重画，
+不在本地取反：取反的话下面那种拒绝会表现成「开关动了一下、刷新又弹回去」，而理由一个字都看不到。
+
+这份状态**全站共用一份**（存 `system_config.ppt_disabled_layouts`，不分用户、不分稿子），
+而且**只影响往后的规划**。两种情况必须显示出来：
+
+- **400**：把某个页型（封面/目录/章节/内容/结尾）停到一条不剩 —— 直接拒。放过去的话规划到
+  那种页时清单里没有可挑的，模型会挑一条别的页型的版式：编号合法、每一页单看都完整正常，
+  整份就是没有目录/没有封面了。
+- **`warnings`**：内容页少了一整种「形状」（聚焦/分屏/并列/对比/数据/时序）—— 只提醒不拦，
+  那之后遇到这种结构的内容只能挑一条形状不对的版式，那一页仍然是一页正常的幻灯片。
+
+### GET /api/ppt/design-options `PROTECTED`
+整份设计规范的可选项（096）：`{ "palettes": [{ "id": "P-A", "name": "想象橙（默认）", "hint": "一句话" }],
+"fonts": […], "densities": […], "headers": […], "default": { "palette": "P-A", "font": "F-A", "density": "D-B", "header": "H-A" } }`。
+`headers` 是左上角那行模块名的样式（H-A 小字加宽字距 / H-B 细宋体 / H-C 品牌色块 / H-D 不显示）——
+**页眉的样式是这里的一档，不是让模型写页眉代码**：一进 prompt 模型就会顺手改写模块名和字号，
+于是每页左上角那行字都不太一样，而每页单看都正常（硬规则 3）。
+
+前端**不写死这份清单**：库里加了一套配色它不出现，删了一套的话他挑到一个存不进去的 id
+（保存时才 400，那一刻看起来像网络问题）。`hint` 也要显示 —— 只有 id 的话他得一个个试，
+每试一次要重看整份。拿不到时要出声：静默的话三个下拉是空的，看起来像「这一版没有设计规范这回事」，
+而库里存着的那份照旧在生效。
 
 ### GET /api/ppt/styles `PROTECTED`
 配图画风库（S-A ~ S-F，唯一来源是 `library/illustration-style.md`）。
@@ -1136,9 +1211,9 @@ demo，卡片缩略图和「生成前改一下」那个下拉都用它 —— �
 ```
 
 前端下拉照它渲染，**不写死一份清单**：md 里加了一套画风之后界面上完全看不见，
-而选中的那几套照旧能用（读起来像「这个平台就这几种风格」）。`colors` 是 deck 外壳
-`:root` 里的真色值 —— 图的配色跟着它走，界面上要能看到是哪几个（图和 deck 不是一套色
-是唯一症状，而每张图单看都好）。**已存的 `styleId` 必须在拿到这份清单之后再覆盖下拉**，
+而选中的那几套照旧能用（读起来像「这个平台就这几种风格」）。`colors` 是**默认那套（P-A）**的色值，只作参考：
+这个端点不带 deck id，而每份稿子实际发给生图模型的颜色是**它自己那套设计规范**解析出来的
+（096 `deckColors(design)`）—— 蓝色系的稿子配出一堆橙图是唯一症状，而每张图单看都好。**已存的 `styleId` 必须在拿到这份清单之后再覆盖下拉**，
 反过来缺省那套会盖掉他存过的画风，而下拉里显示的是缺省值，看起来像他自己选的。
 
 ### GET /api/ppt/demo-deck.html `PUBLIC`
@@ -1193,6 +1268,35 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 **只删这条记录**：COS 上的文件不动，已经用了这张图的那几页 html 也不动。
 前端确认框里必须写清楚这一点 —— 不写的话用户以为这是「把这张图从稿子里去掉」，
 删完去翻那份 deck 图还在，而这边刚回了一句「已删除」。
+
+### POST /api/ppt/decks/:id/replan-images `PROTECTED`
+按**这一页的真实内容 + 现在挑的那条版式**重排图位清单（一次 AI 调用，**不生图**）。
+
+```json
+{ "page": 3, "layoutId": "可选：这次挑的版式（同 /pages，认不出回 400）", "notes": "可选：这一页的额外要求" }
+```
+
+```json
+{
+  "page": 3, "layoutId": "L11",
+  "imageSpecs": [{ "subject": "画什么", "mode": "concept", "ratio": "3:4" }],
+  "problems": ["落在新清单外面的备好的图 / 这一页已经生成过了 之类的话"],
+  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+}
+```
+
+为什么要有这条：图位清单是**整份规划那一次**定的，版式是用户后来在生成前那个对话框里换的
+—— 两者从此对不上而**一处都不报错**（备图面板照旧列着规划那几格，生成时 prompt 里的
+「正好 N 个图位」又压着案例里的图位数，出来是一页排得下但空了两格的幻灯片）。
+张数**按内容定**（4 块分类就 4 张，案例里画 3 张也一样），比例按版式那个位置的形状定。
+
+四条承重的：**版式取「这次传的 → 上次存的 → 规划那条」**（和 `/pages` 同一个顺序，传了就顺手
+存进 `setup_layout_id`，不然重排按新版式算而下一次生成退回旧版式）；**写回 `plan_json` 时
+`images` 那个数跟着一起改**（它是「这一页要几张图」的唯一显示来源）；**落在新清单外面的
+备好的图要点名**（那几张花过钱，重排之后从面板上消失而库里还留着 —— 不删，只说）；
+**这一页已经生成过 HTML 的话回一条 problems 说「要重新生成才生效」**（html 里的图位还是旧的
+那几个，新清单第 4 格备的图贴不进去，而面板上那一格挂着缩略图）。存不上回 500 并说明这次调用
+已经花掉了。前端**不做成「换版式就自动重排」**：那是一次真实调用，点一下下拉就扣一次额度。
 
 ### POST /api/ppt/decks/:id/prepare-images `PROTECTED`
 「先备图」：给规划里第 `index` 格备一张图。**这一页还没生成 HTML 也能备。**
@@ -1317,9 +1421,20 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
   "images": [{ "index": 1, "url": "https://cos/…png", "prompt": "…", "ratio": "16:9 landscape" }],
   "style": { "id": "S-A", "name": "" },
   "setup": { "layoutId": "这次真的用了哪条版式", "notes": "这一页那段要求", "deckNotes": "整份那段要求" },
-  "outline": { "title": "库里现在那份标题", "points": ["库里现在那几条要点"] }
+  "outline": { "title": "库里现在那份标题", "points": ["库里现在那几条要点"] },
+  "plan": { "images": 4, "imageSpecs": [{ "subject": "…", "mode": "data", "ratio": "3:4" }] }
 }
 ```
+
+`plan` 是**按这一页真的排出来的图位对齐之后**那份清单（`specsFromSlots`，纯代码不调 AI，
+存盘前做所以那几句提示进得了 `problems`）。前端必须拿它覆盖内存里那份规划：备图 / 换图 /
+素材库全都按这份清单画，而服务端 `prepare-images` 也按 `imageSpecs.length` 卡格子号 ——
+不覆盖的话规划里 0 格时备图那一整块干脆不出现（界面上写「这一页还没配过图」），
+而画面上就是几张占位图、顶上还写着「配全部图（差 4 张）」，他只剩那条真花钱的路。
+对齐**只在格数变了时发生**（换过版式、或者按真实内容多排了一块）：格数相同时哪怕文字不同
+也不动，那是他改了提示词还没重新生成，覆盖等于把他的修改吞掉。已有那几格原样留着（保住
+他改过的 `subject`），新加的格子从页面上的 `data-img-prompt` / `data-img-mode` / 占位图比例读，
+改动和「空的 data-img-prompt 是哪几格」都在 `problems` 里点名。
 
 `outline` 是**库里现在那份**（他改过就是新的）。前端要拿它更新左边列表和标题栏：不同步的话
 那两处还写着模型原来那句标题，而画面是按新提纲生成的 —— 两处各自都读得通。
@@ -1434,6 +1549,39 @@ center」，不说的话那一整块变了样而他不知道该点回哪个键�
 库里写着新值，而画面一动不动。这一块**本身不是 flex/grid** 时前端就不发（那三个键 CSS 藏着，
 硬点也只换回一句「这一块是 block 布局，align-items 在它身上浏览器根本不认」）——
 放它过去的话同样是「存上了但一点没变」。
+
+### POST /api/ppt/decks/:id/delete-node `PROTECTED`
+把选中的那一整块（一段字也算一块）从第 N 页里**整段剪掉**。不调 AI、不花额度，只写 `html` 这一列。
+定位和交叉核对与 `edit-region-style` 完全同一套（`path` + `eids`，同一份 `pickRegion`）。
+
+```json
+{ "page": 3, "path": [1, 2], "eids": ["t7"] }
+```
+
+```json
+{ "page": 3, "removed": { "name": "div", "cls": "desc", "eids": ["t7"], "text": "一句话说清这一章的落点" },
+  "html": "…", "previewHtml": "…" }
+```
+
+**剩下的 `data-eid` 一个都不重编号**（这条路上绝不调 `injectEids`）：重编一遍的话前端手上那份
+预览里的 t5 和库里的 t5 会指向两个不同的元素，下一次双击改字落到隔壁那一块上，而两块都是正常
+的文字。五种一律 400，且**成因要原样显示给用户**（合成一句「删不了」的话下一步完全不同）：
+
+- **块里有 `<img>` 或图槽位** —— 图的序号是按 html 出现顺序扫的（`findImageSlots`），
+  `images_json` / 备好的图 / `pasteIntoBuiltPage` 全按它贴：少一格之后下一次「换一批图」会把
+  第 2 张贴进第 1 格，图文不符而页面渲染完全正常、面板上照旧写着「3/3 张有图」。要去掉这种块
+  只能走「重新生成这一页」。
+- **空 `path`（整页）** 和 **删完这一页没有任何看得见的内容** —— 空 `<section>` 在 iframe 里是
+  一块白，和「这个版式渲染塌了」分不开，而拼整份那边只会说「缺第 N 页」。
+- **删完一个 `data-eid` 都不剩** —— 前端 `canEditText` 按「html 里有没有 data-eid」算，界面会
+  谎报「这一页还没有编辑标记，重新生成一次才能改文字」，他会为此花掉一次真实调用。
+- **块里是统一页眉（`.slide-header`，096）** —— 那行模块名是整份每一页都有、由代码贴的。
+  只删这一页的话整份里只有这一页左上角是空的，而它看起来只是「这一页比别的干净」。
+  模块名要改是「改这一页的所属模块 + 重新生成」，不是删一块。
+- 块里有 `<script>` / `<style>` 也拒：那段 CSS 改的是整份 deck 的每一页，从这里剪掉的话别的页
+  也跟着变样，而这里只显示「已删掉」。
+
+**撤销还没做**，所以前端删之前有一个确认框，写明「删错了只能重新生成这一页（一次真实调用）」。
 
 ### GET /api/ppt/edit-palette `PROTECTED`
 `{ "colors": ["var(--c-ink-deep)", …] }` —— 浮动条上那几个色块。前端**不自己写一份**：

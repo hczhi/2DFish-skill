@@ -23,12 +23,15 @@ describe('版式案例库', () => {
     expect(lib.layouts.filter((l) => !l.applicable).map((l) => l.id)).toEqual([]);
   });
 
-  it('全幅集合按文末那句话算，不只看条目里的「是否全幅」', () => {
-    // L2/L3 那几条老条目压根没写「是否全幅」，漏了就会被包进 .slide-inner，
-    // 出来是一张四边留白的「全幅」图
-    expect(layoutById('L2')?.fullbleed).toBe(true);
-    expect(layoutById('L3')?.fullbleed).toBe(true);
+  it('fullbleed 只认「内容不包 .slide-inner」，「背景图铺满」不算', () => {
+    // 「背景图铺满整页」不算全幅：L2/L3 的图是绝对定位铺满的，文字照旧在 .slide-inner 里
+    // （demo 片段就是这么写的，`demoDeck.test.ts` 拿它对账）。标成 true 的那段时间里，
+    // 每一页 L2 都被告知「不要包」—— 标题贴着画面边缘、疏密档不动一个像素，一处都不报错。
+    expect(layoutById('L2')?.fullbleed).toBe(false);
+    expect(layoutById('L3')?.fullbleed).toBe(false);
+    // 真全幅的那几条（内容整块脱离 .slide-inner）照旧是 true
     expect(layoutById('L18')?.fullbleed).toBe(true);
+    expect(layoutById('L11')?.fullbleed).toBe(true);
     // L12 明写「否」但要 has-card（色带溢出卡片边缘）
     expect(layoutById('L12')?.fullbleed).toBe(false);
     expect(layoutById('L12')?.hasCard).toBe(true);
@@ -41,9 +44,11 @@ describe('版式案例库', () => {
     expect(l12.name).toBe('circle-float-card');
     expect(l12.hasDetail).toBe(true);
     expect(l12.buildText).toContain('bio-card');
-    // L1–L10 没有详情，buildText 回落成索引条目原文（不能是空的）
-    expect(layoutById('L5')?.hasDetail).toBe(false);
-    expect(layoutById('L5')?.buildText).toContain('stat-grid');
+    // 还没写详情 md 的那几条，buildText 回落成索引条目原文（不能是空的、要认得出是哪一条）
+    // —— 回落成空串的话生成那一步只剩「版式 L6」三个字，模型自己发明结构，而页面照样出来
+    for (const l of loadLibrary().layouts.filter((x) => !x.hasDetail)) {
+      expect(l.buildText).toContain(l.name);
+    }
   });
 
   it('library 目录里的文件一改就重读，派生缓存跟着作废', () => {

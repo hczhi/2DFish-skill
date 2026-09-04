@@ -88,8 +88,9 @@
 ## build-part 结构模板
 
 ```html
-<section class="slide l16">
-  <div class="slide-header"><div class="kicker">第二部分 · 服务网络</div></div>
+<section class="slide">
+  <div class="slide-inner">
+  <!-- 左上角那行模块名（.slide-header）由代码统一贴，这里不要写 -->
   <div class="l16-wrap">
     <div class="l16-title">
       <h2>我们一起，将梦想实现</h2>
@@ -109,6 +110,7 @@
       <div class="l16-cell">…</div>
       <div class="l16-cell">…</div>
     </div>
+  </div>
   </div>
 </section>
 ```

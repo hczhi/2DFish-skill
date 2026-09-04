@@ -15,6 +15,7 @@
 //    调用方必须把这件事说出来（见 imageService / PptPlan.vue）。
 
 import { library, libraryVersion } from './layoutLibrary.js';
+import { designVars, type DesignSpec } from './designSpec.js';
 
 export type ImageMode = 'concept' | 'case' | 'data';
 export const IMAGE_MODES: ImageMode[] = ['concept', 'case', 'data'];
@@ -131,20 +132,35 @@ function field(body: string, label: string): string {
 }
 
 /**
- * deck 真正在用的四个色值（`template.html` 的 `:root`）。
+ * **这一份稿子**真正在用的四个色值：template.html 的 `:root` 打底，再叠上它自己的设计规范
+ * （096 `designVars`）。
+ *
+ * 不给 `design` 就是默认那套（= template 那份）。**调用方一定要把 deck 的规范传进来**：
+ * 一直用默认那份的话，蓝色系的稿子配出来的图全是橙的 —— 每张图单看都不错、没有一处报错，
+ * 他只会以为「这个模型画不了蓝色」，或者一张张重生（每张都是一次真实花费）。
+ *
  * 取不到就抛错：把 `{{BRAND}}` 原样发出去的话，图的配色和 deck 不是一套（见文件头 ②）。
  */
-export function deckColors(): DeckColors {
+export function deckColors(design?: DesignSpec): DeckColors {
   freshen();
-  if (cachedColors) return cachedColors;
-  const css = library().template;
-  const pick = (name: string): string => {
-    const m = new RegExp(`--${name}\\s*:\\s*([^;\\n]+)`).exec(css);
-    if (!m) throw new Error(`template.html 的 :root 里找不到 --${name} —— 生图提示词里的颜色占位符会换不掉。`);
-    return m[1].trim();
+  if (!cachedColors) {
+    const css = library().template;
+    const pick = (name: string): string => {
+      const m = new RegExp(`--${name}\\s*:\\s*([^;\\n]+)`).exec(css);
+      if (!m) throw new Error(`template.html 的 :root 里找不到 --${name} —— 生图提示词里的颜色占位符会换不掉。`);
+      return m[1].trim();
+    };
+    cachedColors = { brand: pick('c-brand'), accent: pick('c-accent'), bg: pick('c-bg'), bgAlt: pick('c-bg-alt') };
+  }
+  if (!design) return cachedColors;
+  // 规范只覆盖它自己列出来的那几个变量（默认那套一个都不覆盖），其余落回 template 那份。
+  const ov = designVars(design);
+  return {
+    brand: ov['--c-brand'] || cachedColors.brand,
+    accent: ov['--c-accent'] || cachedColors.accent,
+    bg: ov['--c-bg'] || cachedColors.bg,
+    bgAlt: ov['--c-bg-alt'] || cachedColors.bgAlt,
   };
-  cachedColors = { brand: pick('c-brand'), accent: pick('c-accent'), bg: pick('c-bg'), bgAlt: pick('c-bg-alt') };
-  return cachedColors;
 }
 
 export interface RenderStyleInput {
@@ -154,6 +170,8 @@ export interface RenderStyleInput {
   scene: string;
   /** '16:9 landscape' */
   ratio: string;
+  /** 这份稿子的设计规范（096）。**不传就是默认那套配色** —— 见 `deckColors` 上的注释。 */
+  design?: DesignSpec;
 }
 
 /**
@@ -163,7 +181,7 @@ export interface RenderStyleInput {
  * `<size>`），一个都不能留 —— 留着就等于把说明文字当需求发给模型了。
  */
 export function renderStylePrompt(style: PptStyle, mode: ImageMode, input: RenderStyleInput): string {
-  const c = deckColors();
+  const c = deckColors(input.design);
   const body = (style.templates[mode] || style.templates.concept)
     .replace(/<size>/g, () => `${input.ratio} composition`)
     // 带「主题」字样的那一处填主题，其余的 `<…>` 都是场景描述。

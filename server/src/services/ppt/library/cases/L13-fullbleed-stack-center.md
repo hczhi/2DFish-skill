@@ -19,7 +19,7 @@
 │  中文副标(一行)                                                │
 │                                                              │
 ├───────────── 下半（浅底信息区 · 双栏文字）──────────────────┤
-│  浅底 (#F5F5F7 类)                                            │
+│  浅底（deck 的 var(--c-bg)）                                   │
 │                                                              │
 └────────── 中心径向亮边缘暗渐变覆盖在上半图上 ──────────────┘
 ```
@@ -129,7 +129,7 @@
 ## build-part 结构模板
 
 ```html
-<section class="slide l13-cover fullbleed">  <!-- fullbleed: 不包 .slide-inner -->
+<section class="slide">  <!-- 全幅：不包 .slide-inner。根 section 上不要写 l13-cover / fullbleed 这类没有定义的类名 -->
   <div class="l13-wrap">
     <div class="l13-bg"><img src="/ppt-cases/ph-16x9.svg" data-img-prompt="这一格要什么图（中文一句话）" alt=""></div>
     <div class="l13-pill">{{演讲单位 · / 主讲人 / 节目标签}}</div>

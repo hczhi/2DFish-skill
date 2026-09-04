@@ -16,6 +16,20 @@ const MAX_OUTLINE = 12000
 
 const form = ref({ title: '', outline: '', brandCn: '', brandEn: '', styleId: '' })
 
+/**
+ * 设计规范（096：配色 / 字体 / 疏密）。**在这里就定**：先生成十几页再去设置里改的话，
+ * 那几页当时是按默认那套排的 —— 虽然改规范会当场跟着变（靠 `:root` 覆盖），但模型挑颜色
+ * 搭配时参考的是那一套，出来的每一页各自都好看。
+ * 清单从 `GET /api/ppt/design-options` 来，**不在前端写死**：库里加了一套配色它不出现，
+ * 删了一套的话他挑到一个存不进去的 id（保存时才 400，那一刻看起来像网络问题）。
+ */
+interface DesignOpt { id: string; name: string; hint: string }
+const designOpts = ref<{ palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[] }>(
+  { palettes: [], fonts: [], densities: [], headers: [] }
+)
+const design = ref({ palette: '', font: '', density: '', header: '' })
+const hintOf = (list: DesignOpt[], id: string) => list.find(x => x.id === id)?.hint || ''
+
 /** 名字留空就用提纲第一行（服务端同一口径）—— 界面上要把这件事说出来，
  *  不说的话列表里会出现一份他没起过名的稿子，读起来像别人建的。 */
 const titlePreview = computed(
@@ -42,6 +56,16 @@ onMounted(async () => {
   } catch {
     // 画风拿不到就留空，进工作台再选（服务端生图时有自己的默认那套）
   }
+  try {
+    const d = await apiGet<{
+      palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[]
+      default: { palette: string; font: string; density: string; header: string }
+    }>('/api/ppt/design-options')
+    designOpts.value = { palettes: d.palettes, fonts: d.fonts, densities: d.densities, headers: d.headers }
+    design.value = { ...d.default }
+  } catch {
+    // 拿不到就整段不传（服务端用默认那套），不挡新建 —— 进工作台还能改。
+  }
 })
 
 async function create() {
@@ -59,6 +83,9 @@ async function create() {
       brandCn: form.value.brandCn.trim() || undefined,
       brandEn: form.value.brandEn.trim() || undefined,
       styleId: form.value.styleId || undefined,
+      // 四项缺一项服务端就 400（缺的那项会悄悄回到默认），所以要么整段传、要么不传。
+      design: design.value.palette && design.value.font && design.value.density && design.value.header
+        ? design.value : undefined,
     })
     router.push(`/ppt/decks/${res.deck.id}`)
   } catch (e: any) {
@@ -155,6 +182,40 @@ async function create() {
                 </select>
               </label>
             </div>
+            <div v-if="designOpts.palettes.length" class="row-fields">
+              <label class="field small">
+                <span class="label">配色</span>
+                <select v-model="design.palette">
+                  <option v-for="o in designOpts.palettes" :key="o.id" :value="o.id">{{ o.name }}</option>
+                </select>
+                <span class="hint">{{ hintOf(designOpts.palettes, design.palette) }}</span>
+              </label>
+              <label class="field small">
+                <span class="label">字体</span>
+                <select v-model="design.font">
+                  <option v-for="o in designOpts.fonts" :key="o.id" :value="o.id">{{ o.name }}</option>
+                </select>
+                <span class="hint">{{ hintOf(designOpts.fonts, design.font) }}</span>
+              </label>
+              <label class="field small">
+                <span class="label">疏密</span>
+                <select v-model="design.density">
+                  <option v-for="o in designOpts.densities" :key="o.id" :value="o.id">{{ o.name }}</option>
+                </select>
+                <span class="hint">{{ hintOf(designOpts.densities, design.density) }}</span>
+              </label>
+              <label class="field small">
+                <span class="label">页眉</span>
+                <select v-model="design.header">
+                  <option v-for="o in designOpts.headers" :key="o.id" :value="o.id">{{ o.name }}</option>
+                </select>
+                <span class="hint">{{ hintOf(designOpts.headers, design.header) }}</span>
+              </label>
+            </div>
+            <span class="hint">
+              这四项是整份的<b>设计规范</b>：所有页面统一。之后在工作台的「提纲与设置」里还能改，
+              <b>改完已经生成的页会跟着变</b>（不用重新生成、不花钱）—— 案例库里的颜色和间距从此只算参考。
+            </span>
             <span class="hint">
               品牌名只影响 deck 外壳（封面和页脚那几个占位符），逐页 HTML 里没有它。
               画风到生图那一步才用得上，整份 deck 只能一套 —— 配了几页图再回头换的话，
