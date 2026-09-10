@@ -68,6 +68,42 @@ describe('版式详情 md 与 template.html 对不对得上', () => {
     expect(missing).toEqual([]);
   });
 
+  it('md 的 CSS 骨架和 template.html 逐条声明一致', () => {
+    // 上面两条只核**名字**（类名在不在、变量名在不在），数值一个都不核 —— 于是同一条规则的
+    // 两份拷贝会慢慢漂开，而两边都「存在」，没有一处会说：`.l21-left` md 写 `top:88px`、
+    // template 是垂直居中；`.l14-hero::after` 的渐变方向在 md 里是反的；`.l18-headline` md
+    // 是 `top:14%` 而 template 已经为了避让页眉改成 18%。模型照 md 想象版面、浏览器照
+    // template 渲染，出来的每一页都完整正常，只是「和案例长得不太一样」。
+    // 最贵的一次就是 `.l16-wrap`：md 那份写着 `padding:160px`（自带页眉安全区），模型据此
+    // 认为这一层的 padding 是可调的，一句 inline style 就把标题推进页眉带里。
+    // 只在 md 里存在的规则同样算错：那是在教模型写一个**永远不会渲染的装饰**（L18 那条
+    // `.l18-cn::before` 波浪线就这样，template 里只有 `.l18-cn svg`）。
+    const tplCss = [...readFileSync(join(libraryRoot(), 'template.html'), 'utf-8')
+      .matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
+    const norm = (s: string) =>
+      s.replace(/\s*([;:,])\s*/g, '$1').replace(/'/g, '"').replace(/\s+/g, ' ').replace(/;$/, '').trim();
+    /** 一段 CSS 里的 `选择器 → 声明`（注释不算；同名只取第一条，和浏览器读到的第一份一致）。 */
+    const rules = (css: string) => {
+      const out = new Map<string, string>();
+      for (const m of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+        const sel = m[1].trim().replace(/\s+/g, ' ');
+        if (!sel || sel.startsWith('@') || out.has(sel)) continue;
+        out.set(sel, norm(m[2]));
+      }
+      return out;
+    };
+    const tpl = rules(tplCss);
+    const bad: string[] = [];
+    for (const f of files) {
+      const cssBlocks = [...readFileSync(join(dir, f), 'utf-8').matchAll(/```css\n([\s\S]*?)```/g)];
+      for (const [sel, body] of rules(cssBlocks.map((m) => m[1]).join('\n'))) {
+        if (!tpl.has(sel)) bad.push(`${f}:${sel} 只在 md 里有，template.html 里没有这条规则`);
+        else if (tpl.get(sel) !== body) bad.push(`${f}:${sel}\n    md  : ${body}\n    tpl : ${tpl.get(sel)}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('结构模板里不写统一页眉（那一行由代码贴）', () => {
     // md 里留着 `.slide-header` 的话，模型会照着写 —— 而 `applyHeader` 会把它整块摘掉再按
     // 提纲贴一份。非封面页看起来没事（摘了又贴），但两处一冲突（prompt 第 4 条明写「不要写」）

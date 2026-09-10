@@ -16,6 +16,8 @@
 
 import { aiGateway } from '../../core/llm/gateway.js';
 import { layoutById, library, type PptLayout } from './layoutLibrary.js';
+import { enabledLayouts } from './layoutState.js';
+import { outlineFitProblem, longformLayouts } from './outlineFit.js';
 import { designPromptBlock, DEFAULT_DESIGN, type DesignSpec } from './designSpec.js';
 import { type PlannedImage } from './imageSpec.js';
 import { assembleDeck, assemblePreview, templateClasses, stripPageNumber, type DeckMeta } from './deckShell.js';
@@ -37,6 +39,16 @@ export interface PageInput {
   section: string;
   title: string;
   points: string[];
+  /**
+   * 这一页对应的**提纲原文**（逐字，`PlannedPage.outlineText`）。**这是这一步唯一的内容来源
+   * 里最重的那一份**：`points` 是规划那一次调用给三十多页一起写的摘要，一页只摊到几十个
+   * token，所以「1.1 那六行地产数据 + 一句结论」在它那儿必然是一句话 —— 不带原文的话，
+   * 提纲上写着的数字、机构名、条款一个字都进不了 prompt，出来是一页排得很好、内容只剩
+   * 三成的幻灯片，而没有任何一处会说（他只会觉得「AI 写得好空」）。
+   *
+   * 老规划的 `plan_json` 里没有这个字段（缺了就退回只按 `points` 排的老行为）。
+   */
+  outlineText?: string;
   layoutId: string;
   images: number;
   /**
@@ -488,6 +500,14 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
   }
   // 图位条数没照规格来：备好的图是**按序号**贴的，条数一变就有图没地方贴、或者有格子空着，
   // 而这一页看起来完全正常（占位图读起来就是「设计上留白」）。
+  // ⑤ 原文装不进这个版式。规划那一步已经按**规划挑的那条**喊过一次，这里按**这次真的用的
+  //    那条**再核一遍：他在「生成前改一下」里把 640 字那一页换成 L38（行表，4–6 行）之后，
+  //    规划那条警告就过期了，而模型会把这一段悄悄压成 4 行 —— 页面完整通顺，一处不报错。
+  const fit = input.outlineText
+    ? outlineFitProblem(layout, input.outlineText, '这一页', longformLayouts(enabledLayouts()))
+    : null;
+  if (fit) problems.push(fit);
+
   const specs = input.imageSpecs?.length || 0;
   if (specs && slots !== specs) {
     problems.push(
@@ -571,15 +591,20 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
 6. 图槽位：一律先用占位图 ${PLACEHOLDERS.join(' / ')}（按构图比例挑），并给每个图元素加两个属性：
    - \`data-img-prompt="这一格要什么图（中文一句话）"\` —— 真图是下一步按这句话生成后替换进来的，**漏了这个属性那一格就永远配不上图**；
    - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。${imageSpecBlock(input)}
-7. 文案照给定的内容写，不要编数字、不要编客户名。要点可以润色成更适合上屏的短句。
+7. 文案照给定的内容写，不要编数字、不要编客户名。要点可以润色成更适合上屏的短句。${input.outlineText?.trim()
+      ? `\n   **下面「提纲原文」那一段是这一页真正要上屏的内容**（「要点」只是它的骨架）：里面的每一个数字、机构名、年份、条款都要出现在页面上，一条都不许合并、不许省略、不许改写成「等多项」「若干」。装不下的时候用 inline \`style\` 把字号收小一档、或者把段落拆成更多小块，**不要删内容**。`
+      : ''}
 8. **下面那个版式是排版参考，不是模子。** 它的结构、类名、间距节奏照它来，但**重复单元的数量按这一页的真实内容定**：案例里画 3 栏而这一页有 4 块内容，就照同一个单元的结构、同一批类名排 4 栏（**不要**自己发明类名、不要把第 4 块塞进第 3 栏、更不要把它丢掉）；只有 2 块就排 2 栏，不要为了填满案例的格子编内容。单元数量变了就用 inline \`style\` 顺手调宽度/间距（例如 4 栏时把每栏的 flex/width 收窄一点），别让它挤出画面。
    图位那一段（第 6 条）**不受这一条影响**：图位的条数和顺序仍然照给定的规格来（备好的图是按序号贴的）—— 内容块比图位多的时候，多出来那几块就不配图。
 
 ## 这一页的内容
 所属模块：${input.section || '（无）'}
 标题：${input.title}
-要点：
+要点（骨架，用来定这一页分成哪几块）：
 ${input.points.length ? input.points.map((p) => `- ${p}`).join('\n') : '（没有给要点，按标题自己组织，宁可少写也不要编事实）'}
+${input.outlineText?.trim()
+      ? `\n提纲原文（**这一页要上屏的内容就是这一段**，照它写：数字、机构名、条款一条都不要丢，见第 7 条）：\n"""\n${input.outlineText.trim()}\n"""`
+      : ''}
 ${input.imageSpecs?.length
       ? `图位（**必须按这个顺序、就这 ${input.imageSpecs.length} 个**）：\n${input.imageSpecs
           .map(

@@ -52,14 +52,10 @@
 
 ```css
 /* 全幅图叠字·居中堆叠 (L13) · 详情见 cases/L13-fullbleed-stack-center.md */
-.l13-wrap{position:absolute;inset:0}
-.l13-bg{position:absolute;inset:0;overflow:hidden}
+.l13-wrap{position:absolute;inset:0;overflow:hidden}
+.l13-bg{position:absolute;inset:0}
 .l13-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l13-bg::after{
-  content:'';position:absolute;inset:0;
-  background:radial-gradient(ellipse 80% 70% at center,
-    rgba(0,0,0,0) 0%, rgba(0,0,0,.18) 45%, rgba(0,0,0,.65) 100%);
-}
+.l13-bg::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 80% 70% at center,rgba(0,0,0,0) 0%,rgba(0,0,0,.18) 45%,rgba(0,0,0,.68) 100%);z-index:1}
 .l13-pill{
   position:absolute;top:48px;right:48px;
   padding:10px 22px;

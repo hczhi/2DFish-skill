@@ -39,19 +39,25 @@
 - **右侧中文**（占右 50%）：两行巨字，"数字排毒 / 找回遗失的专注力"（约 88–112px，细体白色，行高 1.0）
 - 中英文之间无明显分界，靠左右对齐+字重对比区分
 
+### 中文标题下的说明段（`.l18-lead`）
+
+- 中文巨字下面**右对齐**一段 2–4 行说明（20px，`rgba(255,255,255,.8)`），把那句主张落到具体场景 —— 参考原图右半边那三行小字。
+- 它是 `.l18-headline` 这个两列 grid 的第三个孩子，靠 CSS 里的 `grid-column:2` 落到中文那一列下面；**不要放进 `.l18-cn` 里**（波浪线按 `.l18-cn` 高度的 48% 定位，一放进去线就掉到说明文字上）。
+- 不需要时整块删掉即可（标题块自然收回两行）。
+
 ### 中部红色波浪线
 
 - 一条**红色波浪线**横穿右半中文标题中央（约 4–6px 粗，brand/accent 色，长度等于右半宽度的 60–80%）
-- 用 SVG path 画二次贝塞尔曲线 `M0,0 Q50,15 100,0 T200,0` 或 CSS `clip-path` 实现手绘感
+- 用 `.l18-cn` 里内嵌的 `<svg>` 画二次贝塞尔曲线（`M0 9 Q 50 0 100 8 T 200 8 …`），**不用 CSS `clip-path`**
 
 ### 底部暗蒙版 + 3 栏卡片
 
-1. 暗色蒙版（`linear-gradient(180deg, transparent 0%, rgba(0,0,0,.65) 50%, rgba(0,0,0,.85) 100%)`）
+1. 暗色蒙版（`linear-gradient(180deg, transparent 0%, rgba(0,0,0,.65) 50%, rgba(0,0,0,.85) 100%)`）—— 三栏整体离底边 13%（`bottom:13%`），**别贴到底**：贴底那一版三栏和画面下缘挤在一起，而页面照样渲染
 2. 3 栏等宽（间距 24–40px）：
    - 顶部小引号（`""`，50–60px，brand 色）
    - 大数字（`01 / 02 / 03`，40–56px 衬线 italic，brand 色）
-   - 标题（"主动'断连'的勇气"等，16–20px 粗体白色）
-   - 描述段（12–14px 浅灰，3–5 行，行高 1.7）
+   - 标题（"主动'断连'的勇气"等，25px 粗体白色）
+   - 描述段（18px，`rgba(255,255,255,.8)`，3–5 行，行高 1.8）
 
 ---
 
@@ -90,16 +96,20 @@
 .l18-bg img{width:100%;height:100%;object-fit:cover;}
 .l18-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,rgba(0,0,0,.4) 35%,rgba(0,0,0,.75) 70%,rgba(0,0,0,.9) 100%);}
 /* 左上角的模块名走全平台统一的 .slide-header，这一版没有自己的 logo / pill */
-.l18-headline{position:absolute;top:14%;left:5%;right:5%;display:grid;grid-template-columns:1fr 1fr;gap:60px;z-index:2;}
+.l18-headline{position:absolute;top:18%;left:5%;right:5%;display:grid;grid-template-columns:1fr 1fr;gap:60px;z-index:2}
 .l18-en{font-size:clamp(60px,7vw,96px);font-weight:800;color:#fff;line-height:1.0;letter-spacing:-.01em;}
-.l18-cn{position:relative;font-size:clamp(76px,9vw,112px);font-weight:300;color:#fff;line-height:1.05;letter-spacing:.04em;}
-.l18-cn::before{content:'';position:absolute;left:0;right:0;top:53%;height:5px;background:var(--c-accent);z-index:-1;clip-path:path('M0,2.5 Q60,-4 120,2.5 T240,2.5 T360,2.5 T480,2.5 T600,2.5 T720,2.5 T840,2.5');}
-.l18-cards{position:absolute;bottom:8%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:48px;z-index:2;}
+.l18-cn{position:relative;font-size:clamp(76px,9vw,112px);font-weight:300;color:#fff;line-height:1.05;letter-spacing:.04em;z-index:1}
+/* 波浪线是 `.l18-cn` 里内嵌的那个 <svg>（见下面 build-part），不是伪元素：
+   `clip-path:path()` 那一版只在这份 md 里存在过，template.html 里没有这条规则，
+   于是模型照 md 写完之后中文标题上一条线都没有 —— 这一页照样渲染、类名校验也过。 */
+.l18-cn svg{position:absolute;left:0;right:0;top:48%;width:100%;height:14px;z-index:2;pointer-events:none}
+.l18-lead{grid-column:2;justify-self:end;max-width:600px;margin-top:28px;text-align:right;font-size:20px;line-height:1.85;color:rgba(255,255,255,.8);z-index:2}
+.l18-cards{position:absolute;bottom:13%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:56px;z-index:2;}
 .l18-card{position:relative;color:#fff;}
 .l18-card .quote{font-family:Georgia,serif;font-size:54px;color:var(--c-accent);line-height:1;margin-bottom:4px;}
-.l18-card .num{font-size:48px;font-weight:700;color:var(--c-accent);font-style:italic;font-family:serif;margin-bottom:8px;}
-.l18-card .title{font-size:18px;font-weight:600;margin-bottom:10px;}
-.l18-card .desc{font-size:13px;color:rgba(255,255,255,.78);line-height:1.75;}
+.l18-card .num{font-size:56px;font-weight:700;color:var(--c-accent);font-style:italic;font-family:var(--serif);margin-bottom:10px}
+.l18-card .title{font-size:25px;font-weight:700;margin-bottom:12px;}
+.l18-card .desc{font-size:18px;color:rgba(255,255,255,.8);line-height:1.8;}
 ```
 
 ---
@@ -116,7 +126,12 @@
     <!-- 顶部双标题 -->
     <div class="l18-headline">
       <div class="l18-en">{{en_title_line1}}<br>{{en_title_line2}}</div>
-      <div class="l18-cn">{{cn_title_line1}}<br>{{cn_title_line2}}</div>
+      <!-- 波浪线：这个 <svg> 必须写出来，CSS 里没有伪元素版本（漏了就是一条线都没有） -->
+      <div class="l18-cn">{{cn_title_line1}}<br>{{cn_title_line2}}
+        <svg viewBox="0 0 600 14" preserveAspectRatio="none"><path d="M0 9 Q 50 0 100 8 T 200 8 T 300 8 T 400 8 T 500 8 T 600 8" fill="none" stroke="var(--c-accent)" stroke-width="4"/></svg>
+      </div>
+      <!-- 中文标题下的右对齐说明（2–4 行）。不需要就整块删掉；`grid-column:2` 由 CSS 给，别改成放进 .l18-cn 里 -->
+      <div class="l18-lead">{{cn_lead_2_4_lines}}</div>
     </div>
 
     <!-- 底部 3 栏卡片（暗蒙版自然覆盖） -->
@@ -144,7 +159,7 @@
 </section>
 ```
 
-> **design 提示**：波浪线用 SVG path 画效果更稳，CSS `clip-path: path()` 在不同浏览器表现差异大，建议直接内嵌 `<svg>`。
+> **design 提示**：波浪线只有内嵌 `<svg>` 这一种写法（`.l18-cn svg` 是 template 里唯一那条规则）。
 
 ---
 
@@ -175,7 +190,7 @@
 - **关键约束**：
   - 暗 bg 上禁止用浅灰字（`var(--c-ink-soft)`），所有正文必须用 `rgba(255,255,255,.78)` 这种带透明度的白色
   - 双语双标题必须中英对仗工整（行数对齐、字号比例约 1:1.2）
-  - 波浪线穿过中文的位置必须在标题中央（top:50%-60% 区间），不能贴边
+  - 波浪线的位置由 `.l18-cn svg`（top:48%）定死，build-part 里只管把那个 `<svg>` 写出来
   - 3 栏卡片间距 ≥ 40px（暗底上卡片靠得近会糊在一起）
 
 ---

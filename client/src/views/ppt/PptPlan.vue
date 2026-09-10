@@ -50,6 +50,9 @@
       <p v-if="error" class="banner bad">{{ error }}</p>
       <p v-if="metaErr" class="banner bad">{{ metaErr }}</p>
       <p v-if="batchNote" class="banner">{{ batchNote }}</p>
+      <!-- 删页的回执。**逐类报数**（一次生成 / 几张备好的图 / 手写的要求）：只说「已删除」的话
+           他不知道刚扔掉的是几次真实花费，而少掉的那一页在界面上只是少了一张卡。 -->
+      <p v-if="structNote" class="banner" :class="{ bad: structErr }">{{ structNote }}</p>
       <!-- 换画风之后已经配好的那几页**不会自动重做**：不说的话整份翻下来笔触不统一，
            而每张图单看都好、没有一处报错。 -->
       <p v-if="styleMismatch" class="banner warn">{{ styleMismatch }}</p>
@@ -129,7 +132,7 @@
           <b v-else>这份稿子还没有规划</b>
           <p v-if="running">一次真实 AI 调用，通常 10–40 秒。它只挑版式、不生成 HTML。</p>
           <p v-else>
-            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 22 个版式</router-link>里给每页挑一个。
+            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 44 个版式</router-link>里给每页挑一个。
           </p>
           <button v-if="!running" class="btn-primary" @click="showSettings = true">去写提纲</button>
         </div>
@@ -199,6 +202,21 @@
                 :disabled="imgBusy[cur.page] || batchRunning"
                 @click="fillImages(cur, true)"
               >换一批图</button>
+              <!-- 删这一页。**批量/单页正在跑的时候一律禁掉**：那几次调用回来时是按页码写库的，
+                   页码在这中间挪过一位的话，结果会落到别的一页上（服务端 098 那道 planRev
+                   也会拦，这里禁掉是为了不让他白花一次调用）。 -->
+              <button
+                class="btn-ghost warn"
+                :disabled="structBusy || batchRunning || busy[cur.page] || imgBusy[cur.page] || pages.length < 2"
+                :title="pages.length < 2 ? '整份只剩这一页了，删了这份稿子看起来就像没规划过' : ''"
+                @click="removePage(cur)"
+              >{{ structBusy ? '删除中…' : '删掉这一页…' }}</button>
+              <!-- 插一页（不调 AI、不花额度）。禁用条件同上：那几次在跑的调用是按页码写库的。 -->
+              <button
+                class="btn-ghost"
+                :disabled="structBusy || batchRunning || busy[cur.page] || imgBusy[cur.page]"
+                @click="openInsert(cur.page)"
+              >{{ structBusy ? '处理中…' : '在这后面插一页…' }}</button>
             </div>
           </div>
 
@@ -268,17 +286,30 @@
                上一次那一块 —— 画面变了、摘要读起来完全正常）。 -->
           <div v-if="built[cur.page] && (aiSel || aiBusy || aiNote || aiErr)" class="ai-edit">
             <input
-              v-model="aiWish" class="ai-wish" :maxlength="MAX_WISH" :disabled="aiBusy"
-              placeholder="跟 AI 说这一块怎么改，比如「这三条排成两列」「标题小一点、间距拉开」"
+              v-model="aiWish" class="ai-wish" :maxlength="MAX_REMAKE_WISH" :disabled="aiBusy"
+              placeholder="跟 AI 说这一块怎么改：「这三条排成两列」（微调）/「改成两列卡片，每张配一张小图」（自由改造）"
               @keyup.enter="aiEdit()"
             />
             <button class="btn-ai" :disabled="aiBusy || !aiSel || !aiWish.trim()" @click="aiEdit()">
-              {{ aiBusy ? '正在改…' : 'AI 改这一块（花 1 次）' }}
+              {{ aiBusy ? '正在改…' : '微调这一块' }}
+            </button>
+            <!-- 两个按钮、不是一个开关：这一条放开了「删原文 / 新写文案 / 加图」，走错一条的
+                 现象是「AI 怎么没照我说的改」，而两边都花掉一次额度。 -->
+            <button class="btn-ai ghost" :disabled="aiBusy || !aiSel || !aiWish.trim()" @click="aiRemake()">
+              {{ aiBusy ? '正在改…' : '自由改造（不套版式）' }}
             </button>
             <span v-if="aiErr" class="ai-msg bad">{{ aiErr }}</span>
-            <span v-else-if="aiNote" class="ai-msg ok">{{ aiNote }}</span>
+            <template v-else-if="aiNote">
+              <span class="ai-msg ok">{{ aiNote }}</span>
+              <!-- 这几条是「放开了、但必须出声」的那些改动（丢掉的原文 / AI 新写的文案 /
+                   新增的图槽）：不显示的话它们在画面上读起来完全正常。 -->
+              <ul v-if="aiNotes.length" class="ai-notes">
+                <li v-for="(n, i) in aiNotes" :key="i">{{ n }}</li>
+              </ul>
+            </template>
             <span v-else-if="aiSel" class="ai-msg">
-              改「{{ aiSel.label }}」这一块 —— 文案发出去之前会打码，AI 改不到一个字
+              改「{{ aiSel.label }}」这一块（都是一次真实调用）—— <b>微调</b>只动排版，文案打码 AI 碰不到；
+              <b>自由改造</b>可以重排结构、加图、新写文案，改了哪几句会逐条列出来
             </span>
           </div>
           </div>
@@ -308,6 +339,7 @@
                  幻灯片，不说的话他会以为新版式就长这样。 -->
             <p v-if="layoutMismatch" class="banner warn">{{ layoutMismatch }}</p>
             <p v-if="specMismatch" class="banner warn">{{ specMismatch }}</p>
+            <p v-if="orphanPlaceholder" class="banner warn">{{ orphanPlaceholder }}</p>
 
             <!-- 这一页的黑蒙版（097）。滑块显示的是**服务端那份值**，松手才存、存完拿返回的
                  previewHtml 换画面 —— 本地叠一层黑的话预览里它压在文字上面，而真 deck 里它在
@@ -609,7 +641,7 @@
           <ul><li v-for="(x, i) in problems" :key="i">{{ x }}</li></ul>
         </div>
         <p v-if="usage" class="muted">本次规划 token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }}</p>
-        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 22 个版式 demo ↗</a>
+        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 44 个版式 demo ↗</a>
       </aside>
     </div>
 
@@ -625,6 +657,7 @@
         </div>
         <p v-if="layoutsErr" class="banner bad">{{ layoutsErr }}</p>
         <p v-if="rebuildImgWarn" class="banner warn">{{ rebuildImgWarn }}</p>
+        <p v-if="insertedHint?.page === setupFor.page" class="banner warn">{{ insertedHint!.text }}</p>
 
         <!-- 提纲放在最上面：这一页说什么是他真正要改的东西，版式和要求都是围着它转的。
              **一定要写明「点生成才存」**：这个框里改完直接关掉是不存的（他要的就是这样），
@@ -644,6 +677,28 @@
           </span>
           <textarea v-model="draftPoints" rows="5" placeholder="一行一条，模型按这几条排版和写文案"></textarea>
         </label>
+        <!-- 提纲原文：**这一段才是逐字进 prompt 的东西**，上面几条要点只是摘要。
+             不显示的话「这一页为什么把提纲上那个数字丢了」在界面上完全看不出来（要点里本来
+             就没有那个数字），他只会一遍遍重新生成、每次花一份额度。 -->
+        <label class="field">
+          <span class="label">
+            这一页的提纲原文（真正逐字进 prompt 的是这一段）
+            <em :class="{ over: draftOutline.trim().length > MAX_PAGE_OUTLINE }">
+              {{ draftOutline.trim().length }}/{{ MAX_PAGE_OUTLINE }}
+            </em>
+          </span>
+          <textarea
+            v-model="draftOutline" rows="8" class="mono"
+            placeholder="规划那一步从你的提纲里切出来的那几行。粘补充材料、改错别字、把不要的段删掉都在这里。"
+          ></textarea>
+        </label>
+        <!-- 老规划（这个字段之前跑的）没有原文。不说的话上面那个框是空的，看起来像
+             「这一页的提纲丢了」，而它其实只是按要点生成 —— 两种情况在界面上长得一样。 -->
+        <p v-if="!draftOutline.trim()" class="banner warn">
+          这一页没有提纲原文，生成时只有上面那几条要点（摘要）—— 提纲里的数字、机构名、条款
+          进不了 prompt。老的规划都没有这个字段：重新规划一次会有，或者直接把这一页对应的
+          提纲原文粘到上面那个框里。
+        </p>
         <p v-if="outlineIssue" class="banner bad">{{ outlineIssue }}</p>
         <p class="muted">
           提纲跟着这次生成一起存 —— <b>点了下面那个生成按钮才存，直接关掉这个框不保存</b>。
@@ -835,6 +890,45 @@
       </div>
     </div>
 
+    <!-- 插一页（不调 AI、不花额度）。**这里只收提纲，版式不在这个框里挑** —— 插完立刻打开
+         上面那个「生成前确认」框（那里才有 22 条缩略图，挑版式必须看形状）。在这里再放一个
+         挑选器的话就有两处能挑版式，而两处的默认值不一样：他在这里挑完、那边打开又显示成
+         规划那条，界面上看不出哪一处才算数。 -->
+    <div v-if="insertAfter !== null" class="drawer-mask" @click.self="insertAfter = null">
+      <div class="picker" style="width: min(620px, 92vw);">
+        <div class="dr-head">
+          <b>{{ insertAfter === 0 ? '插到最前面（成为第 1 页）' : `在第 ${insertAfter} 页后面插一页（成为第 ${insertAfter + 1} 页）` }}</b>
+          <button class="btn-ghost sm" @click="insertAfter = null">取消</button>
+        </div>
+        <label class="field">
+          <span class="label">
+            这一页的标题
+            <em :class="{ over: insTitle.length > MAX_PAGE_TITLE }">{{ insTitle.length }}/{{ MAX_PAGE_TITLE }}</em>
+          </span>
+          <input v-model="insTitle" type="text" :maxlength="MAX_PAGE_TITLE" placeholder="这一页的标题" />
+        </label>
+        <label class="field">
+          <span class="label">
+            这一页的要点（一行一条，最多 {{ MAX_POINTS }} 条）
+            <em :class="{ over: insPointLines.length > MAX_POINTS }">{{ insPointLines.length }}/{{ MAX_POINTS }} 条</em>
+          </span>
+          <textarea v-model="insPoints" rows="5" placeholder="一行一条，模型按这几条排版和写文案"></textarea>
+        </label>
+        <p v-if="insIssue" class="banner bad">{{ insIssue }}</p>
+        <p class="muted">
+          插进来的是一页<b>还没生成的空页</b>（不花额度）：后面几页的页码整体往后挪一位，它们已经生成的画面、
+          备好的图、写过的要求都跟着自己那一页走。版式先跟着前一页 ——
+          <b>插完会直接打开「生成前确认」，在那里挑一条（和前一页一样的话连着两页会很单调）</b>。
+        </p>
+        <div class="dr-actions">
+          <button class="btn-ghost" @click="insertAfter = null">取消</button>
+          <button class="btn-primary" :disabled="structBusy || !!insIssue" @click="doInsert">
+            {{ structBusy ? '插入中…' : '插进来' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- AI生成前编辑提示词 -->
     <div v-if="aiPromptFor" class="drawer-mask" @click.self="aiPromptFor = null">
       <div class="picker" style="width: min(600px, 92vw);">
@@ -863,16 +957,54 @@
          这也是一次生成，宁可不用而去点「AI 生成」，那才是真的花钱。 -->
     <div v-if="pickFor" class="drawer-mask" @click.self="pickFor = null">
       <div class="picker">
-        <div class="dr-head">
-          <b>给第 {{ pickFor.page }} 页第 {{ pickFor.index }} 格挑一张（挑图不花额度）</b>
-          <button class="btn-ghost sm" @click="pickFor = null">关掉</button>
+        <!-- 标题 + tab 一起 sticky 在抽屉顶上：这里可能是一百多张图，翻到第 80 张想换一组
+             或者退出去时，「关掉」和 tab 全在屏幕外 —— 那时唯一的出路是点遮罩（他不知道），
+             看起来像卡在这个窗口里出不去了。 -->
+        <div class="pick-top">
+          <div class="dr-head">
+            <b>给第 {{ pickFor.page }} 页第 {{ pickFor.index }} 格挑一张（挑图不花额度）</b>
+            <div class="head-btns">
+              <!-- 筛在某一组上时给一个明确的「回全部」：只靠 tab 的话 tab 条横向滚过去之后
+                   「全部」那一个会滚出可视区，而计数行还在说「见上面的『全部』」。 -->
+              <button
+                v-if="assetDeck" class="btn-ghost sm" :disabled="assetsBusy" @click="pickTab('')"
+              >← 回全部（{{ assetAllCount }} 张）</button>
+              <button class="btn-ghost sm" @click="pickFor = null">关掉</button>
+            </div>
+          </div>
+          <!-- 按稿子分 tab。张数是服务端按整张表算的（`groups`），不是把手上这 120 张分组数
+               出来的 —— 页内统计出的「这个项目 3 张」读起来完全正常，而那个项目真正的四十张
+               在第 120 张之后。切 tab 重新请求（同一个理由）。 -->
+          <div v-if="assetGroups.length > 1" class="pick-tabs">
+            <button
+              type="button" class="ptab" :class="{ on: !assetDeck }"
+              :disabled="assetsBusy" @click="pickTab('')"
+            >全部 <em>{{ assetAllCount }}</em></button>
+            <button
+              v-for="g in assetGroups" :key="g.deckId || ASSET_NO_DECK" type="button"
+              class="ptab" :class="{ on: assetDeck === (g.deckId || ASSET_NO_DECK), gone: g.deckGone }"
+              :disabled="assetsBusy" @click="pickTab(g.deckId || ASSET_NO_DECK)"
+              :title="g.deckGone ? '这份稿子已经删了，图还在素材库里' : g.title"
+            >
+              {{ g.deckId === deckId ? '本稿' : g.deckGone ? '（已删除的稿子）' : g.title || (g.deckId ? '（没名字的稿子）' : '没记归属') }}
+              <em>{{ g.count }}</em>
+            </button>
+          </div>
         </div>
+
         <p v-if="assetsErr" class="banner bad">{{ assetsErr }}</p>
+        <p v-else-if="assetsBusy" class="muted">读取中…</p>
+        <p v-else-if="!assets.length && assetDeck" class="muted">
+          这一组里没有图（点上面的「全部」看其余的）。
+        </p>
         <p v-else-if="!assets.length" class="muted">
           素材库还是空的 —— 生成过的每张配图都会自动进这里，之后就能在别的页里重用。
         </p>
         <p v-else class="muted">
-          共 {{ assetsTotal }} 张，这里显示最近 {{ assets.length }} 张。比例/画风和这一格不一样也能挑，
+          <!-- 「这一组 N 张」和「素材库共 M 张」必须同时写出来：只写前一个的话，默认落在
+               本稿这一组上的他会以为库里就这几张，转头去点「AI 生成」花钱生一张库里已有的图。 -->
+          {{ assetDeck === ASSET_NO_DECK ? '没记归属的' : assetDeck ? '这一组' : '素材库共' }}
+          {{ assetsTotal }} 张<span v-if="assetDeck">（素材库共 {{ assetAllCount }} 张，见上面的「全部」）</span><span v-if="assetsTotal > assets.length">，这里显示最近 {{ assets.length }} 张</span>。比例/画风和这一格不一样也能挑，
           挑完会告诉你差在哪（贴进去会被裁 / 笔触不统一）。
         </p>
         <div class="pick-grid">
@@ -889,7 +1021,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { apiGet, apiPost, apiPatch } from '../../lib/api'
+import { apiGet, apiPost, apiPatch, apiDelete } from '../../lib/api'
 
 interface PlannedImage { subject: string; mode: string; ratio: string }
 interface PlannedPage {
@@ -899,6 +1031,9 @@ interface PlannedPage {
   imageSpecs?: PlannedImage[]
   /** 规划给的 2-3 条备选版式（服务端校验过在库里）。老 deck 没有这个字段。 */
   alts?: string[]
+  /** 这一页的提纲原文（代码按行号切的那几行，逐字进 prompt）。老 deck 没有这个字段 ——
+   *  那种页只按上面几条要点生成，所以对话框里要说出来。 */
+  outlineText?: string
   layoutName: string; layoutTitle: string; fullbleed: boolean; demoUrl: string
 }
 
@@ -909,6 +1044,14 @@ const outline = ref('')
 const running = ref(false)
 const error = ref('')
 const pages = ref<PlannedPage[]>([])
+/**
+ * 页序版本号（098）。库里的页数/页序每变一次它就 +1，**按页码写库的那几条请求都要带上它**
+ * （生成 / 备图 / 配图 / 重排图位）：不带的话服务端 400，带错了 409。
+ *
+ * 为什么不能省：那几条都要等上游几十秒，这期间页序变过的话结果会落在**现在的**那个页码上 ——
+ * 出来是一页完整的幻灯片，只是照着别的一页的提纲排的，而这是一次真实花费。
+ */
+const planRev = ref(0)
 const problems = ref<string[]>([])
 const usage = ref<{ prompt_tokens: number; completion_tokens: number; total_tokens: number } | null>(null)
 
@@ -1119,23 +1262,66 @@ function confirmAiPrompt() {
   prepare(page, index, 'ai', undefined, subject)
 }
 
+interface AssetGroup { deckId: string; title: string; deckGone: boolean; count: number; lastAt: string }
+
+/** 「没记归属」那一组在接口上的值（服务端 `ASSETS_NO_DECK`）。空串会被当成「没筛」，
+ *  那个 tab 点下去回的是全部素材 —— 而 tab 是选中的，看起来像这一组有三百张。 */
+const ASSET_NO_DECK = '__none__'
+
 const pickFor = ref<{ page: number; index: number } | null>(null)
 const assets = ref<AssetItem[]>([])
 const assetsTotal = ref(0)
 const assetsErr = ref('')
+const assetGroups = ref<AssetGroup[]>([])
+/** 现在筛的是哪一份稿子（`''` = 全部）。**服务端筛**，不在前端过滤手上这 120 张。 */
+const assetDeck = ref('')
+const assetsBusy = ref(false)
+/** 连点两个 tab 时只认最后那一次的返回：不认的话先发的那次后到，网格是 A 组的图而
+ *  tab 高亮在 B 组上 —— 挑完备的图对不上，而两边读起来都正常。 */
+let assetsSeq = 0
+const assetAllCount = computed(() => assetGroups.value.reduce((n, g) => n + g.count, 0))
 
-async function openPicker(page: number, index: number) {
-  pickFor.value = { page, index }
+async function loadAssets() {
+  const seq = ++assetsSeq
+  assetsBusy.value = true
   assetsErr.value = ''
   try {
-    const data = await apiGet<{ assets: AssetItem[]; total: number }>('/api/ppt/assets')
+    const q = assetDeck.value ? `?deckId=${encodeURIComponent(assetDeck.value)}` : ''
+    const data = await apiGet<{
+      assets: AssetItem[]; total: number; groups: AssetGroup[]
+    }>(`/api/ppt/assets${q}`)
+    if (seq !== assetsSeq) return
     assets.value = data.assets || []
     assetsTotal.value = data.total || 0
+    assetGroups.value = data.groups || []
   } catch (e: any) {
+    if (seq !== assetsSeq) return
     // 静默的话这里是一个空网格，和「素材库本来是空的」长得一样 —— 而他会去点「AI 生成」
     // 重新花一次钱生成一张库里已经有的图。
     assetsErr.value = `素材库读不出来：${e?.message || '请求失败'} —— 先别当成「库里没有图」，那可能只是这次请求失败了。`
+  } finally {
+    if (seq === assetsSeq) assetsBusy.value = false
   }
+}
+
+async function openPicker(page: number, index: number) {
+  pickFor.value = { page, index }
+  // 默认落在本稿那一组：要重用的多半是同一个项目里的图，全库几百张时翻不到。
+  assetDeck.value = deckId.value
+  await loadAssets()
+  // 本稿一张图都没有时退回全部 —— 停在空网格上的话，和「素材库是空的」长得一样，
+  // 而他会去点「AI 生成」花一次钱生一张别的稿子里已经有的图。
+  if (!assetsErr.value && !assets.value.length && assetDeck.value) {
+    assetDeck.value = ''
+    await loadAssets()
+  }
+}
+
+/** 切 tab = 重新请求（前端过滤只过滤得到手上这 120 张，见模板里那段注释）。 */
+function pickTab(id: string) {
+  if (assetDeck.value === id) return
+  assetDeck.value = id
+  loadAssets()
 }
 
 function pickAsset(assetId: string) {
@@ -1166,7 +1352,7 @@ async function prepare(
       pasted?: { html: string; previewHtml: string; images: FilledImage[]; styleId: string }
     }>(
       `/api/ppt/decks/${deckId.value}/prepare-images`,
-      { page, index, from, assetId, subject }
+      { page, index, from, assetId, subject, planRev: planRev.value }
     )
     // 服务端回的规格覆盖内存里那份：改过的提示词只留在输入框里的话，关掉再开是模型
     // 原来那句，而库里已经是新的 —— 两处不一样，界面上一处都不说。
@@ -1226,6 +1412,7 @@ async function replanImages() {
       page: p.page,
       layoutId: draftLayout.value,
       notes: draftNotes.value,
+      planRev: planRev.value,
     })
     const row = pages.value.find(x => x.page === data.page)
     if (row) {
@@ -1354,11 +1541,19 @@ const showAllLayouts = ref(false)
 const draftTitle = ref('')
 /** 要点按行编辑（一行一条）。空行丢掉，服务端也丢 —— 两边规则不一样的话条数对不上。 */
 const draftPoints = ref('')
-/** 三个上限和服务端 `deckStore` 里那三个常量一致：两边不一样时他在这里写得下，
+/**
+ * 这一页的**提纲原文**（`plan_json.outlineText`，规划那一步按行号切出来的那几行）。
+ * 上面那几条要点是摘要，**真正逐字进 prompt 的是这一段** —— 所以这里必须显示出来：
+ * 不显示的话「这一页为什么把提纲上那个数字丢了」在界面上完全看不出来（要点里本来就没有
+ * 那个数字），他只会一遍遍重新生成。
+ */
+const draftOutline = ref('')
+/** 四个上限和服务端 `deckStore` 里那四个常量一致：两边不一样时他在这里写得下，
  *  一点生成就被 400，而看不出是哪一边的限制。 */
 const MAX_PAGE_TITLE = 60
 const MAX_POINTS = 12
 const MAX_POINT = 200
+const MAX_PAGE_OUTLINE = 4000
 
 const draftPointLines = computed(() =>
   draftPoints.value.split('\n').map(s => s.trim()).filter(Boolean)
@@ -1377,6 +1572,8 @@ const outlineIssue = computed(() => {
   if (lines.length > MAX_POINTS) return `要点 ${lines.length} 条，最多 ${MAX_POINTS} 条（多的排不下，会被裁掉且不报错）。拆成两页更好排。`
   const i = lines.findIndex(s => s.length > MAX_POINT)
   if (i >= 0) return `第 ${i + 1} 条要点有 ${lines[i].length} 字，上限 ${MAX_POINT} 字 —— 一条要点是一行字，太长会被版式裁掉。`
+  const n = draftOutline.value.trim().length
+  if (n > MAX_PAGE_OUTLINE) return `提纲原文有 ${n} 字，上限 ${MAX_PAGE_OUTLINE} 字（超了服务端会拒，不会截断）。这么多内容一页装不下，拆成两页。`
   return ''
 })
 
@@ -1425,6 +1622,7 @@ function saveSubject(page: number, index: number, original: string) {
 
 async function openSetup(p: PlannedPage) {
   setupFor.value = p
+  insertedHint.value = null // 只有 doInsert 打开的那一次会紧接着重新写上（见那边）
   showAllLayouts.value = false
   draftLayout.value = setupLayout.value[p.page] || p.layoutId
   draftNotes.value = setupNotes.value[p.page] || ''
@@ -1432,6 +1630,7 @@ async function openSetup(p: PlannedPage) {
   // 这里当成「已经存下来的提纲」显示，而库里还是模型原来那句）。
   draftTitle.value = p.title || ''
   draftPoints.value = (p.points || []).join('\n')
+  draftOutline.value = p.outlineText || ''
   ;(p.imageSpecs || []).forEach((s, i) => { draftSubject.value[subjectKey(p.page, i + 1)] = s.subject })
   if (layoutList.value.length) return
   try {
@@ -1506,6 +1705,27 @@ const specMismatch = computed(() => {
     `所以${slots > planned ? `多出来的那几格现在没有入口` : `多的那几格贴不进画面`}。` +
     '点「重新生成…」会按画面上的图位自动对齐（不用额外花钱，就是这一页那一次调用）。'
 })
+/**
+ * 画面里有占位图，但它不挂在任何一个图槽上（元素上没有 `data-img-prompt`）。
+ *
+ * 这一条**必须说**：整条配图链认的都是 `data-img-prompt`（`findImageSlots`），所以那一处
+ * 在备图面板上不出现、「配全部图」不算它、生图也跳过它 —— 画面上它就是一张图（或者一块
+ * 灰底），永远停在占位图上，而没有一处会说。踩过的那次是自由改造加了一张**背景图**
+ * （`background-image:url(占位图)`）：校验那时只查 `<img>`，于是它整个漏了过去。
+ *
+ * 数法：占位图的处数 - 图槽数。图槽的那张图可能已经是真图（不占一处占位图），所以这个差
+ * 只在「有占位图没人认」时才为正 —— 服务端现在会拒掉这种输出，这条是给库里已经存着的那几页看的。
+ */
+const orphanPlaceholder = computed(() => {
+  const p = cur.value
+  const html = p ? built.value[p.page]?.html || '' : ''
+  if (!html) return ''
+  const n = (html.match(/\/ppt-cases\/ph-/g) || []).length - slotCount(p!.page)
+  if (n <= 0) return ''
+  return `画面里有 ${n} 处占位图没挂在图槽上（元素上少了 data-img-prompt）—— 备图、换图、配全部图都扫不到它，` +
+    '那一处会一直停在占位图上，而它看起来就是一张图。用「自由改造」说一句「给那张背景图补上 data-img-prompt，' +
+    '写清要什么图」，或者重新生成这一页。'
+})
 /** 换版式会连图位一起换：备好的图是按序号贴的，图位少了那几张就没地方贴（服务端会点名）。 */
 const draftLayoutChanged = computed(() => !!setupFor.value && draftLayout.value !== setupFor.value.layoutId)
 
@@ -1521,7 +1741,7 @@ const curIssues = computed(() => {
   if (!p) return 0
   const n = p.page
   return (pageErr.value[n] ? 1 : 0) + (imgErr.value[n] ? 1 : 0) + (prepErr.value[n] ? 1 : 0) +
-    (layoutMismatch.value ? 1 : 0) + (specMismatch.value ? 1 : 0) +
+    (layoutMismatch.value ? 1 : 0) + (specMismatch.value ? 1 : 0) + (orphanPlaceholder.value ? 1 : 0) +
     (built.value[n]?.problems.length || 0) +
     (imgInfo.value[n]?.problems.length || 0) +
     (prepNote.value[n]?.length || 0) +
@@ -1552,6 +1772,10 @@ function startBuild() {
     // 提纲随这次调用一起发（服务端先写回 plan_json 再按新的那份生成）。
     title: draftTitle.value.trim(),
     points: draftPointLines.value,
+    // 原文**每次都发**（他没动过也发同一段回去）：只在「改过」时发的话，一次「只改了标题」
+    // 的生成会走进服务端「没传 outlineText」那条分支 —— 那一次是对的（用库里那份），但
+    // 这里少一个字段就等于把「他刚清空了原文」和「他没动原文」变成同一个请求。
+    outlineText: draftOutline.value.trim(),
   })
 }
 
@@ -1997,7 +2221,12 @@ const aiWish = ref('')
 const aiBusy = ref(false)
 const aiNote = ref('')
 const aiErr = ref('')
+/** 自由改造那次「改了什么」逐条（丢掉的原文 / AI 新写的文案 / 新增的图槽）。**必须显示** ——
+ *  只显示那句摘要的话，这几条改动在画面上读起来完全正常（少一句话、多一句他没写的话）。 */
+const aiNotes = ref<string[]>([])
 const MAX_WISH = 400
+/** 自由改造那句要求的上限（服务端 `MAX_REMAKE_INSTRUCTION` 是同一个数）。 */
+const MAX_REMAKE_WISH = 1000
 /** 存失败时靠它强制重挂 iframe：画面上留着他刚打的那句、而库里是旧的 —— 两处不一样，
  *  而屏幕看起来完全正常（他会以为存上了，直接去导出）。 */
 const previewKey = ref(0)
@@ -2264,6 +2493,7 @@ async function aiEdit() {
   aiBusy.value = true
   aiErr.value = ''
   aiNote.value = ''
+  aiNotes.value = []
   try {
     const data = await apiPost<{ html: string; previewHtml: string; summary: string }>(
       `/api/ppt/decks/${deckId.value}/ai-edit`,
@@ -2286,12 +2516,69 @@ async function aiEdit() {
 }
 
 /**
+ * 自由改造选中那一块（**一次真实调用**）：可以重排结构、新写文案、加图槽，不套案例库那条版式。
+ *
+ * 和上面那条走**两个端点**、不是一个开关：这边放开了「删原文 / 写中文」，走错一条的现象是
+ * 「AI 怎么没照我说的改」。回来那几条 `notes`（丢掉了哪几句 / AI 新写了哪几句 / 新增了几个
+ * 图槽）**一定要显示出来** —— 那些改动在画面上读起来完全正常。
+ */
+async function aiRemake() {
+  const p = cur.value
+  const sel = aiSel.value
+  if (!p || !sel || aiBusy.value) return
+  const wish = aiWish.value.trim()
+  if (!wish) { aiErr.value = '先写一句要改成什么样（比如「改成两列卡片，每张配一张小图」）。'; return }
+  if (wish.length > MAX_REMAKE_WISH) { aiErr.value = `这句有 ${wish.length} 字，上限 ${MAX_REMAKE_WISH} 字 —— 拆成两次改。`; return }
+  const page = p.page
+  aiBusy.value = true
+  aiErr.value = ''
+  aiNote.value = ''
+  aiNotes.value = []
+  try {
+    const data = await apiPost<{
+      html: string; previewHtml: string; summary: string; notes?: string[]
+      images?: FilledImage[]; plan?: { images: number; imageSpecs: PlannedImage[] }
+    }>(
+      `/api/ppt/decks/${deckId.value}/ai-remake`,
+      { page, path: sel.path, eids: sel.eids, instruction: wish }
+    )
+    const b = built.value[page]
+    if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
+    // 图位清单照服务端回的那份记（同「生成这一页」）：自由改造可以加/删图槽，不覆盖的话
+    // 备图那一块照旧按老格数画 —— 画面上两个图槽而面板上只有一格，新那格备图/换图/素材库
+    // 一个入口都没有，他只剩「配全部图」那条真花钱的路。
+    if (data.plan) {
+      p.images = data.plan.images
+      p.imageSpecs = data.plan.imageSpecs
+      data.plan.imageSpecs.forEach((s, i) => { draftSubject.value[subjectKey(page, i + 1)] = s.subject })
+    }
+    // 加/删图槽之后服务端会把配图记录按新 html 重排一次（图的序号是按出现顺序数的），
+    // 重排过就回一份新的 —— 不接的话这一栏照旧写着「配图 1/1 张」并挂着那张缩略图，
+    // 而画面里那几格已经是占位图了，他会当这一页配完直接去拼整份。
+    if (data.images && imgInfo.value[page]) {
+      imgInfo.value[page] = { ...imgInfo.value[page], images: data.images }
+    }
+    aiNote.value = data.summary
+    aiNotes.value = Array.isArray(data.notes) ? data.notes : []
+    invalidateDeck()
+    // 预览重挂之后选中框就没了 —— 那一栏也收起来，留着的话他会对着一块没被框住的内容
+    // 再点一次（那是再花一次额度）。
+    aiSel.value = null
+    aiWish.value = ''
+  } catch (e: any) {
+    aiErr.value = e?.message || '这一块没改上'
+    previewKey.value++
+  }
+  aiBusy.value = false
+}
+
+/**
  * 生成（或重新生成）一页。`setup` 只在从那个对话框点进来时带 —— 不带的话服务端用库里
  * 存着的那份（换过的版式 + 手写要求），所以「逐页生成」也会照着他改过的来。
  */
 async function build(
   p: PlannedPage,
-  setup?: { layoutId: string; notes: string; title: string; points: string[] }
+  setup?: { layoutId: string; notes: string; title: string; points: string[]; outlineText: string }
 ): Promise<BuildOutcome> {
   busy.value[p.page] = true
   pageErr.value[p.page] = ''
@@ -2305,10 +2592,10 @@ async function build(
         images?: FilledImage[]
         style?: { id: string; name: string }
         setup?: { layoutId: string; notes: string }
-        outline?: { title: string; points: string[] }
+        outline?: { title: string; points: string[]; outlineText?: string }
         plan?: { images: number; imageSpecs: PlannedImage[] }
       }
-    >(`/api/ppt/decks/${deckId.value}/pages`, { page: p.page, ...(setup || {}) })
+    >(`/api/ppt/decks/${deckId.value}/pages`, { page: p.page, planRev: planRev.value, ...(setup || {}) })
     // 图位清单照服务端回的那份记：它会按这一页**真的排出来的图位**对齐（换过版式、或者按
     // 真实内容多排了一块）。不覆盖的话备图那一整块照旧按老的格数画 —— 规划里 0 格时它干脆
     // 不画（界面上写「这一页还没配过图」），而画面上明明有 4 张占位图、一个备图入口都没有。
@@ -2322,6 +2609,9 @@ async function build(
     if (data.outline) {
       p.title = data.outline.title
       p.points = data.outline.points
+      // 原文也照服务端回的那份记。不同步的话下次打开那个框显示的是手上这份老原文，
+      // 看起来像上一次的修改没存上 —— 而库里存的、这一页画面上的，都是新的那一段。
+      if (data.outline.outlineText !== undefined) p.outlineText = data.outline.outlineText
     }
     // 这次到底按哪条版式、带了什么要求，照服务端回的那份记（本地那份 draft 可能和它不一样：
     // 选回规划那条时服务端会把覆盖清掉）。不同步的话标签写着 L12 而画面是 L07 排的。
@@ -2482,7 +2772,9 @@ async function fillImages(p: PlannedPage, force = false): Promise<BuildOutcome> 
   try {
     // html 也从库里取（服务端）：传内存里那份的话，重新生成过的那一页会被配上图再存回去，
     // 内容退回上一版而图是新的，两边都不报错。
-    const data = await apiPost<ImagesResult>(`/api/ppt/decks/${deckId.value}/images`, { page: p.page, force })
+    const data = await apiPost<ImagesResult>(
+      `/api/ppt/decks/${deckId.value}/images`, { page: p.page, force, planRev: planRev.value }
+    )
     built.value[p.page] = { ...built.value[p.page], html: data.html, previewHtml: data.previewHtml }
     imgInfo.value[p.page] = data
     invalidateDeck()
@@ -2589,6 +2881,9 @@ async function loadDeck() {
     brandCn.value = deck.brand_cn || ''
     brandEn.value = deck.brand_en || ''
     deckNotes.value = deck.notes || ''
+    // 页序版本号（098）。**每次读 deck 都要跟上**：不跟的话删过一页之后这一页上所有
+    // 花钱的操作都会 409，而他刚刚才刷新过。
+    planRev.value = Number(deck.plan_rev) || 0
     if (deck.style_id) styleId.value = deck.style_id
     // 规范用服务端解析过的那份（`parseDesignSpec`），不自己读 `design_json`：两处各解析一遍的话
     // 画面按服务端那份渲染、下拉显示前端这份，认不出的 id 上两边会不一样而都不报错。
@@ -2700,6 +2995,195 @@ async function saveVeil(page: number, next: number) {
   veilBusy.value = false
 }
 
+// ── 删一页（结构改动，098）────────────────────────────
+const structBusy = ref(false)
+const structNote = ref('')
+const structErr = ref(false)
+
+/**
+ * 把所有**按页码索引**的本地状态清空。
+ *
+ * 删一页之后后面的页码全部往前挪一位，而这十几个 map 的 key 是页码 —— 不清的话它们整体
+ * 错位一位：备好的图挂在没备图的那一页上、蒙版滑块显示的是隔壁那页的值、生成前对话框里
+ * 那几句图片提示词是上一页的。**每一页渲染出来都是一页正常的幻灯片**，一处都不报错。
+ *
+ * 所以这里宁可全清再从库里读一遍（都是本地缓存，重读不花钱），不做「把 key 平移一位」——
+ * 平移漏掉任何一个 map 就是上面那种错位，而漏掉哪个看不出来。
+ */
+function resetPageState() {
+  built.value = {}
+  builtLayout.value = {}
+  busy.value = {}
+  pageErr.value = {}
+  veil.value = {}
+  showSrc.value = {}
+  imgBusy.value = {}
+  imgErr.value = {}
+  imgInfo.value = {}
+  pending.value = {}
+  prepBusy.value = {}
+  prepErr.value = {}
+  prepNote.value = {}
+  setupLayout.value = {}
+  setupNotes.value = {}
+  // 图片提示词的草稿也按「页码:格号」存（`subjectKey`）：留着的话生成前那个对话框里显示的是
+  // 隔壁那一页的提示词，而他一按保存就把它写进这一页了。
+  draftSubject.value = {}
+  editErr.value = {}
+}
+
+/**
+ * 删掉这一页。
+ *
+ * ① **确认框里逐类写清扔掉什么**（一次生成 / 几张备好的图 / 手写的要求）：写成「确定删除？」
+ *    的话他不知道这一下扔的是几次真实花费。备好的图仍在素材库里能挑回来，这句也要说。
+ * ② **删完从服务端重读整份**（`resetPageState` + `loadDeck`），不本地 splice —— 见
+ *    `resetPageState` 上面那段。
+ * ③ **`planRev` 换成服务端回的那个**：不换的话这一页之后所有花钱的操作全部 409，
+ *    而他刚刚才在界面上删过一页。
+ */
+async function removePage(p: PlannedPage) {
+  if (structBusy.value) return
+  const cost = [
+    built.value[p.page] ? '这一页已经生成的画面（一次真实调用）' : '',
+    filledCount(p.page) ? `贴在画面里的 ${filledCount(p.page)} 张图` : '',
+    pending.value[p.page]?.length ? `备好的 ${pending.value[p.page].length} 张图（每张一次真实花费）` : '',
+    setupNotes.value[p.page] ? '你给这一页写的额外要求' : '',
+    veil.value[p.page] ? '这一页调过的蒙版' : '',
+  ].filter(Boolean)
+  const ok = window.confirm(
+    `删掉第 ${p.page} 页「${p.title || '(没标题)'}」？\n\n` +
+      (cost.length
+        ? `会跟着扔掉：\n${cost.map(c => `· ${c}`).join('\n')}\n\n` +
+          '图本身还在素材库里，以后能挑回来（不用重新花钱）；画面和要求删了就没了。\n\n'
+        : '这一页还没生成过，删掉不损失什么。\n\n') +
+      '后面几页的页码会整体往前挪一位。'
+  )
+  if (!ok) return
+  structBusy.value = true
+  structNote.value = ''
+  structErr.value = false
+  try {
+    const r = await apiDelete<{
+      planRev: number
+      removed: { html: boolean; images: number; prepared: number; notes: boolean; veil: boolean }
+      shifted: number
+    }>(`/api/ppt/decks/${deckId.value}/pages/${p.page}`)
+    // 报的是**服务端真的删掉的那几样**，不是上面确认框里那份猜测（两处不一样的时候，
+    // 库里那份才算数 —— 比如另一处刚给这一页备过图）。
+    const gone = [
+      r.removed.html ? '已生成的画面' : '',
+      r.removed.images ? `画面里的 ${r.removed.images} 张图` : '',
+      r.removed.prepared ? `备好的 ${r.removed.prepared} 张图（还在素材库里）` : '',
+      r.removed.notes ? '额外要求' : '',
+      r.removed.veil ? '蒙版' : '',
+    ].filter(Boolean)
+    structNote.value =
+      `第 ${p.page} 页删掉了` +
+      (gone.length ? `，跟着扔掉了：${gone.join('、')}` : '（那一页还没生成过）') +
+      (r.shifted ? `；后面 ${r.shifted} 页的页码往前挪了一位。` : '。')
+    resetPageState()
+    // 拼好的整份/刚导出的那个文件都过期了（少了一页，而它翻起来完全正常）。
+    invalidateDeck()
+    await loadDeck()
+    // ③ 服务端回的那个版本号兜底：`loadDeck` 正常会带回同一个值，这里再落一次是防
+    // 「读 deck 失败但页已经删了」——那种情况下旧的 rev 会让下一次生成 409。
+    planRev.value = r.planRev
+  } catch (e: any) {
+    structErr.value = true
+    structNote.value = `第 ${p.page} 页没删掉：${e?.message || '请求失败'}（库里还是原来那样，页码没动）`
+  }
+  structBusy.value = false
+}
+
+// ── 插一页（结构改动，098）──────────────────────────
+/** 插在第几页后面（0 = 最前面）。null = 那个框没开。 */
+const insertAfter = ref<number | null>(null)
+const insTitle = ref('')
+const insPoints = ref('')
+const insPointLines = computed(() =>
+  insPoints.value.split('\n').map(s => s.trim()).filter(Boolean)
+)
+/**
+ * 「版式还没挑」那句话要显示在「生成前确认」这个框**里面**：写在页面顶上那条
+ * `structNote` 上的话，插完弹出来的这个框正盖住它 —— 他看不到，直接按「生成这一页」
+ * 就是连着两页一模一样的版式（一次真实调用，翻起来只是「有点单调」，没有一处会说）。
+ * 按页码存住，免得下一次为别的页打开这个框时还挂着上一次那句。
+ */
+const insertedHint = ref<{ page: number; text: string } | null>(null)
+/** 和 `outlineIssue` 同一套判据（服务端 `insertPage` 也会拒）—— 少了这一层他要等一次往返。 */
+const insIssue = computed(() => {
+  if (insertAfter.value === null) return ''
+  if (!insTitle.value.trim()) return '标题是空的 —— 生成出来会是一页没有标题的幻灯片，看起来像版式本来就这样。'
+  const lines = insPointLines.value
+  if (!lines.length) return '一条要点都没有 —— 只给标题的话模型会自己编这一页的内容，出来那一页读着通顺但不是你的东西。'
+  if (lines.length > MAX_POINTS) return `要点 ${lines.length} 条，最多 ${MAX_POINTS} 条。拆成两页更好排。`
+  const i = lines.findIndex(s => s.length > MAX_POINT)
+  if (i >= 0) return `第 ${i + 1} 条要点有 ${lines[i].length} 字，上限 ${MAX_POINT} 字 —— 太长会被版式裁掉。`
+  return ''
+})
+
+function openInsert(after: number) {
+  insertAfter.value = after
+  // 每次打开都清空：留着上一次的话他以为这是「已经填好的这一页」，一按插入就多出一页
+  // 内容重复的幻灯片（而两页各自都读得通）。
+  insTitle.value = ''
+  insPoints.value = ''
+  structNote.value = ''
+  structErr.value = false
+}
+
+/**
+ * 插进来。三条和删一页同源（见 `removePage`）：从服务端重读整份而不本地 splice、
+ * 换上服务端回的 `planRev`、按页码索引的本地状态全清（`resetPageState`）。
+ *
+ * 插完**立刻打开新那一页的「生成前确认」**：版式是继承前一页来的（服务端 `layoutInherited`），
+ * 不推他去挑的话这份稿子里会连着两页一模一样的版式 —— 翻起来只是「有点单调」，
+ * 而规划里那几条跨页提示是上一次算的（已经标成可能不准），没有一处会说。
+ */
+async function doInsert() {
+  const after = insertAfter.value
+  if (after === null || structBusy.value || insIssue.value) return
+  structBusy.value = true
+  structNote.value = ''
+  structErr.value = false
+  try {
+    const r = await apiPost<{ page: number; shifted: number; layoutId: string; layoutInherited: boolean; planRev: number }>(
+      `/api/ppt/decks/${deckId.value}/insert-page`,
+      { after, title: insTitle.value.trim(), points: insPointLines.value }
+    )
+    insertAfter.value = null
+    resetPageState()
+    // 少一页/多一页之后，拼好的整份和刚导出的那个文件都过期了（而它们翻起来完全正常）。
+    invalidateDeck()
+    await loadDeck()
+    planRev.value = r.planRev
+    structNote.value =
+      `插好了：新的第 ${r.page} 页「${insTitle.value.trim()}」（还没生成）` +
+      (r.shifted ? `，后面 ${r.shifted} 页的页码往后挪了一位` : '') +
+      (r.layoutInherited ? `。版式先跟着前一页（${r.layoutId}）—— 在打开的这个框里挑一条，连着两页同一个版式会很单调。` : '。')
+    current.value = r.page
+    const fresh = pages.value.find(p => p.page === r.page)
+    // 找不到就**不要静默跳过**：那说明重读回来的规划和服务端说的页码对不上（他会以为
+    // 版式已经挑好了，而这一页用的是继承来的那条）。
+    if (fresh) {
+      await openSetup(fresh)
+      // openSetup 会先清掉，所以这一句必须写在它之后
+      if (r.layoutInherited) insertedHint.value = {
+        page: r.page,
+        text: `这一页的版式先跟着前一页（${r.layoutId}）—— 在下面挑一条再生成，连着两页同一个版式翻起来很单调。`,
+      }
+    } else {
+      structErr.value = true
+      structNote.value = `插好了，但重新读回来的规划里没有第 ${r.page} 页 —— 刷新一下再看，这一页的版式还是跟着前一页的那条（${r.layoutId}），生成前记得挑。`
+    }
+  } catch (e: any) {
+    structErr.value = true
+    structNote.value = `没插进去：${e?.message || '请求失败'}（库里还是原来那样，页码没动）`
+  }
+  structBusy.value = false
+}
+
 async function run() {
   // 规划前必须先把提纲存进去（他常常是改完提纲直接点规划，没失焦过）：服务端规划用的是
   // **库里那一份**，存不上就直接不跑 —— 照跑的话花掉的这次调用规划的是上一版提纲，
@@ -2716,9 +3200,13 @@ async function run() {
       clearedPages?: number
       clearedImages?: number
       clearedNotes?: number
+      planRev?: number
       usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
     }>(`/api/ppt/decks/${deckId.value}/plan`, {})
     pages.value = data.pages || []
+    // 重新规划也会让页序版本号 +1（旧页全清了）。**必须跟上**：不跟的话规划完点第一次生成
+    // 就是一句 409，而他刚刚才在这里成功规划过（读起来像这个按钮坏了）。
+    if (data.planRev !== undefined) planRev.value = data.planRev
     problems.value = data.problems || []
     usage.value = data.usage || null
     // 规划完把工作台落回第一页（旧的选中页可能压根不在这份规划里了）。
@@ -2726,22 +3214,11 @@ async function run() {
     current.value = 0
     selectFirst()
     showSettings.value = false
-    // 重新规划之后已生成的那几页必须清掉：新规划的第 3 页很可能换了版式和内容，
-    // 而旧的那一版会照旧挂在「第 3 页」下面 —— 两边都不报错，看起来像新生成的。
-    built.value = {}
-    pageErr.value = {}
-    showSrc.value = {}
-    imgInfo.value = {}
-    imgErr.value = {}
-    // 备好的图也跟着页一起被清掉了（新规划的第 3 页和旧的第 3 页压根不是一页内容）。
-    pending.value = {}
-    prepNote.value = {}
-    prepErr.value = {}
-    // 生成前改过的版式和手写要求也跟着页一起被清掉了（092）。留在界面上的话对话框里
-    // 还写着那段要求，而库里已经没有了 —— 下一次生成出来不带它，一处都不说。
-    setupLayout.value = {}
-    setupNotes.value = {}
-    builtLayout.value = {}
+    // 重新规划把库里那几页全清了（服务端 savePlan 一起做的），所以按页码索引的本地状态
+    // 一个都不能留：新规划的第 3 页和旧的第 3 页压根不是一页内容，留下来的画面/备图/额外要求
+    // 会挂在同一个页码下面，看起来像刚生成的。**和删页走同一个清空函数** —— 各写一份清单的话，
+    // 以后新加一个按页码索引的 map 只会被清在一处，而漏掉的那一处是「翻起来完全正常」。
+    resetPageState()
     // 库里那几页也被这次规划清掉了（服务端 savePlan 一起做的）。清了几页、扔了几张备好的图
     // 都要说出来 —— 那全是已经花掉的调用，只说「规划完成」的话他不知道自己刚扔掉了什么。
     batchNote.value = [
@@ -3020,9 +3497,22 @@ async function run() {
   padding: 7px 14px; font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
 }
 .btn-ai:disabled { opacity: .45; cursor: not-allowed; }
+/* 自由改造那颗按钮做成描边款：和「微调」长得一样的话他会随手点到放开了删原文/新写文案的那一条。 */
+.btn-ai.ghost {
+  background: transparent; color: var(--brand-yellow);
+  border: 1px solid var(--brand-yellow); padding: 6px 13px;
+}
 .ai-msg { font-size: 12px; color: var(--text-secondary); max-width: min(560px, 92%); }
 .ai-msg.bad { color: #ffb4b4; }
 .ai-msg.ok { color: var(--brand-yellow); }
+.ai-msg b { color: var(--brand-yellow); font-weight: 800; }
+/* 占满一行（不跟着摘要挤在同一行）：这几条是「AI 替你动了什么」，挤成一行他会当装饰略过。 */
+.ai-notes {
+  flex: 0 0 100%; margin: 2px 0 0; padding-left: 18px; text-align: left;
+  max-width: min(700px, 96%); margin-inline: auto;
+  font-size: 12px; line-height: 1.6; color: var(--text-secondary);
+}
+.ai-notes li { margin: 2px 0; }
 .screen-overlay {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 24px;
@@ -3194,6 +3684,35 @@ async function run() {
 .lay-tags em.alt { background: rgba(165, 180, 252, 0.18); color: #C7D2FE; }
 .lay-tags em.dis { background: rgba(252, 165, 165, 0.18); color: #FCA5A5; }
 
+/* 标题 + tab 一起 sticky 在抽屉顶上。**`flex: none` 是承重的**：`.picker` 是被
+   `max-height: 86vh` 压着的 column flex，图网格一高，默认的 flex-shrink 会把这一条压成
+   几个像素高的一道线 —— tab 全在里面但一个都看不见，而计数行照旧写着「见上面的『全部』」。 */
+.pick-top {
+  flex: none; position: sticky; top: 0; z-index: 3;
+  margin: -24px -24px 0; padding: 24px 24px 10px;
+  background: rgba(18, 24, 43, 0.94);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.head-btns { display: flex; gap: 8px; flex: none; }
+/* tab 条横向可滚（十几份稿子时换行会把图网格顶到抽屉外，那时看起来像图没加载出来）。 */
+.pick-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; flex: none; }
+/* 同一个理由：抽屉里的说明/报错这几行也不能被图网格压扁（压扁之后是几行叠在一起的字）。 */
+.picker > p { flex: none; }
+.ptab {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  max-width: 220px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-soft); font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: all 0.2s;
+}
+.ptab:hover:not(:disabled) { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+.ptab:disabled { opacity: 0.5; cursor: default; }
+.ptab.on { background: var(--brand-yellow); border-color: var(--brand-yellow); color: #12182B; }
+.ptab.gone { font-style: italic; }
+.ptab em { font-family: var(--font-mono); font-style: normal; font-size: 10px; opacity: 0.7; }
+
 .pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
 .pick-cell {
   padding: 0; border-radius: 12px; overflow: hidden;
@@ -3218,7 +3737,9 @@ async function run() {
 }
 .problems-title { font-size: 12px; font-weight: 700; color: #FDE68A; margin-bottom: 4px; }
 .problems ul { margin: 0; padding-left: 18px; }
-.problems li { font-size: 12px; line-height: 1.8; color: #FDE68A; }
+/* pre-line：覆盖率那一条是「一行一段漏掉的提纲原文」，塌成一行之后二十段挤成一坨，
+   他找不到自己那一段在哪儿，于是整条警告被当成噪音划过去 */
+.problems li { font-size: 12px; line-height: 1.8; color: #FDE68A; white-space: pre-line; }
 
 .src-box { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .src {
@@ -3259,6 +3780,8 @@ async function run() {
   transition: all 0.2s;
 }
 .field select option { color: #111; }
+/* 提纲原文那个框：小一号 + 等宽，一眼能看出这是「粘进来的原始文字」而不是要他重写的输入。 */
+.field textarea.mono { font-family: var(--font-mono); font-size: 13px; line-height: 1.7; }
 .field input::placeholder, .field textarea::placeholder { color: rgba(255, 255, 255, 0.3); }
 .field input:focus, .field textarea:focus, .field select:focus {
   outline: none; border-color: var(--brand-yellow); box-shadow: 0 0 0 4px rgba(255, 184, 0, 0.1);

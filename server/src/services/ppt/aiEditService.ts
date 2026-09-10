@@ -15,6 +15,7 @@ import { jsonGateway, jsonFailMessage } from '../../core/llm/parseJson.js';
 import { templateClasses, templateVars } from './deckShell.js';
 import {
   findRegionByPath, maskRegion, unmaskRegion, eidsIn, domTree, CJK_RE, PageEditError,
+  hardcodedColors,
 } from './pageEdit.js';
 
 /** 一块结构 1-2KB，剩下的是留给思维链的空间（硬规则 2）。`noThinking` 也一起发。 */
@@ -213,11 +214,13 @@ export function validateEditedRegion(html: string, ctx: ValidateCtx): void {
 
   // ⑥ 颜色。写死的色值换肤那天不跟着变；编出来的变量名会让浏览器把整条声明丢掉
   //    （字色掉回继承色，看起来只是「这一版配色淡了点」）。
-  const literals = [...html.matchAll(/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/g)].map((m) => m[0]);
-  const added = literals.filter((s) => !ctx.original.includes(s));
-  if (added.length) {
+  // 这一份和自由改造那条**共用** `hardcodedColors`：各写一份的话改了一边另一边照旧，
+  // 而两边是同一个模型的同一个毛病（它爱写 `rgba(0,0,0,.08)` 那种阴影）。
+  const colors = hardcodedColors(html, ctx.original);
+  if (colors.length) {
     throw new PageEditError(
-      `模型写死了颜色（${[...new Set(added)].slice(0, 4).join(' / ')}）：换一套配色时这一块不会跟着变，而它读起来完全正常。这一块没改 —— 颜色只能用 var(--c-…)。`
+      `模型写死了颜色（${colors.slice(0, 4).join(' / ')}）：换一套配色时这一块不会跟着变，而它读起来完全正常。这一块没改 —— ` +
+        '颜色得用 var(--c-…)（阴影和蒙版那种半透明黑白除外，比如 rgba(0,0,0,.08)）。'
     );
   }
   const badVars = [...html.matchAll(/var\(\s*(--[a-z0-9-]+)/g)]
@@ -244,7 +247,8 @@ ${instruction}
    不能删、不能重复、不能改写、不能翻译。你可以挪动它们的位置。
 2. **不许写任何中文。** 文案不是你的活（他要改文案会自己去改那句字）。
 3. 类名只能用这一块里已经出现过的那些。要新样式就写 inline style（\`style="…"\`）。
-4. 颜色只能用 \`var(--c-…)\` 这种变量（用这一块里已经出现过的那几个），**不许写 #hex / rgb()**。
+4. 颜色只能用 \`var(--c-…)\` 这种变量（用这一块里已经出现过的那几个），**不许写 #hex / rgb()**
+   —— 阴影和蒙版那种半透明黑白除外（\`rgba(0,0,0,.08)\` 可以）。
 5. 不许写 \`<script>\` / \`<style>\` / \`onclick\` 这类事件属性。
 6. \`data-eid="…"\` 属性原样留在它现在所在的那个元素上：一个都不能删、不能改、不能新增。
 7. 只回这一块，最外层还是 \`<${regionName}>\`，不要多包一层、不要回整页。

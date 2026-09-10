@@ -30,19 +30,41 @@
         <div v-if="err" class="alert">{{ err }}</div>
         <div v-if="note" class="alert note">{{ note }}</div>
 
+        <!-- 按稿子分 tab。**每个 tab 上的张数是服务端按整张表算的**（`groups`），不是把
+             这一屏的 120 张分组数出来的：页内统计出来的数字读起来完全正常（「这个项目 3 张」），
+             而那个项目真正的四十张在第 120 张之后 —— 他会以为图丢了。
+             切 tab **重新请求**（同一个理由：前端过滤只能过滤到手上这 120 张）。 -->
+        <div v-if="groups.length > 1" class="tabs">
+          <button class="tab" :class="{ on: !deckId }" @click="pick('')">
+            全部 <em>{{ allCount }}</em>
+          </button>
+          <button
+            v-for="g in groups" :key="g.deckId || NO_DECK"
+            class="tab" :class="{ on: deckId === (g.deckId || NO_DECK), gone: g.deckGone }"
+            @click="pick(g.deckId || NO_DECK)"
+            :title="g.deckGone ? '这份稿子已经删了，图还在素材库里' : g.title"
+          >
+            <!-- 稿子删了的照旧列出来：过滤掉的话那几十张图从每个 tab 里都消失，看起来像被
+                 删过，而它们还在库里。没名字/没归属的也要各写一句，三种情况不能都显示成空。 -->
+            {{ g.deckGone ? '（已删除的稿子）' : g.title || (g.deckId ? '（没名字的稿子）' : '没记归属') }}
+            <em>{{ g.count }}</em>
+          </button>
+        </div>
+
         <div v-if="loading" class="empty-state">
           <div class="ios-loading-bar"><div class="ios-loading-fill"></div></div>
           <p class="loading-text">加载中...</p>
         </div>
 
         <div v-else-if="!assets.length" class="empty-state">
-          <p>还没有素材。在某一页点「生成这一页的图」，成功的每一张都会自动进这里。</p>
+          <p v-if="deckId">{{ filterNote || '这份稿子在素材库里还没有图。' }}<br />（点上面的「全部」看其余的）</p>
+          <p v-else>还没有素材。在某一页点「生成这一页的图」，成功的每一张都会自动进这里。</p>
         </div>
 
         <template v-else>
           <!-- 只回前 pageSize 张，所以「就这些」和「这一页装不下」必须分得开 -->
           <p class="count-line">
-            共 {{ total }} 张<span v-if="total > assets.length">，下面显示最近 {{ assets.length }} 张</span>
+            {{ deckId ? '这份稿子' : '共' }} {{ total }} 张<span v-if="total > assets.length">，下面显示最近 {{ assets.length }} 张</span>
           </p>
 
           <div class="assets-grid">
@@ -85,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { apiGet, apiDelete } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { openLoginModal } from '../../lib/loginModal'
@@ -106,12 +128,28 @@ interface Asset {
   created_at: string
 }
 
+interface AssetGroup { deckId: string; title: string; deckGone: boolean; count: number; lastAt: string }
+
+/** 「没记归属」那一组在接口上的值（服务端 `ASSETS_NO_DECK`）。空串会被当成「没筛」，
+ *  那个 tab 就会回全部素材 —— 而 tab 是选中的，读起来像这一组有三百张。 */
+const NO_DECK = '__none__'
+
 const assets = ref<Asset[]>([])
 const total = ref(0)
+const groups = ref<AssetGroup[]>([])
+/** 现在筛的是哪一份稿子（`''` = 全部）。**服务端筛**，不在前端过滤手上这 120 张。 */
+const deckId = ref('')
 const loading = ref(false)
 const err = ref('')
 const note = ref('')
+/** 「这份稿子还没有图」那句（服务端给的）。和上面那个 `note` 分开：混用的话删除/复制的
+ *  提示会顶掉它，或者反过来 —— 两句话说的完全不是一回事。 */
+const filterNote = ref('')
 const broken = ref<Record<string, boolean>>({})
+
+/** 「全部」那个 tab 上的数字。各组之和 = 整张表 —— 单独再请求一次不筛的 total 也行，
+ *  但那样两个数字来自两次查询，中间生成一张图就会对不上（而两边都读得通）。 */
+const allCount = computed(() => groups.value.reduce((n, g) => n + g.count, 0))
 
 onMounted(() => {
   if (!getToken()) {
@@ -125,14 +163,29 @@ async function load() {
   loading.value = true
   err.value = ''
   try {
-    const data = await apiGet<{ assets: Asset[]; total: number }>('/api/ppt/assets')
+    const q = deckId.value ? `?deckId=${encodeURIComponent(deckId.value)}` : ''
+    const data = await apiGet<{
+      assets: Asset[]; total: number; groups: AssetGroup[]; note?: string
+    }>(`/api/ppt/assets${q}`)
     assets.value = data.assets || []
     total.value = data.total || 0
+    // 分组每次都照服务端那份重画（刚删掉一张图之后某一组可能整组没了）：留着旧的话
+    // 那个 tab 还挂在上面，点进去是一屏空白，看起来像这一组的图全丢了。
+    groups.value = data.groups || []
+    filterNote.value = data.note || ''
   } catch (e: any) {
     err.value = e?.message || '加载失败'
   } finally {
     loading.value = false
   }
+}
+
+/** 切 tab = 重新请求（前端过滤只过滤得到手上这 120 张，见模板里那段注释）。 */
+function pick(id: string) {
+  if (deckId.value === id) return
+  deckId.value = id
+  note.value = ''
+  load()
 }
 
 /**
@@ -276,6 +329,25 @@ function fmt(ts: string) {
 .loading-text { font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; color: var(--text-secondary); }
 
 .count-line { font-family: var(--font-mono); font-size: 12px; color: var(--color-soft); margin: 0 0 16px; }
+
+/* tab 条：横向可滚（十几份稿子时换行会把网格顶到屏幕外，而那时看起来像图没加载出来）。 */
+.tabs {
+  display: flex; gap: 8px; margin-bottom: 20px;
+  overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  max-width: 260px; padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary); font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: all 0.2s;
+}
+.tab:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+.tab.on { background: var(--brand-yellow); border-color: var(--brand-yellow); color: #12182B; }
+.tab.gone { font-style: italic; }
+.tab em { font-family: var(--font-mono); font-style: normal; font-size: 11px; opacity: 0.7; }
 
 .assets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
 

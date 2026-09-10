@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
-import { MAX_OUTLINE_CHARS } from './planService.js';
+import { MAX_OUTLINE_CHARS, MAX_PAGES } from './planService.js';
 import { type DesignSpec } from './designSpec.js';
 
 // 演示稿的读写（migration 089）。**所有查询都带 user_id** —— 只按 id 取的话
@@ -25,6 +25,11 @@ export interface PptDeck {
   /** planService 的整份返回（JSON 字符串）。空串 = 还没规划过。 */
   plan_json: string;
   planned_total: number;
+  /**
+   * 页数/页序的版本号（098）。**每次结构改动 +1**，按页码写库的那几条路要带着它来
+   * （见那份迁移的头注：不带的话一次三十秒的生成会写到别的一页上，而出来是一页正常的幻灯片）。
+   */
+  plan_rev: number;
   status: string;
   created_at: string;
   updated_at: string;
@@ -190,7 +195,7 @@ export function savePlan(
       db.prepare(`SELECT pending_images_json AS j FROM ppt_deck_pages WHERE deck_id = ?`).all(id) as Array<{
         j: string;
       }>
-    ).reduce((n, r) => n + countPending(r.j), 0);
+    ).reduce((n, r) => n + countWithUrl(r.j), 0);
     // 他手写的那几段要求（092）也跟着删。**要数出来**：不说的话下一次生成拿到的是没带
     // 要求的那一版，而生成出来照样是一页完整的幻灯片 —— 「语气克制一点」一处都没生效，
     // 界面上也没有一处会提。
@@ -200,7 +205,9 @@ export function savePlan(
         .get(id) as { n: number }
     ).n;
     db.prepare('DELETE FROM ppt_deck_pages WHERE deck_id = ?').run(id);
-    db.prepare('UPDATE ppt_decks SET plan_json = ?, planned_total = ?, updated_at = ? WHERE id = ?').run(
+    // `plan_rev` 也 +1（098）：重新规划把页全清了，而上一刻发出去的「生成第 5 页」还在路上
+    // —— 它回来时会照新规划的第 5 页插一行，版式和内容都不是那一页的，翻起来完全正常。
+    db.prepare('UPDATE ppt_decks SET plan_json = ?, planned_total = ?, plan_rev = plan_rev + 1, updated_at = ? WHERE id = ?').run(
       JSON.stringify(plan),
       plan.pages.length,
       new Date().toISOString(),
@@ -283,9 +290,13 @@ export function updatePlanPageImages(
 export const MAX_PAGE_TITLE_CHARS = 60;
 export const MAX_POINTS_PER_PAGE = 12;
 export const MAX_POINT_CHARS = 200;
+/** 这一页提纲**原文**的上限。整份提纲上限 `MAX_OUTLINE_CHARS`(12000)，一页给到 4000 字：
+ *  再往上是他把整份提纲粘到一页里了，那一页排出来一定装不下（而它照样生成，只是内容被模型
+ *  自己砍掉九成）。 */
+export const MAX_PAGE_OUTLINE_CHARS = 4000;
 
 /**
- * 改这一页的提纲：写回 `plan_json` 里那一条的 `title` / `points`。
+ * 改这一页的提纲：写回 `plan_json` 里那一条的 `title` / `points` / `outlineText`（提纲原文）。
  *
  * 和 `updatePlanImageSubject` 同样三条承重的理由，其中第二条最贵：**不能走 `savePlan`** ——
  * 那个会把这份稿子已生成的页全删掉，于是「改一下这一页的标题」等于扔掉十几次已经花过的
@@ -295,12 +306,18 @@ export const MAX_POINT_CHARS = 200;
  * 调用点只有「生成这一页」那一个（他要的就是「点了生成才存，没生成就不存」）—— 另开一个
  * 「保存提纲」的入口会多出一种状态：库里提纲是新的、画面是旧提纲生成的那一版，两边各自
  * 都读得通。
+ *
+ * `outlineText` 按 `!== undefined` 写（同 `upsertProvider` 那条）：写成
+ * `row.outlineText = data.outlineText || ''` 的话，任何一次没带这个字段的编辑都会把原文
+ * 悄悄清空，而生成出来照样是一页完整的幻灯片 —— 只是内容退回摘要那几句，提纲上的数字和
+ * 机构名一个都不在，一处都不会说。**不重算 `outlineRange`**：那个只在规划那一步用
+ * （`coverageWarnings`），行号和改过的原文对不上也不影响生成。
  */
 export function updatePlanPageOutline(
   id: string,
   userId: string,
   page: number,
-  data: { title: string; points: string[] }
+  data: { title: string; points: string[]; outlineText?: string }
 ): { ok: boolean } {
   const deck = getDeck(id, userId);
   if (!deck) return { ok: false };
@@ -314,13 +331,19 @@ export function updatePlanPageOutline(
   if (!row) return { ok: false };
   row.title = data.title;
   row.points = data.points;
+  if (data.outlineText !== undefined) row.outlineText = data.outlineText;
   getDatabase()
     .prepare('UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(JSON.stringify(plan), new Date().toISOString(), id, userId);
   return { ok: true };
 }
 
-function countPending(json: string): number {
+/**
+ * 数「真的有图」的那几条。备好的图（`pending_images_json`）和配图结果（`images_json`）
+ * 是同一个形状，**只有带 `url` 的才算**：失败的那几格也在数组里，一起数进去的话
+ * 「这一页有 3 张图」里可能有两张在画面上是占位图（看起来只是「这版设计得比较空」）。
+ */
+function countWithUrl(json: string): number {
   if (!json) return 0;
   try {
     const rows = JSON.parse(json);
@@ -469,11 +492,16 @@ export function savePageImages(
 }
 
 /**
- * 就地改文字之后把这一页的 html 写回去（**只动 html 这一列**）。
+ * 就地改文字之后把这一页的 html 写回去（**缺省只动 html 这一列**）。
  *
  * 不走 `savePageHtml`：那个会缺省清掉 `images_json` / `image_style_id` 并把 `problems_json`
  * 覆盖成空数组（重新生成才该那样）—— 改一个标题就把「这一页 3 张图都配好了」和
  * 「这一页版式有 2 处要注意」一起悄悄擦掉，界面上只是「已保存」。
+ *
+ * `images` **带了才写**（只有自由改造那条路会带）：那条路可以加/删图槽，图的序号跟着变，
+ * 记录必须按新 html 重排一次（`realignImageRecords`）—— 不写的话面板上照旧写着
+ * 「配图 1/1 张」并挂着缩略图，而画面里那几格全是占位图。反过来缺省就写空数组的话，
+ * 每次改一个字都会把真花过钱的那几张记录擦掉（界面上只是「已保存」）。
  *
  * 那一页还没有 html 时返回 false（不插行）：插的话库里多一行「有文字没内容」的页，
  * 拼整份时它是个空 `<section>`，翻起来像那一页渲染塌了。
@@ -481,16 +509,22 @@ export function savePageImages(
 export function savePageEditedHtml(
   deckId: string,
   userId: string,
-  data: { page: number; html: string }
+  data: { page: number; html: string; images?: unknown[] }
 ): boolean {
   const db = getDatabase();
   if (!getDeck(deckId, userId)) return false;
   const r = db
     .prepare(
-      `UPDATE ppt_deck_pages SET html = ?, updated_at = ?
+      `UPDATE ppt_deck_pages SET html = ?, updated_at = ?${data.images ? ', images_json = ?' : ''}
         WHERE deck_id = ? AND page = ? AND html <> ''`
     )
-    .run(data.html, new Date().toISOString(), deckId, data.page);
+    .run(
+      data.html,
+      new Date().toISOString(),
+      ...(data.images ? [JSON.stringify(data.images)] : []),
+      deckId,
+      data.page
+    );
   if (!r.changes) return false;
   touchDeck(deckId);
   return true;
@@ -615,6 +649,253 @@ export function savePageVeil(
   ).run(uuidv4(), deckId, data.page, data.opacity, now, now);
   touchDeck(deckId);
   return true;
+}
+
+/** 结构改动（删页 / 加页 / 调顺序）拒绝执行时抛这个，带着原因给用户看。 */
+export class DeckStructureError extends Error {}
+
+/**
+ * 规划改过结构之后，`plan.problems` 里那几条**跨页**提示（「第 3–4 页连续同版式」、
+ * 「封面挑了正文版式」）说的是改之前那个顺序 —— 它们读起来仍然像是这份稿子现在的问题，
+ * 而指的那两页已经不在那儿了（页码对不上，也没有一处会说）。所以在最前面标一句。
+ * 已经标过就不再标：不判的话删几页就攒几条一模一样的提示。
+ */
+const STALE_PLAN_NOTE =
+  '（这份规划之后改过页数/页序，下面这几条跨页提示是规划那一刻算的，可能已经不准。）';
+function markStalePlan(problems: unknown): string[] {
+  const list = Array.isArray(problems) ? (problems.filter((x) => typeof x === 'string') as string[]) : [];
+  if (!list.length || list.includes(STALE_PLAN_NOTE)) return list;
+  return [STALE_PLAN_NOTE, ...list];
+}
+
+export interface PageDeleteResult {
+  /** 改完的整份规划（前端照它重画左边那列，不本地 splice —— 见下面第 ③ 条）。 */
+  plan: any;
+  /** 改完的页序版本号（098）。前端要换上它，不换的话下一次生成会 409。 */
+  planRev: number;
+  /** 这一页身上被一起扔掉的东西，**逐类报数**（每一项都是花过真钱的）。 */
+  removed: { html: boolean; images: number; prepared: number; notes: boolean; veil: boolean };
+  /** 跟着往前挪了一位的页数。 */
+  shifted: number;
+}
+
+/**
+ * 删一页：`plan_json` 里那一条 + `ppt_deck_pages` 那一行，后面的页码整体往前挪一位。
+ *
+ * 四条是承重的：
+ *
+ * ① **搬的是「行的页码」，不是行里的内容。** html / 备好的图 / 蒙版 / 他手写的要求全在同一行上，
+ *    所以 `UPDATE … SET page = …` 一句就把一整页的状态整体搬走了。反过来（挨个把内容往前挪一行）
+ *    的话，漏掉任何一列都是「那一页的图/蒙版/要求留在了原地」，而每一页显示出来都是一页
+ *    正常的幻灯片。
+ * ② **重编页码要两段式（先翻成负数再落最终值）。** 直接 `page = page - 1` 的话中途会撞
+ *    `UNIQUE(deck_id, page)`（SQLite 逐行检查，行的处理顺序不是页码顺序），撞上那一刻整条
+ *    语句失败 —— 而这时删除那一句已经跑过：库里少一页、后面的页码一个都没动，于是中间空出
+ *    一个页码，前端按规划的页码去取那几页全部错位一页。
+ * ③ **`plan_json` 和页表在同一个事务里改。** 分两次写的话中间任何一次失败都留下「规划里
+ *    12 页、库里的页码还按 13 页排」的库，而界面上翻起来完全正常，只是每一页的画面比标题
+ *    错开一位。
+ * ④ **`plan_rev` 跟着 +1**（098）：上一刻发出去的那次生成必须被拒掉，否则它回来时写到的是
+ *    现在的第 N 页 —— 一次真实花费换来一页照着别的提纲排的幻灯片。
+ *
+ * 最后一页不给删：删完之后 `plan_json` 里是个空数组、`planned_total = 0`，界面上和「还没
+ * 规划过」一模一样（而提纲还在），他会以为规划丢了。
+ */
+export function deletePage(deckId: string, userId: string, page: number): PageDeleteResult {
+  const db = getDatabase();
+  const deck = getDeck(deckId, userId);
+  if (!deck) throw new DeckStructureError('这份演示稿不存在（或不是你的）');
+  let plan: any;
+  try {
+    plan = JSON.parse(deck.plan_json || '{}');
+  } catch {
+    // 读不出来时**不能**当成空规划接着删：那样页表被改了而规划没有，成了 ③ 那种库。
+    throw new DeckStructureError(
+      '这份稿子存着的规划读不出来（plan_json 坏了），这一页没删 —— 删一页要连着改规划，只改一边会让页码和规划错开一位。'
+    );
+  }
+  const list: any[] | null = Array.isArray(plan?.pages) ? plan.pages : null;
+  if (!list?.length) throw new DeckStructureError('这份稿子还没有规划，没有页可以删。');
+  const idx = list.findIndex((p: any) => Number(p?.page) === page);
+  if (idx < 0) {
+    throw new DeckStructureError(
+      `第 ${page} 页不在这份稿子的规划里（规划只有 ${list.length} 页）。刷新一下看看规划是不是换过了。`
+    );
+  }
+  if (list.length === 1) {
+    throw new DeckStructureError(
+      '整份只剩这一页了，不能删 —— 删完之后这份稿子看起来和「还没规划过」一模一样（提纲还在）。要清空请点「重新规划」。'
+    );
+  }
+  const row = db
+    .prepare(
+      `SELECT html, images_json, pending_images_json, setup_notes, veil_opacity
+         FROM ppt_deck_pages WHERE deck_id = ? AND page = ?`
+    )
+    .get(deckId, page) as
+    | { html: string; images_json: string; pending_images_json: string; setup_notes: string; veil_opacity: number }
+    | undefined;
+  const removed = {
+    html: !!row?.html,
+    images: countWithUrl(row?.images_json || ''),
+    prepared: countWithUrl(row?.pending_images_json || ''),
+    notes: !!row?.setup_notes,
+    veil: !!row?.veil_opacity,
+  };
+  let shifted = 0;
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM ppt_deck_pages WHERE deck_id = ? AND page = ?').run(deckId, page);
+    // ② 两段式。负页码只在这个事务里存在（外面任何一处读到负页码都说明这里中断过）。
+    db.prepare('UPDATE ppt_deck_pages SET page = -page WHERE deck_id = ? AND page > ?').run(deckId, page);
+    shifted = db
+      .prepare('UPDATE ppt_deck_pages SET page = -page - 1 WHERE deck_id = ? AND page < 0')
+      .run(deckId).changes;
+    list.splice(idx, 1);
+    // 页码按数组顺序重编（硬规则 3：会算错的格式在代码里算，不留给别处推断）。
+    list.forEach((p: any, i: number) => {
+      p.page = i + 1;
+    });
+    plan.problems = markStalePlan(plan.problems);
+    db.prepare(
+      `UPDATE ppt_decks SET plan_json = ?, planned_total = ?, plan_rev = plan_rev + 1, updated_at = ?
+        WHERE id = ?`
+    ).run(JSON.stringify(plan), list.length, new Date().toISOString(), deckId);
+  });
+  tx();
+  return { plan, planRev: deck.plan_rev + 1, removed, shifted };
+}
+
+export interface PageInsertInput {
+  /** 插在第几页**后面**（0 = 插到最前面）。 */
+  after: number;
+  title: string;
+  points: string[];
+  /** 他挑的版式。不传 = 跟着插入位置前一页那条（见下面第 ③ 条）。 */
+  layoutId?: string;
+}
+
+export interface PageInsertResult {
+  plan: any;
+  planRev: number;
+  /** 新那一页的页码（= `after + 1`，由这里算，不让调用方猜 —— 硬规则 3）。 */
+  page: number;
+  /** 跟着往后挪了一位的页数。 */
+  shifted: number;
+  /** 新那一页最终用的版式和模块名（都是这里算出来的，界面上要照原样说出来）。 */
+  layoutId: string;
+  section: string;
+  /** 版式是继承前后页来的（他没挑）—— 前端必须据此把「去挑一条」这句话说出来。 */
+  layoutInherited: boolean;
+}
+
+/**
+ * 插一页（`plan_json` 里多一条，`ppt_deck_pages` 里**不建行** —— 新页还没生成，
+ * 建一行空 html 的话它在「已生成」那几处会被当成生成过、预览里是一块白）。
+ *
+ * 和 `deletePage` 镜像的三条（理由见那边 ①②③）：搬的是「行的页码」不是行里的内容、
+ * 重编页码走两段式负数绕开 `UNIQUE(deck_id, page)`、`plan_json` 和页表同一个事务、
+ * `plan_rev` 跟着 +1（在路上那次生成必须被拒，否则它回来时写到的是现在的另一页）。
+ *
+ * 另外三条是这边独有的：
+ * ① **`page` 由数组顺序重编，不信调用方给的数**（硬规则 3）。
+ * ② **`kind` 留空、`why` 写明是他自己插的、`alts` 空**。`kind` 编一个（比如照前一页填
+ *    「章节扉页」）的话 `kindWarnings` 会拿它去核版式挑得对不对 —— 核的是一个没人说过的
+ *    前提，出来的警告读起来完全正常；`why` 写成模型口气的一句话（「这一页承接上文」）
+ *    的话，他往后翻回来会以为这一页是规划出来的。
+ * ③ **`layoutId` 没挑时继承前一页（没有前一页就取后一页）**，并把 `layoutInherited`
+ *    回出去。悄悄回落成某条固定版式（L1）的话，插进来的那一页排出来是一页完整的幻灯片，
+ *    而他压根没挑过这条 —— 而继承前一页会撞「连续同版式 ≤2 页」那条规范，所以必须让界面
+ *    催他去挑一条。库里一条版式都认不出来时（清单换过、规划是旧的）也回空串让上层拒掉，
+ *    因为空版式生成出来是「模型自己看着办」的一页。
+ * ④ **`images: 0` / `imageSpecs: []`**：新页不配图。凭空给几格的话备图面板上挂着几个
+ *    没人定过内容的图位，他备完图生成出来贴不进去（版式的图位数是另一回事）。
+ *    要配图走「按这个版式和这一页的内容重排图位」那条（一次真实调用，他自己点）。
+ */
+export function insertPage(deckId: string, userId: string, input: PageInsertInput): PageInsertResult {
+  const db = getDatabase();
+  const deck = getDeck(deckId, userId);
+  if (!deck) throw new DeckStructureError('这份演示稿不存在（或不是你的）');
+  let plan: any;
+  try {
+    plan = JSON.parse(deck.plan_json || '{}');
+  } catch {
+    throw new DeckStructureError(
+      '这份稿子存着的规划读不出来（plan_json 坏了），这一页没插进去 —— 插一页要连着改规划，只改一边会让页码和规划错开一位。'
+    );
+  }
+  const list: any[] | null = Array.isArray(plan?.pages) ? plan.pages : null;
+  if (!list?.length) {
+    throw new DeckStructureError('这份稿子还没有规划，插不了页 —— 先点「开始规划」，那一步会按提纲分页。');
+  }
+  const after = Number(input.after);
+  if (!Number.isInteger(after) || after < 0 || after > list.length) {
+    throw new DeckStructureError(
+      `插入位置不对（第 ${input.after} 页之后），这份稿子现在一共 ${list.length} 页。刷新一下看看页数是不是变了。`
+    );
+  }
+  if (list.length >= MAX_PAGES) {
+    throw new DeckStructureError(
+      `这份稿子已经 ${list.length} 页，到上限 ${MAX_PAGES} 页了 —— 再插的话规划、生成、导出那几处对页数的假设都不成立。要加内容请先删掉几页。`
+    );
+  }
+  const title = (input.title || '').trim();
+  const points = (input.points || []).map((p) => String(p ?? '').trim()).filter(Boolean);
+  // 这两条和 `updatePlanPageOutline` 用的是同一套上限（各写一套的话这一条路能插进去一页
+  // 超长的提纲，而改提纲那条路拒它 —— 生成出来是被版式裁掉半截的一页）。
+  if (!title) throw new DeckStructureError('新这一页的标题是空的 —— 生成出来会是一页没有标题的幻灯片，看起来像版式本来就这样。');
+  if (title.length > MAX_PAGE_TITLE_CHARS) {
+    throw new DeckStructureError(`标题有 ${title.length} 字，上限 ${MAX_PAGE_TITLE_CHARS} 字（版式里标题就那么大一块，再长会挤成一团或被裁掉）。`);
+  }
+  if (!points.length) {
+    throw new DeckStructureError('新这一页一条要点都没有 —— 只给标题的话模型会自己编这一页的内容，出来那一页读着通顺但不是你的东西。至少写一条。');
+  }
+  if (points.length > MAX_POINTS_PER_PAGE) {
+    throw new DeckStructureError(`这一页有 ${points.length} 条要点，上限 ${MAX_POINTS_PER_PAGE} 条。拆成两页更好排。`);
+  }
+  const long = points.findIndex((p) => p.length > MAX_POINT_CHARS);
+  if (long >= 0) {
+    throw new DeckStructureError(`第 ${long + 1} 条要点有 ${points[long].length} 字，上限 ${MAX_POINT_CHARS} 字 —— 一条要点是一行字，太长会被版式裁掉。`);
+  }
+  const prev = after > 0 ? list[after - 1] : null;
+  const next = list[after] || null;
+  const picked = (input.layoutId || '').trim().toUpperCase();
+  const layoutId = picked || String(prev?.layoutId || next?.layoutId || '');
+  if (!layoutId) {
+    throw new DeckStructureError('这一页没有版式（前后页也读不出来），插不进去 —— 没有版式的话生成那一步是「模型自己看着办」，出来一页和这份稿子不是一套设计。');
+  }
+  // 模块名（`.slide-header .kicker`）跟着前一页 —— 在这一章里插一页是常态。空着的话
+  // 生成出来那一页顶上少一行，读起来像「这个版式没有模块名」。
+  const section = String(prev?.section || next?.section || '');
+  const page = after + 1;
+  let shifted = 0;
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE ppt_deck_pages SET page = -page WHERE deck_id = ? AND page >= ?').run(deckId, page);
+    shifted = db
+      .prepare('UPDATE ppt_deck_pages SET page = -page + 1 WHERE deck_id = ? AND page < 0')
+      .run(deckId).changes;
+    list.splice(after, 0, {
+      page,
+      section,
+      kind: '',
+      title,
+      points,
+      layoutId,
+      why: picked ? '你自己插的一页，版式是你挑的。' : '你自己插的一页，版式先跟着前后页 —— 记得挑一条。',
+      alts: [],
+      images: 0,
+      imageSpecs: [],
+    });
+    list.forEach((p: any, i: number) => {
+      p.page = i + 1;
+    });
+    plan.problems = markStalePlan(plan.problems);
+    db.prepare(
+      `UPDATE ppt_decks SET plan_json = ?, planned_total = ?, plan_rev = plan_rev + 1, updated_at = ?
+        WHERE id = ?`
+    ).run(JSON.stringify(plan), list.length, new Date().toISOString(), deckId);
+  });
+  tx();
+  return { plan, planRev: deck.plan_rev + 1, page, shifted, layoutId, section, layoutInherited: !picked };
 }
 
 /**

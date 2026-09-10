@@ -52,14 +52,24 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    overflow:hidden（或者复制这份骨架的人加了），L12 的色带就被裁掉，那一页看起来只是
    「这版没有色带」。 */
 .slide.has-card{overflow:visible}
-/* 浅色页：faint 网格底纹（与输出规范一致） */
-.slide::before{content:"";position:absolute;inset:0;pointer-events:none;
+/* 浅色页：faint 网格底纹（与输出规范一致）。**用 ::after + z-index:-1，不是 ::before**：
+   ::before 让给蒙版了（见下一条），而 ::after 在绘制顺序里等于「最后一个孩子」——
+   不写 z-index:-1 的话它压在背景图（`.case-bg` / `.p5-visual` 那些 z-index:0/auto 的兄弟）
+   上面，于是整幅照片上蒙着一层网格、tinted 页还多两团橙蓝光斑，而那一页看起来只是
+   「这张图发灰」。-1 是「在 .slide 自己的底色之上、所有孩子之下」，和原来 ::before 的位置一致。 */
+.slide::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
   background-image:linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
   background-size:48px 48px;background-position:center}
-.slide.tinted::before{background-image:radial-gradient(880px 600px at 88% 8%,rgba(240,134,26,.07),transparent 62%),radial-gradient(820px 600px at 6% 94%,rgba(45,185,237,.06),transparent 60%),linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
+.slide.tinted::after{background-image:radial-gradient(880px 600px at 88% 8%,rgba(240,134,26,.07),transparent 62%),radial-gradient(820px 600px at 6% 94%,rgba(45,185,237,.06),transparent 60%),linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
   background-size:auto,auto,48px 48px,48px 48px;background-position:center}
-/* 统一蒙版：**每一页都有，由代码贴（`deckShell.applyVeil`），不让模型写**。
-   默认 opacity 0（等于不存在），每页在「这一页详情」里单独调。
+/* 统一蒙版：**每一页都有，由代码贴（`deckShell.applyVeil` 往 `<section>` 上写 `--veil`），
+   不让模型写**。默认 0（等于不存在），每页在「这一页详情」里单独调。
+   **是伪元素而不是一个 `<div class="slide-veil">`**：贴成 section 的第一个孩子的话，
+   浏览器里数出来的孩子下标比库里那份 HTML 多一位，而就地编辑的「删这一块 / 整块对齐 /
+   AI 改这一块」全是按下标路径定位的 —— 轻则一句「你选中的那一块和库里那一页对不上」，
+   重则（选中的那一块里没有文字时 eid 交叉核对是空对空）删掉/改掉的是隔壁那一块，接口 200。
+   用 ::before 而不是 ::after：绘制顺序里 ::before 等于第一个孩子，同 z-index 的兄弟
+   （`.corners`、各 `xx-bg::after` 那几层黑渐变）照旧压在它上面，和原来那个 div 完全一致。
    z-index:1 是承重的 —— 背景图那一层是 z-index:0 或 auto（`.case-bg` / `.p5-visual` /
    `.l13-bg` / 各 `xx-hero img`），内容那一层是 z-index:2 以上：夹在中间才做得到
    「盖住背景图、不盖内容」。所以**不定位的内容块必须补 `position:relative;z-index:2`**
@@ -67,7 +77,7 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    而它仍然是一页读得通的幻灯片，没有一处会说。
    pointer-events:none：不掐掉的话它盖住整页，就地改文字那一套（双击选中）在没有内容的
    地方点不动，现象是「这一页改不了字」。 */
-.slide-veil{position:absolute;inset:0;background:#000;pointer-events:none;z-index:1}
+.slide::before{content:"";position:absolute;inset:0;background:#000;opacity:var(--veil,0);pointer-events:none;z-index:1}
 .slide-inner{position:absolute;inset:0;padding:var(--pad-top) var(--pad-x) var(--pad-bottom);z-index:2;display:flex;flex-direction:column}
 /* 角标 */
 .corners{position:absolute;inset:0;pointer-events:none;z-index:1}
@@ -205,7 +215,20 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l15-en{font-size:11px;line-height:1.65;color:var(--c-ink-soft);opacity:.78}
 
 /* L16 顶 header 极小 + 四栏矩阵陈列 — 详情见 cases/L16-quad-city-matrix.md */
-.l16-wrap{position:absolute;inset:0;padding:160px 64px 40px;display:flex;flex-direction:column;background:var(--c-card)}
+/* **内容待在 `.slide-inner` 里，顶部安全区只由 `--pad-top` 给一次。**
+   原来这一条是 `position:absolute;inset:0;padding:160px 64px 40px` —— 它 `inset:0` 绕开了
+   `.slide-inner`，于是自己重写了一遍页眉安全区。那 160px 是**模型能改的**：prompt 明说
+   「单元数量变了就用 inline style 顺手调宽度/间距」，它写一句 `style="padding:36px 56px"`
+   就把整条 padding（含 top）顶掉（inline 简写胜过这里的普通声明），标题落进页眉带
+   44–100px，而 `.slide-header` 是 z-index:30 —— 永远是页眉压住标题，而页面渲染、类名校验、
+   图位统计全部正常，problems 里一个字都没有。
+   现在 inline padding 只能在安全区**之内**再往里缩，压不到页眉；顺带这一条终于受疏密档
+   （`--pad-*`）管了 —— 原来那三个写死的数让紧凑/舒展档对 L16 一个像素都不起作用。
+   白底靠 ::before 反向撑满（负 inset 正好是 `.slide-inner` 那三个 padding）：`--c-card` 是纯白、
+   画面底色是暖白，只铺内容区的话四周露出一圈暖白，看起来像「这一版底色没上对」。
+   同样的形状（`inset:0` + 自己写 padding-top 当安全区）在别的版式里再出现一次就是同一个事故。 */
+.l16-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.l16-wrap::before{content:"";position:absolute;top:calc(-1 * var(--pad-top));right:calc(-1 * var(--pad-x));bottom:calc(-1 * var(--pad-bottom));left:calc(-1 * var(--pad-x));background:var(--c-card);z-index:-1}
 /* .l16-head 已废弃：模块名统一走 .slide-header，避免顶部 header 重复 */
 .l16-title{margin-bottom:24px}
 .l16-title h2{font-family:var(--serif);font-size:40px;font-weight:800;color:var(--c-ink-deep);line-height:1.1;margin-bottom:10px}
@@ -247,12 +270,17 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l18-en{font-size:clamp(60px,7vw,96px);font-weight:800;color:#fff;line-height:1.0;letter-spacing:-.01em}
 .l18-cn{position:relative;font-size:clamp(76px,9vw,112px);font-weight:300;color:#fff;line-height:1.05;letter-spacing:.04em;z-index:1}
 .l18-cn svg{position:absolute;left:0;right:0;top:48%;width:100%;height:14px;z-index:2;pointer-events:none}
-.l18-cards{position:absolute;bottom:8%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:48px;z-index:2}
+/* 中文标题下面那段右对齐说明。**必须写 `grid-column:2`** —— `.l18-headline` 是两列 grid，
+   不写的话它掉到第二行第一列（英文标题正下方），读起来像英文那半边的注释，而页面照样渲染。
+   它也不能放进 `.l18-cn` 里面：波浪线是 `.l18-cn svg` 按 `top:48%` 定位的，`.l18-cn` 一变高，
+   那条线就从标题中间掉到说明文字上。 */
+.l18-lead{grid-column:2;justify-self:end;max-width:600px;margin-top:28px;text-align:right;font-size:20px;line-height:1.85;color:rgba(255,255,255,.8);z-index:2}
+.l18-cards{position:absolute;bottom:13%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:56px;z-index:2}
 .l18-card{position:relative;color:#fff}
 .l18-card .quote{font-family:Georgia,serif;font-size:54px;color:var(--c-accent);line-height:1;margin-bottom:4px}
-.l18-card .num{font-size:48px;font-weight:700;color:var(--c-accent);font-style:italic;font-family:var(--serif);margin-bottom:8px}
-.l18-card .title{font-size:18px;font-weight:600;margin-bottom:10px}
-.l18-card .desc{font-size:13px;color:rgba(255,255,255,.78);line-height:1.75}
+.l18-card .num{font-size:56px;font-weight:700;color:var(--c-accent);font-style:italic;font-family:var(--serif);margin-bottom:10px}
+.l18-card .title{font-size:25px;font-weight:700;margin-bottom:12px}
+.l18-card .desc{font-size:18px;color:rgba(255,255,255,.8);line-height:1.8}
 
 /* L19 全幅暗 bg + 左上产品标题 + 中央产品 + 底部 3 白卡参数 — 详情见 cases/L19-fullbleed-product-feature-trio-spec.md */
 .l19-wrap{position:absolute;inset:0;overflow:hidden}
@@ -327,6 +355,426 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l22-lower-col .icon{width:24px;height:24px;color:var(--c-brand);margin-bottom:14px}
 .l22-lower-col h3{font-size:18px;font-weight:600;margin-bottom:14px;color:var(--c-ink-deep)}
 .l22-lower-col p{font-size:14px;color:var(--c-ink-soft);line-height:1.85}
+
+/* L23 整页背景图横向渐隐 + 左侧标题/主体两段堆叠（封面 / 结尾） — 详情见 cases/L23-fade-bg-left-title-stack.md
+   横向渐变（不是 L2 那条纵向的）是这一条的结构签名：右侧留给整幅视觉，左侧渐隐成底色供深色字压上去。
+   文字照旧在 `.slide-inner` 里（所以**不算全幅**）—— 脱出去的话标题贴着画面边缘、疏密档一个像素都不动。 */
+.l23-bg{position:absolute;inset:0;z-index:0;overflow:hidden}
+.l23-bg img{width:100%;height:100%;object-fit:cover;display:block}
+.l23-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(var(--mask-rgb),.97) 0%,rgba(var(--mask-rgb),.9) 28%,rgba(var(--mask-rgb),.5) 50%,rgba(var(--mask-rgb),.08) 72%,transparent 88%)}
+.l23-stack{flex:1;display:flex;flex-direction:column;justify-content:center;max-width:58%}
+.l23-mega{font-size:82px;font-weight:800;color:var(--c-ink-deep);line-height:1.14;letter-spacing:-.01em}
+.l23-sub{font-size:28px;font-weight:600;color:var(--c-accent-deep);line-height:1.5;margin-top:22px}
+.l23-meta{margin-top:96px}
+.l23-owner{font-size:22px;font-weight:700;color:var(--c-ink-deep);letter-spacing:.02em}
+.l23-tag{display:inline-block;margin-top:18px;padding:8px 20px;border-radius:999px;background:var(--hl-b);color:var(--c-accent-deep);font-size:16px;font-weight:600;letter-spacing:.08em}
+
+/* === 报告风共用：标题条 + 结论条（L24 起这一族都用它） ===
+   标题**必须是 `h1.page-title`**（这里只重写字体/字号）：页脚那个目录面板是
+   `sec.querySelector('h1.page-title')` 取标题的，换成 `.rp-head h2` 之后这几页在目录里
+   只剩一个页码，而页面本身完全正常、一处都不报错。
+   `.rp-foot` 的 `margin-top:auto` 靠 `.slide-inner` 那层 flex column 生效 —— 中间那块
+   自己带 `flex:1` 时它只是个保险；两者都没有的话结论条紧贴在内容下面，底部空一大片。 */
+.rp-head{padding-bottom:20px;border-bottom:2px solid var(--c-ink-deep)}
+.rp-head .page-title{font-family:var(--sans);font-size:52px;font-weight:800;color:var(--c-ink-deep);line-height:1.18;letter-spacing:-.01em;margin-top:0}
+.rp-head .lead{font-size:20px;line-height:1.7;color:var(--c-ink);margin-top:18px;max-width:1180px}
+.rp-foot{margin-top:auto;padding-top:20px;border-top:1px solid var(--c-hairline);font-size:21px;line-height:1.6;color:var(--c-ink-deep)}
+.rp-foot b{font-weight:800;color:var(--c-brand-deep)}
+
+/* L24 报告风 2×2 象限卡 + 结论条 — 详情见 cases/L24-quad-matrix-conclusion.md */
+.l24-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:28px;margin:36px 0 28px}
+/* 图是**这一格的底图**（`.l24-bg`，铺满 + `object-fit:cover`），不是小图标。两条都不能动：
+   ① `.l24-cell` 上的 `z-index:0` —— 它把底图那层 `z-index:-1` 关在这一格自己的层叠上下文里；
+   删了之后 -1 会掉到外层，被格子自己的不透明底色盖住，那一格看起来只是「这次没配图」。
+   ② 蒙版走 `rgba(var(--mask-rgb),…)` 跟着 deck 底色变，不写死白色 —— cool 档的页面上
+   写死白会露出四块暖白方块，而每一格单看都正常。 */
+.l24-cell{position:relative;z-index:0;overflow:hidden;background:var(--bg-plain);border:1px solid var(--c-hairline);padding:30px 34px;display:flex;flex-direction:column}
+.l24-cell.on{background:var(--c-card);border:1.5px solid var(--c-brand)}
+.l24-bg{position:absolute;inset:0;z-index:-1}
+.l24-bg img{width:100%;height:100%;object-fit:cover;display:block}
+.l24-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(var(--mask-rgb),.93) 0%,rgba(var(--mask-rgb),.86) 44%,rgba(var(--mask-rgb),.66) 100%)}
+.l24-ttl{font-size:26px;font-weight:800;color:var(--c-ink-deep)}
+.l24-cell.on .l24-ttl{color:var(--c-brand-deep)}
+.l24-txt{font-size:19px;line-height:1.85;color:var(--c-ink);margin-top:16px}
+
+/* L25 横轴四节点（上标签 / 圆形图片压轴线 / 下描述）+ 结论条 — 详情见 cases/L25-axis-icon-nodes.md
+   轴线画在**每个节点自己**的 `::before` 上（首尾各收半格），所以 `top:160px` 必须和上面那三个
+   写死的高度对得上（40 标签 + 56 间距 + 128 圆的一半 = 160）。改了字号或圆的直径忘了改它的话，
+   线会横穿图片或者飘在标签上，而页面照样渲染、一处都不报错。
+   圆里的图是**铺满整个圆**的（`width/height:100%` + `object-fit:cover`，圆由 `.l25-dot` 的
+   `border-radius` + `overflow:hidden` 裁），不是居中的小图标 —— 少了 `overflow:hidden`
+   就是一张方图压在圆环上。 */
+.l25-axis{flex:1;display:grid;grid-template-columns:repeat(4,1fr);align-content:center;margin:44px 0 32px}
+.l25-node{position:relative;text-align:center;padding:0 18px}
+.l25-node::before{content:"";position:absolute;top:160px;left:0;right:0;height:1.5px;background:var(--c-ink-deep);opacity:.28}
+.l25-node:first-child::before{left:50%}
+.l25-node:last-child::before{right:50%}
+.l25-stage{height:40px;font-size:28px;font-weight:800;color:var(--c-ink-deep);letter-spacing:.02em}
+.l25-node.on .l25-stage{color:var(--c-brand-deep)}
+.l25-dot{position:relative;z-index:2;width:128px;height:128px;margin:56px auto 0;border-radius:50%;overflow:hidden;background:var(--c-card);border:1.5px solid var(--c-hairline);display:flex;align-items:center;justify-content:center}
+.l25-node.on .l25-dot{border-color:var(--c-brand);background:var(--card-o);box-shadow:0 0 0 8px var(--hl-o)}
+.l25-dot img{width:100%;height:100%;object-fit:cover;display:block}
+.l25-desc{font-size:19px;line-height:1.75;color:var(--c-ink);margin-top:26px}
+
+/* L26 对比双条（浅底 vs 反色）+ accent 竖线引用 + 底部四栏图标卡 — 详情见 cases/L26-contrast-duo-quote-icon-row.md */
+.l26-duo{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:34px}
+.l26-a{background:var(--bg-plain);border:1px solid var(--c-hairline);padding:26px 30px}
+.l26-b{background:var(--c-ink-deep);padding:26px 30px}
+.l26-duo h3{font-size:26px;font-weight:800;color:var(--c-ink-deep);margin-bottom:10px}
+.l26-duo p{font-size:19px;line-height:1.7;color:var(--c-ink)}
+.l26-b h3{color:var(--c-card)}
+.l26-b p{color:rgba(255,255,255,.8)}
+/* 引用那一层用 `margin:auto 0` 吃掉页面剩余的空白（上下各一半），**不是 `flex:1`**：
+   `flex:1` 会把那条 5px 品牌色竖线拉到三四百像素高，一句话吊在一根长杠中间；
+   也不要把 `margin-top:auto` 放在 `.l26-cap` 上，那样空白全落在引用下面，
+   引用贴着上面那对卡片、页面中段空一大块 —— 两种都照样渲染、一处都不报错。 */
+.l26-quote{margin:auto 0;padding:6px 0 6px 26px;border-left:5px solid var(--c-brand);font-size:30px;font-weight:700;line-height:1.55;color:var(--c-ink-deep)}
+.l26-cap{padding-top:34px;font-size:17px;color:var(--c-ink-soft)}
+.l26-row{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:14px}
+/* 四栏卡的图是**卡片底图**（`.l26-bg`，同 L24 那一族的做法：`z-index:0` 关住 -1 那层、
+   蒙版走 `--mask-rgb`）。这里的蒙版是**上淡下浓**的：文字用 `justify-content:flex-end`
+   压在卡片下缘，上半张露图。反过来（上浓下淡）的话 17px 灰字压在照片上，缩到这个尺寸
+   读不出来，而页面看起来只是「这几张图选得有点花」。 */
+.l26-cell{position:relative;z-index:0;overflow:hidden;border:1px solid var(--c-hairline);background:var(--c-card);padding:22px 24px;min-height:200px;display:flex;flex-direction:column;justify-content:flex-end}
+.l26-cell.on{background:var(--card-o);border-color:var(--c-brand)}
+.l26-bg{position:absolute;inset:0;z-index:-1}
+.l26-bg img{width:100%;height:100%;object-fit:cover;display:block}
+.l26-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(var(--mask-rgb),.40) 0%,rgba(var(--mask-rgb),.86) 56%,rgba(var(--mask-rgb),.96) 100%)}
+.l26-cell b{display:block;font-size:22px;font-weight:800;color:var(--c-ink-deep)}
+.l26-cell span{display:block;font-size:17px;line-height:1.6;color:var(--c-ink-soft);margin-top:8px}
+
+/* L27 左编号清单 + 右竖图 — 详情见 cases/L27-checklist-tall-figure.md */
+/* 右边那张图靠 grid 行拉伸撑满整列（`.l27-fig` 不写高度）。给它写死 height 的话，清单一多
+   图就比左栏短一截，页面照样渲染，只是右下角空一块。 */
+.l27-wrap{flex:1;display:grid;grid-template-columns:1fr 560px;gap:72px;margin-top:36px;min-height:0}
+.l27-list{display:flex;flex-direction:column;justify-content:center;gap:26px}
+.l27-item{display:grid;grid-template-columns:74px 1fr;gap:20px;align-items:start;padding-bottom:24px;border-bottom:1px solid var(--c-hairline)}
+.l27-item:last-child{padding-bottom:0;border-bottom:0}
+.l27-no{font-family:var(--num);font-size:42px;font-weight:800;line-height:.9;color:var(--c-brand)}
+.l27-item h3{font-size:28px;font-weight:800;color:var(--c-ink-deep);margin-bottom:8px}
+.l27-item p{font-size:19px;line-height:1.8;color:var(--c-ink)}
+.l27-fig{position:relative;overflow:hidden;background:var(--c-bg-alt)}
+.l27-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l27-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));color:#fff;font-size:19px;font-weight:700;line-height:1.6}
+
+/* L28 双列勾选清单 + 底部横幅图带 — 详情见 cases/L28-dual-col-checklist-photo-band.md */
+/* 吃掉页面剩余高度的是**图带**（`.l28-band{flex:1}`），不是清单：反过来给 `.l28-cols` 加 `flex:1`
+   + `align-content:space-between` 的话，八个勾选项会被摊到一百多像素的行距上，读起来不再是一份清单，
+   而两种写法都合法、都不报错。蒙版是**左浓右淡**：字压在左边。 */
+.l28-cols{display:grid;grid-template-columns:1fr 1fr;gap:30px 60px;margin:34px 0 40px}
+.l28-line{display:grid;grid-template-columns:36px 1fr;gap:18px;align-items:start}
+.l28-tick{width:36px;height:36px;border-radius:50%;background:var(--card-o);color:var(--c-brand-deep);font-size:18px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.l28-line p{font-size:20px;line-height:1.65;color:var(--c-ink)}
+.l28-line b{font-weight:800;color:var(--c-ink-deep)}
+.l28-band{position:relative;flex:1;min-height:216px;overflow:hidden;display:flex;align-items:flex-end}
+.l28-band img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.l28-band::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.78) 0%,rgba(0,0,0,.42) 46%,rgba(0,0,0,.06) 82%)}
+.l28-band p{position:relative;z-index:2;padding:0 34px 28px;max-width:900px;color:#fff;font-size:22px;font-weight:700;line-height:1.55}
+
+/* L29 暗底金句 + 四步回环（全幅）— 详情见 cases/L29-dark-statement-flow-loop.md */
+/* 全幅：**`.l29-wrap` 上一句 padding 都不能写**（`designSpec.test.ts` 盯着所有 `inset:0` 的容器）——
+   模型被允许用 inline style 顺手调间距，它写一句 `style="padding:36px"` 就把这里的 padding-top 顶掉，
+   金句落进 44–100px 那条页眉带、被 z-index:30 的页眉压住，而页面渲染和类名校验全部正常。
+   所以位置全靠 `.l29-say`(top:24%) / `.l29-loop`(bottom:12%) 两个绝对定位的子块，左右缩进用 `var(--pad-x)`。
+   末格的 `::after` 是 ↺ 而不是 →：那一笔是"回到第一步"，换成 → 就变成了四步单向流程。 */
+.l29-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
+.l29-bg{position:absolute;inset:0;z-index:0}
+.l29-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.4}
+.l29-bg::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 92% at 50% 38%,rgba(0,0,0,.34) 0%,rgba(0,0,0,.84) 74%)}
+.l29-say{position:absolute;top:24%;left:var(--pad-x);right:var(--pad-x);z-index:2}
+.l29-say .page-title{font-family:var(--serif);font-size:64px;font-weight:900;line-height:1.28;color:#fff;max-width:1400px;margin-top:0}
+.l29-say .page-title em{font-style:normal;color:var(--c-brand)}
+.l29-sub{margin-top:24px;font-size:21px;line-height:1.85;color:rgba(255,255,255,.72);max-width:1080px}
+.l29-loop{position:absolute;left:var(--pad-x);right:var(--pad-x);bottom:12%;z-index:2;display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
+.l29-step{position:relative;padding:24px 26px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.06)}
+.l29-step::after{content:"\2192";position:absolute;right:-18px;top:50%;transform:translateY(-50%);z-index:3;font-size:22px;color:var(--c-brand)}
+.l29-step:last-child::after{content:"\21BA"}
+.l29-step i{display:block;font-family:var(--num);font-size:15px;font-style:normal;letter-spacing:.22em;color:var(--c-brand);margin-bottom:10px}
+.l29-step b{display:block;font-size:23px;font-weight:800;color:#fff}
+.l29-step span{display:block;margin-top:8px;font-size:17px;line-height:1.65;color:rgba(255,255,255,.72)}
+
+/* L30 三栏编号证据卡（末栏反色）— 详情见 cases/L30-numbered-evidence-trio.md */
+/* 图区 `flex:0 0 62%` 是按卡片高度分的，不是按图片比例 —— 三张图因此严格等高。
+   改成 `aspect-ratio` 的话三栏会因为文案长短不齐而错开，而页面照样渲染。这个比例还兼着
+   「别在正文和 `.l30-tail` 之间空一大块」：调到 50% 以下时卡片中段会空出一两百像素。 */
+.l30-row{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:34px;min-height:0}
+.l30-card{display:flex;flex-direction:column;overflow:hidden;background:var(--c-card);border:1px solid var(--c-hairline)}
+.l30-card.dark{background:var(--c-ink-deep);border-color:var(--c-ink-deep)}
+.l30-pic{position:relative;flex:0 0 62%;overflow:hidden;background:var(--c-bg-alt)}
+.l30-pic img{width:100%;height:100%;object-fit:cover;display:block}
+.l30-no{position:absolute;left:0;bottom:0;padding:6px 18px;background:var(--c-brand);color:#fff;font-family:var(--num);font-size:26px;font-weight:800;line-height:1.3}
+.l30-body{flex:1;display:flex;flex-direction:column;padding:28px 30px 30px}
+.l30-body h3{font-size:27px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);margin-bottom:12px}
+.l30-body p{font-size:19px;line-height:1.8;color:var(--c-ink)}
+.l30-tail{margin-top:auto;padding-top:18px;border-top:1px solid var(--c-hairline);font-size:17px;color:var(--c-ink-soft)}
+.l30-card.dark h3{color:#fff}
+.l30-card.dark p{color:rgba(255,255,255,.78)}
+.l30-card.dark .l30-tail{border-top-color:rgba(255,255,255,.18);color:rgba(255,255,255,.6)}
+
+/* L31 横贯图带 + 浮白卡（全幅）— 详情见 cases/L31-photo-band-float-card.md */
+/* 白卡是 `position:absolute` 压在图带上的（相对 `.l31-wrap`），不是图带的子元素：
+   放进 `.l31-band` 里的话它会被 `overflow:hidden` 连阴影一起切掉，看起来像"卡片没有浮起来"。 */
+.l31-wrap{position:absolute;inset:0;overflow:hidden;display:flex;flex-direction:column}
+.l31-head{padding:var(--pad-top) var(--pad-x) 0}
+.l31-head .page-title{font-family:var(--sans);font-size:58px;font-weight:800;line-height:1.16;letter-spacing:-.01em;color:var(--c-ink-deep);max-width:1200px;margin-top:0}
+.l31-head p{margin-top:16px;font-size:20px;line-height:1.7;color:var(--c-ink);max-width:1000px}
+.l31-band{position:relative;flex:1;margin-top:36px;overflow:hidden}
+.l31-band img{width:100%;height:100%;object-fit:cover;display:block}
+.l31-band::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.5) 0%,rgba(0,0,0,.16) 46%,rgba(0,0,0,0) 74%)}
+.l31-card{position:absolute;left:var(--pad-x);bottom:56px;z-index:3;width:660px;padding:32px 36px;background:var(--c-card);border-top:5px solid var(--c-brand);box-shadow:0 26px 60px rgba(0,0,0,.24)}
+.l31-card h3{font-size:30px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);margin-bottom:14px}
+.l31-card p{font-size:19px;line-height:1.8;color:var(--c-ink)}
+.l31-card b{display:block;margin-top:16px;font-size:21px;font-weight:800;color:var(--c-brand-deep)}
+.l31-meta{position:absolute;right:var(--pad-x);bottom:74px;z-index:3;text-align:right;color:#fff}
+.l31-meta strong{display:block;font-family:var(--num);font-size:64px;font-weight:800;line-height:1}
+.l31-meta span{display:block;margin-top:10px;font-size:19px;color:rgba(255,255,255,.82)}
+
+/* L32 不等宽三图拼贴（全幅）— 详情见 cases/L32-mosaic-hero-duo-overlay.md */
+/* 左边那张是主角：`grid-row:1 / span 2` 占满两行。漏了这一句三张图会变成"上二下一"，
+   主次关系反过来，而页面照样渲染。三张图都要蒙版，否则白字在亮图上直接看不见。 */
+.l32-wrap{position:absolute;inset:0;overflow:hidden;display:grid;grid-template-columns:1.34fr 1fr;grid-template-rows:1fr 1fr;gap:6px;background:var(--c-bg)}
+.l32-a{position:relative;grid-row:1 / span 2;overflow:hidden}
+.l32-b{position:relative;overflow:hidden}
+.l32-c{position:relative;overflow:hidden}
+.l32-wrap img{width:100%;height:100%;object-fit:cover;display:block}
+.l32-a::after,.l32-b::after,.l32-c::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.1) 0%,rgba(0,0,0,.5) 58%,rgba(0,0,0,.86) 100%)}
+.l32-txt{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:52px 58px;color:#fff}
+.l32-kick{font-size:16px;font-weight:700;letter-spacing:.22em;color:var(--c-brand);margin-bottom:14px}
+.l32-a .page-title{font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.2;color:#fff;margin-top:0}
+.l32-txt h3{font-size:30px;font-weight:800;line-height:1.3;color:#fff}
+.l32-txt p{margin-top:14px;font-size:19px;line-height:1.75;color:rgba(255,255,255,.8)}
+.l32-a .l32-txt p{max-width:660px}
+.l32-b .l32-txt p,.l32-c .l32-txt p{font-size:17px}
+
+/* L33 编号目录行 + 右竖图 — 详情见 cases/L33-toc-rows-side-photo.md */
+/* 目录页。`.l33-row:first-child` 那条上边框和每行的下边框合起来才是"表格感"，
+   少了它第一行看着像掉在半空。当前章节那行加 `.on`（只能一行）。 */
+.l33-wrap{flex:1;display:grid;grid-template-columns:1fr 580px;gap:78px;margin-top:34px;min-height:0}
+.l33-list{display:flex;flex-direction:column;justify-content:center}
+.l33-row{display:grid;grid-template-columns:100px 1fr auto;align-items:center;gap:22px;padding:24px 0;border-bottom:1px solid var(--c-hairline)}
+.l33-row:first-child{border-top:1px solid var(--c-hairline)}
+.l33-no{font-family:var(--num);font-size:32px;font-weight:800;color:var(--c-brand)}
+.l33-row h3{font-size:33px;font-weight:800;line-height:1.25;color:var(--c-ink-deep)}
+.l33-row span{font-size:18px;color:var(--c-ink-soft)}
+.l33-row.on h3{color:var(--c-brand-deep)}
+.l33-row.on .l33-no{color:var(--c-brand-deep)}
+.l33-fig{position:relative;overflow:hidden;background:var(--c-bg-alt)}
+.l33-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l33-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));color:#fff;font-size:19px;line-height:1.6}
+
+/* L34 三条竖图幕帘 + 横贯标题带（全幅封面）— 详情见 cases/L34-cover-slat-photos-title-band.md */
+/* 标题带是**横贯整幅**的（`left:0;right:0`），左右内边距用 `var(--pad-x)` 对齐正文网格。
+   改成两边留白的浮卡就变成了"图上放个卡片"（L31 已经是那个），幕帘被切断的那股封面劲没了。
+   `.l34-wrap` 上一句 padding 都不能写（全幅，见 L29 那条注释）：位置全靠 `top:33%` / `bottom:64px`。 */
+.l34-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
+.l34-slats{position:absolute;inset:0;display:grid;grid-template-columns:1.18fr .74fr 1.08fr;gap:8px}
+.l34-slat{position:relative;overflow:hidden}
+.l34-slat img{width:100%;height:100%;object-fit:cover;display:block}
+.l34-slat::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.44) 0%,rgba(0,0,0,.18) 40%,rgba(0,0,0,.58) 100%)}
+.l34-band{position:absolute;left:0;right:0;top:33%;z-index:3;padding:46px var(--pad-x) 50px;background:var(--c-card);border-top:6px solid var(--c-brand)}
+.l34-eyebrow{display:flex;align-items:center;gap:18px;font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.26em;color:var(--c-brand-deep);margin-bottom:18px}
+.l34-eyebrow::after{content:"";flex:1;height:1px;background:var(--c-hairline)}
+.l34-band .page-title{font-family:var(--serif);font-size:82px;font-weight:900;line-height:1.14;letter-spacing:-.02em;color:var(--c-ink-deep);max-width:1400px;margin-top:0}
+.l34-band .page-title em{font-style:normal;color:var(--c-brand)}
+.l34-sub{margin-top:22px;font-size:23px;line-height:1.7;color:var(--c-ink);max-width:1080px}
+.l34-meta{position:absolute;left:var(--pad-x);right:var(--pad-x);bottom:64px;z-index:3;display:flex;justify-content:space-between;align-items:flex-end}
+.l34-meta div{font-size:20px;line-height:1.6;color:rgba(255,255,255,.86)}
+.l34-meta b{display:block;font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.6);margin-bottom:8px}
+
+/* L35 品牌色块与竖图错位叠压（全幅封面）— 详情见 cases/L35-cover-offset-block-portrait.md */
+/* 三层的错位是这一条的全部：色块贴右边缘通高 → 竖图往左下错开压在它上面 → 文字在左半浅底上。
+   把图和色块对齐（同一个 right / 同高）之后画面还是"右边一张图"，那股杂志封面的层次没了，
+   而每一层都渲染正常。竖图右侧留出的那 200px 色块是唯一的品牌色露出，别把图铺到右边缘。 */
+.l35-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l35-block{position:absolute;top:0;right:0;bottom:0;width:42%;background:var(--c-brand);z-index:0}
+.l35-fig{position:absolute;top:96px;bottom:96px;right:200px;width:38%;overflow:hidden;z-index:1;box-shadow:0 40px 90px rgba(0,0,0,.28)}
+.l35-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l35-en{position:absolute;left:var(--pad-x);top:var(--pad-top);z-index:2;font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.3em;color:var(--c-brand-deep)}
+.l35-txt{position:absolute;left:var(--pad-x);top:50%;transform:translateY(-58%);width:42%;z-index:2}
+.l35-rule{width:64px;height:5px;background:var(--c-brand);margin-bottom:30px}
+.l35-txt .page-title{font-family:var(--serif);font-size:78px;font-weight:900;line-height:1.16;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l35-txt .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l35-txt p{margin-top:26px;font-size:23px;line-height:1.75;color:var(--c-ink);max-width:600px}
+.l35-foot{position:absolute;left:var(--pad-x);bottom:var(--pad-bottom);z-index:2;width:42%;display:flex;gap:56px;padding-top:22px;border-top:1px solid var(--c-hairline)}
+.l35-foot div{font-size:19px;color:var(--c-ink-deep)}
+.l35-foot b{display:block;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;color:var(--c-ink-soft);margin-bottom:8px}
+
+/* L36 暗底细框致谢 + 底部三栏联系信息（全幅结尾）— 详情见 cases/L36-closing-framed-thanks-contact.md */
+/* 图是**压到 .32 透明度的气氛底**，不是主角：不压的话「谢谢」两个字压在实景照片上，
+   而那张图又什么都没在说 —— 页面照样渲染，只是最后一页看起来像一张没做完的图片页。
+   细框（1px + `rgba(255,255,255,.26)`）是这一条的高级感来源，加粗或换成实色块立刻变成横幅广告。 */
+.l36-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
+.l36-bg{position:absolute;inset:0;z-index:0}
+.l36-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.32}
+.l36-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.4) 44%,rgba(0,0,0,.88) 100%)}
+.l36-frame{position:absolute;left:16%;right:16%;top:27%;z-index:2;padding:64px 72px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.04);text-align:center}
+.l36-frame .page-title{font-family:var(--serif);font-size:104px;font-weight:900;line-height:1.1;letter-spacing:.06em;color:#fff;margin-top:0}
+.l36-en{margin-top:24px;font-family:var(--num);font-size:17px;font-weight:700;letter-spacing:.38em;color:var(--c-brand)}
+.l36-say{margin:30px auto 0;font-size:22px;line-height:1.85;color:rgba(255,255,255,.76);max-width:820px}
+.l36-contact{position:absolute;left:var(--pad-x);right:var(--pad-x);bottom:78px;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:40px;padding-top:26px;border-top:1px solid rgba(255,255,255,.2)}
+.l36-contact b{display:block;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.22em;color:rgba(255,255,255,.5);margin-bottom:10px}
+.l36-contact span{display:block;font-size:21px;line-height:1.6;color:#fff}
+
+/* L37 报刊双栏长文 + 首字下沉 + 右侧边注（文字多）— 详情见 cases/L37-dense-two-col-prose.md */
+/* **两栏是两个 `.l37-col` 手动分的，不是 `column-count`**：交给浏览器分栏的话，字数一多
+   最后一段会流到容器外面，而容器是 `overflow:hidden`（`.slide` 那层） —— 页面上就是
+   「最后一段没写完」，一处都不报错，而模型下次还会写这么多。手动两栏时超出的部分会
+   顶到页脚色带上，至少看得见。
+   首字下沉**只给第一栏第一段**（`:first-child p:first-child::first-letter`）：两栏都下沉
+   会读成两篇不相干的文章，而两栏各自都很好看。 */
+.l37-head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;padding-bottom:20px;border-bottom:3px double var(--c-ink-deep)}
+.l37-head .page-title{font-family:var(--serif);font-size:50px;font-weight:900;line-height:1.2;letter-spacing:-.01em;color:var(--c-ink-deep);margin-top:0;max-width:1060px}
+.l37-dateline{flex:none;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;line-height:1.9;color:var(--c-ink-soft);text-align:right}
+.l37-wrap{flex:1;display:grid;grid-template-columns:1fr 1fr 380px;min-height:0;margin-top:34px}
+.l37-col{padding-right:46px}
+.l37-col + .l37-col{padding-left:46px;border-left:1px solid var(--c-hairline)}
+.l37-col p{font-size:19px;line-height:1.95;color:var(--c-ink);margin-bottom:20px}
+.l37-col p:last-child{margin-bottom:0}
+.l37-col p b{font-weight:700;color:var(--c-ink-deep)}
+.l37-col:first-child p:first-child::first-letter{float:left;margin:8px 14px 0 0;font-family:var(--serif);font-size:76px;font-weight:900;line-height:.84;color:var(--c-brand)}
+.l37-aside{padding-left:44px;border-left:2px solid var(--c-brand);display:flex;flex-direction:column;gap:24px}
+.l37-fig{position:relative;aspect-ratio:1/1;overflow:hidden;background:var(--c-bg-alt)}
+.l37-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l37-note h3{font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.16em;color:var(--c-ink-soft);margin-bottom:10px}
+.l37-note p{font-size:18px;line-height:1.8;color:var(--c-ink-deep)}
+.l37-pull{margin-top:auto;padding-top:22px;border-top:1px solid var(--c-hairline);font-family:var(--serif);font-size:23px;font-weight:700;line-height:1.6;color:var(--c-ink-deep)}
+
+/* L38 图文行表：方缩略图 + 小标题 + 说明 + 右端编号（文字多）— 详情见 cases/L38-thumb-row-list.md */
+/* 行数**只能 4–6 行**：`justify-content:center` 让这一叠行在剩余高度里居中，七行起会**同时**
+   从上下两端溢出，而中间那几行看起来完全正常 —— 翻页的人只会觉得「第一条和最后一条怎么被切了」。
+   缩略图写死 `120px` 而不是百分比：跟着行高缩的话行一多图就压成一条，主体全没了，
+   而每一行仍然是一行排版完整的清单。 */
+.l38-rows{flex:1;display:flex;flex-direction:column;justify-content:center;margin-top:30px;min-height:0}
+.l38-row{display:grid;grid-template-columns:120px 320px 1fr 90px;gap:34px;align-items:center;padding:24px 0;border-bottom:1px solid var(--c-hairline)}
+.l38-row:last-child{border-bottom:0}
+.l38-thumb{position:relative;width:120px;height:120px;overflow:hidden;background:var(--c-bg-alt)}
+.l38-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.l38-row h3{font-size:27px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l38-row h3 em{display:block;font-style:normal;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.18em;color:var(--c-brand-deep);margin-top:8px}
+.l38-row p{font-size:19px;line-height:1.85;color:var(--c-ink)}
+.l38-no{font-family:var(--num);font-size:34px;font-weight:800;line-height:1;color:var(--c-ink-soft);text-align:right}
+
+/* L39 暗底长文 + 竖排中文标题 + 右侧数据边栏（文字多）— 详情见 cases/L39-dark-longform-vertical-title.md */
+/* 正文的左右边界是 `calc(var(--pad-x) + …)` 算出来的，**必须给两侧让位**：写成
+   `left:var(--pad-x)` 的话正文压在竖排标题上，两层都是白字，读起来只是「有点糊」。
+   竖排标题（`writing-mode:vertical-rl`）**只能 6–10 个汉字**：写长了从下缘裁掉，
+   而页面上看着就是「标题少了两个字」—— 目录面板里那一条却是全的（它取的是 h1 文本）。 */
+.l39-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
+.l39-bg{position:absolute;inset:0;z-index:0}
+.l39-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.22}
+.l39-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,.6) 52%,rgba(0,0,0,.82) 100%)}
+.l39-side{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;align-items:center;gap:20px}
+.l39-side .page-title{writing-mode:vertical-rl;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;letter-spacing:.16em;color:#fff;margin-top:0}
+.l39-side .l39-en{writing-mode:vertical-rl;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.3em;color:var(--c-brand)}
+.l39-body{position:absolute;left:calc(var(--pad-x) + 220px);right:calc(var(--pad-x) + 440px);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;flex-direction:column;justify-content:center}
+.l39-body p{font-size:21px;line-height:2;color:rgba(255,255,255,.82);margin-bottom:24px}
+.l39-body p:last-child{margin-bottom:0}
+.l39-body p b{font-weight:700;color:#fff}
+.l39-stats{position:absolute;right:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);width:340px;z-index:2;display:flex;flex-direction:column;justify-content:center;gap:38px;padding-left:44px;border-left:1px solid rgba(255,255,255,.22)}
+.l39-stats b{display:block;font-family:var(--num);font-size:60px;font-weight:800;line-height:1;color:var(--c-brand)}
+.l39-stats span{display:block;margin-top:12px;font-size:18px;line-height:1.65;color:rgba(255,255,255,.7)}
+
+/* L40 斜切分屏：clip-path 对角线 + 左文右图（全幅）— 详情见 cases/L40-diagonal-split-photo-text.md */
+/* 斜线是**一条**斜线：图的 `clip-path` 从 52% 切到 66%，那条渐变高光（`.l40-edge`）是
+   `left:59%` + `rotate(-14deg)` 精确压在同一条边上的。改了 `clip-path` 的百分比忘了跟着改
+   角度/位置，画面上是两条错开几十像素的斜线（一条颜色边、一条高光），看起来像"设计就是双线"，
+   一处都不报错。
+   图注（`.l40-cap`）只能贴右下角：挪到左边会落到斜线的浅底那一侧，白字在米底上直接看不见，
+   而它照样渲染、`checkPage` 一个字都不说。 */
+.l40-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l40-img{position:absolute;inset:0;z-index:0;overflow:hidden;background:var(--c-ink-deep);clip-path:polygon(100% 0,52% 0,66% 100%,100% 100%)}
+.l40-img img{width:100%;height:100%;object-fit:cover;display:block}
+.l40-img::after{content:"";position:absolute;inset:0;background:linear-gradient(165deg,rgba(0,0,0,.12) 0%,rgba(0,0,0,.56) 100%)}
+.l40-edge{position:absolute;top:-8%;bottom:-8%;left:59%;width:3px;z-index:1;transform:rotate(-14deg);background:linear-gradient(180deg,var(--c-brand),var(--c-accent))}
+.l40-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);width:40%;z-index:2;display:flex;flex-direction:column;justify-content:center}
+.l40-txt .page-title{font-family:var(--serif);font-size:62px;font-weight:900;line-height:1.18;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l40-txt .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l40-lead{margin-top:24px;font-size:22px;line-height:1.8;color:var(--c-ink)}
+.l40-list{margin-top:34px;display:flex;flex-direction:column;gap:20px;padding-top:26px;border-top:1px solid var(--c-hairline)}
+.l40-list div{display:flex;gap:18px;align-items:baseline}
+.l40-list b{flex:none;font-family:var(--num);font-size:19px;font-weight:800;letter-spacing:.06em;color:var(--c-brand)}
+.l40-list span{font-size:20px;line-height:1.7;color:var(--c-ink-deep)}
+.l40-cap{position:absolute;right:var(--pad-x);bottom:var(--pad-bottom);max-width:420px;z-index:2;text-align:right}
+.l40-cap b{display:block;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.24em;color:var(--c-brand);margin-bottom:10px}
+.l40-cap span{display:block;font-size:19px;line-height:1.65;color:rgba(255,255,255,.86)}
+
+/* L41 描边空心巨数字章节页（全幅）— 详情见 cases/L41-outline-mega-number-chapter.md */
+/* `-webkit-text-stroke` **必须配 `color:transparent`**：少了那一句是一个 420px 的实心色块数字，
+   把标题和下面三条全压死 —— 而它照样渲染，看起来像"这一条设计得就是这么重"。
+   数字**只能 1–2 位**：三位数在 420px 下顶到 1000px 宽，压到标题底下并被 `overflow:hidden`
+   静默裁掉一截。底部只能 3 格（`repeat(3,1fr)`）：写第四条会换行到栅格第二行，而那一行在
+   `bottom:var(--pad-bottom)` 之下，直接被裁掉 —— 页面上就是"第四个小标题没了"。 */
+.l41-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l41-num{position:absolute;left:var(--pad-x);top:17%;z-index:1;font-family:var(--num);font-size:420px;font-weight:800;line-height:.82;letter-spacing:-.04em;white-space:nowrap;color:transparent;-webkit-text-stroke:2px var(--c-brand)}
+.l41-txt{position:absolute;left:calc(var(--pad-x) + 210px);right:var(--pad-x);top:44%;z-index:2}
+.l41-txt .page-title{font-family:var(--serif);font-size:92px;font-weight:900;line-height:1.14;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l41-en{margin-top:20px;font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.34em;color:var(--c-brand-deep)}
+.l41-say{margin-top:24px;max-width:880px;font-size:22px;line-height:1.8;color:var(--c-ink)}
+.l41-sub{position:absolute;left:var(--pad-x);right:var(--pad-x);bottom:var(--pad-bottom);z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:44px;padding-top:26px;border-top:1px solid var(--c-hairline)}
+.l41-sub b{display:block;font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.2em;color:var(--c-brand);margin-bottom:10px}
+.l41-sub span{display:block;font-size:20px;line-height:1.6;color:var(--c-ink-deep)}
+
+/* L42 半圆舞台 + 弧上三组数据（全幅）— 详情见 cases/L42-arc-stage-metrics.md */
+/* 三组数据的坐标（`.l42-m1/m2/m3`）是按**半径 720、圆心 (960,1080)** 的那个半圆算出来的
+   （150° / 90° / 30°，都往弧内收到 r=560 那一圈上，再按块高 97px 上移 48px 让它压在点上）。
+   改了 `.l42-stage` 的宽高忘了重算这几个 `left/top`，那三块白字会跑到弧外面的米底上 ——
+   白字在浅底上直接看不见，而 HTML、CSS、`checkPage` 一个字都不说。
+   `.l42-arc` 是比舞台大 20px 的一圈 1px 细线（`border-bottom:0`，只留上半），它是这一条的
+   精致感来源；圆角写成 `50%` 而不是 `720px 720px 0 0` 的话上半圆会被压成椭圆，而画面照样完整。 */
+.l42-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l42-head{position:absolute;left:var(--pad-x);right:var(--pad-x);top:var(--pad-top);z-index:2;text-align:center}
+.l42-head .page-title{font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.2;color:var(--c-ink-deep);margin-top:0}
+.l42-head p{margin:18px auto 0;max-width:900px;font-size:21px;line-height:1.75;color:var(--c-ink)}
+.l42-stage{position:absolute;left:50%;bottom:0;width:1440px;height:720px;margin-left:-720px;z-index:0;overflow:hidden;border-radius:720px 720px 0 0;background:var(--c-ink-deep)}
+.l42-stage img{width:100%;height:100%;object-fit:cover;display:block;opacity:.5}
+.l42-stage::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.22) 0%,rgba(0,0,0,.78) 100%)}
+.l42-arc{position:absolute;left:50%;bottom:0;width:1480px;height:740px;margin-left:-740px;z-index:1;border:1px solid var(--c-hairline);border-bottom:0;border-radius:740px 740px 0 0;pointer-events:none}
+.l42-m{position:absolute;width:280px;z-index:2;text-align:center}
+.l42-m b{display:block;font-family:var(--num);font-size:56px;font-weight:800;line-height:1;color:var(--c-brand)}
+.l42-m span{display:block;margin-top:12px;font-size:18px;line-height:1.6;color:rgba(255,255,255,.82)}
+.l42-m1{left:335px;top:752px}
+.l42-m2{left:820px;top:472px}
+.l42-m3{left:1305px;top:752px}
+
+/* L43 层叠微旋转卡片（3 张）— 详情见 cases/L43-stacked-tilt-cards.md */
+/* 旋转角**只能 ±3° 以内**：再大卡片的角就伸出内容区、被 `.slide` 的 overflow 裁掉一块，
+   而那张卡片本身看起来是完整的。**只能 3 张**：`460×3 - 40×2 = 1300`，第四张之后总宽超过
+   1640 的内容区，最右那张被裁一半，而前三张排得整整齐齐。
+   投影和 1px 边一起承重：只旋转不投影的话三张纸糊在一起，看起来像排版错位而不是层叠。
+   中间那张靠 `nth-child(2){z-index:2}` 压在两侧上面 —— 不给的话最后一张最上层，
+   视觉重心跑到第三张，读的人以为那才是重点。 */
+.l43-lead{margin-top:16px;max-width:1180px;font-size:21px;line-height:1.75;color:var(--c-ink)}
+.l43-deck{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;margin-top:26px}
+.l43-card{position:relative;flex:none;width:460px;padding:26px 30px 30px;background:var(--c-card);border:1px solid var(--c-hairline);border-radius:18px;box-shadow:0 26px 60px rgba(28,27,26,.14);transform:rotate(-3deg)}
+.l43-card + .l43-card{margin-left:-16px}
+.l43-card:nth-child(2){z-index:2;transform:rotate(1.6deg) translateY(24px)}
+.l43-card:nth-child(3){z-index:1;transform:rotate(-1.2deg) translateY(-12px)}
+.l43-fig{position:relative;aspect-ratio:4/3;overflow:hidden;border-radius:12px;background:var(--c-bg-alt)}
+.l43-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l43-card b{display:block;margin-top:20px;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
+.l43-card h3{margin-top:10px;font-size:28px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l43-card p{margin-top:12px;font-size:18px;line-height:1.75;color:var(--c-ink)}
+
+/* L44 竖向时间轴（5 节点）— 详情见 cases/L44-vertical-timeline-five.md */
+/* 轴线两端那个 `10%` 是按**5 个节点**算的（1/(2×5)：每个节点占 1/5 高、圆点在自己那一格
+   正中）。节点数一变这两个数就不对了 —— 4 个节点时轴线两端各穿出圆点 21px，看起来像
+   "轴画长了"，而每一条节点都完整。**节点只能 4–5 个**：6 个起每格压到 140px 以下，
+   小标题和说明各自换行，两条挨在一起看不出分段。
+   圆点必须有实底（`background:var(--c-card)`）：透明的话那条轴线从圆点中间穿过去，
+   五个点全变成"甜甜圈上画了一道"，而它照样渲染。 */
+.l44-grid{flex:1;display:grid;grid-template-columns:460px 1fr;gap:80px;min-height:0;margin-top:8px}
+.l44-side{display:flex;flex-direction:column}
+.l44-side .page-title{font-family:var(--serif);font-size:54px;font-weight:900;line-height:1.2;color:var(--c-ink-deep);margin-top:0}
+.l44-side p{margin-top:20px;font-size:21px;line-height:1.85;color:var(--c-ink)}
+.l44-side .l44-note{margin-top:auto;padding-top:22px;border-top:1px solid var(--c-hairline);font-size:18px;line-height:1.7;color:var(--c-ink-deep)}
+.l44-axis{position:relative;padding-left:56px;display:flex;flex-direction:column}
+.l44-axis::before{content:"";position:absolute;left:11px;top:10%;bottom:10%;width:2px;background:var(--c-hairline)}
+.l44-step{position:relative;flex:1;display:flex;flex-direction:column;justify-content:center}
+.l44-step::before{content:"";position:absolute;left:-56px;top:50%;margin-top:-12px;width:24px;height:24px;border-radius:50%;background:var(--c-card);border:2px solid var(--c-brand)}
+.l44-step:last-child::before{background:var(--c-brand)}
+.l44-step b{font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
+.l44-step h3{margin-top:8px;font-size:27px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l44-step p{margin-top:8px;max-width:820px;font-size:19px;line-height:1.7;color:var(--c-ink)}
 
 /* 双卡 (L4) */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:30px}

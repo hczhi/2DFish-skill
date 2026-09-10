@@ -22,7 +22,7 @@
 │                                                      │
 │  英文大字 (56px 白)                                   │
 │  中文大字 (56px 白)                                   │  ← 文字靠左 80px
-│                                                      │     垂直居中偏上
+│                                                      │     落在 hero 下部（top:62%）
 │                                              (hero图) │
 ├─────────── 下半信息区（flex 1, 浅底）──────────────────┤
 │  ┌── 左栏 (1fr) ──┐  ┌── 右栏 (1fr) ──┐              │
@@ -39,10 +39,10 @@
 |------|------|
 | 上下分屏比 | **约 56 : 44**（hero 略大） |
 | 分屏手法 | 靠**色温切换**区分（暗 hero 图 → 浅底信息区），无分界线 |
-| 上半文字对齐 | 左对齐（贴左 80px 安全区），垂直居中偏上 |
+| 上半文字对齐 | 左对齐（贴左 80px 安全区），`top:62%`（hero 下部，让开左上角的模块名） |
 | 上半堆叠 | kicker(14px) → 英文大字(56px) → 中文大字(56px) |
 | 上半文字色 | `var(--c-card)`（白/浅），保证 hero 图上可读 |
-| 上半渐变 | `linear-gradient(to top, rgba(0,0,0,.45), rgba(0,0,0,.1) 50%, rgba(0,0,0,.35))` |
+| 上半渐变 | `linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,.32) 55%, rgba(0,0,0,.10))`（**顶部最暗** —— 页眉那行白字压在图上要有底） |
 | 下半底色 | `var(--c-bg)` 或 `var(--c-bg-alt)`（浅色系，与上半形成色温对比） |
 | 下半分栏 | 双栏等宽 `1fr 1fr`，gap 64px，每栏 padding 48px 80px 64px |
 | 每栏堆叠 | 小标题(20px deep + hairline 底线) → 中文段(15px) → 英文段(13px italic) |
@@ -79,12 +79,12 @@
 .l14-wrap{position:absolute;inset:0;display:flex;flex-direction:column}
 .l14-hero{position:relative;flex:0 0 56%;overflow:hidden}
 .l14-hero img{width:100%;height:100%;object-fit:cover;object-position:center 40%;display:block}
-.l14-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.45) 0%,rgba(0,0,0,.1) 50%,rgba(0,0,0,.35) 100%)}
-.l14-hero-text{position:absolute;left:80px;top:50%;transform:translateY(-50%);z-index:2;color:var(--c-card)}
+.l14-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.72) 0%,rgba(0,0,0,.32) 55%,rgba(0,0,0,.10) 100%)}
+.l14-hero-text{position:absolute;left:80px;top:62%;transform:translateY(-50%);z-index:2;color:var(--c-card);text-shadow:0 2px 18px rgba(0,0,0,.45)}
 .l14-kicker{font-size:14px;font-weight:700;letter-spacing:3px;opacity:.85;margin-bottom:16px;padding-left:12px;border-left:2px solid var(--c-accent)}
 .l14-mega-en{font-size:56px;font-weight:700;line-height:1.1;letter-spacing:-.5px}
 .l14-mega-cn{font-size:56px;font-weight:800;line-height:1.15;margin-top:4px;opacity:.95}
-.l14-info{flex:1;background:var(--c-bg);padding:48px 80px 64px;display:grid;grid-template-columns:1fr 1fr;gap:64px}
+.l14-info{position:relative;z-index:2;flex:1;background:var(--c-bg);padding:48px 80px 64px;display:grid;grid-template-columns:1fr 1fr;gap:64px}
 .l14-info-col h3{font-size:20px;font-weight:700;color:var(--c-ink-deep);margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--c-hairline)}
 .l14-cn-p{font-size:15px;line-height:1.85;color:var(--c-ink);margin-bottom:12px}
 .l14-en-p{font-size:13px;line-height:1.65;color:var(--c-ink-soft);font-style:italic;opacity:.85}

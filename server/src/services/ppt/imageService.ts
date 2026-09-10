@@ -371,6 +371,9 @@ async function runOneImage(
     providerId: provider.id,
     n: 1,
     timeoutMs: IMAGE_TIMEOUT_MS,
+    // PPT 的图转存到后台配的「PPT 专用桶」（没配齐就照旧写默认桶）。**这是 PPT 唯一一处生图入口**
+    // ——「照槽位配图」和「按规划先备图」都走 runOneImage，漏在别处传的话那一批图会静默回到老桶。
+    bucketProfile: 'ppt',
   });
   if (!img?.url) throw new Error('生图接口没有返回图片地址');
 
@@ -674,6 +677,50 @@ export function pasteIntoBuiltPage(
     used: fill.used,
     problems,
   };
+}
+
+/**
+ * 自由改造（`ai-remake`）加/删图槽之后，把这一页的配图记录（`images_json`）按**新 html 里的
+ * 图槽顺序**重新对齐。纯函数，只认 html —— `findImageSlots` 数出来的那个序号就是配图那一步、
+ * 备好的图回填、面板上「配图 2/3 张」共用的同一个序号（硬规则 3：这个数在代码里算）。
+ *
+ * 不对齐的话两种后果都是「界面上一切正常」：
+ * ① 一张配好的真图被改造删掉之后记录还在 —— 面板上照旧写着「配图 1/1 张」并挂着那张缩略图，
+ *    而画面里那几格全是占位图。他会当这一页已经配完，直接去拼整份 / 导出。
+ * ② 在前面插进一个新图槽之后序号整体后移 —— 第 1 格那条记录指的是现在第 2 格里那张图，
+ *    下一次贴备好的图（`pasteIntoBuiltPage` 按同序号覆盖）会把图落到隔壁那一格上：
+ *    图文不符，而页面渲染完全正常、接口 200。
+ *
+ * 对齐靠**按地址找它现在在第几格**，不是按序号原地留着：留下来的那张图地址一个字都没变
+ * （原文是打了码整段还回来的），所以地址是唯一可靠的锚。找不到 = 这张图不在这一页了，
+ * 整条丢掉 —— 留着一条 url 指向页面上没有的图就是 ① 那种谎报。
+ */
+export function realignImageRecords(
+  html: string,
+  images: FilledImage[]
+): { images: FilledImage[]; dropped: FilledImage[]; changed: boolean } {
+  const slots = findImageSlots(html);
+  // 同一个地址可能贴在两格上（同一张图用在两处），所以按地址排一队、先来的先占。
+  const free = new Map<string, number[]>();
+  for (const s of slots) {
+    if (!s.src || PLACEHOLDERS.includes(s.src)) continue;
+    free.set(s.src, [...(free.get(s.src) || []), s.index]);
+  }
+  const kept: FilledImage[] = [];
+  const dropped: FilledImage[] = [];
+  let moved = false;
+  for (const rec of [...(images || [])].sort((a, b) => Number(a?.index) - Number(b?.index))) {
+    const to = rec?.url ? free.get(rec.url)?.shift() : undefined;
+    if (to === undefined) {
+      // url 空的那几条（生图失败 / 这一格跳过了）也一起丢：它说的是上一版那几格的事，
+      // 留着的话面板上「配图 1/3 张」那个分母是旧版式的格子数。
+      dropped.push(rec);
+      continue;
+    }
+    if (to !== Number(rec.index)) moved = true;
+    kept.push({ ...rec, index: to });
+  }
+  return { images: kept, dropped, changed: moved || dropped.length > 0 };
 }
 
 /** 从后往前替换（改前面会让后面记下来的位置全部错位）。 */

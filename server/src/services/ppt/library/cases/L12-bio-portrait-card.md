@@ -19,7 +19,7 @@
 ## 结构拆解
 
 ```
-┌──── 外层（neutral 浅底，inset 56px）────┐
+┌──── 外层（neutral 浅底，inset 56px 56px 90px）────┐
 │ ┌──────── Card（圆角 24px，白底）────────┐│
 │ │  KICKER (灰小标)                        ││
 │ │  MEGA-WORD (巨大品牌色字)    ┌─────┐  ││
@@ -27,19 +27,19 @@
 │ │  灰色描述段落                   │ 视觉 │  ││
 │ │  ▬▬ (品牌色短线)               │ 主体 │  ││
 │ │                                └─────┘  ││
-│ │═══════════ 品牌色色带出血 ══════════════││ ← 色带溢出 Card 边缘
+│ │═══════════ 品牌色色带 ══════════════════││ ← 贴在 card 内底部，不溢出
 └─────────────────────────────────────────┘
 ```
 
 | 维度 | 取值 |
 |------|------|
-| 外层 inset | 56px（slide 到 card-wrap 的间距） |
+| 外层 inset | `56px 56px 90px`（底部多留 —— 色带贴在 card 内底部，下面还要给页脚留白） |
 | Card 圆角 | 24px（软） |
 | Card 内 padding | 62px 72px 90px（底部多留色带空间） |
 | 内分栏 | `1.4fr 1fr`（文本为主，圆形视觉辅） |
 | 圆形视觉 | 圆形 crop，~320px 直径，居右，6px 白边 + 阴影 |
 | 标题堆叠 | 5 层：① 灰 kicker(24px) ② 品牌色巨字(116px serif) ③ 深色中字(38px serif) ④ 灰色描述段(15px) ⑤ 品牌色短线(64×5) |
-| 底部色带 | 高度 64px，**出血**到 Card 边缘外（左右各 -24px、底部 -28px） |
+| 底部色带 | 高度 56px，**贴在 card 内底部**（`bottom/left/right:0` + 下圆角 24px），不再出血到 card 外（会被 slide 裁掉一半） |
 | Card 阴影 | `0 24px 60px rgba(0,0,0,.08)` + `0 2px 8px rgba(0,0,0,.04)` |
 | 圆形阴影 | `0 16px 40px rgba(0,0,0,.14)` |
 
@@ -74,7 +74,7 @@
 
 ```css
 /* 圆形浮卡 (L12) · 圆形视觉 + 出血色带 — 详情见 cases/L12-bio-portrait-card.md */
-.bio-wrap{position:absolute;inset:56px;z-index:2}
+.bio-wrap{position:absolute;inset:56px 56px 90px;z-index:2}
 .bio-card{position:relative;width:100%;height:100%;background:var(--c-card);border-radius:24px;
   box-shadow:0 24px 60px rgba(0,0,0,.08),0 2px 8px rgba(0,0,0,.04);
   padding:62px 72px 90px;display:grid;grid-template-columns:1.4fr 1fr;gap:48px;align-items:center;
@@ -87,7 +87,7 @@
   margin-bottom:18px;letter-spacing:1px}
 .bio-desc{font-size:15px;line-height:1.8;color:var(--c-ink-soft);max-width:460px;margin-bottom:8px}
 .bio-accent-line{width:64px;height:5px;background:var(--c-brand);border-radius:3px;margin-top:24px}
-.bio-portrait-wrap{position:relative;display:flex;justify-content:center;align-items:center;z-index:3}
+.bio-portrait-wrap{position:relative;display:flex;justify-content:center;align-items:center;z-index:3;justify-self:center;width:fit-content}
 .bio-portrait{position:relative;width:320px;height:320px;border-radius:50%;overflow:hidden;
   box-shadow:0 16px 40px rgba(0,0,0,.14),0 2px 8px rgba(0,0,0,.08);border:6px solid var(--c-card)}
 .bio-portrait img{width:100%;height:100%;object-fit:cover;display:block}
@@ -96,10 +96,7 @@
 .bio-badge{position:absolute;bottom:-10px;right:-10px;background:var(--c-brand);color:#fff;
   font-size:13px;font-weight:700;letter-spacing:2px;padding:8px 16px;border-radius:20px;
   box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:4}
-.bio-bleed{position:absolute;bottom:-28px;left:-24px;right:-24px;height:64px;
-  background:linear-gradient(90deg,var(--c-brand-deep) 0%,var(--c-brand) 50%,var(--c-brand-deep) 100%);
-  border-radius:0 0 24px 24px;z-index:2;box-shadow:0 12px 36px rgba(0,0,0,.12);
-  display:flex;align-items:center;justify-content:space-between;padding:0 72px}
+.bio-bleed{position:absolute;bottom:0;left:0;right:0;height:56px;background:linear-gradient(90deg,var(--c-brand-deep) 0%,var(--c-brand) 50%,var(--c-brand-deep) 100%);border-radius:0 0 24px 24px;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:0 72px}
 .bio-bleed .bleed-text{color:rgba(255,255,255,.85);font-size:13px;font-weight:600;letter-spacing:6px}
 .bio-bleed .bleed-dots{display:flex;gap:8px}
 .bio-bleed .bleed-dots span{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.4)}

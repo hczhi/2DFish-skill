@@ -69,7 +69,7 @@
 .l15-hero-tl{position:absolute;top:48px;left:80px;color:var(--c-card);z-index:2;font-size:18px;line-height:1.4}
 .l15-hero-tl .logo{font-size:28px;font-weight:700;margin-bottom:8px}
 .l15-hero-tr{position:absolute;top:48px;right:80px;color:var(--c-card);z-index:2;font-size:12px;line-height:1.6;opacity:.85;max-width:240px;text-align:right}
-.l15-text{flex:1;background:var(--c-card);padding:64px 80px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:56px}
+.l15-text{position:relative;z-index:2;flex:1;background:var(--c-card);padding:64px 80px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:56px}
 .l15-col h3{font-size:22px;font-weight:700;color:var(--c-ink-deep);margin-bottom:24px;padding-left:14px;border-left:3px solid var(--c-accent)}
 .l15-cn{font-size:16px;line-height:1.85;color:var(--c-ink);margin-bottom:16px}
 .l15-en{font-size:11px;line-height:1.65;color:var(--c-ink-soft);opacity:.78}

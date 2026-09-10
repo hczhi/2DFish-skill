@@ -46,7 +46,7 @@
 
 ```css
 /* L22 上下两段 + 每段各自左右分栏 — 详情见 cases/L22-stacked-hero-info-block-each-split.md */
-.l22-wrap{position:absolute;inset:0;display:flex;flex-direction:column;z-index:1;overflow:hidden}
+.l22-wrap{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden}
 .l22-upper{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0}
 .l22-hero{position:relative;overflow:hidden}
 .l22-hero img{width:100%;height:100%;object-fit:cover;display:block}
@@ -54,11 +54,11 @@
 .l22-hero-txt{position:absolute;bottom:48px;left:48px;color:#fff;z-index:2}
 .l22-hero-txt .cn{font-size:36px;font-weight:300;letter-spacing:.04em}
 .l22-hero-txt .en{display:block;font-size:18px;margin-top:8px;letter-spacing:.32em;font-weight:300}
-.l22-info{background:var(--c-card);padding:48px 56px;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.l22-info{position:relative;z-index:2;background:var(--c-card);padding:48px 56px;display:flex;flex-direction:column;justify-content:center;gap:14px}
 .l22-info h3{font-size:18px;font-weight:600;padding-bottom:8px;border-bottom:1px solid var(--c-hairline);color:var(--c-ink-deep)}
 .l22-info .row{font-size:14px;color:var(--c-ink);line-height:1.8}
 .l22-info .row strong{font-weight:600}
-.l22-lower{flex:1;display:grid;grid-template-columns:1fr 1fr;background:var(--c-card);min-height:0}
+.l22-lower{position:relative;z-index:2;flex:1;display:grid;grid-template-columns:1fr 1fr;background:var(--c-card);min-height:0}
 .l22-lower-col{padding:48px 56px}
 .l22-lower-col+.l22-lower-col{border-left:1px solid var(--c-hairline)}
 .l22-lower-col .icon{width:24px;height:24px;color:var(--c-brand);margin-bottom:14px}

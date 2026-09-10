@@ -63,6 +63,28 @@ describe('deck 设计规范', () => {
     for (const top of tops) expect(top).toBeGreaterThan(headY + 30);
   });
 
+  it('绕开 .slide-inner 的版式容器不许自己写一份页眉安全区', () => {
+    // L16 的 `.l16-wrap` 原来是 `inset:0` + `padding:160px 64px 40px`：它绕开了 `.slide-inner`，
+    // 于是自己抄了一份页眉安全区。而那一份是**模型能改的** —— prompt 明说「单元数量变了就用
+    // inline style 顺手调间距」，它写一句 `style="padding:36px 56px"` 就把整条 padding（含 top）
+    // 顶掉（inline 简写胜过 template 里的普通声明），标题落进 44–100px 那条页眉带，而
+    // `.slide-header` 是 z-index:30 —— 屏幕上是页眉压住标题，而页面渲染、类名校验、图位统计
+    // 全部正常，problems 里一个字都没有。安全区只能有一份，在 `.slide-inner` 上。
+    const css = [...library().template.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)]
+      .map((m) => m[1])
+      .join('\n')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const bad: string[] = [];
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1].trim().replace(/\s+/g, ' ');
+      if (sel.startsWith('@') || sel.includes('.slide-inner')) continue;
+      if (!/inset:\s*0/.test(m[2])) continue;
+      const top = (/padding-top:\s*([^;]+)/.exec(m[2]) || /padding:\s*([^\s;]+)/.exec(m[2]))?.[1]?.trim();
+      if (top && !/^0(px|%)?$/.test(top)) bad.push(`${sel} → padding-top:${top}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('默认那一套注出来是空字符串（外壳里一句覆盖都没有）', () => {
     // 不空的话默认稿子上多一段和 template 抄重的色值，template 改了色它就钉在旧值上。
     expect(designStyleBlock(DEFAULT_DESIGN)).toBe('');

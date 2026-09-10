@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// 这一步的每种失败都是「一份看起来完整的规划」：编出来的版式名（L23 读起来和 L2 一样真）、
+// 这一步的每种失败都是「一份看起来完整的规划」：编出来的版式名（L99 读起来和 L2 一样真）、
 // 被截断只规划了一半、连续五页同一个版式。全都不报错，手测时和挑得准的那一版分不开 ——
 // 所以必须有测试。happy path 不测（挑得准不准是他自己看 demo 判断的）。
 
@@ -25,12 +25,12 @@ beforeEach(() => gateway.mockReset());
 
 describe('排版规划', () => {
   it('模型编出来的版式名不进结果，而且要点名说出它给了什么', async () => {
-    gateway.mockResolvedValue(reply([page('L1'), page('L23', '落地路径'), page('L4')]));
+    gateway.mockResolvedValue(reply([page('L1'), page('L99', '落地路径'), page('L4')]));
     const r = await planDeck('提纲', 'u1');
     // 绝不静默替换成某一条：替成 L1 之后这一页排出来也好看，只是不是模型挑的那个，
     // 而用户以为是。
     expect(r.pages.map((p) => p.layoutId)).toEqual(['L1', 'L4']);
-    expect(r.problems.join('\n')).toContain('L23');
+    expect(r.problems.join('\n')).toContain('L99');
     expect(r.problems.join('\n')).toContain('落地路径');
     // 页码由代码按留下来的页重排 —— 沿用模型的下标会出现「第 1、3 页」这种跳号
     expect(r.pages.map((p) => p.page)).toEqual([1, 2]);
@@ -139,6 +139,38 @@ describe('排版规划', () => {
     } finally {
       setLayoutEnabled('L5', true);
     }
+  });
+
+  it('提纲里没被任何一页认领的段落要点名，并且带出原文', async () => {
+    // 这是「提纲上的重要内容在成稿里丢了」唯一的可查点：页数对得上、每一页单看都合理，
+    // 而那几行数据整段没有任何一页认领 —— 不说的话和「这几段本来就该合并掉」一模一样，
+    // 他只能等成稿翻到那儿才发现。
+    const outline = ['封面：年度合作方案', '', '1.1 市场规模', '全国 3.2 万亿，华东占 38%', '同比 +12%', '', '1.2 结论', '优先打华东'].join('\n');
+    gateway.mockResolvedValue(reply([{ ...page('L2'), lines: [1, 2] }, { ...page('L7'), lines: [7, 8] }]));
+    const said = (await planDeck(outline, 'u1')).problems.join('\n');
+    expect(said).toMatch(/没有被任何一页认领/);
+    expect(said).toContain('第 3–5 行');
+    expect(said).toContain('全国 3.2 万亿'); // 只给行号的话他得回去数行
+  });
+
+  it('这一页的原文按行号在代码里切，不用模型回传的文本', async () => {
+    // 让模型自己抄原文的话，抄的过程就是又一次压缩（六行合成两行、数字被改），
+    // 而那一段读起来完全通顺 —— 页面上一处都不报错。
+    const outline = ['第一行', '第二行 3.2 万亿', '第三行'].join('\n');
+    gateway.mockResolvedValue(reply([{ ...page('L2'), lines: [1, 3], source: '第一行到第三行的概括' }]));
+    const r = await planDeck(outline, 'u1');
+    expect(r.pages[0].outlineText).toBe(outline);
+    expect(r.pages[0].outlineRange).toEqual([1, 3]);
+  });
+
+  it('行号给不出来时按成因分组汇总，不逐页刷一条', async () => {
+    // 三种成因解法完全不同（改 prompt / 提纲行数对不上 / 模型换了格式），合成一句
+    // 「行号有问题」等于指错方向；而逐页刷的话 30 条一样的警告会把「漏了哪几段」冲下去。
+    const outline = ['一', '二', '三'].join('\n');
+    gateway.mockResolvedValue(reply([{ ...page('L2'), lines: [1, 2] }, page('L7'), { ...page('L4'), lines: [2, 99] }]));
+    const said = (await planDeck(outline, 'u1')).problems.join('\n');
+    expect(said).toContain('第 2 页 压根没给 `lines`');
+    expect(said).toContain('第 3 页 行号 2–99 越界（提纲只有 3 行）');
   });
 
   it('拿不到 JSON 抛错而不是回空规划', async () => {

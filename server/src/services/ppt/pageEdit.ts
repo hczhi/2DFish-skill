@@ -22,6 +22,47 @@ const VOID_TAGS = new Set([
   'param', 'source', 'track', 'wbr',
 ]);
 
+/**
+ * 一整个色值（`#2DB9ED` / `rgba(0,0,0,.08)` / `rgba(var(--mask-rgb),.5)`）。
+ *
+ * **必须连括号里那一段一起抓**：只抓 `rgba(` 的话报错里就是一句「模型写死了颜色（rgba(）」——
+ * 他根本不知道是哪一处的什么颜色，只能一路重试（每次一次真实花费）。里层还允许一对括号，
+ * 不然 `rgba(var(--mask-rgb),.58)` 会在第一个 `)` 上切断。
+ */
+const COLOR_RE = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\((?:[^()]|\([^()]*\))*\)/g;
+
+/**
+ * 纯黑/纯白（含半透明）算「中性色」，**不当写死颜色拦**：阴影、蒙版、压在图上的那层黑
+ * 只能这么写，换一套配色它们照样成立。拦掉的话「加一点投影」这种要求无论怎么写都过不去，
+ * 而他看到的是一句「颜色只能用 var(--c-…)」—— 照着做不可能，于是一直重试。
+ */
+function isNeutralColor(lit: string): boolean {
+  if (lit.startsWith('#')) {
+    const h = lit.slice(1).toLowerCase();
+    return /^f+$/.test(h) || /^0+$/.test(h);
+  }
+  const inner = lit.slice(lit.indexOf('(') + 1, lit.lastIndexOf(')'));
+  // `rgba(var(--mask-rgb),.5)`：颜色本身还是变量，变量名那条校验单独管。
+  if (/^\s*var\(\s*--[a-z0-9-]+\s*\)/.test(inner)) return true;
+  const nums = inner.split(',').slice(0, 3).map((s) => Number(s.trim()));
+  if (nums.length < 3 || nums.some((n) => !Number.isFinite(n))) return false;
+  return nums.every((n) => n === 0) || nums.every((n) => n === 255);
+}
+
+/** 模型新写进来的写死色值（原来那一段里已有的、以及中性色不算）。两条 AI 路径共用这一份。 */
+export function hardcodedColors(html: string, original: string): string[] {
+  const out = new Set<string>();
+  for (const m of html.matchAll(COLOR_RE)) {
+    if (!original.includes(m[0]) && !isNeutralColor(m[0])) out.add(m[0]);
+  }
+  return [...out];
+}
+
+/** 这一块能不能装东西（`<img>` 装不了 —— 想「一张图拆三张」只能去改它外面那一层）。 */
+export function isVoidTag(name: string): boolean {
+  return VOID_TAGS.has(name.toLowerCase());
+}
+
 /** 标签 / 注释。属性值里的 `>` 不算标签结束（`data-img-prompt="…>…"` 会把扫描切错）。 */
 const TAG_RE = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][\w-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
 
@@ -262,6 +303,38 @@ export function findRegionByPath(
 /** 这段 html 里有哪些 `data-eid`（顺序就是出现顺序）。 */
 export function eidsIn(html: string): string[] {
   return [...html.matchAll(/data-eid=["']([^"']+)["']/g)].map((m) => m[1]);
+}
+
+/** 这段 html 里 `tN` 这种编号最大到几（新加的那几段要从它往后接着排）。 */
+export function maxEidNumber(html: string): number {
+  let max = 0;
+  for (const id of eidsIn(html)) {
+    const n = Number(/^t(\d+)$/.exec(id)?.[1] || 0);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+/**
+ * 给这段 html 里**还没有 eid** 的文字段补上编号（自由改造新写出来的那几段用）。
+ *
+ * `injectEids` 在这里用不了：它见到任何一个 `data-eid` 就原样返回（幂等），而这段里
+ * 老的那几段是带着编号的 —— 于是新写的那几段一个编号都拿不到，屏幕上是完整正常的一页，
+ * 只是那几句**从此双击改不动**（也不能用浮动条改样式），而没有一处会说为什么。
+ * 从 `from` 往后接着排、不重用旧号：重用的话前端手上那份预览里的 t3 和库里的 t3 指向
+ * 两个不同的元素，改一句字会落到另一块上。
+ */
+export function assignMissingEids(html: string, from: number): { html: string; added: string[] } {
+  const found = leaves(html).filter((l) => !/\sdata-eid=/.test(l.attrs));
+  const added: string[] = [];
+  let out = html;
+  // 从后往前插，前面那几个位置才不会因为插入而漂掉。
+  for (let i = found.length - 1; i >= 0; i--) {
+    const id = `t${from + i + 1}`;
+    added.unshift(id);
+    out = `${out.slice(0, found[i].gt)} data-eid="${id}"${out.slice(found[i].gt)}`;
+  }
+  return { html: out, added };
 }
 
 // ── 打码 / 还原（AI 编辑只让模型碰结构，碰不到文案）────────────────

@@ -33,17 +33,26 @@ export function uploadsRoot(): string {
   return process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'data/uploads');
 }
 
-export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: string; Region: string } | null {
+/** 库里读一批 system_config；`secret` 里列出的键按密文解（migrations/050）。 */
+function readConfig(keys: string[], secret: Set<string>): { plain: Record<string, string>; raw: Record<string, string> } {
   const db = getDatabase();
-  const rows = db.prepare("SELECT key, value FROM system_config WHERE key IN ('cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region')").all() as Array<{ key: string; value: string }>;
-
-  // secret_id/secret_key 在库里是密文（migrations/050），bucket/region 不是敏感信息不加密。
-  // tryDecryptSecret 对没有 enc: 前缀的值原样返回，所以这里对两类值都安全。
-  const SECRET_FIELDS = new Set(['cos_secret_id', 'cos_secret_key']);
-  const config: Record<string, string> = {};
+  const rows = db
+    .prepare(`SELECT key, value FROM system_config WHERE key IN (${keys.map(() => '?').join(',')})`)
+    .all(...keys) as Array<{ key: string; value: string }>;
+  const plain: Record<string, string> = {};
+  const raw: Record<string, string> = {};
   for (const row of rows) {
-    config[row.key] = SECRET_FIELDS.has(row.key) ? tryDecryptSecret(row.value) ?? '' : row.value;
+    raw[row.key] = (row.value || '').trim();
+    // tryDecryptSecret 对没有 enc: 前缀的值原样返回，所以这里对两类值都安全。
+    plain[row.key] = (secret.has(row.key) ? tryDecryptSecret(row.value) ?? '' : row.value || '').trim();
   }
+  return { plain, raw };
+}
+
+const COS_SECRET_FIELDS = new Set(['cos_secret_id', 'cos_secret_key', 'cos_ppt_secret_id', 'cos_ppt_secret_key']);
+
+export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: string; Region: string } | null {
+  const { plain: config } = readConfig(['cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region'], COS_SECRET_FIELDS);
 
   // 解密失败会落到空串，和「没配置」走同一个 null 分支：上传接口返回
   // 「对象存储未配置」而不是拿着空凭据去调腾讯云换一个看不懂的签名错误。
@@ -59,6 +68,86 @@ export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: s
   };
 }
 
+/** 一次转存要写到哪：桶 + 凭据 + 那个桶的公网域名（域名和桶必须成对传，见 resolveCosTarget）。 */
+export type CosTarget = { SecretId: string; SecretKey: string; Bucket: string; Region: string; publicBase: string };
+
+/**
+ * PPT 专用桶（后台 > 系统配置 > PPT 专用桶）。**三项要么齐、要么当没配**，中间状态一律抛错。
+ *
+ * 缺一项就静默走默认桶的话，界面上是一张正常显示的图 —— 他会以为新桶已经在用了，
+ * 而实际上一张都没进去；等哪天把默认桶清了，整份稿子的图一起裂。
+ * 域名和桶对不上更隐蔽：`putObject` 成功、接口 200、库里存了 URL，只有浏览器那边是裂图，
+ * 所以默认 cos 域名形式这里直接核对 bucket/region 两段（自定义 CDN 域名核不了，只能核 https）。
+ * 密钥留空 = 复用默认桶那对；但**填了却解不开必须抛错**（拿默认桶的凭据去写这个桶只会换来
+ * 一个 AccessDenied，那句话会把人指向权限而不是 CONFIG_ENCRYPTION_KEY）。
+ */
+export function getPptCosTarget(): CosTarget | null {
+  const KEYS = ['cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key'];
+  const { plain, raw } = readConfig(KEYS, COS_SECRET_FIELDS);
+  const trio = ['cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base'];
+  const filled = trio.filter((k) => plain[k]);
+  if (!filled.length) return null;
+  if (filled.length < trio.length) {
+    throw new Error(
+      `PPT 专用桶配置不全，缺：${trio.filter((k) => !plain[k]).join(' / ')}。` +
+        '要么把三项填齐，要么三项都清空（清空 = PPT 也用默认桶）。'
+    );
+  }
+
+  const Bucket = plain.cos_ppt_bucket;
+  const Region = plain.cos_ppt_region;
+  const publicBase = plain.cos_ppt_base.replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(publicBase)) {
+    throw new Error(`PPT 专用桶的公网域名必须以 https:// 开头（当前「${publicBase}」）—— http 的图会被浏览器当混合内容静默拦掉。`);
+  }
+  const m = /^https:\/\/([a-z0-9-]+)\.cos\.([a-z0-9-]+)\.myqcloud\.com$/i.exec(publicBase);
+  if (m && (m[1] !== Bucket || m[2] !== Region)) {
+    throw new Error(
+      `PPT 专用桶的公网域名和桶对不上：域名指向 ${m[1]} / ${m[2]}，而桶填的是 ${Bucket} / ${Region}。` +
+        '这样图会成功写进桶里，而页面上是裂图。'
+    );
+  }
+
+  let SecretId = plain.cos_ppt_secret_id;
+  let SecretKey = plain.cos_ppt_secret_key;
+  const storedButUnreadable = (['cos_ppt_secret_id', 'cos_ppt_secret_key'] as const).filter((k) => raw[k] && !plain[k]);
+  if (storedButUnreadable.length) {
+    throw new Error(
+      `PPT 专用桶的 ${storedButUnreadable.join(' / ')} 解密失败 —— 通常是 CONFIG_ENCRYPTION_KEY 变了或没设。` +
+        '别急着重填（重填会覆盖掉库里那份密文）。'
+    );
+  }
+  if (!SecretId !== !SecretKey) {
+    throw new Error('PPT 专用桶的 SecretId / SecretKey 只填了一个：两个都填（用这个桶自己的账号）或两个都留空（复用默认桶那对）。');
+  }
+  if (!SecretId) {
+    const fallback = getCosConfig();
+    if (!fallback) {
+      throw new Error(`PPT 专用桶没填密钥，而默认桶的凭据也用不了：${cosUnavailableReason()}`);
+    }
+    SecretId = fallback.SecretId;
+    SecretKey = fallback.SecretKey;
+  }
+
+  return { SecretId, SecretKey, Bucket, Region, publicBase };
+}
+
+/**
+ * 这次转存写哪个桶。`profile==='ppt'` 且 PPT 专用桶配齐了就写它，否则写默认桶。
+ *
+ * **配置错误在这里抛，调用方要在调上游之前先调一次**（见 imageGateway.generateImage）：
+ * 放到转存那一步才抛的话，上游已经生成、已经扣了费，而他看到的是一句「生图失败」，
+ * 于是一路重试 —— 每次都真花钱、每次都断在同一个地方。
+ */
+export function resolveCosTarget(profile?: 'ppt'): CosTarget | null {
+  if (profile === 'ppt') {
+    const ppt = getPptCosTarget();
+    if (ppt) return ppt;
+  }
+  const d = getCosConfig();
+  return d ? { ...d, publicBase: defaultPublicBase() } : null;
+}
+
 /**
  * COS 对象的公网地址。**只有这一份**（生图转存和后台图片上传共用）。
  *
@@ -67,10 +156,15 @@ export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: s
  * 后台页面本身走 https 时更隐蔽：`http://` 的图会被当混合内容**静默**拦掉，
  * 控制台之外什么都看不到。
  * 域名可用 COS_PUBLIC_BASE 覆盖（换 CDN / 直连 bucket 域名时不用改代码）。
+ * **写别的桶时必须把那个桶的域名传进来**（`base`）：不传就套默认桶的 CDN 域名，
+ * 于是图进了新桶而 URL 指着老桶 —— 上传/生图接口全都 200，页面上是裂图。
  */
-export function cosPublicUrl(key: string): string {
-  const base = (process.env.COS_PUBLIC_BASE || 'https://file.qiaonan.vip').replace(/\/+$/, '');
-  return `${base}/${key}`;
+export function cosPublicUrl(key: string, base?: string): string {
+  return `${(base || defaultPublicBase()).replace(/\/+$/, '')}/${key}`;
+}
+
+function defaultPublicBase(): string {
+  return (process.env.COS_PUBLIC_BASE || 'https://file.qiaonan.vip').replace(/\/+$/, '');
 }
 
 /**

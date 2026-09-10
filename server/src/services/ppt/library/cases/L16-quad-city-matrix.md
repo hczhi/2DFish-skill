@@ -71,8 +71,12 @@
 
 ```css
 /* 四栏矩阵陈列（模块名走全平台统一的 .slide-header，这一版没有自己的顶 header） */
-.l16-wrap{position:absolute;inset:0;padding:40px 64px;display:flex;flex-direction:column;background:var(--c-card)}
-.l16-title{margin-bottom:32px}
+/* 顶部/左右/底部的留白**全部由 `.slide-inner` 给**（`--pad-top` 里已经含了页眉那条带）：
+   这一层不要再写 padding-top、也不要用 inline style 改它 —— 改小了标题会被左上角那行
+   模块名压住（页眉在最上层），而页面照样渲染、一处都不报错。 */
+.l16-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.l16-wrap::before{content:"";position:absolute;top:calc(-1 * var(--pad-top));right:calc(-1 * var(--pad-x));bottom:calc(-1 * var(--pad-bottom));left:calc(-1 * var(--pad-x));background:var(--c-card);z-index:-1}
+.l16-title{margin-bottom:24px}
 .l16-title h2{font-family:var(--serif);font-size:40px;font-weight:800;color:var(--c-ink-deep);line-height:1.1;margin-bottom:10px}
 .l16-title p{font-size:14px;color:var(--c-ink-soft)}
 .l16-grid{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:28px}

@@ -22,7 +22,7 @@
         </div>
 
         <div class="header-actions">
-          <router-link class="btn-ghost" to="/ppt/layouts">版式案例库（22 个）</router-link>
+          <router-link class="btn-ghost" to="/ppt/layouts">版式案例库（44 个）</router-link>
           <!-- 没有入口的话生成过的图只存在于各页 html 里，他不知道自己有一堆花过钱的图可以重用 -->
           <router-link class="btn-ghost" to="/ppt/assets">配图素材库</router-link>
           <button class="btn-create" @click="router.push('/ppt/decks/new')">

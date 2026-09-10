@@ -26,21 +26,84 @@ export interface PptAsset {
 /** 列表一次最多回多少张。素材是累积的，全量回的话几百张图的 json 会把这个页面拖住。 */
 export const ASSETS_PAGE_SIZE = 120;
 
-export function listAssets(userId: string, limit = ASSETS_PAGE_SIZE): { assets: PptAsset[]; total: number } {
+/** 「没记归属」那一组（`deck_id = ''`）在接口上的值。见 `listAssets` 的注释。 */
+export const ASSETS_NO_DECK = '__none__';
+
+/**
+ * 我的素材，可**按稿子筛**（素材库累积到几百张之后，不分项目那一页就是一堵图墙）。
+ *
+ * 筛选**必须在 SQL 里做**，不能在前端拿这 120 张再过滤：那样「这个项目就 3 张」和
+ * 「这个项目的图都在第 120 张之后」在界面上完全一样 —— 一个看起来完整的项目图库，
+ * 而他真正要重用的那几张根本不在里面，一处都不会说。同理 `total` 是**这一组的**总数。
+ *
+ * `deckId` 传 `''` / 不传 = 全部；传 `ASSETS_NO_DECK` 才是「没记归属」那一组
+ * （`deck_id = ''`）。用一个哨兵值而不是空串：空串当成「没筛」的话，点那个 tab 会回
+ * 全部素材，而 tab 是选中的 —— 读起来就是「这一组有三百张」。
+ */
+export function listAssets(
+  userId: string,
+  opts: { deckId?: string; limit?: number } = {}
+): { assets: PptAsset[]; total: number } {
   const db = getDatabase();
+  const limit = opts.limit ?? ASSETS_PAGE_SIZE;
+  const deckId = opts.deckId === ASSETS_NO_DECK ? '' : opts.deckId || '';
+  const where = deckId || opts.deckId === ASSETS_NO_DECK ? 'user_id = ? AND deck_id = ?' : 'user_id = ?';
+  const args = deckId || opts.deckId === ASSETS_NO_DECK ? [userId, deckId] : [userId];
   const total = (
-    db.prepare('SELECT COUNT(*) AS n FROM ppt_assets WHERE user_id = ?').get(userId) as { n: number }
+    db.prepare(`SELECT COUNT(*) AS n FROM ppt_assets WHERE ${where}`).get(...args) as { n: number }
   ).n;
   const assets = db
     .prepare(
       `SELECT id, url, prompt, mode, style_id, ratio, model, storage, deck_id, page, created_at
-         FROM ppt_assets WHERE user_id = ?
+         FROM ppt_assets WHERE ${where}
         ORDER BY created_at DESC LIMIT ?`
     )
-    .all(userId, limit) as PptAsset[];
+    .all(...args, limit) as PptAsset[];
   // total 要一起回：只回前 120 张的话「素材库里就这些」和「这一页只装得下 120 张」
   // 在界面上分不开，而他会以为剩下的图丢了。
   return { assets, total };
+}
+
+export interface AssetGroup {
+  /** `''` = 没记归属（接口上要用 `ASSETS_NO_DECK` 去筛它）。 */
+  deckId: string;
+  /** 那份稿子现在的名字；稿子已经删了就是空串（前端要标出来，见下）。 */
+  title: string;
+  /** 稿子还在不在。删了的**照旧要出现在 tab 里** —— 过滤掉的话那几十张图从每个 tab
+   *  里都消失了，看起来像被删过，而它们还在库里、url 也还能用。 */
+  deckGone: boolean;
+  count: number;
+  lastAt: string;
+}
+
+/**
+ * 按稿子分组的张数（tab 条用它画）。
+ *
+ * **张数按整张表算，不是按上面那 120 张算**：拿页内数据统计的话每个 tab 上的数字都偏小，
+ * 而它读起来完全正常（「这个项目 3 张」），他会以为那个项目的图丢了。
+ * 所以这里单独一条 `GROUP BY`，不复用列表那次查询。
+ */
+export function assetGroups(userId: string): AssetGroup[] {
+  const rows = getDatabase()
+    .prepare(
+      `SELECT a.deck_id AS deckId, COUNT(*) AS count, MAX(a.created_at) AS lastAt,
+              d.id AS foundId, d.title AS title
+         FROM ppt_assets a
+         LEFT JOIN ppt_decks d ON d.id = a.deck_id AND d.user_id = a.user_id
+        WHERE a.user_id = ?
+        GROUP BY a.deck_id
+        ORDER BY lastAt DESC`
+    )
+    .all(userId) as Array<{ deckId: string; count: number; lastAt: string; foundId: string | null; title: string | null }>;
+  return rows.map((r) => ({
+    deckId: r.deckId || '',
+    title: r.title || '',
+    // 按 `d.id` 判，不按 `title` 判：标题本来就可能是空串，那时「稿子删了」和
+    // 「这份稿子没名字」会混成一个，而前端两种写的话是两句不同的提示。
+    deckGone: !!r.deckId && !r.foundId,
+    count: r.count,
+    lastAt: r.lastAt || '',
+  }));
 }
 
 /**

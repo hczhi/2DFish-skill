@@ -11,7 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import { resolveImageProvider, getProvider, type AIProvider } from '../../services/aiProviderService.js';
-import { getCosConfig, uploadsRoot, cosUnavailableReason, cosPublicUrl } from '../../api/upload.js';
+import { resolveCosTarget, uploadsRoot, cosUnavailableReason, cosPublicUrl, type CosTarget } from '../../api/upload.js';
 
 export interface GenerateImageOptions {
   size?: string;          // 如 '1024x1024'，各家默认值不同
@@ -29,6 +29,11 @@ export interface GenerateImageOptions {
   providerId?: string;
   /** 单次请求超时（毫秒）。生图普遍比文本慢，缺省 180 秒。 */
   timeoutMs?: number;
+  /**
+   * 转存到哪个桶。`'ppt'` = 后台配的「PPT 专用桶」，没配齐就照旧写默认桶。
+   * 不传的模块（后台上传、ui-review）一律默认桶。
+   */
+  bucketProfile?: 'ppt';
 }
 
 export interface GeneratedImage {
@@ -63,6 +68,9 @@ export async function generateImage(prompt: string, opts: GenerateImageOptions =
     throw new Error(`生图接入点「${provider.label || provider.id}」的 API Key 未设置或无法解密。`);
   }
 
+  // 转存目标**在调上游之前先解析出来**：桶配错了要在花钱之前就抛（见 resolveCosTarget）。
+  const target = resolveCosTarget(opts.bucketProfile);
+
   const { protocol, inferred } = readProtocol(provider);
   // 分段计时打进日志：生图有两段（上游生成、把图搬回来），只有一个总耗时的话
   // 「上游慢」和「下载拉不动」看起来一模一样 —— 而后者时上游已经扣了费。
@@ -84,8 +92,11 @@ export async function generateImage(prompt: string, opts: GenerateImageOptions =
       `形式=${raw.map((r) => ('b64' in r ? 'base64' : 'url')).join('/')}`
   );
 
-  const stored = await Promise.all(raw.map((r) => persistImage(r)));
-  console.log(`[imageGateway] 转存完成 ${Date.now() - t1}ms → ${stored.map((s) => s.storage).join('/')}`);
+  const stored = await Promise.all(raw.map((r) => persistImage(r, target)));
+  console.log(
+    `[imageGateway] 转存完成 ${Date.now() - t1}ms → ${stored.map((s) => s.storage).join('/')}` +
+      (target ? ` bucket=${target.Bucket}` : '')
+  );
   return stored.map((s) => ({
     url: s.url,
     provider: provider.id,
@@ -259,7 +270,7 @@ function sleep(ms: number): Promise<void> {
  * `/uploads` 静态挂载提供）。原来这里在 COS 缺失时直接返回上游的限时 URL —— 那是个
  * 定时炸弹：生成当天一切正常，几小时/几天后整份演示稿的图全变成裂图，而没有任何一处报错。
  */
-async function persistImage(raw: RawImage): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
+async function persistImage(raw: RawImage, target: CosTarget | null): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
   let buffer: Buffer;
   let contentType: string;
 
@@ -291,16 +302,16 @@ async function persistImage(raw: RawImage): Promise<{ url: string; storage: 'cos
   const datePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
   const key = `ai-images/${datePath}/${uuidv4()}${ext}`;
 
-  const cosConfig = getCosConfig();
-  if (cosConfig) {
-    const cos = new COS({ SecretId: cosConfig.SecretId, SecretKey: cosConfig.SecretKey });
+  if (target) {
+    const cos = new COS({ SecretId: target.SecretId, SecretKey: target.SecretKey });
     await new Promise<void>((resolve, reject) => {
       cos.putObject(
-        { Bucket: cosConfig.Bucket, Region: cosConfig.Region, Key: key, Body: buffer, ContentType: contentType },
+        { Bucket: target.Bucket, Region: target.Region, Key: key, Body: buffer, ContentType: contentType },
         (err) => (err ? reject(err) : resolve())
       );
     });
-    return { url: cosPublicUrl(key), storage: 'cos' };
+    // 域名跟着桶走：这里套默认域名的话图进了新桶而 URL 指着老桶，接口全程 200、页面上是裂图。
+    return { url: cosPublicUrl(key, target.publicBase), storage: 'cos' };
   }
 
   // 退回本机磁盘时必须说出**为什么**没走 COS：「没配」和「配了但凭据解不开」

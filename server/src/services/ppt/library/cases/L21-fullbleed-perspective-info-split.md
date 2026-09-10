@@ -18,12 +18,12 @@
 
 1. **全幅背景图**（`.l21-bg`，中央透视构图——栈道/桥/船头/隧道/走廊延伸感）
 2. **双向蒙版**（`.l21-bg::after`，`linear-gradient(to right, rgba(0,0,0,.5) 0%, transparent 35%, transparent 65%, rgba(0,0,0,.45) 100%)`）—— 左右收暗、中央透亮
-3. **左 1/3 文字**（`.l21-left`，absolute top 88px left 80px，max-width 42%）
+3. **左 1/3 文字**（`.l21-left`，absolute **垂直居中** `top:50%+translateY(-50%)`，left 80px，max-width 42%）
    - 英文巨字 2 行（`.l21-en`，56–64px 白色，weight 800，行高 1.05）
    - 中文副标一行（`.l21-cn`，30–36px 白色）
    - 品牌色短线（`.l21-rule`，4px × 56–80px，`var(--c-brand)`）
    - 双语正文（`.l21-body`，14–16px，`rgba(255,255,255,.85)`，行高 1.7，max-width 480px）
-4. **右 1/3 数据三栏**（`.l21-right`，absolute top 96px right 80px，flex gap 56px）
+4. **右 1/3 数据三栏**（`.l21-right`，absolute **垂直居中**（同上），right 80px，flex gap 56px）
    - 每栏（`.l21-stat`）：大数字（`.num`，衬线 56–72px 白色）+ 中文小标（`.lab`，14–18px 白色）+ 英文小字 italic（`.lab-en`，12–14px `rgba(255,255,255,.7)`）
 5. **底部居中分页指示**（`.l21-nav`，absolute bottom 40px center，flex gap 8px）
    - 半透白点 8×8px；当前态拉长 24×8px 圆角 4px
@@ -34,16 +34,16 @@
 
 ```css
 /* L21 全幅中央透视 + 左文字 + 右三数据栏 — 详情见 cases/L21-fullbleed-perspective-info-split.md */
-.l21-wrap{position:absolute;inset:0;overflow:hidden;z-index:1}
+.l21-wrap{position:absolute;inset:0;overflow:hidden}
 .l21-bg{position:absolute;inset:0}
 .l21-bg img{width:100%;height:100%;object-fit:cover;display:block}
 .l21-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,.5) 0%,transparent 35%,transparent 65%,rgba(0,0,0,.45) 100%);z-index:1}
-.l21-left{position:absolute;top:88px;left:80px;max-width:42%;z-index:2}
+.l21-left{position:absolute;top:50%;transform:translateY(-50%);left:80px;max-width:42%;z-index:2}
 .l21-en{font-size:60px;font-weight:800;color:#fff;line-height:1.05}
 .l21-cn{font-size:32px;color:#fff;margin-top:14px}
 .l21-rule{width:64px;height:4px;background:var(--c-brand);margin:20px 0 16px}
 .l21-body{font-size:15px;color:rgba(255,255,255,.85);line-height:1.7;max-width:480px}
-.l21-right{position:absolute;top:96px;right:80px;display:flex;gap:56px;z-index:2}
+.l21-right{position:absolute;top:50%;transform:translateY(-50%);right:80px;display:flex;gap:56px;z-index:2}
 .l21-stat .num{font-size:64px;font-weight:700;color:#fff;font-family:var(--serif);line-height:1}
 .l21-stat .lab{font-size:14px;color:#fff;margin-top:10px;font-weight:500}
 .l21-stat .lab-en{font-size:12px;color:rgba(255,255,255,.7);margin-top:4px;font-style:italic}

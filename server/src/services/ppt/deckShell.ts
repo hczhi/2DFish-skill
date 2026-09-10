@@ -96,24 +96,34 @@ export function assemblePreview(html: string, meta: DeckMeta, veilOpacity: numbe
  * 不让模型写：交给模型的话它会挑着页写、还会顺手改成渐变或者半透明白，
  * 而每一页单看都是正常的设计。
  *
- * 贴在 `<section>` 开标签紧后面 = DOM 里的第一个孩子：`.slide-veil` 是 `z-index:1`，
- * 背景图那层是 0/auto、内容那层是 2 以上，所以它夹在中间（见 template.html 里
- * `.slide-veil` 上那段注释）。同 z-index 的兄弟（`.corners`、`.l18-cn`）靠「后画的在上面」
- * 压在它上面 —— 所以**必须是第一个孩子**，贴到末尾的话那几个元素会被压暗。
+ * **只往 `<section>` 开标签上写一个 `--veil` 变量，不往里塞任何元素。** 那一层黑现在是
+ * `.slide::before`（见 template.html 里那段注释）。原来贴的是 `<div class="slide-veil">` 作为
+ * 第一个孩子 —— 而那个 div 只存在于拼装出来的这一份、库里那份 html 里没有，于是浏览器里数出来
+ * 的孩子下标整体多一位，就地编辑里「删这一块 / 整块对齐 / AI 改这一块」（都按 `<section>` 数
+ * 下来的下标路径定位）全错一格：轻则一句「你选中的那一块和库里那一页对不上」，重则那一块里
+ * 没有文字时 eid 交叉核对是空对空，删掉/改掉的是隔壁那一块而接口 200。
+ * **所以拼装这一层往 section 里加任何孩子都会重犯这个 bug**（见 pageService.test.ts 里那条断言）。
  *
- * 先摘掉已有的那一层：拼装在读的时候每次都跑一遍，不摘的话同一页会越叠越黑
- * （每存一次多一层 0.4，看起来只是「这一页怎么越来越暗」）。
+ * 顺手摘掉老页面里可能存着的那个 div 和上一次写进去的 `--veil`：不摘的话同一页越叠越黑
+ * （看起来只是「这一页怎么越来越暗」），而 style 里两个 `--veil` 时生效的是后一个 ——
+ * 他调的那个数悄悄不作数。
  */
 export function applyVeil(html: string, opacity: number): string {
   const cleaned = html.replace(/<div class="slide-veil"[^>]*><\/div>\s*/g, '');
-  // 夹逼 + 非数字回落到 0：NaN 写进 style 的话整条声明被浏览器丢掉，蒙版变成**全黑不透明**
-  // （opacity 缺省 1），那一页只剩一块黑，而没有一处报错。
+  // 夹逼 + 非数字回落到 0：NaN 写进去的话 `opacity:var(--veil,0)` 整条声明在计算值那一步
+  // 作废、回到初始值 1，那一页只剩一块黑，而没有一处报错。
   const o = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0;
-  const div = `<div class="slide-veil" style="opacity:${o}"></div>`;
   let injected = false;
   const out = cleaned.replace(/<section\b[^>]*>/, (m) => {
     injected = true;
-    return m + div;
+    const tag = m.replace(/\s*--veil\s*:[^;"']*;?/g, '');
+    // 已经有 style 的（版式会往 section 上写背景图）必须**并进那一个属性里**：另起一个
+    // `style="…"` 的话 HTML 只认前面那一个，后加的整条被丢掉 —— 蒙版对这几页静默失效。
+    // 单引号也要认（同一个原因）。
+    const has = /\sstyle\s*=\s*(["'])/.exec(tag);
+    return has
+      ? tag.slice(0, has.index + has[0].length) + `--veil:${o};` + tag.slice(has.index + has[0].length)
+      : `${tag.slice(0, -1)} style="--veil:${o}">`;
   });
   if (!injected) {
     // 这里静默返回原文的话，那一页就是唯一一页没有蒙版的 —— 而它在放映里翻过去只是「亮了一下」。

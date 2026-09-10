@@ -40,8 +40,8 @@
 
 ```css
 /* L20 左浮文带 + 宽 hero + 三圆图标 — 详情见 cases/L20-left-textband-wide-hero-icon-cluster.md */
-.l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;z-index:1;overflow:hidden}
-.l20-textband{padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
+.l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;overflow:hidden}
+.l20-textband{position:relative;z-index:2;padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
 .l20-en{font-size:64px;font-weight:800;color:var(--c-ink-deep);line-height:1.05;letter-spacing:-.01em}
 .l20-cn{font-size:34px;font-weight:500;color:var(--c-ink-deep);margin-top:14px}
 .l20-stat{display:flex;align-items:baseline;gap:10px;margin-top:36px}

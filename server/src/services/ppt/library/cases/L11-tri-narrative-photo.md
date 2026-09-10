@@ -73,7 +73,7 @@
 
 ```css
 /* 三栏并列叙事 (L11) · 全幅图叠字（标题白字叠在图上，没有 header 带） */
-.tri-narrative{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;overflow:hidden}
+.tri-narrative{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden}
 .tri-title{position:absolute;top:188px;left:80px;right:80px;z-index:5;color:#fff;font-family:var(--serif);font-size:40px;font-weight:800;letter-spacing:.5px;text-shadow:0 2px 18px rgba(0,0,0,.4)}
 .tri-title .em{color:var(--c-accent)}
 .tri-cols{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;position:relative;overflow:hidden}

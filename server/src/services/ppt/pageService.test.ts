@@ -7,7 +7,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../core/llm/gateway.js', () => ({ aiGateway: vi.fn() }));
 
 const { aiGateway } = await import('../../core/llm/gateway.js');
+// 版式启用状态在库里（layoutState）：checkPage 要按它给「换成哪几条装得下」的建议。
+const { initDatabase } = await import('../../db/index.js');
+initDatabase();
 const { generatePage, buildDeck, PageError } = await import('./pageService.js');
+const { domTree } = await import('./pageEdit.js');
 
 function reply(content: string, finish = 'stop', reasoningTokens?: number) {
   (aiGateway as any).mockResolvedValue({
@@ -165,6 +169,28 @@ describe('生成一页 HTML', () => {
     expect(prompt).not.toContain('P-E'); // 库里压根没有这个 id 的配色
   });
 
+  it('提纲原文逐字进 prompt，并且写明它才是内容（要点只是骨架）', async () => {
+    // 不带原文的话这一步的输入只剩规划那次写的摘要（一页摊到几十个 token），提纲上那六行
+    // 数字一个字都进不了 prompt —— 出来是一页排得很好、内容只剩三成的幻灯片，一处不报错。
+    reply('<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2></div></section>');
+    const outlineText = '1.1 市场规模\n- 全国 3.2 万亿，华东占 38%\n- 同比 +12%';
+    await generatePage({ ...base, layoutId: 'L1', outlineText }, 'u1');
+    const prompt = (aiGateway as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('全国 3.2 万亿，华东占 38%');
+    expect(prompt).toMatch(/一条都不许合并|不许省略/);
+  });
+
+  it('原文装不进这个版式时要点名字数（只喊不改）', async () => {
+    // 装不下时模型会自己压缩，六行数据合成一句话 —— 页面完整通顺，压掉了哪几句它不会说。
+    // 不点名字数的话他不知道该拆页还是换版式，于是重新生成同一页、再花一次钱。
+    reply('<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2></div></section>');
+    const r = await generatePage({ ...base, layoutId: 'L1', outlineText: '数'.repeat(900) }, 'u1');
+    const said = r.problems.join('\n');
+    expect(said).toContain('900 字');
+    expect(said).toMatch(/L1（形状：分屏）一页大约装 \d+ 字/);
+    expect(said).toContain('L37'); // 装得下的那几条要点名，不然他只能自己翻 44 个版式
+  });
+
   it('用了 template 里没有的类名要点名，且预览是套好外壳的整页', async () => {
     reply('<section class="slide"><div class="slide-inner"><h2 class="mega-title">三阶段</h2></div></section>');
     const r = await generatePage({ ...base, layoutId: 'L1' }, 'u1');
@@ -202,8 +228,22 @@ describe('拼整份 deck', () => {
       2,
       meta
     );
-    const veils = [...html.matchAll(/<section[^>]*data-p="(\d)">\s*<div class="slide-veil" style="opacity:([\d.]+)">/g)];
+    const veils = [...html.matchAll(/<section[^>]*data-p="(\d)"[^>]*--veil:([\d.]+)/g)];
     expect(veils.map((m) => [m[1], m[2]])).toEqual([['1', '0'], ['2', '0.6']]);
+  });
+
+  it('拼装不往 <section> 里塞任何孩子（塞了的话「删这一块」会删到隔壁那一块）', () => {
+    // 就地编辑那一套（删这一块 / 整块对齐 / AI 改这一块）是按「从 section 数下来的第几个
+    // 孩子」定位的：浏览器数的是拼装出来这一份，代码切的是库里那一份。这里多插一个元素
+    // （097 的蒙版原来就是 section 的第一个孩子）之后两边整体错一位 —— 选中的那一块里
+    // 有文字时报的是一句「这一页在别处改过」（指错方向），没有文字时 eid 交叉核对空对空，
+    // 于是删掉/改掉的是隔壁那一块而接口 200。
+    const stored = '<section class="slide"><div class="a"></div><div class="slide-inner">x</div></section>';
+    const assembled = buildDeck([{ page: 1, html: stored, veil: 0.4 }], 1, meta);
+    const kids = (h: string) =>
+      domTree(h.slice(h.indexOf('<section class="slide"'), h.indexOf('</section>') + 10))[0]
+        .children.map((c) => c.name);
+    expect(kids(assembled)).toEqual(kids(stored));
   });
 
   it('按页码排，不按传进来的顺序', () => {

@@ -97,6 +97,7 @@ import { migration_094 } from './094_ppt_drop_ratio_problems.js';
 import { migration_095 } from './095_ppt_page_eids.js';
 import { migration_096 } from './096_ppt_deck_design.js';
 import { migration_097 } from './097_ppt_page_veil.js';
+import { migration_098 } from './098_ppt_plan_rev.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -195,4 +196,5 @@ export const allMigrations: Migration[] = [
   migration_095,
   migration_096,
   migration_097,
+  migration_098,
 ];

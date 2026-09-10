@@ -215,6 +215,61 @@
       </div>
     </div>
 
+    <h2 class="section-title">PPT 专用桶（只给 /ppt 的 AI 生图用）</h2>
+    <p class="desc">
+      填了这三项（桶名 / 地域 / 公网域名），/ppt 生成的图就转存到这个桶，其它模块照旧走上面那套。
+      三项要么都填、要么都留空 —— 只填一两项会被当成没配（生图仍然写上面那个桶，图能正常显示，看不出来）。
+      公网域名必须和这个桶对得上、必须 https，且桶要开公有读：域名填错时上传照样成功，页面上是裂图。
+      下面两个密钥留空 = 复用上面那对 SecretId/SecretKey（同账号同权限时不用填）。
+    </p>
+
+    <div class="config-card">
+      <div class="form-group">
+        <label>Bucket</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_bucket" placeholder="ai-1303208826" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_bucket', form.cos_ppt_bucket)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_ppt_bucket">当前: {{ current.cos_ppt_bucket.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>Region</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_region" placeholder="ap-guangzhou" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_region', form.cos_ppt_region)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_ppt_region">当前: {{ current.cos_ppt_region.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>公网访问域名</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_base" placeholder="https://ai-1303208826.cos.ap-guangzhou.myqcloud.com" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_base', form.cos_ppt_base)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_ppt_base">当前: {{ current.cos_ppt_base.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>SecretId（选填）</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_secret_id" type="password" placeholder="留空 = 复用上面那个" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_secret_id', form.cos_ppt_secret_id)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_ppt_secret_id">当前: {{ current.cos_ppt_secret_id.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>SecretKey（选填）</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_secret_key" type="password" placeholder="留空 = 复用上面那个" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_secret_key', form.cos_ppt_secret_key)">保存</button>
+        </div>
+        <span class="hint" v-if="current.cos_ppt_secret_key">当前: {{ current.cos_ppt_secret_key.value }}</span>
+      </div>
+    </div>
+
     <p class="success" v-if="saved">已保存</p>
   </div>
 </template>
@@ -223,7 +278,7 @@
 import { ref, onMounted } from 'vue'
 import { apiGet, apiPost, apiDelete } from '../../lib/api'
 
-const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '', web_search_api_key: '', cos_secret_id: '', cos_secret_key: '', cos_bucket: '', cos_region: '' })
+const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '', web_search_api_key: '', cos_secret_id: '', cos_secret_key: '', cos_bucket: '', cos_region: '', cos_ppt_bucket: '', cos_ppt_region: '', cos_ppt_base: '', cos_ppt_secret_id: '', cos_ppt_secret_key: '' })
 const current = ref<Record<string, { value: string; updated_at: string }>>({})
 const saved = ref(false)
 

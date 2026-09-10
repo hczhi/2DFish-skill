@@ -8,8 +8,8 @@ import { generatePage, buildDeck, PageError } from '../services/ppt/pageService.
 import { assemblePreview } from '../services/ppt/deckShell.js';
 import {
   fillPageImages, generateSpecImage, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared,
-  findImageSlots, specsFromSlots,
-  PptImageError,
+  findImageSlots, specsFromSlots, realignImageRecords,
+  PptImageError, type FilledImage,
 } from '../services/ppt/imageService.js';
 import {
   applyTextEdit,
@@ -22,6 +22,7 @@ import {
   PageEditError,
 } from '../services/ppt/pageEdit.js';
 import { aiEditRegion } from '../services/ppt/aiEditService.js';
+import { aiRemakeRegion } from '../services/ppt/aiRemakeService.js';
 import { exportDeck, ExportError } from '../services/ppt/exportService.js';
 import { styles, defaultStyleId, deckColors } from '../services/ppt/styleLibrary.js';
 import {
@@ -44,6 +45,9 @@ import {
   updatePlanPageImages,
   updatePlanPageOutline,
   deleteDeck,
+  deletePage,
+  insertPage,
+  DeckStructureError,
   MAX_TITLE_CHARS,
   MAX_BRAND_CHARS,
   MAX_DECK_OUTLINE_CHARS,
@@ -51,8 +55,11 @@ import {
   MAX_PAGE_TITLE_CHARS,
   MAX_POINTS_PER_PAGE,
   MAX_POINT_CHARS,
+  MAX_PAGE_OUTLINE_CHARS,
 } from '../services/ppt/deckStore.js';
-import { listAssets, getAsset, deleteAsset, ASSETS_PAGE_SIZE } from '../services/ppt/assetStore.js';
+import {
+  listAssets, getAsset, deleteAsset, assetGroups, ASSETS_PAGE_SIZE, ASSETS_NO_DECK,
+} from '../services/ppt/assetStore.js';
 import { MAX_SUBJECT_CHARS, orphanedPreparedNotes, type PreparedImage } from '../services/ppt/imageSpec.js';
 
 export const pptRouter = Router();
@@ -65,6 +72,37 @@ function userIdOf(req: Request, res: Response): string | null {
     return null;
   }
   return id;
+}
+
+/**
+ * 页序版本号对账（098）。**按页码写库、而且要花时间的那几条路都要过这一关**：
+ * 生成一页要三十秒以上，这期间他删掉/移动一页的话，回来那份结果会 upsert 到**现在的**
+ * 第 N 页上 —— 出来是一页完整的幻灯片，只是照着别的一页的提纲排的，两边都不报错，
+ * 而这是一次真实花费。
+ *
+ * **没带这个字段一律 400，不能当成「跳过检查」**：那样任何一处前端漏传都会让这道保护
+ * 静默失效，而现象只是偶尔某一页内容对不上标题。
+ * 报错里两个版本号都要写出来 —— 只说「请刷新」的话，和网络错误在他眼里是同一句话。
+ */
+function checkPlanRev(req: Request, res: Response, deck: { plan_rev: number }): boolean {
+  const raw = req.body?.planRev;
+  if (raw === undefined || raw === null || raw === '') {
+    res.status(400).json({
+      error:
+        '这次请求没带 planRev（页序版本号），没执行 —— 带上它才能确认你点的那一页和库里现在的第几页是同一页。刷新页面重试。',
+    });
+    return false;
+  }
+  const rev = Number(raw);
+  if (!Number.isInteger(rev) || rev !== deck.plan_rev) {
+    res.status(409).json({
+      error:
+        `这份稿子的页数/页序在你打开之后变过（你这边是第 ${rev} 版，库里是第 ${deck.plan_rev} 版），这次没执行 ——` +
+        '照做的话结果会落在现在的那个页码上，而那已经不是你点的那一页了（出来是一页正常的幻灯片，只是内容对不上标题）。刷新页面再试。',
+    });
+    return false;
+  }
+  return true;
 }
 
 // ── 演示稿（落库，migration 089）────────────────────────────
@@ -215,11 +253,29 @@ pptRouter.delete('/decks/:id', (req: Request, res: Response) => {
 // 每一张真的生成出来的配图（按人）。注意和下面那条 `/library/assets` 不是一回事：
 // 那条是 deck 外壳的共享 CSS/配色资料，这两条是用户自己的图。
 
-/** 我的配图素材。`total` 一起回 —— 只回前一页的话「就这些」和「装不下」分不开。 */
+/**
+ * 我的配图素材。`total` 一起回 —— 只回前一页的话「就这些」和「装不下」分不开。
+ *
+ * `?deckId=` 按稿子筛（tab 条），`groups` 是每份稿子的张数。两件事是承重的：
+ * **筛和计数都在 SQL 里做**（见 `listAssets` / `assetGroups`），前端拿这 120 张再分组的话
+ * 每个 tab 上的数字都偏小、而且读起来完全正常；**认不出的 `deckId` 回空列表 + 说一句**，
+ * 不回落成「全部」—— 回落的话那个 tab 选中着却显示三百张，看起来像这个项目有三百张图。
+ */
 pptRouter.get('/assets', (req: Request, res: Response) => {
   const userId = userIdOf(req, res);
   if (!userId) return;
-  res.json({ ...listAssets(userId), pageSize: ASSETS_PAGE_SIZE });
+  const deckId = typeof req.query.deckId === 'string' ? req.query.deckId.trim() : '';
+  const groups = assetGroups(userId);
+  const known = deckId === ASSETS_NO_DECK ? groups.some((g) => !g.deckId) : groups.some((g) => g.deckId === deckId);
+  res.json({
+    ...listAssets(userId, { deckId }),
+    groups,
+    deckId,
+    // 筛了一个一张图都没有的稿子（刚建的、或者图都删了）：不说的话那是一屏空白，
+    // 和「素材库是空的」长得一样。
+    note: deckId && !known ? '这份稿子在素材库里还没有图（可能刚建、也可能都删了）。' : '',
+    pageSize: ASSETS_PAGE_SIZE,
+  });
 });
 
 /**
@@ -379,6 +435,9 @@ pptRouter.post('/decks/:id/plan', async (req: Request, res: Response) => {
     // 可以重新挑回来 —— 这半句也得说，不然他以为钱白花了）。
     res.json({
       ...result,
+      // 新的页序版本号（098）：重新规划也会 +1（旧页全清了），**不回的话前端手里那个号立刻过期**
+      // —— 规划完点第一次生成就是一句 409，而他刚刚才在这里成功规划过。
+      planRev: getDeck(deck.id, userId)?.plan_rev ?? 0,
       clearedPages: saved.clearedPages,
       clearedImages: saved.clearedImages,
       // 他手写的那几段要求也一起没了（092）。不说的话下一次生成拿到的是没带要求的那一版，
@@ -438,6 +497,9 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  // 页序在他打开之后变过就不生成（098）：这一次要等上游几十秒，回来时写的是**现在的**
+  // 第 N 页 —— 那可能已经不是他点的那一页了，而出来是一页正常的幻灯片。
+  if (!checkPlanRev(req, res, deck)) return;
   const page = Number(req.body?.page) || 0;
   try {
     const plan = planOf(deck);
@@ -463,6 +525,9 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       }
       row.title = outline.title;
       row.points = outline.points;
+      // 原文也要换成他改过的那一段：这里不换的话下面进 prompt 的还是规划切出来的老原文
+      // （库里已经是新的了），出来是一页排得很好、内容却是他刚删掉那一版的幻灯片。
+      if (outline.outlineText !== undefined) row.outlineText = outline.outlineText;
     }
     const stored = listPages(deck.id, userId).find((p) => p.page === row.page);
     // 有效版式 = 这次选的 → 上次存的 → 规划里那条。**认不出的版式在 readPageSetup 里已经
@@ -477,6 +542,10 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
         section: row.section,
         title: row.title,
         points: row.points,
+        // 这一页的提纲原文（规划那一步按行号切的）。**必须带**：不带的话这一步的输入又只剩
+        // 摘要，提纲上的数字、机构名、条款一个字都进不了 prompt —— 而出来照样是一页排得
+        // 很好的幻灯片，内容只剩三成，一处都不报错。老规划里没有这个字段（缺了退回老行为）。
+        outlineText: row.outlineText,
         layoutId,
         notes,
         // 整份那段（093）**每页都带**，和页级那段一起发（不是二选一，见 pageService）。
@@ -560,7 +629,9 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       setup: { layoutId: result.layoutId, notes, deckNotes: deck.notes || '' },
       // 这一页**现在库里那份**提纲（他改过的话就是新的）。回出来前端才对得上：不回的话
       // 左边列表和标题栏还写着模型原来那句标题，而画面是按新提纲生成的 —— 两处各自都读得通。
-      outline: { title: row.title, points: row.points },
+      // 原文一起回：不回的话下次打开那个框读的是前端手上那份老原文，他会以为上一次的修改
+      // 没存上、再改一遍（而库里存的才是对的）。
+      outline: { title: row.title, points: row.points, outlineText: row.outlineText || '' },
       // 对齐之后的图位清单（`specsFromSlots`）。**必须回**：前端手上那份规划还是老的，
       // 不覆盖的话备图那一块照旧按 0 格 / 3 格画，而 problems 里明明写着「已改成 4 格」。
       plan: { images: row.images, imageSpecs: row.imageSpecs || [] },
@@ -610,8 +681,10 @@ function readPageSetup(
 }
 
 /**
- * 「生成前改提纲」那两个字段的校验。**没传 `title` 就是没改**（用库里那份），传了就整条都按
+ * 「生成前改提纲」那几个字段的校验。**没传 `title` 就是没改**（用库里那份），传了就整条都按
  * 传进来的算 —— 两个字段各自可选的话，「只改了标题」那一次会把要点当成空数组存进去。
+ * （`outlineText` 例外：它自己按「传了才动」算，见函数末尾 —— 老前端不带这个字段时
+ * 一律不动库里那份原文。）
  *
  * 三条都是「不拒就悄悄跑偏」：
  * ① **标题空一律 400**。空标题生成出来是一页没有标题的幻灯片，读起来像「这个版式就这样」。
@@ -623,7 +696,7 @@ function readPageSetup(
  * 空行/空要点丢掉（textarea 里按行拆，中间空一行是正常打法），但**只丢空的** —— 丢完
  * 一条不剩时走 ②。
  */
-function readPageOutline(body: any): { title: string; points: string[] } | null {
+function readPageOutline(body: any): { title: string; points: string[]; outlineText?: string } | null {
   if (typeof body?.title !== 'string') return null;
   const title = body.title.trim();
   if (!title) {
@@ -648,7 +721,22 @@ function readPageOutline(body: any): { title: string; points: string[] } | null 
   if (long >= 0) {
     throw new PageError(`第 ${long + 1} 条要点有 ${points[long].length} 字，上限 ${MAX_POINT_CHARS} 字 —— 一条要点是一行字，太长会被版式裁掉。`);
   }
-  return { title, points };
+  // 提纲原文（他在框里改过的那一段）。**没传就是没改**（用库里那份，老规划里干脆没有这个
+  // 字段）；传了空串是「他有意清空」—— 允许，但那一页往后只按上面几条要点生成。
+  // 超长一律拒不截断：截掉的后半段照样生成出一页完整的幻灯片，而他粘进去的那些数字一个
+  // 都没进 prompt。**只 trim 首尾**：中间的换行就是提纲的分条，规范化掉之后模型看到的是
+  // 一大段连着的字，排出来会把几条并成一句。
+  let outlineText: string | undefined;
+  if (typeof body?.outlineText === 'string') {
+    outlineText = body.outlineText.trim();
+    if (outlineText!.length > MAX_PAGE_OUTLINE_CHARS) {
+      throw new PageError(
+        `这一页的提纲原文有 ${outlineText!.length} 字，上限 ${MAX_PAGE_OUTLINE_CHARS} 字（截断的话后半段一个字都不会进 prompt，所以这里直接拒）。` +
+          '这么多内容一页装不下，回上一步拆成两页。'
+      );
+    }
+  }
+  return { title, points, outlineText };
 }
 
 /**
@@ -701,6 +789,63 @@ function safeJson<T>(text: string, fallback: T): T {
 }
 
 /**
+ * 删掉这一页（规划里那一条 + 库里那一行），后面的页码整体往前挪一位（`deckStore.deletePage`）。
+ *
+ * **回执要逐类报数**（html 一次调用、备好的 N 张图、他手写的要求、调过的蒙版）：只回
+ * 「已删除」的话，他不知道刚扔掉的是几次真实花费 —— 而删掉的那一页在界面上只是「少了一张卡」。
+ * 已经删掉的图仍在素材库里可以挑回来，这句话也要说（不说的话他以为那几张钱白花了）。
+ *
+ * 改完的整份规划 + 新的 `planRev` 一起回：前端照它重画，**不本地 splice** —— 本地那十几个
+ * 按页码索引的 map（备图 / 蒙版 / 额外要求 / 已生成的画面）会整体错位一位，而每一页渲染出来
+ * 都是一页正常的幻灯片。
+ */
+pptRouter.delete('/decks/:id/pages/:page', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  const page = Number(req.params.page) || 0;
+  try {
+    const r = deletePage(req.params.id, userId, page);
+    res.json(r);
+  } catch (e: any) {
+    res.status(e instanceof DeckStructureError ? 400 : 500).json({ error: e?.message || '这一页没删掉' });
+  }
+});
+
+/**
+ * 在第 `after` 页后面插一页（`after: 0` = 插到最前面）。规划里多一条、**库里不建行**
+ * （新页还没生成），后面的页码整体往后挪一位（`deckStore.insertPage`）。
+ *
+ * **不调 AI、不花额度** —— 提纲是他自己写的。所以这里不校验配额，但版式要在这里就认掉：
+ * 认不出的版式回落成前一页那条的话，他挑了 L12 而插进来的是 L07，往后翻回来读起来完全正常。
+ *
+ * 回执里 `layoutInherited` 必须转给界面：版式是继承前一页来的时候，那一页会撞「连续同版式
+ * ≤2 页」那条规范，而规划的 problems 是上一次算的（已经标成可能不准）—— 不催他去挑一条的话，
+ * 出来是两页一模一样的版式，翻起来只是「这份稿子有点单调」。
+ */
+pptRouter.post('/decks/:id/insert-page', (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  try {
+    const picked = typeof req.body?.layoutId === 'string' ? req.body.layoutId.trim().toUpperCase() : '';
+    if (picked && !layoutById(picked)) {
+      res.status(400).json({
+        error: `没有版式 ${picked} —— 案例库里只有 ${layouts().map((l) => l.id).join(' / ')}。`,
+      });
+      return;
+    }
+    const r = insertPage(req.params.id, userId, {
+      after: Number(req.body?.after),
+      title: String(req.body?.title ?? ''),
+      points: Array.isArray(req.body?.points) ? req.body.points : [],
+      layoutId: picked,
+    });
+    res.json(r);
+  } catch (e: any) {
+    res.status(e instanceof DeckStructureError ? 400 : 500).json({ error: e?.message || '这一页没插进去' });
+  }
+});
+
+/**
  * 按**这一页的真实内容 + 他现在挑的那条版式**重排图位清单（一次 AI 调用，不生图、不花生图的钱）。
  *
  * 为什么要单独一个入口：图位清单是整份规划那一次定的，版式是他后来换的 —— 两者从此对不上
@@ -724,6 +869,9 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  // 同「生成这一页」（098）：这一次也是真实调用，而它写回 `plan_json` 里那一页的图位清单 ——
+  // 页序变过之后落在别的一页上，那一页的备图面板从此按不对的清单画，一处都不报错。
+  if (!checkPlanRev(req, res, deck)) return;
   const page = Number(req.body?.page) || 0;
   try {
     const plan = planOf(deck);
@@ -812,6 +960,9 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  // 同「生成这一页」（098）：备一张图是几十秒的真实花费，页序变过之后它会备到别的一页上
+  // （那一页的面板上于是多出一张不相干的图，而两处都读起来正常）。
+  if (!checkPlanRev(req, res, deck)) return;
   const page = Number(req.body?.page) || 0;
   const index = Number(req.body?.index) || 0;
   const from = String(req.body?.from || '');
@@ -1327,6 +1478,107 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * 自由改造选中那一块（**一次真实调用**）：可以重排结构、新写文案、加图槽，不受案例库那条
+ * 版式约束。和 `ai-edit` 分成两个端点、不做成一个 `mode` 开关：那两条路放开的规则不一样
+ * （这边允许中文和删原文），一个开关传错值就会静默走另一条 —— 现象是「AI 怎么没照我说的改」。
+ */
+pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
+  const userId = userIdOf(req, res);
+  if (!userId) return;
+  const deck = getDeck(req.params.id, userId);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const page = Number(req.body?.page) || 0;
+  const row = listPages(deck.id, userId).find((p) => p.page === page);
+  if (!row || !row.html.includes('<section')) {
+    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
+    return;
+  }
+  try {
+    const raw = Array.isArray(req.body?.path) ? req.body.path : [];
+    const result = await aiRemakeRegion(
+      {
+        html: row.html,
+        // 路径只收整数下标（同 ai-edit）：字符串进来的话报的会是「这一块和库里对不上」——指错方向。
+        path: raw.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n >= 0),
+        eids: (Array.isArray(req.body?.eids) ? req.body.eids : []).map((x: unknown) => String(x)),
+        instruction: String(req.body?.instruction || ''),
+      },
+      userId
+    );
+    // 加/删了图槽之后配图记录要按新 html 重排一次（`realignImageRecords`）：图的序号是按
+    // 出现顺序数的，不重排的话面板上写着「配图 1/1 张」而画面里全是占位图，或者下一次贴
+    // 备好的图落到隔壁那一格上 —— 两种都是页面渲染完全正常、接口 200。
+    const was = safeJson<FilledImage[]>(row.images_json || '', []);
+    const re = realignImageRecords(result.html, was);
+    // 规划里那份图位清单也要跟着对齐（和「生成这一页」走同一个 `specsFromSlots`：已有那几格
+    // 连他改过的提示词一起原样留着，只按格数增删）。不对齐的话新加的那几格在界面上**根本
+    // 不存在** —— 备图那一块按老清单画 1 格，而画面上是 2 个图槽，他只剩「配全部图」那条
+    // 真花钱的路，且换一张要重花一次。
+    const slots = findImageSlots(result.html);
+    const planRow = planOf(deck).pages.find((p) => p.page === page);
+    const sync = specsFromSlots(planRow?.imageSpecs || [], slots);
+    let plan: { images: number; imageSpecs: typeof sync.specs } | undefined;
+    if (sync.changed) {
+      if (updatePlanPageImages(deck.id, userId, page, sync.specs).ok) {
+        plan = { images: sync.specs.length, imageSpecs: sync.specs };
+        // 格数变少时，落在新清单外面那几张**备好的**图（花过钱的）要当场点名：备图面板按新
+        // 清单画，于是它们从界面上消失而库里还留着 —— 下一次生成这一页才会冒出一句「第 N 格
+        // 备好的图没地方贴」，那时他对不回是这一次改造弄的。
+        result.notes.push(
+          ...orphanedPreparedNotes(
+            safeJson<PreparedImage[]>(row.pending_images_json || '', []),
+            sync.specs.length
+          )
+        );
+      } else {
+        // 存不上要说出来：界面上照旧是老清单，而他在面板上备的图会按错的格子号贴。
+        result.notes.push(
+          `这一页现在有 ${slots.length} 个图槽，但规划里那份清单没改上（还是 ${planRow?.imageSpecs?.length || 0} 格）——` +
+            '刷新一下重新改一次；不改的话备图面板上多出来那几格没有入口，而画面上它们就在那儿。'
+        );
+      }
+    }
+    if (slots.length > sync.specs.length) {
+      // 超过一页 6 格的那几格备不了图（清单按上限截了），而画面上它们和别的格子长得一样。
+      result.notes.push(
+        `这一页排出了 ${slots.length} 个图槽，超过一页 ${sync.specs.length} 格的上限 —— 第 ${sync.specs.length + 1} 格往后` +
+          '备不了图、也换不了图（只能走「配全部图」那条真花钱的路）。改成少几格的排法更好。'
+      );
+    }
+    if (!savePageEditedHtml(deck.id, userId, { page, html: result.html, images: re.changed ? re.images : undefined })) {
+      res.status(500).json({
+        error: `第 ${page} 页改出来了但没存上（这次调用已经花掉了）。刷新一下，别直接重试。`,
+      });
+      return;
+    }
+    res.json({
+      page,
+      summary: result.summary,
+      // 「改了什么」逐条回给前端并且**必须显示出来**：丢掉的原文 / AI 新写的文案在这里，
+      // 只显示 summary 的话那几条改动在画面上读起来完全正常（一眼看得见的那几种不在这里，
+      // 见 `aiRemakeService` 头注）。
+      notes: result.notes,
+      region: result.region,
+      html: result.html,
+      previewHtml: assemblePreview(result.html, shellMeta(deck), row.veil_opacity || 0),
+      // 重排过就把新的那份回给前端：不回的话面板上那份「配图 x/y 张」还是旧的，
+      // 而库里已经是对的 —— 他要刷新一次才看得到真实的图况。
+      images: re.changed ? re.images : undefined,
+      // 对齐之后的图位清单（同「生成这一页」那条路）。**必须回**：前端手上那份规划还是老的，
+      // 不覆盖的话备图那一块照旧按 1 格画，而画面上已经是 2 个图槽了。
+      plan,
+      usage: result.usage,
+    });
+  } catch (e: any) {
+    const code = e instanceof PageEditError ? 400 : 500;
+    res.status(code).json({ error: e?.message || '这一块没改上' });
+  }
+});
+
 /** 浮动条上那几个色块 —— 前端不硬编码一份（两份漂开的话他点的那个颜色会被 400 拒掉）。 */
 pptRouter.get('/edit-palette', (_req: Request, res: Response) => {
   res.json({ colors: COLOR_PALETTE });
@@ -1348,6 +1600,8 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  // 同「生成这一页」（098）：一页几张图就是几次真实花费，页序变过之后它们贴到别的一页上。
+  if (!checkPlanRev(req, res, deck)) return;
   const page = Number(req.body?.page) || 0;
   const row = listPages(deck.id, userId).find((p) => p.page === page);
   if (!row || !row.html.includes('<section')) {

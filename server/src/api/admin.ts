@@ -199,7 +199,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 // --- System Config ---
 
-const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
+const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
 
 /**
  * 需要加密存储 + 脱敏回显的 key，显式列出。
@@ -208,7 +208,7 @@ const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platf
  * 被整串明文返回给了前端 —— 判断依据是命名巧合而不是语义，加一个
  * 叫 xxx_token 的配置项就会重演一次。
  */
-const SECRET_CONFIG_KEYS = new Set(['platform_api_key', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key']);
+const SECRET_CONFIG_KEYS = new Set(['platform_api_key', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_ppt_secret_id', 'cos_ppt_secret_key']);
 
 adminRouter.get('/config', (_req: Request, res: Response) => {
   const db = getDatabase();

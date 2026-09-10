@@ -19,17 +19,21 @@ import {
 // 否则老稿子里用过停用版式的那几页重新生成会直接 400）。见 layoutState.ts 文件头。
 import { disabledLayoutIds, enabledLayouts, enabledLayoutsForRole } from './layoutState.js';
 import { normalizeImageSpecs, IMAGE_RATIOS, MAX_SLOTS_PER_PAGE, type PlannedImage } from './imageSpec.js';
+import { outlineFitProblem, longformLayouts } from './outlineFit.js';
 import { IMAGE_MODES } from './styleLibrary.js';
 
 /** 提纲上限。只拒不截 —— 截掉后半截的话用户以为整份都规划过了。 */
 export const MAX_OUTLINE_CHARS = 12000;
 /** 一份 deck 的页数上限。同上，超了明确拒绝。 */
-export const MAX_PAGES = 40;
+export const MAX_PAGES = 45;
 
-// 一页的 JSON 约 150-250 字符，30 页就是 6000+ 字符。这个数是留给**思维链**的空间
-// （硬规则 2）：`noThinking: true` 之后它才真的全给 JSON。调小不省钱，只是把偶发的
-// 长思维链变成确定性截断。
-const MAX_PLAN_TOKENS = 8000;
+// 一页的 JSON 约 150-250 字符（≈200 token），45 页就是 9000 token 上下。**这个数和
+// `MAX_PAGES` 是一对**：只把页数放开、不放这个预算的话，那种四十几页的提纲每次都断在
+// 第三十几页（`finish_reason=length`，会喊出来但不重试 —— 同一个 body 断在同一处），
+// 于是「上限 45 页」在实际里根本到不了，而报错说的是「把提纲拆短」。
+// 这个数是留给**思维链**的空间（硬规则 2）：`noThinking: true` 之后它才真的全给 JSON。
+// 调大不花钱（按实际用量计费），调小只是把偶发的长思维链变成确定性截断。
+const MAX_PLAN_TOKENS = 10000;
 
 /**
  * 一页最多留几条备选版式。多于这个数等于把整份清单又抄了一遍，「排在最前面的是规划挑的」
@@ -78,6 +82,23 @@ export interface PlannedPage {
    * `images > 0` = 模型只给了张数没说画什么（那时 problems 里有一条）。
    */
   imageSpecs: PlannedImage[];
+  /**
+   * 这一页对应的**提纲原文**（逐字），由**代码**按 `outlineRange` 从提纲里切出来（硬规则 3）。
+   *
+   * 为什么要有它：`points` 是模型在一次调用里给 30 多页一起写的**摘要**，一页只摊到几十个
+   * token —— 提纲里「1.1 那六行地产数据 + 一句结论」必然被压成一句话。而生成 HTML 那一步
+   * 从头到尾只拿到 `title` + `points`，原文一个字都没进过它的 prompt，所以丢掉的细节
+   * **不可能**在后面补回来：界面上表现成「这一页本来就这么短」，一处都不报错。
+   *
+   * 让模型把原文抄进 JSON 是不行的（抄的过程就是又一次压缩，而且 token 直接翻倍），
+   * 所以模型只给行号，切的动作在代码里。
+   */
+  outlineText: string;
+  /**
+   * 这一页认领的提纲行号区间（含两端，1 起）。`null` = 模型没给/给的越界 —— 那一页只能
+   * 靠 `points` 生成，problems 里会点名（不点名的话那几页和「原文本来就这么短」一样）。
+   */
+  outlineRange: [number, number] | null;
   /** 版式名 / 中文标题 / 是否全幅，从库里补上（模型不许自己说这些） */
   layoutName: string;
   layoutTitle: string;
@@ -107,7 +128,9 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
   }
 
   const lib = enabledLayouts();
-  const prompt = buildPrompt(text, lib);
+  // 行号是**代码**编的，切原文也在代码里 —— prompt 里那份带号提纲和这里切的是同一个数组。
+  const outlineLines = text.split('\n');
+  const prompt = buildPrompt(outlineLines, lib);
 
   const { parsed, raw, finish, reasoningTokens, usage, noThinkingRequested } = await jsonGateway<any[]>(
     () => ({ messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: MAX_PLAN_TOKENS }),
@@ -142,6 +165,8 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
 
   const pages: PlannedPage[] = [];
   const badAlts: string[] = [];
+  /** 页码 → 行号区间为什么用不了。汇总进 `coverageWarnings` 那一条。 */
+  const badRanges = new Map<number, string>();
   rows.forEach((row, i) => {
     const rawId = String(row?.layoutId ?? row?.layout ?? '').trim().toUpperCase();
     const layout = layoutById(rawId);
@@ -166,6 +191,11 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     }
     const alt = normalizeAlts(row?.alts ?? row?.alternatives, layout.id, off);
     badAlts.push(...alt.bad);
+    const src = normalizeSourceLines(row?.lines ?? row?.outlineLines ?? row?.sourceLines, outlineLines.length);
+    // 逐页刷一条的话，模型压根没给 `lines` 时是 30 条一模一样的警告，把真正要看的那几条
+    // （漏了哪几段）全冲下去 —— 汇总成一条，但**按成因分组**（没给 / 越界 / 不是数字 三种
+    // 解法完全不同，合成一句「行号有问题」等于指错方向，硬规则 1）。
+    if (src.reason) badRanges.set(page, src.reason);
     pages.push({
       page,
       section: clean(row?.section) || clean(row?.kicker),
@@ -177,6 +207,10 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
       alts: alt.ids,
       images: img.count,
       imageSpecs: img.specs,
+      // 逐字切，**不用**模型回传的任何文本：让它把原文写进 JSON 的话，抄的过程就是又一次
+      // 悄悄的压缩（数字被改、六行合成两行），而那一段读起来完全通顺。
+      outlineText: src.range ? outlineLines.slice(src.range[0] - 1, src.range[1]).join('\n').trim() : '',
+      outlineRange: src.range,
       layoutName: layout.name,
       layoutTitle: layout.title,
       fullbleed: layout.fullbleed,
@@ -188,7 +222,14 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     throw new PlanError(`模型规划的 ${rows.length} 页全都用了案例库里没有的版式（${problems.join('；')}）。`);
   }
 
-  problems.push(...repeatWarnings(pages), ...kindWarnings(pages), ...missingWhy(pages), ...altWarnings(pages, badAlts));
+  problems.push(
+    ...coverageWarnings(pages, outlineLines, badRanges),
+    ...fitWarnings(pages),
+    ...repeatWarnings(pages),
+    ...kindWarnings(pages),
+    ...missingWhy(pages),
+    ...altWarnings(pages, badAlts)
+  );
   return { pages, problems, usage };
 }
 
@@ -331,6 +372,154 @@ function clean(v: any): string {
 }
 
 /**
+ * 模型给的提纲行号区间 → `[起, 止]`。给不出来的一律返回 `null` **并且说一句**：
+ * 静默当成「这一页没有原文」的话，那一页会退回只靠 `points` 生成（也就是丢细节的老行为），
+ * 而界面上看不出任何区别。
+ *
+ * 几种写法都认（`[12,18]` / `"12-18"` / `{from,to}` / 单个数字）：这不是「宽容」，是模型
+ * 换个格式写就等于整份提纲一行都没被认领 —— 那种情况下警告会长到几十条，真正的漏页
+ * 反而被冲掉。倒序的自己掉个头（`[18,12]` 显然是笔误），越界的**不夹到边界**（夹了之后
+ * 切出来的是别的段落，读起来是正常的一页，只是内容不是这一页的）。
+ */
+function normalizeSourceLines(raw: any, total: number): { range: [number, number] | null; reason: string } {
+  let a: any;
+  let b: any;
+  if (Array.isArray(raw)) [a, b] = raw;
+  else if (raw && typeof raw === 'object') {
+    a = (raw as any).from ?? (raw as any).start ?? (raw as any).begin;
+    b = (raw as any).to ?? (raw as any).end;
+  } else if (typeof raw === 'number') a = b = raw;
+  else if (typeof raw === 'string') {
+    const m = raw.trim().match(/^(\d+)\s*[-–~,to]+\s*(\d+)$/i) || raw.trim().match(/^(\d+)$/);
+    if (m) {
+      a = Number(m[1]);
+      b = Number(m[2] ?? m[1]);
+    }
+  }
+  if (a === undefined && b === undefined) return { range: null, reason: '压根没给 `lines`' };
+  let s = Math.trunc(Number(a));
+  let e = Math.trunc(Number(b ?? a));
+  if (!Number.isFinite(s) || !Number.isFinite(e)) {
+    return { range: null, reason: `\`lines\` 不是行号（${JSON.stringify(raw)}）` };
+  }
+  if (s > e) [s, e] = [e, s];
+  if (s < 1 || e > total) return { range: null, reason: `行号 ${s}–${e} 越界（提纲只有 ${total} 行）` };
+  return { range: [s, e], reason: '' };
+}
+
+/** 一条覆盖率警告里最多列几段。再多就把别的 problems 全冲下去了。 */
+const MAX_LISTED_RANGES = 8;
+
+/**
+ * 提纲覆盖率审计：**哪几行没有被任何一页认领**。
+ *
+ * 这是「提纲上的重要内容在成稿里丢了」的唯一可查点。规划出来的 30 页每一页单看都合理、
+ * 页数也对得上，而提纲里那六行地产数据 / 那张喜事日历表整段没有任何一页认领 —— 界面上
+ * 和「这几段本来就该合并掉」一模一样，一处都不报错，用户只能等成稿翻到那儿才发现。
+ *
+ * 只报不改（同 `repeatWarnings`）：自动补一页的话页数凭空变多，而他以为那是模型规划的。
+ * 空行不算漏（提纲里的空行没有内容），但**夹在两段漏字之间的空行照旧算进区间**，
+ * 否则「42–47 行」会碎成三条。
+ */
+function coverageWarnings(
+  pages: PlannedPage[],
+  outlineLines: string[],
+  badRanges: Map<number, string>
+): string[] {
+  const out: string[] = [];
+  const total = outlineLines.length;
+  const owner: number[] = new Array(total).fill(0);
+  const dupes = new Map<string, number>();
+
+  for (const p of pages) {
+    if (!p.outlineRange) continue;
+    const [s, e] = p.outlineRange;
+    for (let i = s; i <= e; i++) {
+      const held = owner[i - 1];
+      if (held && outlineLines[i - 1].trim()) {
+        const key = `第 ${held} 页和第 ${p.page} 页`;
+        dupes.set(key, (dupes.get(key) || 0) + 1);
+      }
+      owner[i - 1] = held || p.page;
+    }
+  }
+  const overlaps = [...dupes.entries()].slice(0, MAX_LISTED_RANGES).map(([k, n]) => `${k}认领了同样的 ${n} 行`);
+
+  if (badRanges.size) {
+    const byReason = new Map<string, number[]>();
+    for (const [page, reason] of badRanges) byReason.set(reason, [...(byReason.get(reason) || []), page]);
+    const parts = [...byReason].map(([reason, ps]) => `第 ${ps.slice(0, 12).join(' / ')} 页 ${reason}`);
+    out.push(
+      `有 ${badRanges.size} 页没有对应的提纲原文（${parts.join('；')}）——` +
+        '那几页只能靠要点生成，提纲里的数字、客户名、具体条款不会出现在页面上（而页面看起来仍然是完整的一页）。'
+    );
+  }
+
+  // 一页都没给行号时（模型整个忽略了这个字段）就到此为止：再往下走会把整份提纲列成
+  // 「没被认领」，几十段警告刷下来，上面那条真正的成因反而看不见了。
+  if (!pages.some((p) => p.outlineRange)) return out;
+
+  // 连续的未认领行合成一段（空行不单独成段，但可以夹在中间）
+  const ranges: Array<{ s: number; e: number }> = [];
+  for (let i = 0; i < total; i++) {
+    if (owner[i]) continue;
+    if (!outlineLines[i].trim() && !(ranges.length && ranges[ranges.length - 1].e === i)) continue;
+    const last = ranges[ranges.length - 1];
+    if (last && last.e === i) last.e = i + 1;
+    else ranges.push({ s: i, e: i + 1 });
+  }
+  // 尾部的空行退掉：留着的话行号写成「42–48 行」而第 48 行是空的，他数到那儿会以为报错了
+  for (const r of ranges) while (r.e > r.s + 1 && !outlineLines[r.e - 1].trim()) r.e--;
+  const missing = ranges
+    .map((r) => ({ ...r, text: outlineLines.slice(r.s, r.e).join('\n').trim() }))
+    .filter((r) => r.text);
+
+  if (missing.length) {
+    const lost = missing.reduce((n, r) => n + r.text.length, 0);
+    const list = missing
+      .slice(0, MAX_LISTED_RANGES)
+      .map((r) => `- 第 ${r.s + 1}${r.e > r.s + 1 ? `–${r.e}` : ''} 行：「${preview(r.text)}」`);
+    if (missing.length > MAX_LISTED_RANGES) list.push(`- …另有 ${missing.length - MAX_LISTED_RANGES} 段`);
+    out.push(
+      `提纲里有 ${missing.length} 段（共 ${lost} 字）**没有被任何一页认领**，这些内容一个字都不会出现在成稿里：\n` +
+        `${list.join('\n')}\n` +
+        '这几段确实不用就忽略这条；要留的话给对应那一页补上（或者插一页），不然翻到那儿才会发现。'
+    );
+  }
+
+  if (overlaps.length) {
+    out.push(
+      `${overlaps.join('；')} —— 这几页会写同一段提纲，成稿里读起来像重复说了两遍（每一页单看都正常）。`
+    );
+  }
+  return out;
+}
+
+/**
+ * 哪几页的原文装不进它挑的版式。**在这里报（规划刚出来、还没花生成的钱那一刻）**：
+ * 等生成完再说的话，那一页已经是模型压缩过的成品，他看到的是一页完整通顺的幻灯片
+ * 加一句「内容偏多」，而压掉的那几行要逐字对提纲才发现。只喊不改，见 outlineFit 文件头。
+ */
+function fitWarnings(pages: PlannedPage[]): string[] {
+  const long = longformLayouts(enabledLayouts());
+  const out: string[] = [];
+  for (const p of pages) {
+    if (!p.outlineText) continue;
+    const layout = layoutById(p.layoutId);
+    if (!layout) continue;
+    const said = outlineFitProblem(layout, p.outlineText, `第 ${p.page} 页「${p.title}」`, long);
+    if (said) out.push(said);
+  }
+  return out;
+}
+
+/** 报错里露出原文的头一截：只给行号的话他得回去数行，而数错一次就以为没漏。 */
+function preview(text: string): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  return one.length > 42 ? `${one.slice(0, 42)}…` : one;
+}
+
+/**
  * 连续 3 页以上同版式。**只报不改** —— 自动打散的话用户看到的是一份「模型挑的」规划，
  * 而实际上是代码挑的，下次同样的提纲又是这个结果，他永远不知道要去改提纲还是改 prompt。
  */
@@ -422,7 +611,10 @@ function roleBlock(): string {
   }).join('\n');
 }
 
-function buildPrompt(outline: string, lib: PptLayout[]): string {
+function buildPrompt(outlineLines: string[], lib: PptLayout[]): string {
+  // 行号由代码编（硬规则 3）：让模型自己数行的话它会数偏两三行，而切出来的那一段
+  // 读起来仍然通顺 —— 只是讲的是上一节的事。
+  const numbered = outlineLines.map((l, i) => `${i + 1}| ${l}`).join('\n');
   return `你是演示稿的排版设计师。任务：把下面这份提纲拆成逐页，并**从给定的版式清单里**给每页挑一个版式。
 
 ## 硬规则（违反其中任何一条，这次规划就是废的）
@@ -439,7 +631,12 @@ function buildPrompt(outline: string, lib: PptLayout[]): string {
    - \`mode\`：\`concept\`（抽象概念插画）/ \`case\`（具体场景、产品、人物）/ \`data\`（信息图、图表感）；
    - \`ratio\`：\`16:9\`（横幅、全幅背景）/ \`1:1\`（方块图标位）/ \`3:4\`（竖图、人物卡）—— 按你挑的那个版式里图位的形状选，选错的图会被裁掉两边。
    张数要和版式装得下的图位数一致，一页最多 ${MAX_SLOTS_PER_PAGE} 张。
-10. \`alts\` 是这一页的**备选版式**：从清单里再挑 2-3 个也装得下这一页内容的编号（**同样要在这一页页型那一行里**），按「越合适排越前」的顺序给。不许重复 \`layoutId\`、不许给清单里没有的编号（清单里没有的会被丢掉）。
+10. \`lines\` 是这一页对应**提纲原文的行号区间** \`[起始行, 结束行]\`（含两端，就是「## 提纲」里每行开头那个数字）：
+   - **提纲的每一行都要被某一页认领**：整份下来 \`lines\` 要连成 \`[1,x] [x+1,y] …\` 一直到最后一行，不许跳过、不许两页认领同一行。
+   - 后面写这一页的时候，程序会按这个区间把**提纲原文逐字**交给它 —— 所以区间给漏了，那几行内容一个字都不会出现在成稿里（而页面看起来仍然是完整的一页）。
+   - 一节内容太多装不进一页时，**拆成两页各认领一半**，不要把整节压给一页。
+   - \`points\` 照旧要给（它是这一页的骨架），但不要因为写了 points 就少认领行 —— points 是摘要，原文才是内容。
+11. \`alts\` 是这一页的**备选版式**：从清单里再挑 2-3 个也装得下这一页内容的编号（**同样要在这一页页型那一行里**），按「越合适排越前」的顺序给。不许重复 \`layoutId\`、不许给清单里没有的编号（清单里没有的会被丢掉）。
 
 ## 页型 → 可用版式（\`layoutId\` 和 \`alts\` 只能从这一页页型对应的那一行里挑）
 ${roleBlock()}
@@ -447,11 +644,11 @@ ${roleBlock()}
 ## 版式清单（${lib.length} 个）
 ${lib.map((l) => l.selectText).join('\n\n')}
 
-## 提纲
-${outline}
+## 提纲（每行开头的数字是行号，\`lines\` 要用它）
+${numbered}
 
 ## 输出格式
 只输出一个 JSON 数组，不要任何解释文字。每个元素：
-{"kind":"内容","section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","points":["要点1","要点2"],"layoutId":"L7","alts":["L3","L9"],"why":"挑它的理由（一句话）","images":[{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}]}
+{"kind":"内容","section":"所属模块名（如「第二部分 · 落地路径」，封面页可留空）","title":"这一页的标题","lines":[12,18],"points":["要点1","要点2"],"layoutId":"L7","alts":["L3","L9"],"why":"挑它的理由（一句话）","images":[{"subject":"画什么，一句话","mode":"${IMAGE_MODES.join(' | ')}","ratio":"${IMAGE_RATIOS.join(' | ')}"}]}
 `;
 }
