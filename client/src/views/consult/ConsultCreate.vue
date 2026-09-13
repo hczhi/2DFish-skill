@@ -15,26 +15,35 @@ const err = ref('')
 const form = ref({ brandName: '', brief: '' })
 const MAX_BRIEF = 20000
 
+/**
+ * 上传的那几个文件整理出来的正文。**不再往上面那个 textarea 里插** ——
+ * 插进去之后他只能对着一大段混在一起的文字改，分不清哪句是自己写的、哪句是从 PPT 里抠的；
+ * 分开放着，提交时由服务端合成（`briefCompose.buildBrief`，超上限只拒不截并点名哪个文件）。
+ */
+const attachments = ref<Array<{ filename: string; text: string; variant: 'tidy' | 'raw' }>>([])
+/**
+ * 还有文件在提取/整理。这段时间里**禁掉「创建项目」**：不禁的话他点下去，正在整理的那几份
+ * 压根不在 attachments 里，而项目建出来一切正常（资料里少几节，读起来完整），
+ * 后面十二步就照着少几份的资料推。
+ */
+const filesBusy = ref(false)
+
 onMounted(() => {
   if (!getToken()) {
     openLoginModal(window.location.pathname, '创建品牌项目需要登录')
   }
 })
 
-/** 文件提取出来的文字追加到资料末尾（不覆盖）—— 覆盖的话他刚手打的那段就没了。 */
-function appendFromFile(text: string) {
-  const cur = form.value.brief.trimEnd()
-  form.value.brief = cur ? `${cur}\n\n${text}` : text
-}
-
 async function create() {
-  if (!form.value.brandName.trim()) { err.value = '请填写品牌 / 客户名称'; return }
+  if (!form.value.brandName.trim()) { err.value = '请填写品牌 / 客户名称' ; return }
   creating.value = true
   err.value = ''
   try {
     const res = await apiPost('/api/consult/projects', {
       brandName: form.value.brandName.trim(),
       brief: form.value.brief,
+      // 文件内容一律跟着提交走，不用他手动插入（要求 4）。服务端合成并复查上限。
+      attachments: attachments.value,
     })
     // 新建项目先去补料问卷页，不直接进工作台
     router.push(`/consult/projects/${res.project.id}/intake?auto=1`)
@@ -96,14 +105,22 @@ async function create() {
               <span class="hint">
                 这段资料会进「四看」每一次分析的 prompt。超过 {{ MAX_BRIEF }} 字会被拒绝而不是自动截断
                 —— 悄悄砍掉后半段的话，AI 是照着半份资料出结论的，而结论看起来完全正常。
+                下面上传的文件<strong>算在同一个 {{ MAX_BRIEF }} 字里</strong>（合计多少字显示在文件列表下面），
+                提交时自动带上，不用你手动粘进这个框。
               </span>
             </label>
             <!-- 放在 label 外面：label 里点任何东西都会连带激活它的表单控件（上面那个 textarea），
                  上传按钮和预览框套在里面会被 label 的点击行为带着跑。 -->
-            <FileExtractPanel :current-chars="form.brief.length" @insert="appendFromFile" />
+            <FileExtractPanel
+              :current-chars="form.brief.length"
+              @change="attachments = $event"
+              @busy="filesBusy = $event"
+            />
             <div class="create-actions">
-              <button class="btn-primary" :disabled="creating" @click="create">
-                {{ creating ? '创建中…' : '创建项目' }}
+              <!-- 禁用的**理由要写在按钮上**：只是灰掉的话他会以为页面卡了，刷新一次
+                   前面传的几个文件全没了（文件不落盘，重来一遍还要再花几次额度）。 -->
+              <button class="btn-primary" :disabled="creating || filesBusy" @click="create">
+                {{ creating ? '创建中…' : filesBusy ? '文件还在处理中…' : '创建项目' }}
               </button>
               <span class="muted">
                 创建后先进补料问卷：全部答完才进工作台，答案会追加进这段资料。

@@ -23,6 +23,7 @@
         <router-link to="/admin/tender" class="nav-item" active-class="active" @click="sidebarOpen = false">标讯管理</router-link>
         <router-link to="/admin/consult" class="nav-item" active-class="active" @click="sidebarOpen = false">咨询接入</router-link>
         <router-link to="/admin/consult-flow" class="nav-item" active-class="active" @click="sidebarOpen = false">咨询流程</router-link>
+        <router-link to="/admin/ppt-access" class="nav-item" active-class="active" @click="sidebarOpen = false">展示稿接入</router-link>
         <router-link to="/admin/feishu" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书助理</router-link>
         <router-link to="/admin/skills" class="nav-item" active-class="active" @click="sidebarOpen = false">Skill 管理</router-link>
         <router-link to="/admin/agent-skills" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书 Skill</router-link>

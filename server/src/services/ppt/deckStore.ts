@@ -2,10 +2,20 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
 import { MAX_OUTLINE_CHARS, MAX_PAGES } from './planService.js';
 import { type DesignSpec } from './designSpec.js';
+import { type PptOwner, platformOwner, tenantSql, tenantArgs } from './tenant.js';
+import { BLANK_LAYOUT_ID, BLANK_LAYOUT_NAME, BLANK_LAYOUT_TITLE, blankPageHtml } from './blankPage.js';
 
-// 演示稿的读写（migration 089）。**所有查询都带 user_id** —— 只按 id 取的话
+// 演示稿的读写（migration 089）。**所有查询都带归属键** —— 只按 id 取的话
 // 换个账号带上别人的 deck id 就能读到（甚至改到）他那份稿子，而返回的是一份
 // 正常的 deck，界面上一句错都没有。
+//
+// 归属键 = 租户 = `(绑定账号, 那把 pk)`，**一份**放在 `tenant.ts`（和素材库共用；各拼一遍的
+// 话稿子按公司共用而素材按员工隔离，现象是「同事的稿子我打得开，里面那几张图我挑不到」）。
+// `external_uid` 只记「这一份是谁建的」，不参与筛选 —— 同一家公司的员工要看得到彼此的稿子。
+
+/** @deprecated 名字留着兼容既有调用（`api/ppt.ts` 和几个测试）；类型就是 {@link PptOwner}。 */
+export type DeckOwner = PptOwner;
+export { platformOwner };
 
 export interface PptDeck {
   id: string;
@@ -60,7 +70,7 @@ export interface PptDeckRow {
   updated_at: string;
 }
 
-export function listDecks(userId: string): PptDeckRow[] {
+export function listDecks(owner: DeckOwner): PptDeckRow[] {
   const db = getDatabase();
   return db
     .prepare(
@@ -75,14 +85,14 @@ export function listDecks(userId: string): PptDeckRow[] {
                 WHERE p.deck_id = d.id AND p.html LIKE '%data-img-prompt%'
                   AND p.html NOT LIKE '%/ppt-cases/ph-%') AS imaged_count
          FROM ppt_decks d
-        WHERE d.user_id = ?
+        WHERE ${tenantSql('d.')}
         ORDER BY d.updated_at DESC`
     )
-    .all(userId) as PptDeckRow[];
+    .all(...tenantArgs(owner)) as PptDeckRow[];
 }
 
 export function createDeck(
-  userId: string,
+  owner: DeckOwner,
   data: {
     title: string; outline: string; brandCn?: string; brandEn?: string; styleId?: string;
     /** 设计规范（096）。**建稿时就定下来**：先生成十几页再定的话，那些页是按默认那套排的。 */
@@ -94,12 +104,14 @@ export function createDeck(
   const id = uuidv4();
   db.prepare(
     `INSERT INTO ppt_decks
-       (id, user_id, title, outline, brand_cn, brand_en, style_id, design_json, plan_json,
-        planned_total, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 0, 'active', ?, ?)`
+       (id, user_id, sdk_pk, external_uid, title, outline, brand_cn, brand_en, style_id,
+        design_json, plan_json, planned_total, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 'active', ?, ?)`
   ).run(
     id,
-    userId,
+    ...tenantArgs(owner),
+    // 建的人只记在这一列上（**不参与筛选**），同公司的同事要看得到这一份。
+    owner.externalUid,
     data.title,
     data.outline,
     data.brandCn || '',
@@ -109,13 +121,13 @@ export function createDeck(
     now,
     now
   );
-  return getDeck(id, userId)!;
+  return getDeck(id, owner)!;
 }
 
-export function getDeck(id: string, userId: string): PptDeck | null {
+export function getDeck(id: string, owner: DeckOwner): PptDeck | null {
   const db = getDatabase();
   return (
-    (db.prepare('SELECT * FROM ppt_decks WHERE id = ? AND user_id = ?').get(id, userId) as
+    (db.prepare(`SELECT * FROM ppt_decks WHERE id = ? AND ${tenantSql()}`).get(id, ...tenantArgs(owner)) as
       | PptDeck
       | undefined) || null
   );
@@ -127,7 +139,7 @@ export function getDeck(id: string, userId: string): PptDeck | null {
  */
 export function updateDeckMeta(
   id: string,
-  userId: string,
+  owner: DeckOwner,
   data: {
     title?: string;
     outline?: string;
@@ -157,9 +169,9 @@ export function updateDeckMeta(
   push('design_json', data.design ? JSON.stringify(data.design) : undefined);
   if (!sets.length) return false;
   sets.push('updated_at = ?');
-  args.push(new Date().toISOString(), id, userId);
+  args.push(new Date().toISOString(), id, ...tenantArgs(owner));
   const r = db
-    .prepare(`UPDATE ppt_decks SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
+    .prepare(`UPDATE ppt_decks SET ${sets.join(', ')} WHERE id = ? AND ${tenantSql()}`)
     .run(...(args as any[]));
   return r.changes > 0;
 }
@@ -174,11 +186,11 @@ export function updateDeckMeta(
  */
 export function savePlan(
   id: string,
-  userId: string,
+  owner: DeckOwner,
   plan: { pages: unknown[]; problems?: string[]; usage?: unknown }
 ): { ok: boolean; clearedPages: number; clearedImages: number; clearedNotes: number } {
   const db = getDatabase();
-  if (!getDeck(id, userId)) return { ok: false, clearedPages: 0, clearedImages: 0, clearedNotes: 0 };
+  if (!getDeck(id, owner)) return { ok: false, clearedPages: 0, clearedImages: 0, clearedNotes: 0 };
   let cleared = 0;
   let clearedImages = 0;
   let clearedNotes = 0;
@@ -229,12 +241,12 @@ export function savePlan(
  */
 export function updatePlanImageSubject(
   id: string,
-  userId: string,
+  owner: DeckOwner,
   page: number,
   index: number,
   subject: string
 ): { ok: boolean; specs: Array<{ subject: string; mode: string; ratio: string }> } {
-  const deck = getDeck(id, userId);
+  const deck = getDeck(id, owner);
   if (!deck) return { ok: false, specs: [] };
   let plan: any;
   try {
@@ -247,8 +259,8 @@ export function updatePlanImageSubject(
   if (!specs || !specs[index - 1]) return { ok: false, specs: [] };
   specs[index - 1].subject = subject;
   getDatabase()
-    .prepare('UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(JSON.stringify(plan), new Date().toISOString(), id, userId);
+    .prepare(`UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND ${tenantSql()}`)
+    .run(JSON.stringify(plan), new Date().toISOString(), id, ...tenantArgs(owner));
   return { ok: true, specs };
 }
 
@@ -263,11 +275,11 @@ export function updatePlanImageSubject(
  */
 export function updatePlanPageImages(
   id: string,
-  userId: string,
+  owner: DeckOwner,
   page: number,
   specs: Array<{ subject: string; mode: string; ratio: string }>
 ): { ok: boolean } {
-  const deck = getDeck(id, userId);
+  const deck = getDeck(id, owner);
   if (!deck) return { ok: false };
   let plan: any;
   try {
@@ -280,8 +292,8 @@ export function updatePlanPageImages(
   row.imageSpecs = specs;
   row.images = specs.length;
   getDatabase()
-    .prepare('UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(JSON.stringify(plan), new Date().toISOString(), id, userId);
+    .prepare(`UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND ${tenantSql()}`)
+    .run(JSON.stringify(plan), new Date().toISOString(), id, ...tenantArgs(owner));
   return { ok: true };
 }
 
@@ -315,11 +327,11 @@ export const MAX_PAGE_OUTLINE_CHARS = 4000;
  */
 export function updatePlanPageOutline(
   id: string,
-  userId: string,
+  owner: DeckOwner,
   page: number,
   data: { title: string; points: string[]; outlineText?: string }
 ): { ok: boolean } {
-  const deck = getDeck(id, userId);
+  const deck = getDeck(id, owner);
   if (!deck) return { ok: false };
   let plan: any;
   try {
@@ -333,8 +345,8 @@ export function updatePlanPageOutline(
   row.points = data.points;
   if (data.outlineText !== undefined) row.outlineText = data.outlineText;
   getDatabase()
-    .prepare('UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND user_id = ?')
-    .run(JSON.stringify(plan), new Date().toISOString(), id, userId);
+    .prepare(`UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND ${tenantSql()}`)
+    .run(JSON.stringify(plan), new Date().toISOString(), id, ...tenantArgs(owner));
   return { ok: true };
 }
 
@@ -376,9 +388,9 @@ export interface PptDeckPage {
   updated_at: string;
 }
 
-export function listPages(deckId: string, userId: string): PptDeckPage[] {
+export function listPages(deckId: string, owner: DeckOwner): PptDeckPage[] {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return [];
+  if (!getDeck(deckId, owner)) return [];
   return db
     .prepare(
       `SELECT page, layout_id, html, images_json, image_style_id, problems_json,
@@ -406,7 +418,7 @@ function touchDeck(deckId: string) {
  */
 export function savePageHtml(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: {
     page: number;
     layoutId: string;
@@ -423,7 +435,7 @@ export function savePageHtml(
   }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   const now = new Date().toISOString();
   // `pending_images_json` **不在下面这份 SET 里**（091）：备好的图是花过真钱的，而它
   // 存在于 HTML 之前 —— 跟着配图记录一起清掉的话，「重新生成这一页」会静默扔掉那几张，
@@ -466,11 +478,11 @@ export function savePageHtml(
  */
 export function savePageImages(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: { page: number; html: string; images: unknown[]; styleId: string; problems?: string[] }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   const r = db
     .prepare(
       `UPDATE ppt_deck_pages
@@ -508,11 +520,11 @@ export function savePageImages(
  */
 export function savePageEditedHtml(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: { page: number; html: string; images?: unknown[] }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   const r = db
     .prepare(
       `UPDATE ppt_deck_pages SET html = ?, updated_at = ?${data.images ? ', images_json = ?' : ''}
@@ -543,11 +555,11 @@ export function savePageEditedHtml(
  */
 export function savePendingImages(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: { page: number; images: unknown[] }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO ppt_deck_pages
@@ -582,11 +594,11 @@ export const MAX_PAGE_NOTES_CHARS = 500;
  */
 export function savePageSetup(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: { page: number; layoutId?: string; notes?: string }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   if (data.layoutId === undefined && data.notes === undefined) return false;
   const now = new Date().toISOString();
   const sets: string[] = [];
@@ -632,11 +644,11 @@ export function savePageSetup(
  */
 export function savePageVeil(
   deckId: string,
-  userId: string,
+  owner: DeckOwner,
   data: { page: number; opacity: number }
 ): boolean {
   const db = getDatabase();
-  if (!getDeck(deckId, userId)) return false;
+  if (!getDeck(deckId, owner)) return false;
   const now = new Date().toISOString();
   db.prepare(
     `INSERT INTO ppt_deck_pages
@@ -701,9 +713,9 @@ export interface PageDeleteResult {
  * 最后一页不给删：删完之后 `plan_json` 里是个空数组、`planned_total = 0`，界面上和「还没
  * 规划过」一模一样（而提纲还在），他会以为规划丢了。
  */
-export function deletePage(deckId: string, userId: string, page: number): PageDeleteResult {
+export function deletePage(deckId: string, owner: DeckOwner, page: number): PageDeleteResult {
   const db = getDatabase();
-  const deck = getDeck(deckId, userId);
+  const deck = getDeck(deckId, owner);
   if (!deck) throw new DeckStructureError('这份演示稿不存在（或不是你的）');
   let plan: any;
   try {
@@ -769,9 +781,19 @@ export interface PageInsertInput {
   /** 插在第几页**后面**（0 = 插到最前面）。 */
   after: number;
   title: string;
-  points: string[];
+  /** 这一页的要点。空白页不传（传了会被拒 —— 见下面 `blank`）。 */
+  points?: string[];
   /** 他挑的版式。不传 = 跟着插入位置前一页那条（见下面第 ③ 条）。 */
   layoutId?: string;
+  /**
+   * 插一页**空白页**（自己往上摆文字和图，见 `blankPage.ts`）。
+   *
+   * 和上面那条路两处不一样，各治一种「看起来完全正常」的失败：**不要要点**（空白页不进
+   * 任何 prompt，收了那几条等于让他写一段永远不会出现在页面上的字）、**插进来就带 html**
+   * （不带的话它是「未生成」，「生成剩下的 N 页」会花一次真实调用把画布换成一页版式排出来的
+   * 幻灯片）。
+   */
+  blank?: boolean;
 }
 
 export interface PageInsertResult {
@@ -786,6 +808,8 @@ export interface PageInsertResult {
   section: string;
   /** 版式是继承前后页来的（他没挑）—— 前端必须据此把「去挑一条」这句话说出来。 */
   layoutInherited: boolean;
+  /** 这一页是空白页（已经带着 html 落库了）—— 前端据此**不要**去开「生成前确认」那个框。 */
+  blank: boolean;
 }
 
 /**
@@ -811,9 +835,9 @@ export interface PageInsertResult {
  *    没人定过内容的图位，他备完图生成出来贴不进去（版式的图位数是另一回事）。
  *    要配图走「按这个版式和这一页的内容重排图位」那条（一次真实调用，他自己点）。
  */
-export function insertPage(deckId: string, userId: string, input: PageInsertInput): PageInsertResult {
+export function insertPage(deckId: string, owner: DeckOwner, input: PageInsertInput): PageInsertResult {
   const db = getDatabase();
-  const deck = getDeck(deckId, userId);
+  const deck = getDeck(deckId, owner);
   if (!deck) throw new DeckStructureError('这份演示稿不存在（或不是你的）');
   let plan: any;
   try {
@@ -838,15 +862,26 @@ export function insertPage(deckId: string, userId: string, input: PageInsertInpu
       `这份稿子已经 ${list.length} 页，到上限 ${MAX_PAGES} 页了 —— 再插的话规划、生成、导出那几处对页数的假设都不成立。要加内容请先删掉几页。`
     );
   }
+  const blank = !!input.blank;
   const title = (input.title || '').trim();
   const points = (input.points || []).map((p) => String(p ?? '').trim()).filter(Boolean);
   // 这两条和 `updatePlanPageOutline` 用的是同一套上限（各写一套的话这一条路能插进去一页
   // 超长的提纲，而改提纲那条路拒它 —— 生成出来是被版式裁掉半截的一页）。
+  // 空白页也要标题：那是缩略图和「整份目录」上这一页唯一的名字（空着的话左边那一栏里它是
+  // 一格「(这一页没标题)」的灰卡，和「这一页渲染塌了」分不开）。
   if (!title) throw new DeckStructureError('新这一页的标题是空的 —— 生成出来会是一页没有标题的幻灯片，看起来像版式本来就这样。');
   if (title.length > MAX_PAGE_TITLE_CHARS) {
     throw new DeckStructureError(`标题有 ${title.length} 字，上限 ${MAX_PAGE_TITLE_CHARS} 字（版式里标题就那么大一块，再长会挤成一团或被裁掉）。`);
   }
-  if (!points.length) {
+  // 空白页收了要点也没地方用（它不进任何 prompt、也不会排到页面上）—— 静默扔掉的话他写的
+  // 那几条在界面上从此不存在，而这一页插得好好的。
+  if (blank && points.length) {
+    throw new DeckStructureError('空白页不吃要点 —— 那几条不会出现在页面上（空白页不走 AI 生成，内容全靠你自己往画布上摆）。要按要点排的话插一页普通的。');
+  }
+  if (blank && (input.layoutId || '').trim()) {
+    throw new DeckStructureError('空白页不挑版式（它就是一张空画布）—— 要用案例库里那条版式的话插一页普通的。');
+  }
+  if (!blank && !points.length) {
     throw new DeckStructureError('新这一页一条要点都没有 —— 只给标题的话模型会自己编这一页的内容，出来那一页读着通顺但不是你的东西。至少写一条。');
   }
   if (points.length > MAX_POINTS_PER_PAGE) {
@@ -859,20 +894,33 @@ export function insertPage(deckId: string, userId: string, input: PageInsertInpu
   const prev = after > 0 ? list[after - 1] : null;
   const next = list[after] || null;
   const picked = (input.layoutId || '').trim().toUpperCase();
-  const layoutId = picked || String(prev?.layoutId || next?.layoutId || '');
+  const layoutId = blank ? BLANK_LAYOUT_ID : picked || String(prev?.layoutId || next?.layoutId || '');
   if (!layoutId) {
     throw new DeckStructureError('这一页没有版式（前后页也读不出来），插不进去 —— 没有版式的话生成那一步是「模型自己看着办」，出来一页和这份稿子不是一套设计。');
   }
   // 模块名（`.slide-header .kicker`）跟着前一页 —— 在这一章里插一页是常态。空着的话
   // 生成出来那一页顶上少一行，读起来像「这个版式没有模块名」。
-  const section = String(prev?.section || next?.section || '');
+  // **空白页一律空着**：那条页眉带是生成那一步贴上去的，空白页压根没有那一步 ——
+  // 填了的话左边缩略图上这一页挂着一个模块名，而画面上从来没有它。
+  const section = blank ? '' : String(prev?.section || next?.section || '');
   const page = after + 1;
+  const now = new Date().toISOString();
   let shifted = 0;
   const tx = db.transaction(() => {
     db.prepare('UPDATE ppt_deck_pages SET page = -page WHERE deck_id = ? AND page >= ?').run(deckId, page);
     shifted = db
       .prepare('UPDATE ppt_deck_pages SET page = -page + 1 WHERE deck_id = ? AND page < 0')
       .run(deckId).changes;
+    // 空白页**在这里就把 html 落进去**（上面那条腾出来的空位）：不落的话它是「未生成」，
+    // 「生成剩下的 N 页」会把它算进去 —— 一次真实调用，出来是一页按案例库版式排的幻灯片，
+    // 而他摆的东西全没了（读起来完全正常，只是不是他那一页）。
+    if (blank) {
+      db.prepare(
+        `INSERT INTO ppt_deck_pages
+           (id, deck_id, page, layout_id, html, images_json, image_style_id, problems_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, '', '', '[]', ?, ?)`
+      ).run(uuidv4(), deckId, page, BLANK_LAYOUT_ID, blankPageHtml(), now, now);
+    }
     list.splice(after, 0, {
       page,
       section,
@@ -880,10 +928,20 @@ export function insertPage(deckId: string, userId: string, input: PageInsertInpu
       title,
       points,
       layoutId,
-      why: picked ? '你自己插的一页，版式是你挑的。' : '你自己插的一页，版式先跟着前后页 —— 记得挑一条。',
+      why: blank
+        ? '你自己插的空白页 —— 内容靠你往画布上摆，不走 AI 生成。'
+        : picked
+          ? '你自己插的一页，版式是你挑的。'
+          : '你自己插的一页，版式先跟着前后页 —— 记得挑一条。',
       alts: [],
       images: 0,
       imageSpecs: [],
+      // 界面上那三行（版式名 / 中文标题 / demo 链接）**跟着页一起存**：前端读的就是
+      // `plan_json`（规划那一步也是这么存的）。空白页没有 demo，`demoUrl` 必须留空 ——
+      // 随便指一条的话点开是别人的版式 demo，而他会以为空白页就长那样。
+      ...(blank
+        ? { layoutName: BLANK_LAYOUT_NAME, layoutTitle: BLANK_LAYOUT_TITLE, fullbleed: false, demoUrl: '' }
+        : {}),
     });
     list.forEach((p: any, i: number) => {
       p.page = i + 1;
@@ -892,10 +950,10 @@ export function insertPage(deckId: string, userId: string, input: PageInsertInpu
     db.prepare(
       `UPDATE ppt_decks SET plan_json = ?, planned_total = ?, plan_rev = plan_rev + 1, updated_at = ?
         WHERE id = ?`
-    ).run(JSON.stringify(plan), list.length, new Date().toISOString(), deckId);
+    ).run(JSON.stringify(plan), list.length, now, deckId);
   });
   tx();
-  return { plan, planRev: deck.plan_rev + 1, page, shifted, layoutId, section, layoutInherited: !picked };
+  return { plan, planRev: deck.plan_rev + 1, page, shifted, layoutId, section, layoutInherited: !blank && !picked, blank };
 }
 
 /**
@@ -903,9 +961,9 @@ export function insertPage(deckId: string, userId: string, input: PageInsertInpu
  * REFERENCES 只是注释，留下的孤儿页不报错，但会被列表里那几个计数一直算进去
  * （删掉的稿子不见了，而下次同 id 建一份就会带着一批别人的页）。
  */
-export function deleteDeck(id: string, userId: string): boolean {
+export function deleteDeck(id: string, owner: DeckOwner): boolean {
   const db = getDatabase();
-  if (!getDeck(id, userId)) return false;
+  if (!getDeck(id, owner)) return false;
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM ppt_deck_pages WHERE deck_id = ?').run(id);
     db.prepare('DELETE FROM ppt_decks WHERE id = ?').run(id);

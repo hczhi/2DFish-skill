@@ -8,13 +8,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 //    而它在正文里和客户亲口说的一模一样。数字比对是界面上唯一会露馅的地方。
 //
 // mock 必须在 import 业务代码之前（ESM 提升）。
-const replies: Array<{ text: string; finish?: string; reasoning?: number }> = [];
+const replies: Array<{ text?: string; finish?: string; reasoning?: number; error?: string }> = [];
 const sentSystems: string[] = [];
 vi.mock('../../core/llm/gateway.js', () => ({
   aiGateway: vi.fn(async (params: any) => {
     sentSystems.push(params.messages.find((m: any) => m.role === 'system').content);
     const r = replies.shift();
     if (!r) throw new Error('测试没有为这次 LLM 调用准备返回值');
+    if (r.error) throw new Error(r.error);
     return {
       response: {
         choices: [{ message: { content: r.text }, finish_reason: r.finish || 'stop' }],
@@ -72,6 +73,15 @@ describe('consult 上传资料的 AI 整理', () => {
     expect(sentSystems[1]).toContain('第 2 段（共 2 段）');
   });
 
+  it('没压进单份字数预算时出声而不是截断（整理稿是自动带进资料的，他不会去数字数）', async () => {
+    const { TIDY_BUDGET_CHARS } = await import('./fileTidyService.js');
+    replies.push({ text: `## 品牌与公司\n${'甲'.repeat(TIDY_BUDGET_CHARS)}` });
+    const r = await tidyExtractedText('u1', 'x.pptx', '乙'.repeat(TIDY_BUDGET_CHARS + 500));
+    expect(r.overBudget).toBe(true);
+    expect(r.text.length).toBeGreaterThan(TIDY_BUDGET_CHARS); // 一个字都没被截掉
+    expect(r.notes.join('\n')).toMatch(/自己删掉 \d+ 字/);
+  });
+
   it('分段整理时失败的那一段退回原文并点名，不静默丢掉，也不谎报花了几次额度', async () => {
     // 静默丢掉的话「AI 整理」那一栏少了一整段，而它读起来照样是一份完整的资料；
     // 而 planTidy 报 2 次、实际扣 4 次的话，他只会以为额度算错了。
@@ -87,5 +97,20 @@ describe('consult 上传资料的 AI 整理', () => {
     expect(r.text).toContain('## 第一部分');
     expect(r.text).toContain('乙'.repeat(9000)); // 第二段的原文一个字都不能少
     expect(r.notes.join('\n')).toMatch(/第 2\/2 段整理失败/);
+  });
+
+  it('失败文案里带「额度」两个字不等于额度打满，后面几段照样整理', async () => {
+    // 这条链路上几乎每一句失败文案都带着「这次的 AI 额度已经扣了」（如实交代花掉的钱）。
+    // 按文案匹配的话，一次上游超时就被当成额度打满：第 2 段起全部保留原文，外加一句
+    // 「AI 额度已经用完，明天 0 点重置」—— 账号可能压根不限额度，他照着那句话等到明天，
+    // 结果一模一样，而真实成因（模型太慢）一个字都看不到。
+    const raw = `--- 第 1 页 ---\n${'甲'.repeat(9000)}\n--- 第 2 页 ---\n${'乙'.repeat(9000)}`;
+    replies.push({ error: '模型在超时时间内没有返回。这次的 AI 额度已经扣了。' });
+    replies.push({ text: '## 产品与服务\n- 乙' });
+    const r = await tidyExtractedText('u1', 'x.pptx', raw);
+
+    expect(r.calls).toBe(2); // 第 2 段真的打出去了，没有被「停止」掉
+    expect(r.text).toContain('## 产品与服务');
+    expect(r.notes.join('\n')).not.toMatch(/额度已经用完/);
   });
 });

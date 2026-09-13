@@ -23,6 +23,7 @@ import { generateImage } from '../../core/image/imageGateway.js';
 import { resolveImageProvider } from '../../services/aiProviderService.js';
 import { assemblePreview, type DeckMeta } from './deckShell.js';
 import { rememberAsset } from './assetStore.js';
+import { type PptOwner } from './tenant.js';
 import { type DesignSpec } from './designSpec.js';
 import {
   MAX_SLOTS_PER_PAGE, IMAGE_RATIOS, type ImageRatio, type PlannedImage, type PreparedImage,
@@ -82,7 +83,8 @@ export interface FillImagesResult {
 }
 
 export interface FillImagesContext {
-  userId: string;
+  /** 租户 + 付钱的账号（`tenant.ts`）。**钱记在 `owner.userId` 上**，图记在租户名下。 */
+  owner: PptOwner;
   title: string;
   section?: string;
   topic?: string;
@@ -338,19 +340,21 @@ function resolveProvider(userId: string) {
 async function runOneImage(
   job: { subject: string; mode: ImageMode; ratio: string; label: string },
   ctx: {
-    userId: string; title: string; section?: string; topic?: string; deckId?: string; page?: number;
+    owner: PptOwner; title: string; section?: string; topic?: string; deckId?: string; page?: number;
     /** 这份稿子的设计规范（096）。**不传的话图的配色是默认那套** —— 蓝色系的稿子配出一堆橙图，
      *  每张单看都不错、一处都不报错（见 `styleLibrary.deckColors`）。 */
     design?: DesignSpec;
   },
   style: PptStyle,
   provider: { id: string; model: string },
-  owner: 'platform' | 'dedicated'
+  providerOwner: 'platform' | 'dedicated'
 ): Promise<{ url: string; model?: string; storage?: 'cos' | 'local'; problems: string[] }> {
   const problems: string[] = [];
   // 额度按张扣，顺序和 aiGateway 一致（应用额度先扣，专属渠道烧自己的 key 不占总额）。
-  checkAndDeductAppQuota(ctx.userId, 'ppt');
-  if (owner !== 'dedicated') checkAndDeductQuota(ctx.userId);
+  // 额度**记在绑定账号上**（`owner.userId`），不是记在租户上：第三方那边的终端用户没有
+  // 平台账号，按租户记的话这笔钱在后台一处都对不上人。按 key 的天花板另在 sdkLimits 里。
+  checkAndDeductAppQuota(ctx.owner.userId, 'ppt');
+  if (providerOwner !== 'dedicated') checkAndDeductQuota(ctx.owner.userId);
 
   const t0 = Date.now();
   const theme = [ctx.topic, ctx.section, ctx.title].filter(Boolean).join(' · ');
@@ -367,7 +371,7 @@ async function runOneImage(
     problems.push(`${job.label}的提示词里还剩没换掉的占位符 ${left.join(' / ')} —— 这几个字会原样发给模型（画风模板改过？）。`);
   }
   const [img] = await generateImage(prompt, {
-    userId: ctx.userId,
+    userId: ctx.owner.userId,
     providerId: provider.id,
     n: 1,
     timeoutMs: IMAGE_TIMEOUT_MS,
@@ -380,14 +384,14 @@ async function runOneImage(
   // 生图原来完全不进 ai_logs —— 那意味着这笔钱在后台一处都看不见。
   logAIUsage(
     'ppt', 'gen-image', img.model, 0, 0, Date.now() - t0,
-    `${job.label} ${job.ratio} ${style.id}/${job.mode}`, ctx.userId, prompt, img.url, img.provider, owner
+    `${job.label} ${job.ratio} ${style.id}/${job.mode}`, ctx.owner.userId, prompt, img.url, img.provider, providerOwner
   );
 
   // 进素材库（migration 090）。**逐张写**：写在 api 层的话撞额度中断时前面那几张成功的图
   // 进不了库，而它们是真花过钱的。写不进去不能让这一步报错（图已经生成了），但**必须出声**
   // —— 静默的话素材库里少了几张，他只会以为「本来就这样」，下次重用时再花一次钱。
   try {
-    rememberAsset(ctx.userId, {
+    rememberAsset(ctx.owner, {
       url: img.url,
       prompt: job.subject,
       mode: job.mode,
@@ -416,7 +420,7 @@ async function runOneImage(
 export async function generateSpecImage(
   spec: PlannedImage,
   ctx: {
-    userId: string;
+    owner: PptOwner;
     index: number;
     title: string;
     section?: string;
@@ -433,7 +437,7 @@ export async function generateSpecImage(
     throw new PptImageError(`第 ${ctx.index} 格的规划里没写画什么，没法备图 —— 重新规划一次才会有这句话。`);
   }
   const style = resolveStyle(ctx.styleId);
-  const { provider, owner } = resolveProvider(ctx.userId);
+  const { provider, owner } = resolveProvider(ctx.owner.userId);
   const ratio = ratioText(spec.ratio);
   const r = await runOneImage(
     { subject: spec.subject, mode: spec.mode, ratio, label: `第 ${ctx.page || '?'} 页第 ${ctx.index} 格` },
@@ -488,7 +492,7 @@ export async function fillPageImages(html: string, ctx: FillImagesContext): Prom
 
   // 画风和接入点都整页取一次、按 id 绑死（见文件头 ①）。
   const style = resolveStyle(ctx.styleId);
-  const { provider, owner } = resolveProvider(ctx.userId);
+  const { provider, owner } = resolveProvider(ctx.owner.userId);
 
   const problems: string[] = [];
   const images: FilledImage[] = [];

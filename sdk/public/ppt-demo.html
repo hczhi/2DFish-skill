@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>接入示例 · 某第三方站点里的展示稿工作台</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif; color: #0f172a; background: #f1f5f9; }
+    /* 下面这一整套壳子是「假的第三方站点」，只为了让人看清工作台是嵌在别人页面里的 */
+    .site-top { background: #0f172a; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 20px; }
+    .site-top .logo { font-weight: 700; letter-spacing: .5px; }
+    .site-top nav { display: flex; gap: 18px; font-size: 13px; color: #cbd5e1; }
+    .site-top nav span:first-child { color: #fff; border-bottom: 2px solid #38bdf8; padding-bottom: 2px; }
+    .site-top .me { margin-left: auto; font-size: 13px; color: #94a3b8; }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 24px 60px; }
+    .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+    .panel h2 { margin: 0 0 4px; font-size: 15px; }
+    .panel .hint { margin: 0 0 12px; font-size: 12px; color: #64748b; }
+    .fields { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #475569; }
+    input, select { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 13px; }
+    input.pk { width: 320px; font-family: ui-monospace, monospace; font-size: 12px; }
+    input.base { width: 210px; font-family: ui-monospace, monospace; font-size: 12px; }
+    button { border: none; border-radius: 6px; padding: 8px 15px; font-size: 13px; cursor: pointer; }
+    .primary { background: #2563eb; color: #fff; }
+    .ghost { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+    .banner { display: none; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; padding: 11px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 13px; white-space: pre-wrap; }
+    .frame-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+    .frame-card > header { padding: 10px 16px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b; display: flex; }
+    .frame-card > header b { color: #0f172a; }
+    .frame-card > header .tag { margin-left: auto; background: #eff6ff; color: #1d4ed8; border-radius: 10px; padding: 1px 9px; font-size: 11px; }
+    #ppt:empty::after { content: "还没挂载 —— 填上 pk 点「挂载工作台」"; display: block; padding: 40px 16px; text-align: center; color: #94a3b8; font-size: 13px; }
+    .log { margin-top: 16px; font-size: 12px; color: #475569; }
+    .log pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px 14px; max-height: 190px; overflow: auto; margin: 6px 0 0; line-height: 1.6; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    ol { margin: 6px 0 0; padding-left: 20px; font-size: 12px; color: #475569; }
+    .share { background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; border-radius: 8px; padding: 9px 12px; font-size: 12px; margin: 10px 0 0; }
+  </style>
+</head>
+<body>
+  <!-- ================= 假的第三方站点外壳 ================= -->
+  <div class="site-top">
+    <span class="logo">云舟企服</span>
+    <nav><span>方案演示稿</span><span>品牌咨询</span><span>工商注册</span><span>帮助中心</span></nav>
+    <span class="me">李经理（他们自己的登录态）</span>
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h2>这是「第三方页面」，不是我们的站点</h2>
+      <p class="hint">
+        整页 HTML 只有下面那一个 <code>&lt;div&gt;</code> 加两个 <code>&lt;script&gt;</code>。
+        没有后端、没有构建、没有登录页 —— 工作台本体跑在一个指向平台的 iframe 里。
+      </p>
+      <ol>
+        <li>在平台后台 <code>/admin/ppt-access</code> 建一把 key，域名白名单填上<b>当前这个源</b>（地址栏里的 <span id="cur-origin"></span>）。</li>
+        <li>把 pk 粘到下面；「平台地址」默认就是当前这个源，本机开发时改成 <code>http://localhost:5173</code>（前端跑在 Vite 上）。点「挂载工作台」。</li>
+        <li>换一下「终端用户 id」再挂载一次 —— 稿子列表和素材库<b>是同一份</b>（见下），变的只有「谁建的」。</li>
+      </ol>
+      <p class="share">
+        <b>一把 pk = 一家公司。</b>同一把 pk 下所有终端用户共用稿子列表和素材库（内部同事互相看得到、能接着改、
+        能挑对方生成的图）。<code>externalUid</code> 只记录创建人，<b>不是隔离手段</b> —— 要把两家客户分开，申请两把 pk。
+      </p>
+      <div class="fields" style="margin-top:12px">
+        <label>pk（后台复制来的）
+          <input id="pk" class="pk" placeholder="pk_ppt_…" />
+        </label>
+        <label>平台地址（baseUrl）
+          <input id="base" class="base" placeholder="https://平台域名" />
+        </label>
+        <label>终端用户 id（externalUid）
+          <select id="euid">
+            <option value="demo-user-1">demo-user-1（李经理）</option>
+            <option value="demo-user-2">demo-user-2（王总 · 同一家公司的同事）</option>
+          </select>
+        </label>
+        <label>打开哪一页
+          <select id="path">
+            <option value="/ppt/decks">稿子列表</option>
+            <option value="/ppt/assets">素材库</option>
+            <option value="/ppt/layouts">版式参考</option>
+          </select>
+        </label>
+        <button class="primary" id="mount">挂载工作台</button>
+        <button class="ghost" id="unmount">卸载</button>
+      </div>
+    </div>
+
+    <div class="banner" id="banner"></div>
+
+    <div class="frame-card">
+      <header><b>方案演示稿</b>　由平台提供<span class="tag">iframe · 跨源</span></header>
+      <div id="ppt"></div>
+    </div>
+
+    <div class="log">
+      iframe 发回宿主页面的消息（凭证请求 / 高度 / 错误）：
+      <pre id="log">（等待挂载）</pre>
+    </div>
+  </div>
+
+  <!-- ================= 真正的接入代码，就这么多 ================= -->
+  <script src="/sdk/ppt-sdk.umd.cjs"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    $('cur-origin').textContent = location.origin;
+
+    const log = (line) => {
+      const pre = $('log');
+      const t = new Date().toTimeString().slice(0, 8);
+      pre.textContent = (pre.textContent === '（等待挂载）' ? '' : pre.textContent + '\n') + `[${t}] ${line}`;
+      pre.scrollTop = pre.scrollHeight;
+    };
+
+    // pk / 平台地址记在 demo 页自己的 localStorage 里，刷新不用重新粘
+    $('pk').value = localStorage.getItem('demo-ppt-pk') || '';
+    // 默认就是这个页面的源（把 demo 放在平台上时最省事）。开发环境前端跑在 Vite 上，
+    // 这里要改成 http://localhost:5173 —— 填错的症状是 iframe 里一句 404/401，
+    // 而 pk 和白名单都是对的。
+    $('base').value = localStorage.getItem('demo-ppt-base') || location.origin;
+
+    let handle = null;
+
+    $('mount').onclick = () => {
+      const pk = $('pk').value.trim();
+      $('banner').style.display = 'none';
+      const base = $('base').value.trim().replace(/\/$/, '');
+      if (!pk) { show('先填 pk（平台后台「展示稿 · 对外接入」里复制）'); return; }
+      if (!base) { show('先填平台地址（本机开发填 http://localhost:5173）'); return; }
+      localStorage.setItem('demo-ppt-pk', pk);
+      localStorage.setItem('demo-ppt-base', base);
+      handle?.destroy();
+
+      // ---- 这几行就是全部的接入代码 ----
+      handle = PptSDK.mountPpt({
+        pk,
+        baseUrl: base,                     // 平台地址，如 https://平台域名
+        externalUid: $('euid').value,      // 必填：记录「这份稿子谁建的」（同一把 pk 共用工作台）
+        target: '#ppt',
+        path: $('path').value,
+        onError: show,                     // 不接的话失败只写控制台，页面上是一块空白
+      });
+      // ---------------------------------
+
+      log(`已挂载：baseUrl=${base}，externalUid=${$('euid').value}，path=${$('path').value}`);
+    };
+
+    $('unmount').onclick = () => {
+      handle?.destroy();          // SPA 里换页必须调，否则 message 监听一直挂着
+      handle = null;
+      $('ppt').innerHTML = '';
+      log('已卸载（message 监听也一起拆掉了）');
+    };
+
+    function show(msg) {
+      const b = $('banner');
+      b.style.display = 'block';
+      b.textContent = msg;
+      log('❌ ' + msg);
+    }
+
+    // 下面这段只是为了让人看见握手过程，接入时不需要写。
+    // 注意：宿主 → iframe 那个方向（真正递 token 的那一下）在这里看不到，
+    // 它由 SDK 直接 postMessage 给 iframe。通道是 `qn-ppt`，和咨询那条（`qn-consult`）
+    // 分开 —— 同一页同时嵌两个工作台时，混用会把咨询的 token 递给展示稿。
+    window.addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (!d || d.channel !== 'qn-ppt') return;
+      if (d.type === 'token-request') log('iframe：要一把访问凭证 → SDK 用 pk 在本页换取并递进去');
+      else if (d.type === 'height') log(`iframe：内容高度 ${d.height}px → 外框已跟着调整`);
+      else if (d.type === 'error') log('iframe 报错：' + d.message);
+    });
+  </script>
+</body>
+</html>

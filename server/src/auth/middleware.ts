@@ -51,6 +51,9 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   // 品牌咨询 iframe 嵌入（084）：同上，pk + Origin 白名单在 consultSdk 的 handler 里校验。
   { path: '/api/consult/sdk/token', method: 'POST', level: 'public' },
   { path: '/api/consult/sdk/token', method: 'OPTIONS', level: 'public' },
+  // HTML 展示稿 iframe 嵌入（100）：同上，pk + Origin 白名单在 pptSdk 的 handler 里校验。
+  { path: '/api/ppt/sdk/token', method: 'POST', level: 'public' },
+  { path: '/api/ppt/sdk/token', method: 'OPTIONS', level: 'public' },
   // 对外中转接口（migration 082）：带的是 sk-mmpla- 那把 key，不是平台 JWT。
   // 走 protected 的话 authMiddleware 会先回一句 401 «Invalid or expired token»，
   // 下游只会以为自己那把 key 废了，而真正的校验（relayService）压根没跑到。

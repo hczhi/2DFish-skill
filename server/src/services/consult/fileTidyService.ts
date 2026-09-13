@@ -29,6 +29,18 @@ import { MAX_BRIEF_CHARS } from './projectStore.js';
 export const MAX_TIDY_INPUT_CHARS = 80_000;
 
 /**
+ * 一份文件整理出来最多留这么多字。**一次上传最多 5 个文件、5 份都自动带进资料**
+ * （见 briefCompose.ts），所以这个数乘 5 必须还装得进资料框的
+ * {@link MAX_BRIEF_CHARS}（20000）—— 剩下的空间留给他自己手打的那段。
+ *
+ * 它是**发给模型的预算**，不是事后截断：截到 3500 字的那一份在界面上和「模型自己压到
+ * 3500 字」长得一模一样，而断掉的正好是排在后面的类目（用户与客群 / 当前问题与目标 ——
+ * 提炼时越靠后越是结论性的东西）。模型压不下来时走 `overBudget` 出声，由他自己删
+ * （卡片里那份是可编辑的），提交那一下再拒一次并点名是哪个文件。
+ */
+export const TIDY_BUDGET_CHARS = 3_500;
+
+/**
  * 每次调用喂多少字。超过这个数就分几次调用（{@link splitForTidy}）。
  *
  * **分批是要花几次 AI 额度的**（登录用户缺省 10 次/天），所以这件事绝不能悄悄发生：
@@ -84,7 +96,36 @@ export interface TidyResult {
    * 不报出来的话它和整理干净的一份长得一模一样，而中间夹着一整段没删过的页码目录。
    */
   fallbackChunks: number;
+  /** 这份文件的字数预算（{@link TIDY_BUDGET_CHARS}）。界面上和 chars 并排显示。 */
+  budgetChars: number;
+  /**
+   * 没压进预算。**这里不截**（截掉的是排在后面的类目，而那一份读起来照样完整），
+   * 所以这一位要显眼地回给界面：他得自己在卡片里删到预算以内，否则提交那一下会被拒。
+   */
+  overBudget: boolean;
 }
+
+/**
+ * 提炼出来的那几个 `## 小标题`，以及每一节装什么。
+ *
+ * **图片识别那条路复用同一份**（`imageExtractService.ts`）—— 各写一份的话，图片提出来的
+ * 那几节和文件提出来的小标题不一样（"## 用户画像" vs "## 用户与客群"），而它们最后拼进
+ * **同一段**客户资料里：后面十二步于是要同时认两套标题，认漏的那一套就成了「客户没提过
+ * 这一类」，而每一步的正文读起来完全正常。改这里等于同时改两条路，这是有意的。
+ */
+export const CATEGORY_LIST = `   - \`## 品牌与公司\`：是谁、做什么的、成立时间、规模、发展阶段、现有的定位表述 / slogan /
+     品牌主张 / 品牌故事
+   - \`## 产品与服务\`：产品线、卖点、成分 / 技术 / 工艺、规格、价格带、适用场景
+   - \`## 经营与销量数据\`：营收、销量、增长、门店 / 客户 / 网点 / 会员数、市占率、客单价、
+     复购、渠道占比 —— **数字一个都不要动**
+   - \`## 行业与市场\`：市场规模、趋势、政策、行业痛点、机会点（只写原文的说法）
+   - \`## 竞品\`：原文提到的每一个竞争对手，以及关于它的说法（谁、什么打法、和我们的差别）
+   - \`## 优势与差异点\`：品牌优势、产品优势、供应链 / 渠道 / 团队 / 资源优势、专利、
+     资质、背书、代言
+   - \`## 用户与客群\`：人群、画像、地域、使用与购买场景、需求与痛点、购买者和使用者
+   - \`## 渠道与传播\`：线上线下渠道、平台、投放、内容打法、活动、合作
+   - \`## 当前问题与目标\`：客户自己说的困难、瓶颈、这次想解决什么、目标与规划
+   - \`## 其它可能有用的\`：拿不准算哪一类、但和这个品牌的业务有关的事实`;
 
 const SYSTEM = `你是品牌咨询项目的资料整理员。用户上传了一份文件（PPT / Word），程序已经把里面的
 文字**原样**抠出来交给你。它是碎的：页码页脚混在正文里、同一句话被拆成好几行、目录页和
@@ -105,19 +146,7 @@ const SYSTEM = `你是品牌咨询项目的资料整理员。用户上传了一�
 
 1. **要留的**，用下面这些 \`## 小标题\`（原文里没有对应内容的那一节**直接不要出现**，
    不要写"暂无"）：
-   - \`## 品牌与公司\`：是谁、做什么的、成立时间、规模、发展阶段、现有的定位表述 / slogan /
-     品牌主张 / 品牌故事
-   - \`## 产品与服务\`：产品线、卖点、成分 / 技术 / 工艺、规格、价格带、适用场景
-   - \`## 经营与销量数据\`：营收、销量、增长、门店 / 客户 / 网点 / 会员数、市占率、客单价、
-     复购、渠道占比 —— **数字一个都不要动**
-   - \`## 行业与市场\`：市场规模、趋势、政策、行业痛点、机会点（只写原文的说法）
-   - \`## 竞品\`：原文提到的每一个竞争对手，以及关于它的说法（谁、什么打法、和我们的差别）
-   - \`## 优势与差异点\`：品牌优势、产品优势、供应链 / 渠道 / 团队 / 资源优势、专利、
-     资质、背书、代言
-   - \`## 用户与客群\`：人群、画像、地域、使用与购买场景、需求与痛点、购买者和使用者
-   - \`## 渠道与传播\`：线上线下渠道、平台、投放、内容打法、活动、合作
-   - \`## 当前问题与目标\`：客户自己说的困难、瓶颈、这次想解决什么、目标与规划
-   - \`## 其它可能有用的\`：拿不准算哪一类、但和这个品牌的业务有关的事实
+${CATEGORY_LIST}
 2. **要删的**：页码、页眉页脚、目录页、"--- 第 N 页 ---" 这类分页标记、CONTENTS / THANKS /
    Company Profile 这类模板装饰词、重复出现的章节标题、纯排版装饰、汇报礼节话（"感谢聆听"）、
    和这个品牌的业务无关的内容（会议安排、内部流程、人员名单）、空洞的通用口号
@@ -144,6 +173,24 @@ const MISSING_SECTION_RULE = `
    列出来（例如"没有销量数据、没有竞品信息、没有用户画像"）。这一节不许省 ——
    缺哪几类决定了后面要向客户补问什么；省掉之后 AI 会照常识把这些补齐，
    而补出来的东西读起来和真资料一模一样。`;
+
+/**
+ * 字数预算那一条。图片识别那条路也用它（同一个预算、同一套压缩纪律，`no` 只是条目编号）。
+ *
+ * **必须连「压缩时不许做什么」一起写**：只说「控制在 N 字以内」的话，
+ * 模型压缩的第一招就是把三个客户名字并成「多家头部客户」、把两个数字并成一个总数 ——
+ * 那句话读起来比原文还顺，而那三个名字和那两个数字从此不在资料里，后面十二步谁都不知道
+ * 有过它们（同硬规则 3：会算错的东西不交给 LLM）。
+ */
+export function budgetRule(budget: number, no = 8): string {
+  return `
+${no}. **这一段的输出控制在 ${budget} 字以内**（含小标题和符号）。装不下时按这个优先级砍：
+   数字 / 定位语 slogan / 竞品名 / 用户与客群 / 当前问题与目标 一律留到最后；先删描述性的
+   形容词、重复的表述、能从别的事实推出来的话。
+   **压缩不许改写事实**：不许把几个具体名字并成"多家客户""若干竞品"，不许把两个数字加成
+   一个总数，不许把一条带数字的事实概括成"增长明显"。删掉一条，好过把它改成一句
+   读起来更顺、但已经不是原文说法的概括。`;
+}
 
 /** 分段时追加：说清这是第几段，并且**不要**报缺料清单（理由见 MISSING_SECTION_RULE）。 */
 function chunkRule(index: number, total: number): string {
@@ -214,7 +261,8 @@ async function tidyOneChunk(
   filename: string,
   chunk: string,
   index: number,
-  total: number
+  total: number,
+  chunkBudget: number
 ): Promise<ChunkOutcome> {
   const where = total > 1 ? `（第 ${index + 1}/${total} 段）` : '';
   try {
@@ -224,7 +272,13 @@ async function tidyOneChunk(
         messages: [
           // 第 7 条按「一次装得下 / 分了几段」二选一：分段时报缺料清单是错的，
           // 而单段时省掉它，缺哪几类资料就再也没有地方会说出来。
-          { role: 'system', content: SYSTEM + (total > 1 ? chunkRule(index, total) : MISSING_SECTION_RULE) },
+          {
+            role: 'system',
+            content:
+              SYSTEM
+              + (total > 1 ? chunkRule(index, total) : MISSING_SECTION_RULE)
+              + budgetRule(chunkBudget),
+          },
           {
             role: 'user',
             content: `文件名：${filename}\n\n以下是程序从这个文件里抠出来的原始文字：\n\n${chunk}`,
@@ -243,6 +297,10 @@ async function tidyOneChunk(
         noThinking: true,
         timeoutMs: AI_TIMEOUT_MS,
         maxRetries: 0,
+        // `maxRetries: 0` 关掉的是「重试超时」，可上游回一句 `503 system cpu overloaded`
+        // 也被一起关掉了 —— 那种重发一次基本就过，而不重发的表现是这一段退回原文
+        // （页码目录全在），他只会以为是自己的文件不行。重发在同一次调用里，额度不多扣。
+        retryOnBusy: true,
         tier: 'fast', // 输出是大段散文，不是 JSON
       }
     );
@@ -298,6 +356,10 @@ export async function tidyExtractedText(
   }
 
   const chunks = splitForTidy(text);
+  // 预算是**整份文件**的，所以分段时要摊到每一段上（每段各给 3500 的话，三段拼起来
+  // 一万字 —— 5 个文件全带进资料就直接顶爆 20000 字的上限，而每一段各自看都是合规的）。
+  // 下限 600 是为了别让段数一多就把每段压成一句话（那时候丢的是事实，不是废话）。
+  const chunkBudget = Math.max(600, Math.floor(TIDY_BUDGET_CHARS / chunks.length));
   const notes: string[] = [];
   const outs: string[] = [];
   let truncated = false;
@@ -315,7 +377,7 @@ export async function tidyExtractedText(
       fallbackChunks++;
       continue;
     }
-    const r = await tidyOneChunk(userId, filename, chunks[i], i, chunks.length);
+    const r = await tidyOneChunk(userId, filename, chunks[i], i, chunks.length, chunkBudget);
     calls++;
     reasoningTokens += r.reasoningTokens;
 
@@ -330,10 +392,7 @@ export async function tidyExtractedText(
       // 额度是全局的，撞了之后剩下几段必然也撞 —— 继续打只是让他多等几个来回。
       if (isQuotaFailure(r.failure.error)) {
         stopped = true;
-        notes.push(
-          `AI 额度已经用完，${i + 1} 段之后的内容全部保留原文。明天 0 点额度重置，`
-            + '或者先插入这份（原文那几段你也可以自己删），回头再整理。'
-        );
+        notes.push(`AI 额度已经用完，第 ${i + 1} 段之后全部保留原文。明天 0 点重置。`);
       }
       continue;
     }
@@ -342,9 +401,9 @@ export async function tidyExtractedText(
     if (r.truncated) {
       truncated = true;
       notes.push(
-        `${at}的整理结果被截断了（顶到 ${MAX_TOKENS_TIDY} token 上限`
-          + `${r.reasoningTokens > 0 ? `，其中 ${r.reasoningTokens} 花在思维链上` : ''}）——`
-          + '那一段的结尾是半截的，后面的内容没整理进来。请对着「原文」补齐。'
+        `${at}被截断了（顶到 ${MAX_TOKENS_TIDY} token`
+          + `${r.reasoningTokens > 0 ? `，${r.reasoningTokens} 花在思维链上` : ''}），`
+          + '这一段结尾是半截的，请对着「原文」补齐。'
       );
     }
   }
@@ -366,26 +425,31 @@ export async function tidyExtractedText(
   // 模型开始自己写了 —— 而写出来的那几段读起来和客户资料完全一样，没有别的地方会提醒他。
   if (out.length > text.length) {
     notes.push(
-      `整理后（${out.length} 字）比原文（${text.length} 字）还长。这一步是"挑出有用的、`
-        + '删掉没用的"，结果应该短很多；变长基本意味着模型自己补了内容 —— '
-        + '请对着「原文」那一栏核一遍再插入。'
+      `整理后（${out.length} 字）比原文（${text.length} 字）还长 —— 这一步只该删不该增，`
+        + '变长基本意味着模型自己补了内容，请对着「原文」核一遍。'
     );
   }
   // 分段是各段独立提炼的，所以同一个类目的小标题会出现好几次。不说的话他会以为
   // 「AI 把资料重复了一遍」而去删，删的时候很容易连着删掉后面几段里独有的那几条。
   if (chunks.length > 1) {
     notes.push(
-      `这份文字分了 ${chunks.length} 段整理，每段各自归类，所以同一个类目的小标题`
-        + `（如"## 产品与服务"）可能出现好几次 —— 里面的内容是不一样的，`
-        + '插入前可以自己并到一起，别整节删掉。'
+      `分了 ${chunks.length} 段整理，同一个小标题（如"## 产品与服务"）会出现好几次 ——`
+        + '里面的内容不一样，可以自己并到一起，别整节删掉。'
+    );
+  }
+  // 没压进预算。这份文字是**自动带进资料**的（不用他点插入），所以这里不说的话，
+  // 他要到点「创建项目」那一下才撞上一句「超了 4310 字」—— 而那时他已经离开这个面板了。
+  const overBudget = out.length > TIDY_BUDGET_CHARS;
+  if (overBudget) {
+    notes.push(
+      `整理后 ${out.length} 字，超过单份上限 ${TIDY_BUDGET_CHARS} 字`
+        + `${fallbackChunks > 0 ? '（有几段退回了原文，见上面那条）' : ''}，`
+        + `请自己删掉 ${out.length - TIDY_BUDGET_CHARS} 字（这里不替你截，截掉的正好是后面几节）。`
     );
   }
   if (reasoningTokens > 0) {
     // 后台核不到这一条的话，用户只会觉得「整理一次要等三分钟」，日志里一切正常。
-    notes.push(
-      `这条接入点没关掉思维链（这次一共想了 ${reasoningTokens} token），所以又慢又容易截断。`
-        + '去「AI 模型 Provider」把它的「关思维链」勾上。'
-    );
+    notes.push(`这条接入点没关掉思维链（一共想了 ${reasoningTokens} token），又慢又容易截断 —— 去「AI 模型 Provider」勾上「关思维链」。`);
   }
 
   return {
@@ -398,13 +462,22 @@ export async function tidyExtractedText(
     notes,
     calls,
     fallbackChunks,
+    budgetChars: TIDY_BUDGET_CHARS,
+    overBudget,
   };
 }
 
-/** 额度打满的那种失败（`QuotaExceededError`，也认接口透传回来的那句话）。 */
+/**
+ * 额度打满的那种失败。**只认错误的类型 / 机器码，绝不拿文案里有没有「额度」两个字去猜。**
+ *
+ * 这条链路上几乎每一句失败文案里都带着「这次的 AI 额度已经扣了」/「额度全被想掉了」——
+ * 那是在如实交代花掉的钱（硬规则 1）。按 `/额度/` 匹配的话，一次空返回、一次上游超时
+ * 就被当成额度打满：后面几段全部保留原文，外加一句「AI 额度已经用完，明天 0 点重置」。
+ * 那句话是假的（账号可能压根不限额度），而他照着它等到明天，结果一模一样。
+ */
 function isQuotaFailure(e: unknown): boolean {
   const err = e as any;
-  return err?.name === 'QuotaExceededError' || /额度/.test(String(err?.message || ''));
+  return err?.name === 'QuotaExceededError' || err?.message === 'quota_exceeded';
 }
 
 /**

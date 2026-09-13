@@ -25,6 +25,30 @@ export const MAX_SUBJECT_CHARS = 300;
 export const IMAGE_RATIOS = ['16:9', '1:1', '3:4'] as const;
 export type ImageRatio = (typeof IMAGE_RATIOS)[number];
 
+/**
+ * 一张**已经存在**的图（用户上传的）该按哪一档比例记进素材库。图不会被重裁，
+ * 所以这里只是在这三档里挑最接近的一档 —— 而这一档是「贴进这一格会被裁掉两边」
+ * 那句提醒的唯一依据：一律记成 16:9 的话，一张竖图贴进 16:9 的槽里照样是一页完整的
+ * 幻灯片，只是主体被裁掉，接口全程 200。
+ *
+ * 按对数距离挑，因为比例是乘法量（0.75 → 1 和 1 → 1.33 是同样大小的一步）；
+ * 用差值的话三档之间的分界会偏向竖的那一侧。
+ */
+export function nearestRatio(width: number, height: number): ImageRatio {
+  const r = width / height;
+  let best: ImageRatio = '16:9';
+  let bestGap = Infinity;
+  for (const cand of IMAGE_RATIOS) {
+    const [a, b] = cand.split(':').map(Number);
+    const gap = Math.abs(Math.log(r / (a / b)));
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = cand;
+    }
+  }
+  return best;
+}
+
 /** 规划里的一张图：画什么 + 哪一路画法 + 什么比例。 */
 export interface PlannedImage {
   /** 画什么（一句话）。它就是最后写进 `data-img-prompt` 的那句话。 */

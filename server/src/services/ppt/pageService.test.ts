@@ -188,7 +188,7 @@ describe('生成一页 HTML', () => {
     const said = r.problems.join('\n');
     expect(said).toContain('900 字');
     expect(said).toMatch(/L1（形状：分屏）一页大约装 \d+ 字/);
-    expect(said).toContain('L37'); // 装得下的那几条要点名，不然他只能自己翻 44 个版式
+    expect(said).toContain('L37'); // 装得下的那几条要点名，不然他只能自己翻 51 个版式
   });
 
   it('用了 template 里没有的类名要点名，且预览是套好外壳的整页', async () => {

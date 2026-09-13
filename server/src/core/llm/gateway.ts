@@ -46,6 +46,22 @@ export interface GatewayOptions {
    */
   maxRetries?: number;
   /**
+   * 上游回「忙」（HTTP 429 / 5xx，实测那条接入点是
+   * `503 system cpu overloaded (current: 97.5%, threshold: 90%)`）时**隔几秒重发一次**。
+   *
+   * 存在的理由是 {@link maxRetries} 给 0 的那几条路：给 0 是为了**不重试超时**
+   * （同一个 body 第二次还是在同一处超时，只把等待翻倍），可这一刀连「上游那台机器
+   * CPU 满了」也一起关掉了 —— 那种失败重发一次基本就过，而不重发的表现是
+   * 「AI 整理没成功」，用户会去改文件、调 `max_tokens`、或者一分钟点五次
+   * （每次都真扣一次额度），而问题压根不在他这边。
+   *
+   * **重发在扣额度之后、在同一次 `aiGateway` 里，所以额度只扣一次**（配额是在发请求
+   * 之前扣的）；调用方自己 catch 之后重来一遍的话，那一遍是新的一次调用，会再扣一次。
+   * 只认「上游明确回了状态码」那一种，连接超时（`APIConnectionTimeoutError`，status
+   * 是 undefined）不在内。
+   */
+  retryOnBusy?: boolean;
+  /**
    * 关掉思维链（reasoning / thinking）。**缺省不关。**
    *
    * 实测同一条专属接入点（deepseek-v4-pro）、同一个问题：不关 36.6 秒，输出的 1592
@@ -105,6 +121,45 @@ async function withNoThinking<T>(
       return run({});
     }
     throw err;
+  }
+}
+
+/** 上游「忙」之后等多久重发（见 {@link GatewayOptions.retryOnBusy}）。 */
+const BUSY_RETRY_DELAY_MS = 2_500;
+
+/**
+ * 上游明确回了「忙」（HTTP 429 / 5xx）。
+ *
+ * **只认带状态码的那一种。** 连接超时（`APIConnectionTimeoutError`）的 status 是
+ * undefined，重发它只是把等待时间翻倍（见 {@link GatewayOptions.maxRetries}）。
+ */
+function isUpstreamBusy(err: unknown): boolean {
+  if (!(err instanceof OpenAI.APIError)) return false;
+  const s = err.status;
+  return s === 429 || s === 500 || s === 502 || s === 503 || s === 504;
+}
+
+/**
+ * 上游回「忙」时重发一次（`retryOnBusy` 打开时才生效），并且**喊一句**：
+ * 不喊的话这条路只是偶尔慢 2.5 秒，没人知道上游正在过载 —— 而那是「今天怎么老失败」
+ * 唯一的线索。重发发生在扣额度之后，所以额度只扣一次。
+ */
+async function withBusyRetry<T>(
+  enabled: boolean | undefined,
+  operation: string,
+  attempt: () => Promise<T>
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (err) {
+    if (!enabled || !isUpstreamBusy(err)) throw err;
+    const e = err as { status?: number; message?: string };
+    console.warn(
+      `[llm] ${operation}: 上游回了 HTTP ${e.status}（${String(e.message || '').slice(0, 140)}），` +
+        `${BUSY_RETRY_DELAY_MS / 1000} 秒后重发一次（额度不会因此多扣：配额在发请求之前就扣了）。`
+    );
+    await new Promise((r) => setTimeout(r, BUSY_RETRY_DELAY_MS));
+    return attempt();
   }
 }
 
@@ -385,13 +440,17 @@ export async function aiGateway(
     noThinking,
     options.operation,
     (extra) =>
-      client.chat.completions.create(
-        { ...params, ...extra, model } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-        // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
-        {
-          timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
-        }
+      // 「上游忙」的重发套在最里面：外面那层管的是「上游不认关思维链那几个键」（400），
+      // 两件事的解法不同，混在一层的话 400 那次会被当成忙、白等 2.5 秒再原样失败一次。
+      withBusyRetry(options.retryOnBusy, options.operation, () =>
+        client.chat.completions.create(
+          { ...params, ...extra, model } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+          // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
+          {
+            timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+          }
+        )
       )
   );
   const duration = Date.now() - startTime;

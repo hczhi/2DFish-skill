@@ -1,11 +1,13 @@
 // HTML 展示稿（/ppt）。这一层薄：校验 → service → 响应。
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import { layouts, layoutById, library } from '../services/ppt/layoutLibrary.js';
 import { demoDeck, demoIds, DemoNotFoundError } from '../services/ppt/demoDeck.js';
 import { disabledLayoutIds, setLayoutEnabled, LayoutStateError } from '../services/ppt/layoutState.js';
 import { planDeck, replanPageImages, PlanError, type PlannedPage } from '../services/ppt/planService.js';
+import { cleanOutline, OutlineCleanError } from '../services/ppt/outlineCleanService.js';
 import { generatePage, buildDeck, PageError } from '../services/ppt/pageService.js';
-import { assemblePreview } from '../services/ppt/deckShell.js';
+import { assemblePreview, previewShell, previewSection, PREVIEW_SLOT } from '../services/ppt/deckShell.js';
 import {
   fillPageImages, generateSpecImage, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared,
   findImageSlots, specsFromSlots, realignImageRecords,
@@ -21,6 +23,8 @@ import {
   COLOR_PALETTE,
   PageEditError,
 } from '../services/ppt/pageEdit.js';
+import { isBlankPage } from '../services/ppt/blankPage.js';
+import { addCanvasText, addCanvasImage, setCanvasBox, deleteCanvasEl } from '../services/ppt/canvasEdit.js';
 import { aiEditRegion } from '../services/ppt/aiEditService.js';
 import { aiRemakeRegion } from '../services/ppt/aiRemakeService.js';
 import { exportDeck, ExportError } from '../services/ppt/exportService.js';
@@ -56,22 +60,78 @@ import {
   MAX_POINTS_PER_PAGE,
   MAX_POINT_CHARS,
   MAX_PAGE_OUTLINE_CHARS,
+  type DeckOwner,
+  type PptDeck,
+  type PptDeckPage,
 } from '../services/ppt/deckStore.js';
 import {
-  listAssets, getAsset, deleteAsset, assetGroups, ASSETS_PAGE_SIZE, ASSETS_NO_DECK,
+  listAssets, getAsset, deleteAsset, assetGroups, rememberAsset, findAssetByUrl,
+  ASSETS_PAGE_SIZE, ASSETS_NO_DECK,
 } from '../services/ppt/assetStore.js';
-import { MAX_SUBJECT_CHARS, orphanedPreparedNotes, type PreparedImage } from '../services/ppt/imageSpec.js';
+import {
+  MAX_SUBJECT_CHARS, nearestRatio, orphanedPreparedNotes, type PreparedImage,
+} from '../services/ppt/imageSpec.js';
+import { storeUploadedImage } from '../core/image/imageGateway.js';
+import { imageSize } from '../core/image/imageSize.js';
+import { requireAdmin } from '../auth/guards.js';
+import { registerPptSdkRoutes, registerPptSdkAdminRoutes } from './pptSdk.js';
+import { pptSdkLimits, chargeExtraPptSdkAiCalls } from '../services/ppt/sdkLimits.js';
 
 export const pptRouter = Router();
 
-/** 当前登录用户；没有就 401（deck 是按人存的，拿不到 id 时不能落到某个缺省桶里）。 */
-function userIdOf(req: Request, res: Response): string | null {
+// 对外接入（migration 100）：pk 换短 token 的路由是 PUBLIC（校验在 handler 里），
+// 带 scope 的短 token 能碰哪些端点由全局 `auth/scopeGuard.ts` 管 —— 不在这里再写一份。
+registerPptSdkRoutes(pptRouter);
+
+// 对外接入的后台管理（发 pk / 配域名白名单 / 改上限 / 停用）。
+// `/admin/*` 的统一闸门必须挂在任何 /admin 路由注册**之前**，Express 才会先过它 ——
+// 挂在后面的话那几条发 key 的接口对任何登录用户都开着，而每一次调用都返回 200。
+pptRouter.use('/admin', requireAdmin);
+registerPptSdkAdminRoutes(pptRouter);
+
+// 每把 pk 的天花板：key 停用即失效 + 每日 AI/生图次数 + 稿子总数。必须挂在下面所有业务路由
+// **之前**，也必须在 /admin 之后（后台自己不受 pk 上限管）。
+pptRouter.use(pptSdkLimits);
+
+/**
+ * 这次请求的稿子属于谁（100）；拿不到登录身份就 401（deck 是按归属存的，不能落到某个缺省桶里）。
+ *
+ * 后两项**只从签过名的 token 里取**（`authMiddleware` 写的 `req.sdkPk` / `req.externalUid`）——
+ * 从 body/query 里收的话第三方页面上任何人改一个参数就换成别人的租户，而返回的是一份正常的
+ * 稿子列表。AI/生图的钱记在 `owner.userId` 上（钱是绑定账号付的），别拿这个三元组当额度键。
+ */
+function ownerOf(req: Request, res: Response): DeckOwner | null {
   const id = (req as any).user?.id as string | undefined;
   if (!id) {
     res.status(401).json({ error: '请先登录' });
     return null;
   }
-  return id;
+  return { userId: id, sdkPk: req.sdkPk ?? null, externalUid: req.externalUid ?? null };
+}
+
+/**
+ * 六条花钱路径的错误码收口。**一份**：原来六处各写一遍，其中四处（规划整份、生成这一页、
+ * ai-edit、ai-remake）漏了额度和专属渠道那两档 —— 额度用光在那四条路上是一句 500
+ * 「服务器错误」，而平台那个额度弹窗只认 `429 + {error:'quota_exceeded'}`（见
+ * `client/src/lib/api.ts`），于是他看到的是「这功能坏了」，会一路重试，**每次重试都真的
+ * 扣一次**。专属渠道缺档位合成 500 同理：真实解法是去后台补一条接入点，而 500 指向的是我们。
+ *
+ * 额度那一档必须**同时**给平台形状（`error:'quota_exceeded'` 触发弹窗）和 `detail`
+ * （撞的是账号总额还是这个应用的单独额度 —— 两条限制解法不同，只说「额度用完」他会去改错
+ * 那个数）。`is400` 由各端点自己判（每条路的「参数不对」是不同的错误类），传错方向的后果
+ * 是明确的错误码，不是静默。
+ */
+export function sendPptError(res: Response, e: any, is400: boolean, fallback: string): void {
+  const message = e?.message || fallback;
+  if (is400) {
+    res.status(400).json({ error: message });
+    return;
+  }
+  if (e?.name === 'QuotaExceededError') {
+    res.status(429).json({ error: 'quota_exceeded', remaining: 0, daily_limit: e.dailyLimit, app: e.app, detail: message });
+    return;
+  }
+  res.status(e?.name === 'DedicatedChannelError' ? 503 : 500).json({ error: message });
 }
 
 /**
@@ -109,14 +169,14 @@ function checkPlanRev(req: Request, res: Response, deck: { plan_rev: number }): 
 // 一份 deck 是十几次真实 AI 调用，不落库的话刷新一次就全没了而界面上一句错都没有。
 
 pptRouter.get('/decks', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  res.json({ decks: listDecks(userId) });
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  res.json({ decks: listDecks(owner) });
 });
 
 pptRouter.post('/decks', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
+  const owner = ownerOf(req, res);
+  if (!owner) return;
   const b = req.body || {};
   const outline = String(b.outline ?? '');
   // 名字缺省取提纲第一行（那通常就是主题），但**存下来**而不是每次现算 ——
@@ -147,7 +207,7 @@ pptRouter.post('/decks', (req: Request, res: Response) => {
     res.status(e instanceof DesignSpecError ? 400 : 500).json({ error: e?.message || '设计规范没存上' });
     return;
   }
-  const deck = createDeck(userId, {
+  const deck = createDeck(owner, {
     title,
     outline,
     brandCn: b.brandCn ? String(b.brandCn).slice(0, MAX_BRAND_CHARS) : '',
@@ -160,9 +220,9 @@ pptRouter.post('/decks', (req: Request, res: Response) => {
 });
 
 pptRouter.get('/decks/:id', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
@@ -185,8 +245,8 @@ pptRouter.get('/design-options', (_req: Request, res: Response) => {
  * 任何一次只改名字的保存都会把提纲清空，而两边都回「已保存」。
  */
 pptRouter.patch('/decks/:id', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
+  const owner = ownerOf(req, res);
+  if (!owner) return;
   const b = req.body || {};
   if (b.title !== undefined) {
     const t = String(b.title).trim();
@@ -222,7 +282,7 @@ pptRouter.patch('/decks/:id', (req: Request, res: Response) => {
     res.status(e instanceof DesignSpecError ? 400 : 500).json({ error: e?.message || '设计规范没存上' });
     return;
   }
-  const ok = updateDeckMeta(req.params.id, userId, {
+  const ok = updateDeckMeta(req.params.id, owner, {
     title: b.title === undefined ? undefined : String(b.title).trim(),
     outline: b.outline === undefined ? undefined : String(b.outline),
     brandCn: b.brandCn === undefined ? undefined : String(b.brandCn).slice(0, MAX_BRAND_CHARS),
@@ -236,13 +296,13 @@ pptRouter.patch('/decks/:id', (req: Request, res: Response) => {
     res.status(404).json({ error: '没保存上：这份演示稿不存在（或这次没有要改的字段）' });
     return;
   }
-  res.json({ deck: getDeck(req.params.id, userId) });
+  res.json({ deck: getDeck(req.params.id, owner) });
 });
 
 pptRouter.delete('/decks/:id', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  if (!deleteDeck(req.params.id, userId)) {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  if (!deleteDeck(req.params.id, owner)) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
@@ -250,7 +310,9 @@ pptRouter.delete('/decks/:id', (req: Request, res: Response) => {
 });
 
 // ── 素材库（migration 090）────────────────────────────
-// 每一张真的生成出来的配图（按人）。注意和下面那条 `/library/assets` 不是一回事：
+// 每一张真的生成出来的配图（**按租户**：网页登录 = 这个账号，嵌入 = 那把 pk 代表的那家公司，
+// 同一把 key 下的员工共用一个素材库，判定在 `services/ppt/tenant.ts`）。
+// 注意和下面那条 `/library/assets` 不是一回事：
 // 那条是 deck 外壳的共享 CSS/配色资料，这两条是用户自己的图。
 
 /**
@@ -262,13 +324,13 @@ pptRouter.delete('/decks/:id', (req: Request, res: Response) => {
  * 不回落成「全部」—— 回落的话那个 tab 选中着却显示三百张，看起来像这个项目有三百张图。
  */
 pptRouter.get('/assets', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
+  const owner = ownerOf(req, res);
+  if (!owner) return;
   const deckId = typeof req.query.deckId === 'string' ? req.query.deckId.trim() : '';
-  const groups = assetGroups(userId);
+  const groups = assetGroups(owner);
   const known = deckId === ASSETS_NO_DECK ? groups.some((g) => !g.deckId) : groups.some((g) => g.deckId === deckId);
   res.json({
-    ...listAssets(userId, { deckId }),
+    ...listAssets(owner, { deckId }),
     groups,
     deckId,
     // 筛了一个一张图都没有的稿子（刚建的、或者图都删了）：不说的话那是一屏空白，
@@ -278,15 +340,114 @@ pptRouter.get('/assets', (req: Request, res: Response) => {
   });
 });
 
+/** 上传一张图的上限。反代那层配的是 300m（docs/RELEASE.md），所以到不了这里就被拦的只有超大文件。 */
+const ASSET_UPLOAD_MB = 10;
+
+const assetUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ASSET_UPLOAD_MB * 1024 * 1024, files: 1 },
+});
+
+/**
+ * 上传一张本地图片进素材库（`multipart/form-data`，字段 `file`，可带 `deckId` 记归属）。
+ *
+ * 三件事是承重的：
+ * ① **比例在服务端按字节算**（`imageSize` + `nearestRatio`），不信前端量的那个数 ——
+ *    这一档是「贴进这一格会被裁掉两边」那句提醒的唯一依据，算错时那张图照旧贴得进去，
+ *    只是主体被裁掉，接口全程 200。读不出尺寸的**直接拒**，不缺省成 16:9。
+ * ② **转存走 `storeUploadedImage`**（和生图同一条路）：COS 没配时落本机磁盘，而那件事
+ *    必须回给前端说出来 —— 本机磁盘上的图换机器/多实例就 404，而那时页面上只是裂图。
+ * ③ **存进桶了但没记进库时要 500**：素材库里看不到它，他只会以为上传失败再传一遍，
+ *    每传一遍在桶里多留一份孤儿文件。
+ *
+ * `mode` 存空串（不是 'concept'）：挑进图槽时 `asset.mode || spec.mode` 会回落成那一格
+ * 本来要的画法 —— 写死一个的话上传的图会被当成概念插画，数据页那一格的检查就放过去了。
+ */
+pptRouter.post('/assets/upload', (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  assetUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      const tooBig = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE';
+      res.status(400).json({
+        error: tooBig
+          ? `这张图超过 ${ASSET_UPLOAD_MB}MB，没有上传。先压一下（截图另存成 JPG 通常能小一个量级）再传。`
+          : `文件读不出来：${err.message || '未知错误'}`,
+      });
+      return;
+    }
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: '没收到文件（表单字段名要是 file）' });
+      return;
+    }
+
+    const size = imageSize(file.buffer);
+    if (!size || !size.width || !size.height) {
+      // 尺寸读不出来一律拒。缺省成 16:9 的话，一张竖图会被静默当成横图记进库，
+      // 之后贴进 16:9 的槽里一句提醒都没有，而画面上主体被裁掉一半。
+      res.status(400).json({
+        error:
+          `读不出这张图的尺寸（${file.originalname || '未命名'}，${(file.size / 1024).toFixed(0)}KB）。` +
+          '只支持 PNG / JPG / GIF / WebP —— 尺寸决定它按哪一档比例（16:9 / 1:1 / 3:4）记进素材库，' +
+          '猜一个的话它贴进图槽时会被裁掉而没有任何提醒。请另存成 PNG 或 JPG 再传。',
+      });
+      return;
+    }
+    const ratio = nearestRatio(size.width, size.height);
+    const deckId = typeof req.body?.deckId === 'string' ? req.body.deckId.trim() : '';
+
+    try {
+      const stored = await storeUploadedImage(file.buffer, {
+        mime: file.mimetype,
+        bucketProfile: 'ppt',
+        keyPrefix: 'ppt-uploads',
+      });
+      rememberAsset(owner, {
+        url: stored.url,
+        prompt: file.originalname || '本地上传',
+        mode: '',
+        ratio,
+        model: '本地上传',
+        storage: stored.storage,
+        deckId,
+      });
+      const asset = findAssetByUrl(owner, stored.url);
+      if (!asset) {
+        res.status(500).json({
+          error:
+            `图已经存好了（${stored.url}），但没能记进素材库 —— 别重传（每传一遍都会在存储里多留一份），` +
+            '这是库写入的问题，请看服务端日志。',
+        });
+        return;
+      }
+      res.json({
+        asset,
+        ratio,
+        pixels: `${size.width}×${size.height}`,
+        // 落本机磁盘要说出来**并且说出为什么**：这张图现在只在这台机器上，
+        // 换机器/多实例部署时它 404，而那时页面上只是一张裂图。
+        note:
+          stored.storage === 'local'
+            ? `这张图存在服务器本机磁盘上，没进对象存储：${stored.reason || '原因未知'}。换机器或多实例部署时它会打不开。`
+            : '',
+      });
+    } catch (e: any) {
+      console.error('[ppt] 素材上传失败:', e?.message || e);
+      res.status(500).json({ error: `上传失败：${e?.message || '未知错误'}` });
+    }
+  });
+});
+
 /**
  * 删一条素材。**只删这条记录** —— COS 上的文件和已经用了这张图的那几页 html 都不动，
  * 所以前端那句确认里必须写清楚（不写的话他以为这是「把这张图从稿子里去掉」，
  * 删完去翻那份 deck 图还在，而这边刚回了「已删除」）。
  */
 pptRouter.delete('/assets/:id', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  if (!deleteAsset(req.params.id, userId)) {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  if (!deleteAsset(req.params.id, owner)) {
     res.status(404).json({ error: '这条素材不存在（或不是你的）' });
     return;
   }
@@ -404,6 +565,37 @@ pptRouter.get('/styles', (_req: Request, res: Response) => {
 });
 
 /**
+ * 提纲整理：挑出提纲里的无效信息（备注 / 待办 / 口头语 / 元信息），回一份干净提纲。
+ *
+ * **不落库**，也不动这份稿子的任何一列：库里照旧是他原来那份提纲，换不换由前端那个
+ * 「用整理后的版本 / 撤销整理」决定。直接覆盖库里那一份的话，删错的那几行连撤都撤不回来
+ * —— 而整理后的提纲读起来完全通顺，他要逐字对原文才发现少了什么。
+ *
+ * 提纲同样取库里那一份（同 `/plan`）：收 body 的话「整理的」和「规划用的」会是两份。
+ */
+pptRouter.post('/decks/:id/clean-outline', async (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  try {
+    const result = await cleanOutline(deck.outline, owner.userId);
+    res.json({
+      ...result,
+      // 一行都没删也要能说清（前端那句「提纲很干净」靠它，而不是靠 removed 为空猜）：
+      // 「模型认为没有要删的」和「这次调用其实失败了」在界面上必须分得开。
+      changed: result.removed.length > 0,
+      chars: { before: deck.outline.trim().length, after: result.cleaned.length },
+    });
+  } catch (e: any) {
+    sendPptError(res, e, e instanceof OutlineCleanError, '提纲整理失败');
+  }
+});
+
+/**
  * 排版规划：这份稿子的提纲 → 每页挑一个版式（不生成 HTML），结果落库。
  *
  * **提纲取库里那一份，不收 body 里的** —— 收 body 的话前端那个还没保存的编辑框会成为
@@ -414,16 +606,16 @@ pptRouter.get('/styles', (_req: Request, res: Response) => {
  * 分不开，而真实成因（额度打满 / 截断 / 模型没按 JSON 回）三种解法完全不同。
  */
 pptRouter.post('/decks/:id/plan', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
   try {
-    const result = await planDeck(deck.outline, userId);
-    const saved = savePlan(deck.id, userId, result);
+    const result = await planDeck(deck.outline, owner.userId);
+    const saved = savePlan(deck.id, owner, result);
     if (!saved.ok) {
       // 规划本身是一次真实调用，存不下来必须说 —— 回 200 的话他刷新之后规划没了，
       // 只会以为「又要重新规划一次」，而额度已经扣过。
@@ -437,7 +629,7 @@ pptRouter.post('/decks/:id/plan', async (req: Request, res: Response) => {
       ...result,
       // 新的页序版本号（098）：重新规划也会 +1（旧页全清了），**不回的话前端手里那个号立刻过期**
       // —— 规划完点第一次生成就是一句 409，而他刚刚才在这里成功规划过。
-      planRev: getDeck(deck.id, userId)?.plan_rev ?? 0,
+      planRev: getDeck(deck.id, owner)?.plan_rev ?? 0,
       clearedPages: saved.clearedPages,
       clearedImages: saved.clearedImages,
       // 他手写的那几段要求也一起没了（092）。不说的话下一次生成拿到的是没带要求的那一版，
@@ -445,8 +637,7 @@ pptRouter.post('/decks/:id/plan', async (req: Request, res: Response) => {
       clearedNotes: saved.clearedNotes,
     });
   } catch (e: any) {
-    const code = e instanceof PlanError ? 400 : 500;
-    res.status(code).json({ error: e?.message || '排版规划失败' });
+    sendPptError(res, e, e instanceof PlanError, '排版规划失败');
   }
 });
 
@@ -475,6 +666,65 @@ function shellMeta(deck: { title: string; brand_cn: string; brand_en: string; de
   };
 }
 
+/** 库里这一页那一行（没有 = 这一页还没生成、也没备过图）。 */
+function pageRow(deckId: string, owner: DeckOwner, page: number): PptDeckPage | undefined {
+  return listPages(deckId, owner).find((p) => p.page === page);
+}
+
+/**
+ * 这一页**真的有 HTML**（不是只备了图的那种空行）。判据是里面有 `<section>` 而不是
+ * `html !== ''`：空串拿去拼装会抛「找不到 <section>」，而更糟的是当成「已生成」之后
+ * 前端右边是一块白 —— 读起来像那一页排版塌了。
+ */
+// 写成类型收窄（`row is T`）：只回 boolean 的话调用点后面那句 `row.html` 会被编译器拦下，
+// 于是那里只能写 `row!.html` —— 而 `!` 一旦养成习惯，哪天真的传进来一个 undefined 就是
+// 运行时崩在这一行，而不是编译期就拦住。
+function isBuilt<T extends { html: string }>(row?: T): row is T {
+  return !!row?.html?.includes('<section');
+}
+
+/** 单页预览（套外壳、不带页脚、带这一页的蒙版）。**十几处都走它** —— 漏传蒙版那个参数的话
+ *  那一处是「预览里没蒙版、刷新之后有」，两份各自都是一页正常的幻灯片。 */
+function previewOf(deck: PptDeck, row: { veil_opacity?: number | null }, html: string): string {
+  return assemblePreview(html, shellMeta(deck), row.veil_opacity || 0);
+}
+
+/**
+ * 「改这一页」那七条接口共同的前置：登录 → 这份稿子是他的 → **页序版本号对账** → 这一页
+ * 已经生成过。任何一步没过这里已经写好响应（401/404/400/409），调用方直接 `return`。
+ *
+ * **一份**：这段原来在七个端点里各抄了一遍，而其中六个（改字 / 改样式 / 改整块对齐 / 删这一块 /
+ * ai-edit / ai-remake）漏了页序对账那一步 —— 这几条接口全按**页码**定位：他在另一个标签页
+ * 里插过/删过一页之后，这边第 12 页已经是另一份内容，改下去接口 200、界面上「已修改」，
+ * 而改的是隔壁那一页。`eids` 交叉核对救不了：`injectEids` 是每页从 `t1` 重编的，
+ * 连着两页同版式时它是空对空。
+ *
+ * 页序对账放在「这一页生成过没」**之前**：版本号已经旧了的时候，那个页码指的是哪一页本身
+ * 就是没意义的，先回一句「还没生成」会让他去点「生成这一页」—— 那是一次真实花费，
+ * 落在的还是错的那一页。
+ */
+function editTarget(
+  req: Request,
+  res: Response,
+  notBuiltTail: string
+): { owner: DeckOwner; deck: PptDeck; page: number; row: PptDeckPage } | null {
+  const owner = ownerOf(req, res);
+  if (!owner) return null;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return null;
+  }
+  if (!checkPlanRev(req, res, deck)) return null;
+  const page = Number(req.body?.page) || 0;
+  const row = pageRow(deck.id, owner, page);
+  if (!isBuilt(row)) {
+    res.status(400).json({ error: `第 ${page} 页还没生成${notBuiltTail}` });
+    return null;
+  }
+  return { owner, deck, page, row: row as PptDeckPage };
+}
+
 /**
  * 生成这份稿子的第 N 页 HTML，**生成完立刻落库**。
  *
@@ -490,9 +740,9 @@ function shellMeta(deck: { title: string; brand_cn: string; brand_en: string; de
  * 前端自己拼一遍的话「预览里好看、真 deck 里换了骨架」两边都不报错。
  */
 pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
@@ -509,18 +759,26 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
         `第 ${page} 页不在这份稿子的规划里（规划只有 ${plan.pages.length} 页）。刷新一下看看规划是不是换过了。`
       );
     }
+    // 空白页没有「生成」这一步（103）。**必须在这里拦**：往下走的话它会按案例库那套版式排出
+    // 一页读得通的幻灯片，把他自己摆的文字和图整页换掉 —— 一次真实调用，而屏幕上只是
+    // 「这一页怎么变样了」。前端也不给这个按钮，这一道是防另一个标签页/直接调接口。
+    if (isBlankPage(row.layoutId)) {
+      throw new PageError(
+        `第 ${page} 页是空白页（你自己摆的），不走 AI 生成 —— 生成会按案例库的版式把这一页整页换掉，你摆的文字和图都会没了。要改就在右边预览里直接改。`
+      );
+    }
     // 「生成前改一下」（092）。body 里带了就先存下来再生成：不存的话下一次「重新生成」和
     // 「逐页生成」都会退回规划里那条版式、丢掉那段要求，而出来照样是一页完整的幻灯片。
     const setup = readPageSetup(req.body, row.layoutId);
     if (setup.layoutId !== undefined || setup.notes !== undefined) {
-      savePageSetup(deck.id, userId, { page: row.page, layoutId: setup.layoutId, notes: setup.notes });
+      savePageSetup(deck.id, owner, { page: row.page, layoutId: setup.layoutId, notes: setup.notes });
     }
     // 他在对话框里改过的提纲（标题 + 要点）：**存下来再生成，而且只有这一条路会存**
     // （「点了生成才保存，没生成就不保存」）。存之后下面用的就是新的那份 —— 存了却拿旧的
     // 去生成的话，出来是一页照着旧提纲排的完整幻灯片，而列表和标题栏写的是新提纲。
     const outline = readPageOutline(req.body);
     if (outline) {
-      if (!updatePlanPageOutline(deck.id, userId, row.page, outline).ok) {
+      if (!updatePlanPageOutline(deck.id, owner, row.page, outline).ok) {
         throw new PageError(`第 ${page} 页的提纲没存上，这一页没生成（别直接重试，刷新一下看看规划是不是换过了）。`);
       }
       row.title = outline.title;
@@ -529,7 +787,7 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       // （库里已经是新的了），出来是一页排得很好、内容却是他刚删掉那一版的幻灯片。
       if (outline.outlineText !== undefined) row.outlineText = outline.outlineText;
     }
-    const stored = listPages(deck.id, userId).find((p) => p.page === row.page);
+    const stored = pageRow(deck.id, owner, row.page);
     // 有效版式 = 这次选的 → 上次存的 → 规划里那条。**认不出的版式在 readPageSetup 里已经
     // 400 了**，绝不悄悄回落成规划那条（他选了 L12 拿到 L07 排的一页，读起来完全正常）。
     const layoutId = setup.layoutId || stored?.setup_layout_id || row.layoutId;
@@ -563,12 +821,12 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
         // 刷新之后才有 —— 看起来像「蒙版时好时不好」。
         veil: stored?.veil_opacity || 0,
       },
-      userId
+      owner.userId
     );
     // 备好的图**当场贴进这份 html**（不调 AI、不花钱）。不贴的话「先备图」那一步等于白做：
     // 页面第一次显示出来仍然全是占位图，他会去点配图，那才是重新花一次钱。
     const prepared = safeJson<any[]>(
-      listPages(deck.id, userId).find((p) => p.page === row.page)?.pending_images_json || '',
+      pageRow(deck.id, owner, row.page)?.pending_images_json || '',
       []
     ).filter((x) => x?.url);
     const fill = applyPreparedImages(result.html, prepared);
@@ -584,7 +842,7 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
     // **在存盘之前做**：放到后面的话这几句提示进不了 `problems_json`，刷新一次就没了。
     const sync = specsFromSlots(row.imageSpecs || [], findImageSlots(html));
     if (sync.changed) {
-      if (updatePlanPageImages(deck.id, userId, row.page, sync.specs).ok) {
+      if (updatePlanPageImages(deck.id, owner, row.page, sync.specs).ok) {
         row.imageSpecs = sync.specs;
         row.images = sync.specs.length;
       } else {
@@ -596,7 +854,7 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       }
     }
     problems.push(...sync.problems);
-    const saved = savePageHtml(deck.id, userId, {
+    const saved = savePageHtml(deck.id, owner, {
       page: row.page,
       // 存**这次真的用了的**那条版式（可能是他换过的），不是规划里那条：存规划那条的话
       // 界面上这一页的标签写着 L07，画面是 L12 排的 —— 两版都是一页正常的幻灯片。
@@ -637,8 +895,7 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       plan: { images: row.images, imageSpecs: row.imageSpecs || [] },
     });
   } catch (e: any) {
-    const code = e instanceof PageError ? 400 : 500;
-    res.status(code).json({ error: e?.message || '这一页生成失败' });
+    sendPptError(res, e, e instanceof PageError, '这一页生成失败');
   }
 });
 
@@ -740,26 +997,33 @@ function readPageOutline(body: any): { title: string; points: string[]; outlineT
 }
 
 /**
- * 这份稿子已经生成的页（`previewHtml` 现拼 —— 存下来的话改过骨架之后老 deck 用旧骨架）。
+ * 这份稿子已经生成的页（预览现拼 —— 存下来的话改过骨架之后老 deck 用旧骨架）。
  *
- * 091 之后这里会出现 `html = ''` 的行（先备了图、还没生成 HTML）。那种行的 `previewHtml`
- * **必须留空**：照样拼一份的话回的是一个空 deck，前端把它当成「这一页已经生成」渲染成
- * 一块白，读起来像那一页排版塌了（而它其实压根没生成过）。
+ * **外壳只回一份**（`shell` + 每页 `section`，前端做一次 `replace(previewSlot, section)`）。
+ * 原来给每一页都回一整份 `assemblePreview`，也就是把同一份 85KB 的外壳抄了 N 遍：实测那份
+ * 41 页的稿子响应 3658KB，而那些页的 html 合计只有 51.5KB（`server/scripts/bench-ppt.mts`），
+ * 改完 141KB。这件事界面上完全看不出来 —— 只是「打开这份稿子有点慢」。
+ * 其余那几条接口（生成 / 配图 / 就地编辑）照旧各回一份完整的 `previewHtml`：那是一次一页，
+ * 抄不出量来，而少一处改动就少一处漂开的机会。
+ *
+ * 091 之后这里会出现 `html = ''` 的行（先备了图、还没生成 HTML）。那种行的 `section`
+ * **必须留空**：照样拼一份的话前端把它当成「这一页已经生成」渲染成一块白，读起来像那一页
+ * 排版塌了（而它其实压根没生成过）。
  */
 pptRouter.get('/decks/:id/pages', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
   const meta = shellMeta(deck);
-  const rows = listPages(deck.id, userId).map((p) => ({
+  const rows = listPages(deck.id, owner).map((p) => ({
     page: p.page,
     layoutId: p.layout_id,
     html: p.html,
-    previewHtml: p.html ? assemblePreview(p.html, meta, p.veil_opacity || 0) : '',
+    section: p.html ? previewSection(p.html, meta, p.veil_opacity || 0) : '',
     problems: safeJson<string[]>(p.problems_json, []),
     images: safeJson<unknown[]>(p.images_json, []),
     imageStyleId: p.image_style_id,
@@ -776,7 +1040,9 @@ pptRouter.get('/decks/:id/pages', (req: Request, res: Response) => {
     notes: p.setup_notes,
     updatedAt: p.updated_at,
   }));
-  res.json({ pages: rows });
+  // `previewSlot` 跟着响应一起回，前端不写死一份：两边漂开的话 replace 什么都不做，
+  // 而 iframe 里是一份**没有幻灯片的空外壳** —— 一块白，和「这一页排版塌了」长得一样。
+  res.json({ pages: rows, shell: previewShell(meta), previewSlot: PREVIEW_SLOT });
 });
 
 function safeJson<T>(text: string, fallback: T): T {
@@ -800,11 +1066,11 @@ function safeJson<T>(text: string, fallback: T): T {
  * 都是一页正常的幻灯片。
  */
 pptRouter.delete('/decks/:id/pages/:page', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
+  const owner = ownerOf(req, res);
+  if (!owner) return;
   const page = Number(req.params.page) || 0;
   try {
-    const r = deletePage(req.params.id, userId, page);
+    const r = deletePage(req.params.id, owner, page);
     res.json(r);
   } catch (e: any) {
     res.status(e instanceof DeckStructureError ? 400 : 500).json({ error: e?.message || '这一页没删掉' });
@@ -821,10 +1087,15 @@ pptRouter.delete('/decks/:id/pages/:page', (req: Request, res: Response) => {
  * 回执里 `layoutInherited` 必须转给界面：版式是继承前一页来的时候，那一页会撞「连续同版式
  * ≤2 页」那条规范，而规划的 problems 是上一次算的（已经标成可能不准）—— 不催他去挑一条的话，
  * 出来是两页一模一样的版式，翻起来只是「这份稿子有点单调」。
+ *
+ * `blank: true` 插的是**一页空白画布**（⑥，见 `blankPage.ts`）：那一条路不要要点、不挑版式，
+ * 而且**插进来就带 html**（回执里 `blank` 为真）—— 前端据此不要去开「生成前确认」那个框，
+ * 开了的话他会在那里按「生成这一页」，而那是一次真实调用（服务端会拦，但额度前的那一步
+ * 已经让他以为空白页也要生成）。
  */
 pptRouter.post('/decks/:id/insert-page', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
+  const owner = ownerOf(req, res);
+  if (!owner) return;
   try {
     const picked = typeof req.body?.layoutId === 'string' ? req.body.layoutId.trim().toUpperCase() : '';
     if (picked && !layoutById(picked)) {
@@ -833,11 +1104,14 @@ pptRouter.post('/decks/:id/insert-page', (req: Request, res: Response) => {
       });
       return;
     }
-    const r = insertPage(req.params.id, userId, {
+    const r = insertPage(req.params.id, owner, {
       after: Number(req.body?.after),
       title: String(req.body?.title ?? ''),
       points: Array.isArray(req.body?.points) ? req.body.points : [],
       layoutId: picked,
+      // 空白页（⑥）：**只认 `true`**，不认 `'false'` / `0` 这些真值不明的写法 —— 认宽了的话
+      // 前端某次漏传成字符串就会插进一页空白页，而界面上它是「已生成」的一页空幻灯片。
+      blank: req.body?.blank === true,
     });
     res.json(r);
   } catch (e: any) {
@@ -862,9 +1136,9 @@ pptRouter.post('/decks/:id/insert-page', (req: Request, res: Response) => {
  *    新清单第 4 格备的图贴不进去，而面板上那一格挂着缩略图 —— 两处都读起来正常。
  */
 pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
@@ -879,12 +1153,12 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
     if (!row) {
       throw new PageError(`第 ${page} 页不在这份稿子的规划里。刷新一下看看规划是不是换过了。`);
     }
-    const stored = listPages(deck.id, userId).find((p) => p.page === page);
+    const stored = pageRow(deck.id, owner, page);
     // 他在对话框里刚换的那条版式**先存下来**（同「生成这一页」那条路）：不存的话重排是按新
     // 版式算的，而下一次生成又退回旧版式 —— 图位数和版式各说各话，两边都不报错。
     const setup = readPageSetup(req.body, row.layoutId);
     if (setup.layoutId !== undefined || setup.notes !== undefined) {
-      savePageSetup(deck.id, userId, { page, layoutId: setup.layoutId, notes: setup.notes });
+      savePageSetup(deck.id, owner, { page, layoutId: setup.layoutId, notes: setup.notes });
     }
     const layoutId = setup.layoutId || stored?.setup_layout_id || row.layoutId;
     const notes = setup.notes !== undefined ? setup.notes : stored?.setup_notes || '';
@@ -898,9 +1172,9 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
         notes,
         deckNotes: deck.notes || '',
       },
-      userId
+      owner.userId
     );
-    if (!updatePlanPageImages(deck.id, userId, page, r.specs)) {
+    if (!updatePlanPageImages(deck.id, owner, page, r.specs)) {
       // 这次调用已经花掉了。静默丢的话面板上还是旧清单，他只会再点一次。
       res.status(500).json({
         error: `第 ${page} 页的图位重排出来了但没存上（这次调用已经花掉了）。刷新一下再试，别直接重试。`,
@@ -911,7 +1185,7 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
     const problems = [
       ...r.problems,
       ...orphanedPreparedNotes(prepared, r.specs.length),
-      ...(stored?.html.includes('<section')
+      ...(isBuilt(stored)
         ? [
             `这一页已经生成过了 —— 画面里的图位还是旧的那几个（${layoutId} 的新清单有 ${r.specs.length} 格），` +
               '要按新清单排图位得重新生成这一页（已经备好的图会自动贴回去，不用重新花钱）。',
@@ -920,15 +1194,7 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
     ];
     res.json({ page, layoutId: r.layoutId, imageSpecs: r.specs, problems, usage: r.usage });
   } catch (e: any) {
-    const code =
-      e instanceof PageError || e instanceof PlanError
-        ? 400
-        : e?.name === 'QuotaExceededError'
-          ? 429
-          : e?.name === 'DedicatedChannelError'
-            ? 503
-            : 500;
-    res.status(code).json({ error: e?.message || '重排图位失败' });
+    sendPptError(res, e, e instanceof PageError || e instanceof PlanError, '重排图位失败');
   }
 });
 
@@ -953,9 +1219,9 @@ pptRouter.post('/decks/:id/replan-images', async (req: Request, res: Response) =
  * 那一格会一直停在占位图上；截断的话他写在后面那几个条件一处都没生效）。
  */
 pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
@@ -982,7 +1248,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
       throw new PageError(`第 ${page} 页只规划了 ${specs.length} 格图，没有第 ${index} 格（备了也没有位置贴）。`);
     }
 
-    const row = listPages(deck.id, userId).find((p) => p.page === page);
+    const row = pageRow(deck.id, owner, page);
     const before = safeJson<any[]>(row?.pending_images_json || '', []).filter((x) => x?.url);
     const kept = before.filter((x) => Number(x.index) !== index);
     // 这一格原来备的那张（换掉/清掉之后它可能还留在已经生成的 html 里 —— 见 `pastePrepared`）。
@@ -1003,7 +1269,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
         );
       }
       if (rawSubject !== specs[index - 1].subject) {
-        if (!updatePlanImageSubject(deck.id, userId, page, index, rawSubject).ok) {
+        if (!updatePlanImageSubject(deck.id, owner, page, index, rawSubject).ok) {
           throw new PageError(`第 ${index} 格的提示词没存上（这一格还是原来那句）。刷新一下再试。`);
         }
         specs[index - 1] = { ...specs[index - 1], subject: rawSubject };
@@ -1026,7 +1292,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
       // 清掉只是不再备着 —— 图本身还在素材库里（这句话要说，不然他以为刚才那次钱白花了）。
       problems.push('这一格清掉了（只是不再备着，图还在素材库里，可以再挑回来）。');
     } else if (from === 'library') {
-      const asset = getAsset(String(req.body?.assetId || ''), userId);
+      const asset = getAsset(String(req.body?.assetId || ''), owner);
       if (!asset) {
         throw new PageError('这张素材找不到了（可能已经在素材库里删掉了）—— 刷新素材库再挑一张。');
       }
@@ -1054,7 +1320,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
     } else if (from === 'ai') {
       const meta = shellMeta(deck);
       const r = await generateSpecImage(specs[index - 1], {
-        userId,
+        owner,
         index,
         title: planRow.title,
         section: planRow.section || undefined,
@@ -1076,7 +1342,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
     }
 
     const images = [...kept, ...(picked ? [picked] : [])].sort((a, b) => Number(a.index) - Number(b.index));
-    if (!savePendingImages(deck.id, userId, { page, images })) {
+    if (!savePendingImages(deck.id, owner, { page, images })) {
       res.status(500).json({
         error:
           from === 'ai'
@@ -1088,22 +1354,14 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
     // 这一页已经生成过 HTML 了：备好的图**当场贴进库里那份 html**（纯代码替换，不调 AI、
     // 不花钱）。只写进 `pending_images_json` 的话界面上这一格挂着缩略图而画面里还是占位图，
     // 唯一的出路是「重新生成这一页」—— 那是一次真实调用，而他要换的只是一张图。
-    const pasted = row?.html.includes('<section')
-      ? pastePrepared(deck, userId, page, row, images, problems, from === 'clear' ? droppedUrl : undefined)
+    const pasted = isBuilt(row)
+      ? pastePrepared(deck, owner, page, row, images, problems, from === 'clear' ? droppedUrl : undefined)
       : undefined;
     // `imageSpecs` 一起回去：他刚改过的那句提示词要覆盖前端内存里那份规划，不然对话框
     // 关掉再开是模型原来那句，而库里已经是新的 —— 两处不一样，界面上一处都不说。
     res.json({ page, images, problems, imageSpecs: specs, pasted });
   } catch (e: any) {
-    const code =
-      e instanceof PageError || e instanceof PptImageError
-        ? 400
-        : e?.name === 'QuotaExceededError'
-          ? 429
-          : e?.name === 'DedicatedChannelError'
-            ? 503
-            : 500;
-    res.status(code).json({ error: e?.message || '备图失败' });
+    sendPptError(res, e, e instanceof PageError || e instanceof PptImageError, '备图失败');
   }
 });
 
@@ -1120,7 +1378,7 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
  */
 function pastePrepared(
   deck: NonNullable<ReturnType<typeof getDeck>>,
-  userId: string,
+  owner: DeckOwner,
   page: number,
   row: ReturnType<typeof listPages>[number],
   images: unknown[],
@@ -1133,7 +1391,7 @@ function pastePrepared(
   });
   problems.push(...fill.problems);
   const styleId = row.image_style_id || (fill.used.length ? deck.style_id || '' : '');
-  const saved = savePageImages(deck.id, userId, {
+  const saved = savePageImages(deck.id, owner, {
     page,
     html: fill.html,
     images: fill.images,
@@ -1149,7 +1407,7 @@ function pastePrepared(
   return {
     html: fill.html,
     // 单页预览不带页脚（同 pageService / imageService）。
-    previewHtml: assemblePreview(fill.html, shellMeta(deck), row.veil_opacity || 0),
+    previewHtml: previewOf(deck, row, fill.html),
     images: fill.images,
     styleId,
   };
@@ -1169,13 +1427,16 @@ function pastePrepared(
  *    去调，而导出的文件是另一副样子。
  */
 pptRouter.patch('/decks/:id/pages/:page/veil', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  // 页序对账（098）也要过：不花钱，但同样按**页码**写库 —— 页序变过之后这一下调的是隔壁
+  // 那一页，而界面上他看着的这一页跟着回来的预览一起变暗了，看起来完全正常。
+  if (!checkPlanRev(req, res, deck)) return;
   const page = Number(req.params.page) || 0;
   const raw = req.body?.opacity;
   const opacity = typeof raw === 'number' ? raw : Number(raw);
@@ -1183,20 +1444,18 @@ pptRouter.patch('/decks/:id/pages/:page/veil', (req: Request, res: Response) => 
     res.status(400).json({ error: `蒙版透明度要是 0 到 1 之间的数（收到 ${JSON.stringify(raw)}），这一页没改。` });
     return;
   }
-  if (!savePageVeil(deck.id, userId, { page, opacity })) {
+  if (!savePageVeil(deck.id, owner, { page, opacity })) {
     res.status(500).json({
       error: `第 ${page} 页的蒙版没存上 —— 画面上是调过的，而库里还是原来那个值（拼整份和导出用的都是它）。刷新一下再调一次。`,
     });
     return;
   }
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
+  const row = pageRow(deck.id, owner, page);
   res.json({
     page,
     veilOpacity: opacity,
     // 这一页还没生成时回空串：拿 '' 去拼会抛「找不到 <section>」，而他要的只是先把值存下来。
-    previewHtml: row?.html?.includes('<section')
-      ? assemblePreview(row.html, shellMeta(deck), opacity)
-      : '',
+    previewHtml: isBuilt(row) ? previewOf(deck, { veil_opacity: opacity }, row.html) : '',
   });
 });
 
@@ -1215,26 +1474,16 @@ pptRouter.patch('/decks/:id/pages/:page/veil', (req: Request, res: Response) => 
  * `problems_json` / `images_json` 一列都不动（`savePageEditedHtml`）。
  */
 pptRouter.post('/decks/:id/edit-text', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以改的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const { html, text } = applyTextEdit(row.html, {
       eid: String(req.body?.eid || ''),
       oldText: String(req.body?.oldText ?? ''),
       newText: String(req.body?.newText ?? ''),
     });
-    if (!savePageEditedHtml(deck.id, userId, { page, html })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上是你改过的那句，而库里还是原来那句（拼整份和导出用的都是它）。刷新一下再改一次。`,
       });
@@ -1246,7 +1495,7 @@ pptRouter.post('/decks/:id/edit-text', (req: Request, res: Response) => {
       text,
       html,
       // 单页预览不带页脚（同 pageService / imageService）。
-      previewHtml: assemblePreview(html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, html),
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
@@ -1263,25 +1512,15 @@ pptRouter.post('/decks/:id/edit-text', (req: Request, res: Response) => {
  * 静默忽略的话他点了按钮画面一点不变，看起来像按钮坏了，而接口回的是 200。
  */
 pptRouter.post('/decks/:id/edit-style', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以改的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const { html, style } = applyStyleEdit(row.html, {
       eid: String(req.body?.eid || ''),
       style: (req.body?.style || {}) as Record<string, unknown>,
     });
-    if (!savePageEditedHtml(deck.id, userId, { page, html })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上是改过的样子，而库里还是原来那一版（拼整份和导出用的都是它）。刷新一下再改一次。`,
       });
@@ -1292,7 +1531,7 @@ pptRouter.post('/decks/:id/edit-style', (req: Request, res: Response) => {
       eid: String(req.body?.eid || ''),
       style,
       html,
-      previewHtml: assemblePreview(html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, html),
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
@@ -1334,26 +1573,16 @@ function pickRegion(html: string, body: any) {
 }
 
 pptRouter.post('/decks/:id/edit-region-style', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以改的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const { path } = pickRegion(row.html, req.body);
     const { html, style, region: name, prev } = applyRegionStyle(row.html, {
       path,
       style: (req.body?.style || {}) as Record<string, unknown>,
     });
-    if (!savePageEditedHtml(deck.id, userId, { page, html })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上是改过的样子，而库里还是原来那一版（拼整份和导出用的都是它）。刷新一下再改一次。`,
       });
@@ -1367,7 +1596,7 @@ pptRouter.post('/decks/:id/edit-region-style', (req: Request, res: Response) => 
       // 变了样而他不知道该点回哪个键）。
       prev,
       html,
-      previewHtml: assemblePreview(html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, html),
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
@@ -1390,23 +1619,13 @@ pptRouter.post('/decks/:id/edit-region-style', (req: Request, res: Response) => 
  * **撤销还没做**（下一片），所以前端那个确认框必须写明「删错了只能重新生成这一页（一次真实调用）」。
  */
 pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以删的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以删的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const { path } = pickRegion(row.html, req.body);
     const { html, removed } = applyDelete(row.html, { path });
-    if (!savePageEditedHtml(deck.id, userId, { page, html })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上那一块像是删掉了，而库里还在（拼整份和导出用的都是它）。刷新一下再删一次。`,
       });
@@ -1416,11 +1635,81 @@ pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
       page,
       removed,
       html,
-      previewHtml: assemblePreview(html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, html),
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
     res.status(code).json({ error: e?.message || '这一块没删掉' });
+  }
+});
+
+/**
+ * 空白页画布上的摆放（**不调 AI、不花额度**）：加一个文字框 / 拖动缩放一块 / 删掉一块。
+ *
+ * 和上面那六条编辑同一套前置（`editTarget`：页序对账 + 这一页生成过）和同一条存法
+ * （`savePageEditedHtml`，只动 html 这一列）。
+ *
+ * **「是不是空白页」的判据在 `canvasEdit` 里，按 html 里有没有 `.bl-canvas` 算，不按
+ * `layout_id`**：要改的东西是 html，两处各判一次的话总有一处先放行 —— 往普通版式页上写
+ * 绝对定位的块，那一行别的内容跟着塌，而接口 200、页面照样渲染。
+ *
+ * 认不出的 `op` 一律 400：静默当成「什么都不做」的话，前端拼错一个字之后画布上是「拖得动、
+ * 松手就弹回去」，看起来像拖动这个功能坏了。
+ */
+pptRouter.post('/decks/:id/canvas', (req: Request, res: Response) => {
+  const t = editTarget(req, res, '，没有可以摆的画布。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
+  const op = String(req.body?.op || '');
+  const bel = String(req.body?.bel || '');
+  try {
+    let html = row.html;
+    let out: Record<string, unknown> = {};
+    if (op === 'add-text') {
+      const r = addCanvasText(html);
+      html = r.html;
+      out = { bel: r.bel, eid: r.eid, box: r.box };
+    } else if (op === 'add-image') {
+      // **只收 assetId、不收 url**：收 url 的话他能贴一个外站地址进来，导出的那份 html
+      // 换台机器打开是一张裂图，而这边显示得好好的。挑别人的素材 id 也在这里挡掉
+      // （`getAsset` 带租户键）—— 不挡的话那张图会出现在他的稿子里，接口 200。
+      const asset = getAsset(String(req.body?.assetId || ''), owner);
+      if (!asset) {
+        res.status(404).json({ error: '素材库里没有这张图（或者不是你的）—— 刷新一下挑图那个抽屉再试。' });
+        return;
+      }
+      const r = addCanvasImage(html, asset);
+      html = r.html;
+      out = { bel: r.bel, box: r.box, ratio: r.ratio, url: asset.url };
+    } else if (op === 'box') {
+      const r = setCanvasBox(html, {
+        bel,
+        box: {
+          left: req.body?.left,
+          top: req.body?.top,
+          width: req.body?.width,
+          height: req.body?.height,
+        } as any,
+      });
+      html = r.html;
+      out = { bel, box: r.box };
+    } else if (op === 'delete') {
+      html = deleteCanvasEl(html, { bel }).html;
+      out = { bel };
+    } else {
+      res.status(400).json({ error: `认不出的画布操作「${op}」。这次没动。` });
+      return;
+    }
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
+      res.status(500).json({
+        error: `第 ${page} 页没存上 —— 画面上是你摆过的样子，而库里还是原来那一版（拼整份和导出用的都是它）。刷新一下再摆一次。`,
+      });
+      return;
+    }
+    res.json({ page, op, ...out, html, previewHtml: previewOf(deck, row, html) });
+  } catch (e: any) {
+    const code = e instanceof PageEditError ? 400 : 500;
+    res.status(code).json({ error: e?.message || '这一块没摆上' });
   }
 });
 
@@ -1432,19 +1721,9 @@ pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
  * 存一段错的进去，画面上是一页读起来完全正常的幻灯片，而他后面照着它做完整份。
  */
 pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以改的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const raw = Array.isArray(req.body?.path) ? req.body.path : [];
     const result = await aiEditRegion(
@@ -1456,9 +1735,9 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
         eids: (Array.isArray(req.body?.eids) ? req.body.eids : []).map((x: unknown) => String(x)),
         instruction: String(req.body?.instruction || ''),
       },
-      userId
+      owner.userId
     );
-    if (!savePageEditedHtml(deck.id, userId, { page, html: result.html })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html: result.html })) {
       res.status(500).json({
         error: `第 ${page} 页改出来了但没存上（这次调用已经花掉了）。刷新一下，别直接重试。`,
       });
@@ -1469,12 +1748,11 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
       summary: result.summary,
       region: result.region,
       html: result.html,
-      previewHtml: assemblePreview(result.html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, result.html),
       usage: result.usage,
     });
   } catch (e: any) {
-    const code = e instanceof PageEditError ? 400 : 500;
-    res.status(code).json({ error: e?.message || '这一块没改上' });
+    sendPptError(res, e, e instanceof PageEditError, '这一块没改上');
   }
 });
 
@@ -1484,19 +1762,9 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
  * （这边允许中文和删原文），一个开关传错值就会静默走另一条 —— 现象是「AI 怎么没照我说的改」。
  */
 pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成，没有可以改的内容。` });
-    return;
-  }
+  const t = editTarget(req, res, '，没有可以改的内容。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   try {
     const raw = Array.isArray(req.body?.path) ? req.body.path : [];
     const result = await aiRemakeRegion(
@@ -1507,7 +1775,7 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
         eids: (Array.isArray(req.body?.eids) ? req.body.eids : []).map((x: unknown) => String(x)),
         instruction: String(req.body?.instruction || ''),
       },
-      userId
+      owner.userId
     );
     // 加/删了图槽之后配图记录要按新 html 重排一次（`realignImageRecords`）：图的序号是按
     // 出现顺序数的，不重排的话面板上写着「配图 1/1 张」而画面里全是占位图，或者下一次贴
@@ -1523,7 +1791,7 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
     const sync = specsFromSlots(planRow?.imageSpecs || [], slots);
     let plan: { images: number; imageSpecs: typeof sync.specs } | undefined;
     if (sync.changed) {
-      if (updatePlanPageImages(deck.id, userId, page, sync.specs).ok) {
+      if (updatePlanPageImages(deck.id, owner, page, sync.specs).ok) {
         plan = { images: sync.specs.length, imageSpecs: sync.specs };
         // 格数变少时，落在新清单外面那几张**备好的**图（花过钱的）要当场点名：备图面板按新
         // 清单画，于是它们从界面上消失而库里还留着 —— 下一次生成这一页才会冒出一句「第 N 格
@@ -1549,7 +1817,7 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
           '备不了图、也换不了图（只能走「配全部图」那条真花钱的路）。改成少几格的排法更好。'
       );
     }
-    if (!savePageEditedHtml(deck.id, userId, { page, html: result.html, images: re.changed ? re.images : undefined })) {
+    if (!savePageEditedHtml(deck.id, owner, { page, html: result.html, images: re.changed ? re.images : undefined })) {
       res.status(500).json({
         error: `第 ${page} 页改出来了但没存上（这次调用已经花掉了）。刷新一下，别直接重试。`,
       });
@@ -1564,7 +1832,7 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
       notes: result.notes,
       region: result.region,
       html: result.html,
-      previewHtml: assemblePreview(result.html, shellMeta(deck), row.veil_opacity || 0),
+      previewHtml: previewOf(deck, row, result.html),
       // 重排过就把新的那份回给前端：不回的话面板上那份「配图 x/y 张」还是旧的，
       // 而库里已经是对的 —— 他要刷新一次才看得到真实的图况。
       images: re.changed ? re.images : undefined,
@@ -1574,8 +1842,7 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
       usage: result.usage,
     });
   } catch (e: any) {
-    const code = e instanceof PageEditError ? 400 : 500;
-    res.status(code).json({ error: e?.message || '这一块没改上' });
+    sendPptError(res, e, e instanceof PageEditError, '这一块没改上');
   }
 });
 
@@ -1593,28 +1860,17 @@ pptRouter.get('/edit-palette', (_req: Request, res: Response) => {
  * 部分成功是常态（一张失败别的照样贴上去），所以逐张回 `images`，失败的那几格保留占位图。
  */
 pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
-  if (!deck) {
-    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
-    return;
-  }
-  // 同「生成这一页」（098）：一页几张图就是几次真实花费，页序变过之后它们贴到别的一页上。
-  if (!checkPlanRev(req, res, deck)) return;
-  const page = Number(req.body?.page) || 0;
-  const row = listPages(deck.id, userId).find((p) => p.page === page);
-  if (!row || !row.html.includes('<section')) {
-    res.status(400).json({ error: `第 ${page} 页还没生成（先生成这一页，再生成它的图）。` });
-    return;
-  }
+  // 页序对账同「生成这一页」（098）：一页几张图就是几次真实花费，页序变过之后它们贴到别的一页上。
+  const t = editTarget(req, res, '（先生成这一页，再生成它的图）。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
   const planRow = safeJson<{ pages?: PlannedPage[] }>(deck.plan_json, {}).pages?.find(
     (p) => p.page === page
   );
   try {
     const meta = shellMeta(deck);
     const result = await fillPageImages(row.html, {
-      userId,
+      owner,
       title: planRow?.title || deck.title,
       section: planRow?.section || undefined,
       topic: meta.topic,
@@ -1628,8 +1884,15 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
       // 配完图那一眼的预览要带这一页的蒙版（097），否则「配了图之后蒙版没了」。
       veil: row.veil_opacity || 0,
     });
+    // 对外接入（100）：这一次真的生了几张图就按几张扣。中间件只知道「来了一个请求」，扣的是 1
+    // —— 不补差额的话生图这条路对第三方相当于打了 N 折（一次最多 4 张），而后台显示的用量是
+    // 一个完全正常的数字。跳过的那几格（已经有图了）不算钱，所以不扣。
+    if (req.sdkPk) {
+      const generated = result.images.filter((img) => !img.skipped).length;
+      chargeExtraPptSdkAiCalls(req.sdkPk, generated - 1);
+    }
     // 部分成功也要存：那几张成功的图都是真花过钱的，不存等于让他再花一遍。
-    const saved = savePageImages(deck.id, userId, {
+    const saved = savePageImages(deck.id, owner, {
       page,
       html: result.html,
       images: result.images,
@@ -1649,7 +1912,7 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
       result.images,
       { styleId: result.style?.id || deck.style_id || '', prevStyleId: row.image_style_id || undefined }
     );
-    if (!savePendingImages(deck.id, userId, { page, images: kept })) {
+    if (!savePendingImages(deck.id, owner, { page, images: kept })) {
       // 图已经贴进这一页了（上面存过），只是没记成「备好的」—— 不说的话下一次重新生成
       // 这一页时它们会凭空消失，而那时看起来只是「这一页还没配图」。
       result.problems = [
@@ -1660,9 +1923,10 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
     res.json(result);
   } catch (e: any) {
     // 专属渠道缺 kind=image 那一档是 503（配置问题），不是 500 —— 合成 500 的话
-    // 用户只会以为服务坏了，而真实解法是去后台补一条接入点。
-    const code = e instanceof PptImageError ? 400 : e?.name === 'DedicatedChannelError' ? 503 : 500;
-    res.status(code).json({ error: e?.message || '生图失败' });
+    // 用户只会以为服务坏了，而真实解法是去后台补一条接入点。额度那一档到不了这里
+    // （`fillPageImages` 逐格吞掉、回 `quotaExceeded`），走 `sendPptError` 只是为了
+    // 万一哪天改成往外抛时不用记得再补一遍。
+    sendPptError(res, e, e instanceof PptImageError, '生图失败');
   }
 });
 
@@ -1672,15 +1936,15 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
  * 而拼出来的 deck 翻起来完全正常。缺页时 400 并点名，见 `buildDeck`。
  */
 pptRouter.post('/decks/:id/deck', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
   try {
-    const rows = listPages(deck.id, userId).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
+    const rows = listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
     const html = buildDeck(rows, deck.planned_total, shellMeta(deck));
     res.json({ html, pages: deck.planned_total });
   } catch (e: any) {
@@ -1699,16 +1963,16 @@ pptRouter.post('/decks/:id/deck', (req: Request, res: Response) => {
  * 浏览器拦掉，而那几格看起来就是「没配图」。
  */
 pptRouter.post('/decks/:id/export', (req: Request, res: Response) => {
-  const userId = userIdOf(req, res);
-  if (!userId) return;
-  const deck = getDeck(req.params.id, userId);
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
   if (!deck) {
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
   const baseUrl = String(req.body?.baseUrl || '').trim() || `${req.protocol}://${req.get('host')}`;
   try {
-    const rows = listPages(deck.id, userId).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
+    const rows = listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
     res.json(exportDeck(rows, deck.planned_total, shellMeta(deck), baseUrl));
   } catch (e: any) {
     const code = e instanceof ExportError || e instanceof PageError ? 400 : 500;

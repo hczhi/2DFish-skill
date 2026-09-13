@@ -27,6 +27,10 @@
      紧凑档右边 32px，而每一页都是一页正常的幻灯片；纵向更狠：紧凑档的内容起点比页眉还高，
      两行字直接叠在一起。--pad-top 必须留在页眉带下面（designSpec.test.ts 按这个对账）。 */
   --head-y:44px; --pad-x:140px; --pad-top:100px; --pad-bottom:118px;
+  /* 条形图（L47）逐行由 inline style 给的两个量：`--bar-v` 是那一行的**原始数值**、
+     `--bar-max` 是整组的上限。在这里兜一个底，是为了让「骨架里每个 var 都要在 :root 有定义」
+     那条测试也管住这两个 —— 拼成 `--val` 的话条长落回默认、五根条一样长，而右边的数字还是对的。 */
+  --bar-v:1; --bar-max:100;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-ink);overflow:hidden}
@@ -79,6 +83,21 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    地方点不动，现象是「这一页改不了字」。 */
 .slide::before{content:"";position:absolute;inset:0;background:#000;opacity:var(--veil,0);pointer-events:none;z-index:1}
 .slide-inner{position:absolute;inset:0;padding:var(--pad-top) var(--pad-x) var(--pad-bottom);z-index:2;display:flex;flex-direction:column}
+/* 空白页画布（`data-layout="BLANK"`，不是案例库里的版式 —— 见 blankPage.ts 头注）。
+   **画布上不设 padding、不设 flex/gap**：里面每一块的 left/top 是他拖出来的那个数（px，
+   1920×1080 那套坐标系），容器上任何一条内边距或者 flex 都会让存下来的数和画面上的位置
+   差一截，而两边各自看都很正常。
+   z-index:2 是承重的（同 `.slide-inner`）：留在 auto 的话整块画布落在那层统一蒙版之下，
+   调过蒙版的页上他摆的字会跟着一起变暗，看起来只是「这一页颜色有点闷」。
+   **不写 overflow:hidden**：裁掉的话拖到画面外的那一块凭空消失（而画布本身完全正常），
+   所以越界这件事由存的那一步夹回画布里并说一句，不靠 CSS 藏。 */
+.bl-canvas{position:absolute;inset:0;z-index:2}
+.bl-el{position:absolute}
+/* `white-space:pre-wrap` 是承重的：他在文字框里敲的换行就是他要的换行，塌掉之后那一段
+   会重排成另一个样子，而读起来完全通顺。 */
+.bl-text{white-space:pre-wrap;word-break:break-word;font-family:var(--sans);font-size:32px;line-height:1.5;color:var(--c-ink-deep)}
+.bl-img{overflow:hidden}
+.bl-img img{width:100%;height:100%;object-fit:cover;display:block}
 /* 角标 */
 .corners{position:absolute;inset:0;pointer-events:none;z-index:1}
 .corners i{position:absolute;width:18px;height:18px;color:var(--c-ink-soft);opacity:.45}
@@ -493,13 +512,14 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l29-step b{display:block;font-size:23px;font-weight:800;color:#fff}
 .l29-step span{display:block;margin-top:8px;font-size:17px;line-height:1.65;color:rgba(255,255,255,.72)}
 
-/* L30 三栏编号证据卡（末栏反色）— 详情见 cases/L30-numbered-evidence-trio.md */
+/* L30 三栏编号证据卡（三栏同色）— 详情见 cases/L30-numbered-evidence-trio.md */
 /* 图区 `flex:0 0 62%` 是按卡片高度分的，不是按图片比例 —— 三张图因此严格等高。
    改成 `aspect-ratio` 的话三栏会因为文案长短不齐而错开，而页面照样渲染。这个比例还兼着
-   「别在正文和 `.l30-tail` 之间空一大块」：调到 50% 以下时卡片中段会空出一两百像素。 */
+   「别在正文和 `.l30-tail` 之间空一大块」：调到 50% 以下时卡片中段会空出一两百像素。
+   三栏一律同色（原来末栏有个 `.dark` 反色变体，已去掉）：**不要再加回单栏反色**，
+   反色那一栏在整份里是唯一一处深底卡，翻起来像另一套模板里的页。 */
 .l30-row{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:34px;min-height:0}
 .l30-card{display:flex;flex-direction:column;overflow:hidden;background:var(--c-card);border:1px solid var(--c-hairline)}
-.l30-card.dark{background:var(--c-ink-deep);border-color:var(--c-ink-deep)}
 .l30-pic{position:relative;flex:0 0 62%;overflow:hidden;background:var(--c-bg-alt)}
 .l30-pic img{width:100%;height:100%;object-fit:cover;display:block}
 .l30-no{position:absolute;left:0;bottom:0;padding:6px 18px;background:var(--c-brand);color:#fff;font-family:var(--num);font-size:26px;font-weight:800;line-height:1.3}
@@ -507,9 +527,6 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l30-body h3{font-size:27px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);margin-bottom:12px}
 .l30-body p{font-size:19px;line-height:1.8;color:var(--c-ink)}
 .l30-tail{margin-top:auto;padding-top:18px;border-top:1px solid var(--c-hairline);font-size:17px;color:var(--c-ink-soft)}
-.l30-card.dark h3{color:#fff}
-.l30-card.dark p{color:rgba(255,255,255,.78)}
-.l30-card.dark .l30-tail{border-top-color:rgba(255,255,255,.18);color:rgba(255,255,255,.6)}
 
 /* L31 横贯图带 + 浮白卡（全幅）— 详情见 cases/L31-photo-band-float-card.md */
 /* 白卡是 `position:absolute` 压在图带上的（相对 `.l31-wrap`），不是图带的子元素：
@@ -775,6 +792,178 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l44-step b{font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
 .l44-step h3{margin-top:8px;font-size:27px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
 .l44-step p{margin-top:8px;max-width:820px;font-size:19px;line-height:1.7;color:var(--c-ink)}
+
+/* === 表格共用：`.dt-*`（L45 起这一族都用它）===
+   同 `.rp-head` 那一族：CSS 只在这里有一份，各案例 md 里那段是抄过来对账用的
+   （`caseLibrary.test.ts` 逐条比对）。
+   三条是承重的，改了任何一条那一页照样渲染、接口 200，只是那张表开始骗人：
+   ① **`table-layout:fixed` + `width:100%`**：不写死的话浏览器按内容算列宽，某一格多写四个字
+      整张表就往右顶出画面（`#stage` 是 `overflow:hidden`，顶出去那一列直接看不见，而剩下
+      几列排得整整齐齐）；
+   ② **数字列 `font-variant-numeric:tabular-nums` + `var(--num)` + 右对齐**：等宽数字关掉之后
+      同一列的「1」和「7」宽度不一样，纵向对不齐 —— 而一张对不齐的表看起来只是「排得糙」，
+      读的人照旧会拿它比大小；
+   ③ **不许 `overflow:auto`**：投出来的稿子没有人去滚一个格子，超出的行就是不存在
+      （放映时连滚动条都不显示）。行数放不下要拆页，不是让它滚。 */
+.dt-wrap{flex:1;min-height:0;margin-top:30px}
+.dt-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:20px;color:var(--c-ink)}
+.dt-table th,.dt-table td{padding:16px 22px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--c-hairline);overflow-wrap:break-word}
+.dt-table thead th{background:var(--c-ink-deep);color:#fff;font-size:19px;font-weight:700;line-height:1.4;letter-spacing:.02em;border-bottom:0}
+/* 斑马纹用 `var(--c-card)`（白）而不是 `var(--bg-plain)`：后者和浅色页的底色
+   `--c-bg` 是**同一个色值**（都是 #FAF8F4），写它等于没写 —— 表格照样渲染、
+   一处都不报错，只是行与行之间压根没有明暗差，八行数字看起来是糊在一起的一片 */
+.dt-table tbody tr:nth-child(even){background:var(--c-card)}
+.dt-table tbody td:first-child{font-weight:700;color:var(--c-ink-deep)}
+/* 数字列：`<td class="num">`（表头同名）。整列一起标，只标一半的话那一列半右对齐半左对齐 */
+.dt-table .num{font-family:var(--num);font-variant-numeric:tabular-nums;text-align:right;font-weight:700;color:var(--c-ink-deep)}
+.dt-table thead th.num{color:#fff}
+/* 合计/结论那一行：`<tr class="on">`。只能有一行 —— 全标之后等于没标 */
+.dt-table tbody tr.on{background:var(--hl-o)}
+.dt-table tbody tr.on td{border-bottom:0;font-weight:800;color:var(--c-brand-deep);border-top:2px solid var(--c-brand)}
+/* 单位/口径那一行（表格右上角）。不写的话「3.2」是万亿还是亿全靠读的人猜 */
+.dt-unit{display:flex;justify-content:flex-end;gap:26px;margin-top:22px;font-size:16px;color:var(--c-ink-soft);letter-spacing:.04em}
+/* 表下面的脚注（数据来源 / 口径说明）：`var(--c-ink-soft)` + 15px，别写成正文 */
+.dt-src{margin-top:16px;font-size:15px;line-height:1.7;color:var(--c-ink-soft)}
+/* **表体最多 8 行**（含合计行；L45，详情见 cases/L45-data-table-sheet.md）。实测值：整套结构
+   （标题条 + lead + 单位行 + 表头 + 脚注 + 结论条）之后留给表体的是 555px，一行 62px → 8 行；
+   去掉 lead 和脚注（V2/V5）能到 9 行。`.dt-wrap` 是 `flex:1`，高度被剩余空间钉死而**不裁**内容：
+   超出的行从它下沿漏出去，压在 `.dt-src` 和 `.rp-foot` 上（第 9 行压脚注、第 10 行起压结论条），
+   出来是字叠字的一页，第 12 行才真被画面裁掉。这一层故意不写 `overflow:hidden` —— 裁掉的话
+   最后那行「合计」凭空消失，而剩下几行整整齐齐、一处都不报错。行数放不下要拆页。 */
+
+/* L46 分节说明页：报告风标题条 + 2–3 个「编号 + 小标题 + 整段正文」浅底区块（文字多）
+   — 详情见 cases/L46-prose-sections-numbered.md */
+/* 这一条是**整句成段**的文字页（方案概述 / 核心功能 / 预期效果 那种），不是要点式。
+   实测（1640×862 内容区）：留给 `.l46-list` 的是 640px，每个区块固定开销 97px（padding 52 +
+   小标题 35 + 正文 margin 10）、区块间距 24px、正文一行 35px 约 58 个汉字 ——
+   **三节时正文合计 ≤ 8 行**（约 460 字），两节时 ≤ 12 行；去掉 `lead` 和 `.rp-foot` 各能多出 2–4 行。
+   **区块只能 2–3 个**：`.l46-list` 是 `flex:1` + `min-height:0`，高度被剩余空间钉死而**不裁**内容，
+   第 4 个区块从下沿漏出去压在 `.rp-foot` 上，出来是字叠字的一页（同 `.dt-wrap` 那条，
+   故意不加 `overflow:hidden` —— 裁掉的话最后那一节凭空消失，而前三节排得整整齐齐、一处都不报错）。
+   编号那一列写死 92px：跟着内容缩的话「10」比「1」宽，三节的正文起点各差几个像素。
+   区块底色是 `var(--c-card)`（白）+ 一圈 `--c-hairline`，**不是 `var(--bg-plain)`**：
+   后者和浅色页的底色 `--c-bg` 是同一个色值（都是 #FAF8F4），写它的话三个区块在画面上
+   压根不存在，只剩左边三条橙线孤零零立着 —— 而页面照样渲染、一处都不报错。 */
+.l46-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:24px;margin-top:32px}
+.l46-item{display:grid;grid-template-columns:92px 1fr;gap:28px;align-items:start;background:var(--c-card);border:1px solid var(--c-hairline);border-left:3px solid var(--c-brand);padding:26px 32px}
+.l46-no{font-family:var(--num);font-size:44px;font-weight:800;line-height:1;color:var(--c-brand)}
+.l46-item h3{font-size:26px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l46-item h3 em{font-style:normal;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.18em;color:var(--c-ink-soft);margin-left:14px}
+.l46-item p{margin-top:10px;font-size:19px;line-height:1.85;color:var(--c-ink)}
+.l46-item p b{font-weight:800;color:var(--c-brand-deep)}
+
+/* L47 条形图页：报告风标题条 + 横向条形 4–7 行 + 结论条 —— 详情见 cases/L47-bar-chart-rows.md */
+/* **`--bar-v` 写数值本身，不写百分比**（硬规则 3：会算错的格式不交给模型）。条的长度由
+   `flex-grow:var(--bar-v)` 和它旁边那格 `flex-grow:calc(var(--bar-max) - var(--bar-v))` 分掉整条轨道 ——
+   浏览器替你做除法，所以只要 `--bar-v` 和标签上那个数字是同一个，几条之间的长短关系**自动是对的**。
+   换成百分比的话那几个除法就落到模型头上：38% 画得比 52% 长的那一页读起来完全正常，
+   一处都不报错，而它把结论画反了。
+   `--bar-max` 写在 `.l47-rows` 上（=最大的那个值，通常就是标签里最大那个数）：写小了那一条的
+   `calc()` 变负数、被夹成 0，于是它顶满整条轨道 —— 这是**看得见**的错，比按百分比算安全。
+   行数 4–7：`justify-content:center` 让这一叠行在剩余高度里居中，8 行起从上下两端同时溢出，
+   而中间那几行看起来完全正常（同 `.l38-rows`）。 */
+.l47-rows{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;gap:22px;margin-top:34px}
+.l47-row{display:grid;grid-template-columns:300px 1fr 190px;gap:26px;align-items:center}
+.l47-name{font-size:21px;font-weight:700;line-height:1.35;color:var(--c-ink-deep)}
+.l47-name em{display:block;font-style:normal;font-size:15px;font-weight:700;letter-spacing:.06em;color:var(--c-ink-soft);margin-top:4px}
+.l47-track{display:flex;height:38px;background:var(--c-card);border:1px solid var(--c-hairline)}
+.l47-fill{flex-grow:var(--bar-v,1);flex-basis:0;min-width:4px;background:var(--c-brand)}
+.l47-gap{flex-grow:calc(var(--bar-max,100) - var(--bar-v,1));flex-basis:0}
+.l47-val{font-family:var(--num);font-size:27px;font-weight:800;line-height:1;text-align:right;font-variant-numeric:tabular-nums;color:var(--c-ink-deep)}
+.l47-val i{font-style:normal;font-family:var(--sans);font-size:15px;font-weight:700;color:var(--c-ink-soft);margin-left:6px}
+.l47-row.on .l47-fill{background:var(--c-brand-deep)}
+.l47-row.on .l47-name,.l47-row.on .l47-val{color:var(--c-brand-deep)}
+.l47-row.dim .l47-fill{background:var(--c-ink-soft)}
+
+/* L48 目录页：底部品牌色带 + 上方错位白卡 + 两列章节条目 —— 详情见 cases/L48-agenda-offset-card.md */
+/* L35 的错位是**竖着**的（色块贴右、竖图往左错），这一条是**横着**的：色带贴底通宽，白卡从上方
+   压下来盖住它的上半，于是色带只在底部露出一条 90px、左右各露 140px。三个值一起构成错位
+   （`.l48-band` 的 38% + 卡片的 `top:150px` / `bottom:90px`）—— 把卡片改成 `inset:0` 对齐边缘
+   之后这一页就是「一张白卡列了几条」，色带一条都看不见，而每一层都渲染正常。
+   卡片 `top:150px` 是为了让代码贴的 `.slide-header`（44–100px 那条带）落在浅底上：往上挪到
+   100px 以内的话模块名压在白卡边沿，蓝字压白卡看起来只是「有点挤」。
+   条目 4–8 条、推荐偶数（两列各 2–4 行）：实测条目区 613px、一条一行说明约 99px + 行距 30px，
+   10 条还塞得下但每条只剩一行说明，**12 条起从卡片下沿漏出去压在色带上**（故意不裁 —— 裁掉的话
+   最后一两章凭空消失，而前十条排得整整齐齐）。 */
+.l48-band{position:absolute;left:0;right:0;bottom:0;height:38%;background:var(--c-brand);z-index:0}
+.l48-card{position:absolute;left:var(--pad-x);right:var(--pad-x);top:150px;bottom:90px;z-index:1;background:var(--c-card);box-shadow:0 40px 90px rgba(0,0,0,.22);padding:56px 72px;display:flex;flex-direction:column}
+.l48-head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;padding-bottom:22px;border-bottom:2px solid var(--c-ink-deep)}
+.l48-card .page-title{font-family:var(--serif);font-size:52px;font-weight:900;line-height:1.1;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l48-en{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.3em;color:var(--c-brand-deep);padding-bottom:8px}
+.l48-rows{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:30px 72px;align-content:stretch;margin-top:34px}
+.l48-item{display:grid;grid-template-columns:76px 1fr;gap:22px;align-items:start;padding-top:20px;border-top:1px solid var(--c-hairline)}
+.l48-no{font-family:var(--num);font-size:38px;font-weight:800;line-height:1;color:var(--c-brand)}
+.l48-item h3{font-size:25px;font-weight:800;line-height:1.3;color:var(--c-ink-deep)}
+.l48-item p{margin-top:8px;font-size:17px;line-height:1.7;color:var(--c-ink)}
+.l48-item.on{border-top:2px solid var(--c-brand)}
+.l48-item.on h3,.l48-item.on .l48-no{color:var(--c-brand-deep)}
+
+/* L49 结尾页（浅底）：右下角出血品牌色块 + 往左上错位的白卡「下一步」+ 左侧衬线巨字 —— 详情见 cases/L49-closing-next-steps.md */
+/* 和 L35 / L48 同一族的错位叠压，方向是**斜的**：色块占右下角（40%×52%，两边都出血），白卡从
+   左上方压下来盖住它的左上角，于是色块只在右侧露出 96px、底部露出 96px，而白卡的上沿和左沿
+   反过来伸出色块之外（`top:400px` 对色块顶 518px、卡左 1094px 对色块左 1152px）。
+   把卡片挪进色块里（或者把色块铺到贴边）之后，这一页就是「浅底上放了一张白卡」，收尾的分量没了，
+   而每一层都渲染正常、一处都不报错。
+   为什么另做一条浅底的结尾：库里专门的结尾页只有 L36 那条暗底气氛图，整份浅色稿子的最后一页
+   要么突然黑一下，要么退回章节封面那几条（读起来像「还有下一章」）。
+   **这一条的重点是「下一步做什么」**，所以白卡里是 3 条行动项而不是致谢语；`.page-title` 必须留在
+   左侧那块（页脚目录面板按 `.page-title` 取每页标题，写进卡里的话目录里这一页会显示成「下一步」）。 */
+.l49-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l49-block{position:absolute;right:0;bottom:0;width:40%;height:52%;background:var(--c-brand);z-index:0}
+.l49-txt{position:absolute;left:var(--pad-x);top:50%;transform:translateY(-56%);width:44%;z-index:2}
+.l49-en{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.3em;color:var(--c-brand-deep)}
+.l49-rule{width:64px;height:5px;background:var(--c-brand);margin:26px 0 30px}
+.l49-txt .page-title{font-family:var(--serif);font-size:88px;font-weight:900;line-height:1.14;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l49-txt .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l49-txt p{margin-top:28px;font-size:23px;line-height:1.8;color:var(--c-ink);max-width:640px}
+.l49-foot{position:absolute;left:var(--pad-x);bottom:var(--pad-bottom);z-index:2;width:44%;display:flex;gap:56px;padding-top:22px;border-top:1px solid var(--c-hairline)}
+.l49-foot div{font-size:19px;line-height:1.5;color:var(--c-ink-deep)}
+.l49-foot b{display:block;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;color:var(--c-ink-soft);margin-bottom:8px}
+.l49-card{position:absolute;right:96px;bottom:96px;top:400px;width:38%;z-index:2;background:var(--c-card);box-shadow:0 40px 90px rgba(0,0,0,.24);padding:48px 56px;display:flex;flex-direction:column}
+.l49-card h2{font-size:26px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);padding-bottom:20px;border-bottom:2px solid var(--c-ink-deep)}
+.l49-steps{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;gap:26px}
+.l49-step{display:grid;grid-template-columns:58px 1fr;gap:20px;align-items:start}
+.l49-no{font-family:var(--num);font-size:30px;font-weight:800;line-height:1.2;color:var(--c-brand)}
+.l49-step h3{font-size:22px;font-weight:800;line-height:1.4;color:var(--c-ink-deep)}
+.l49-step p{margin-top:6px;font-size:17px;line-height:1.65;color:var(--c-ink)}
+
+/* L50 分层架构页：右侧通高品牌色块 + 从左侧压过来的 3–4 条层带 —— 详情见 cases/L50-stacked-layers-arch.md */
+/* 同一族的错位叠压，这一条错的是**整组**：品牌色块贴右通高（32%），三四条层带从左侧压过来盖住它的
+   左侧大半（`right:96px`），于是色块只在右边露出 96px、上下各露一截。把层带收进内容区（`right:var(--pad-x)`）
+   之后色块和层带之间空出一条缝，整页退回「浅底上摞了几条白带」，而每一层都渲染正常。
+   色块**必须在右边**：贴左的话代码贴的 `.slide-header`（左 140px / 44–100px 那条带）落在色块上，
+   蓝色模块名压在品牌色实底上，对比度不够而它照样渲染。
+   层带**从上往下 = 从上层往底层**（应用层在最上、数据层在最下），顺序反了这一页仍然是一张完整的
+   架构图，只是讲的是反的。
+   几条层带一律同一套配色（原来有个 `.on` 高亮变体，已去掉）：**不要再加回单层高亮** ——
+   高亮那一层会被读成「这一层最重要」，而分层图讲的是包含关系，哪一层重要这一页压根没说。 */
+.l50-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l50-block{position:absolute;right:0;top:0;bottom:0;width:32%;background:var(--c-brand);z-index:0}
+.l50-txt{position:absolute;left:var(--pad-x);top:132px;width:58%;z-index:2}
+.l50-txt .page-title{font-family:var(--sans);font-size:52px;font-weight:800;line-height:1.18;letter-spacing:-.01em;color:var(--c-ink-deep);margin-top:0}
+.l50-txt p{margin-top:18px;font-size:21px;line-height:1.7;color:var(--c-ink)}
+.l50-layers{position:absolute;left:var(--pad-x);right:96px;top:300px;bottom:150px;z-index:2;display:flex;flex-direction:column;gap:22px}
+.l50-layer{flex:1;min-height:0;display:grid;grid-template-columns:280px 1fr;background:var(--c-card);box-shadow:0 24px 54px rgba(0,0,0,.14)}
+.l50-tag{background:var(--c-ink-deep);padding:24px 30px;display:flex;flex-direction:column;justify-content:center}
+.l50-tag h3{font-size:24px;font-weight:800;line-height:1.3;color:#fff}
+.l50-tag b{font-family:var(--num);font-size:13px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.58);margin-top:8px}
+.l50-cells{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:16px;padding:22px 30px;align-items:stretch}
+.l50-cell{display:flex;align-items:center;justify-content:center;text-align:center;padding:13px 18px;border:1px solid var(--c-hairline);background:var(--c-bg);font-size:19px;font-weight:700;line-height:1.4;color:var(--c-ink-deep)}
+
+/* L51 三档方案页：报告风标题条 + 三列方案卡 —— 详情见 cases/L51-tier-plans-trio.md */
+/* 三列一律同一套配色和尺寸（原来中间那列有个 `.on`：品牌色反色实底 + `margin:-28px 0` 上下溢出
+   + 投影，已去掉）。**推荐哪一档只由右上角那面小旗 `.l51-flag` 说**：反色/溢出那一套在整份浅色
+   稿子里是唯一一处满色卡，翻起来像另一套模板里的页；而小旗是文字标记，去掉之后「三个选项里我们
+   建议哪个」就一个字都没说了 —— 三列各自都很完整，读的人自己挑，销售意图静默没了。 */
+.l51-trio{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;align-items:stretch;margin:48px 0 44px}
+.l51-plan{position:relative;background:var(--c-card);border:1px solid var(--c-hairline);padding:36px 32px;display:flex;flex-direction:column}
+.l51-plan b{font-family:var(--num);font-size:13px;font-weight:700;letter-spacing:.2em;color:var(--c-ink-soft)}
+.l51-plan h3{font-size:30px;font-weight:800;line-height:1.25;color:var(--c-ink-deep);margin-top:10px}
+.l51-price{font-family:var(--num);font-size:44px;font-weight:800;line-height:1;letter-spacing:-.01em;color:var(--c-brand);margin-top:20px;font-variant-numeric:tabular-nums}
+.l51-price i{font-style:normal;font-family:var(--sans);font-size:16px;font-weight:700;color:var(--c-ink-soft);margin-left:8px}
+.l51-feat{margin-top:22px;padding-top:16px;border-top:1px solid var(--c-hairline);font-size:18px;line-height:1.6;color:var(--c-ink)}
+.l51-plan .l51-note{margin-top:auto;padding-top:22px;font-size:16px;line-height:1.6;color:var(--c-ink-soft)}
+.l51-flag{position:absolute;top:0;right:0;background:var(--c-ink-deep);padding:8px 16px;font-size:14px;font-weight:700;letter-spacing:.1em;color:#fff}
 
 /* 双卡 (L4) */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:30px}

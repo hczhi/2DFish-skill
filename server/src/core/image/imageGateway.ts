@@ -51,8 +51,29 @@ export interface GeneratedImage {
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
-/** 原始产物：各家要么给限时 URL，要么直接给 base64。两种都必须认（见 persistImage）。 */
-type RawImage = { url: string } | { b64: string; mime?: string };
+/**
+ * 原始产物：各家要么给限时 URL，要么直接给 base64。两种都必须认（见 persistImage）。
+ * `bytes` 那一种不来自上游，是用户直接上传的图（见 `storeUploadedImage`）。
+ */
+type RawImage = { url: string } | { b64: string; mime?: string } | { bytes: Buffer; mime?: string };
+
+/**
+ * 把用户上传的图落成永久可访问的图，走的是**和生图完全同一条转存路径**
+ * （COS 配了走 COS、没配落本机磁盘并说出为什么、魔术字节核一遍是不是图片）。
+ *
+ * 各写一份 putObject 的后果是那一份缺哪一件哪一件就静默不生效：不核魔术字节时
+ * 一个改名成 .png 的 pdf 会一路 200 存进素材库，卡片上是一张裂图；不带桶域名时图进了
+ * PPT 桶而 URL 指着默认桶，同样接口 200、页面裂图。
+ *
+ * `keyPrefix` 分开存（上传的不进 `ai-images/`）：混在一起的话，将来清生图产物时会
+ * 把用户自己上传的原图一起清掉，而库里那几条记录还在、卡片还在，只是点开全是裂图。
+ */
+export async function storeUploadedImage(
+  bytes: Buffer,
+  opts: { mime?: string; bucketProfile?: 'ppt'; keyPrefix?: string } = {}
+): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
+  return persistImage({ bytes, mime: opts.mime }, resolveCosTarget(opts.bucketProfile), opts.keyPrefix);
+}
 
 /**
  * 生成图片。失败一律抛错并带上上游原文 —— 生图的每种失败（模型名不对 / 余额不足 /
@@ -270,11 +291,20 @@ function sleep(ms: number): Promise<void> {
  * `/uploads` 静态挂载提供）。原来这里在 COS 缺失时直接返回上游的限时 URL —— 那是个
  * 定时炸弹：生成当天一切正常，几小时/几天后整份演示稿的图全变成裂图，而没有任何一处报错。
  */
-async function persistImage(raw: RawImage, target: CosTarget | null): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
+async function persistImage(
+  raw: RawImage,
+  target: CosTarget | null,
+  keyPrefix = 'ai-images'
+): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
   let buffer: Buffer;
   let contentType: string;
 
-  if ('b64' in raw) {
+  if ('bytes' in raw) {
+    buffer = raw.bytes;
+    // 上传来的 mime 是浏览器按扩展名猜的，所以魔术字节优先 —— 反过来的话一个
+    // 改名成 .png 的文件会以 image/png 存进去，卡片上是一张裂图而接口 200。
+    contentType = sniffImageType(buffer) || raw.mime || '';
+  } else if ('b64' in raw) {
     buffer = Buffer.from(raw.b64, 'base64');
     contentType = raw.mime || sniffImageType(buffer) || 'image/png';
   } else {
@@ -289,9 +319,14 @@ async function persistImage(raw: RawImage, target: CosTarget | null): Promise<{ 
     // 页面上是个放不出来的裂图，而后台显示「已生成」。
     const sniffed = sniffImageType(buffer);
     if (!sniffed) {
+      // 成因分两种，说错的那一句会把人指反方向：上传来的是「这个文件不是图」，
+      // 上游给的是「接入点配成了视频模型」。
       throw new Error(
-        `上游返回的不是图片（content-type=${contentType || '未知'}，${buffer.length} 字节）。` +
-          `如果配的是视频模型（如 doubao-seedance），请换成生图模型（如 doubao-seedream）。`
+        'bytes' in raw
+          ? `这个文件不是 PNG / JPG / GIF / WebP 图片（浏览器说它是 ${raw.mime || '未知类型'}，${buffer.length} 字节）。` +
+              '改扩展名不管用 —— 请用图片编辑器/截图工具另存成 PNG 或 JPG 再传。'
+          : `上游返回的不是图片（content-type=${contentType || '未知'}，${buffer.length} 字节）。` +
+              `如果配的是视频模型（如 doubao-seedance），请换成生图模型（如 doubao-seedream）。`
       );
     }
     contentType = sniffed;
@@ -300,7 +335,7 @@ async function persistImage(raw: RawImage, target: CosTarget | null): Promise<{ 
   const ext = extFromContentType(contentType);
   const now = new Date();
   const datePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
-  const key = `ai-images/${datePath}/${uuidv4()}${ext}`;
+  const key = `${keyPrefix}/${datePath}/${uuidv4()}${ext}`;
 
   if (target) {
     const cos = new COS({ SecretId: target.SecretId, SecretKey: target.SecretKey });

@@ -98,6 +98,9 @@ import { migration_095 } from './095_ppt_page_eids.js';
 import { migration_096 } from './096_ppt_deck_design.js';
 import { migration_097 } from './097_ppt_page_veil.js';
 import { migration_098 } from './098_ppt_plan_rev.js';
+import { migration_099 } from './099_ppt_cdn_urls.js';
+import { migration_100 } from './100_ppt_sdk_keys.js';
+import { migration_101 } from './101_ppt_asset_tenant.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -197,4 +200,7 @@ export const allMigrations: Migration[] = [
   migration_096,
   migration_097,
   migration_098,
+  migration_099,
+  migration_100,
+  migration_101,
 ];

@@ -11,6 +11,8 @@ import {
   safeParseArray,
   checkExchangeRateLimit,
   applySdkCors,
+  originFormatError,
+  limitOr,
 } from '../core/sdkKeys.js';
 import { sdkKeyUsage, invalidateFrameAncestors } from '../services/consult/sdkLimits.js';
 
@@ -44,31 +46,9 @@ const TOKEN_TTL_SECONDS = 15 * 60;
 const MAX_EXTERNAL_UID_CHARS = 64;
 const EXTERNAL_UID_RE = /^[A-Za-z0-9_.:@-]+$/;
 
-/** 存得进去但永远匹配不上的白名单条目要**拒**，不能存。存下来的话后台那一行显示得和
- *  配对了的一模一样，而接入方那边是稳定 403 —— 他只会反复核对自己那个没写错的域名。
- *  话术里带上那几条原文：不带的话「哪一条不对」得靠猜（最常见的是漏了 https://）。 */
-function originFormatError(bad: string[]): string {
-  return (
-    `这几条不是合法的域名，存进去只会稳定 403（要 https://example.com 这种形式：带 http/https、不带路径）：${bad.join('、')}。` +
-    '一行一个，或者用逗号/空格分隔。'
-  );
-}
-
 /** 新 key 的缺省上限（086）。和 `ai_app_quota` 的「没配就不限」相反 —— 理由见那份迁移。 */
 export const DEFAULT_DAILY_AI_LIMIT = 50;
 export const DEFAULT_MAX_PROJECTS = 200;
-
-/**
- * 上限字段的取值。**0 是合法值**（等于把这把 key 冻住），所以不能写 `Number(x) || 缺省`
- * —— 那样管理员填 0 会被悄悄改回 50，他以为已经冻住了而第三方那边照样在调。
- * 不是 >= 0 的整数就返回 null（由调用方回 400），别兜成缺省值。
- */
-function limitOr(raw: unknown, fallback: number): number | null {
-  if (raw === undefined || raw === null || raw === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) return null;
-  return n;
-}
 
 interface ConsultSdkKeyRow {
   pk: string;

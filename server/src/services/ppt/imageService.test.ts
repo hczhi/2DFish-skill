@@ -30,7 +30,7 @@ const {
   PptImageError,
 } = await import('./imageService.js');
 
-const ctx = { userId: 'u1', title: '三阶段路径', meta: { brandCn: '云启', brandEn: 'YQ', topic: 'AI 转型' } };
+const ctx = { owner: { userId: 'u1', sdkPk: null, externalUid: null }, title: '三阶段路径', meta: { brandCn: '云启', brandEn: 'YQ', topic: 'AI 转型' } };
 
 /** 一页两格：一个 <img src>，一个 background-image。 */
 const twoSlots =

@@ -72,6 +72,31 @@ export function getCosConfig(): { SecretId: string; SecretKey: string; Bucket: s
 export type CosTarget = { SecretId: string; SecretKey: string; Bucket: string; Region: string; publicBase: string };
 
 /**
+ * PPT 专用桶那两个域名（源站 / CDN）共用一套校验。
+ *
+ * https 是硬的：`http://` 的图在 https 后台上被当混合内容**静默**拦掉，控制台之外什么都看不到。
+ * 形如默认 cos 域名的再核 bucket/region 两段 —— 那种写错法（比如把 CDN 框里填成另一个桶的
+ * myqcloud 域名）会让 `putObject` 成功、接口 200、库里存下 URL，只有浏览器那边是裂图。
+ * 自定义 CDN 域名核不了指向哪个桶，只能核到 https。
+ */
+function checkPptDomain(base: string, Bucket: string, Region: string, label: string): void {
+  const trimmed = base.replace(/\/+$/, '');
+  if (!/^https:\/\//i.test(trimmed)) {
+    throw new Error(`PPT 专用桶的${label}必须以 https:// 开头（当前「${trimmed}」）—— http 的图会被浏览器当混合内容静默拦掉。`);
+  }
+  const m = /^https:\/\/([a-z0-9-]+)\.cos\.([a-z0-9-]+)\.myqcloud\.com$/i.exec(trimmed);
+  if (m && (m[1] !== Bucket || m[2] !== Region)) {
+    throw new Error(
+      `PPT 专用桶的${label}和桶对不上：域名指向 ${m[1]} / ${m[2]}，而桶填的是 ${Bucket} / ${Region}。` +
+        '这样图会成功写进桶里，而页面上是裂图。'
+    );
+  }
+}
+
+/** PPT 专用桶没填 CDN 域名时用的那个。改这里等于改所有 /ppt 新图的域名（旧图库里存的是全 URL，不会跟着变）。 */
+export const PPT_CDN_BASE_DEFAULT = 'https://ai-cdn01.xiaozancloud.com';
+
+/**
  * PPT 专用桶（后台 > 系统配置 > PPT 专用桶）。**三项要么齐、要么当没配**，中间状态一律抛错。
  *
  * 缺一项就静默走默认桶的话，界面上是一张正常显示的图 —— 他会以为新桶已经在用了，
@@ -80,9 +105,13 @@ export type CosTarget = { SecretId: string; SecretKey: string; Bucket: string; R
  * 所以默认 cos 域名形式这里直接核对 bucket/region 两段（自定义 CDN 域名核不了，只能核 https）。
  * 密钥留空 = 复用默认桶那对；但**填了却解不开必须抛错**（拿默认桶的凭据去写这个桶只会换来
  * 一个 AccessDenied，那句话会把人指向权限而不是 CONFIG_ENCRYPTION_KEY）。
+ *
+ * **这个桶的文件一律从 CDN 取**（`cos_ppt_cdn_base`，留空 = `PPT_CDN_BASE_DEFAULT`），
+ * `cos_ppt_base` 只留作源站域名、只用来核对桶名/地域，不再参与拼 URL —— 两个域名都拿来拼的话
+ * 「这张图走没走 CDN」得逐张看 URL 才知道，而回源那张也能正常显示。
  */
 export function getPptCosTarget(): CosTarget | null {
-  const KEYS = ['cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key'];
+  const KEYS = ['cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_cdn_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key'];
   const { plain, raw } = readConfig(KEYS, COS_SECRET_FIELDS);
   const trio = ['cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base'];
   const filled = trio.filter((k) => plain[k]);
@@ -96,17 +125,10 @@ export function getPptCosTarget(): CosTarget | null {
 
   const Bucket = plain.cos_ppt_bucket;
   const Region = plain.cos_ppt_region;
-  const publicBase = plain.cos_ppt_base.replace(/\/+$/, '');
-  if (!/^https:\/\//i.test(publicBase)) {
-    throw new Error(`PPT 专用桶的公网域名必须以 https:// 开头（当前「${publicBase}」）—— http 的图会被浏览器当混合内容静默拦掉。`);
-  }
-  const m = /^https:\/\/([a-z0-9-]+)\.cos\.([a-z0-9-]+)\.myqcloud\.com$/i.exec(publicBase);
-  if (m && (m[1] !== Bucket || m[2] !== Region)) {
-    throw new Error(
-      `PPT 专用桶的公网域名和桶对不上：域名指向 ${m[1]} / ${m[2]}，而桶填的是 ${Bucket} / ${Region}。` +
-        '这样图会成功写进桶里，而页面上是裂图。'
-    );
-  }
+  // 源站域名照旧要核（它是「这两项填对了没」的唯一交叉验证），但拼 URL 用的是 CDN 那个。
+  checkPptDomain(plain.cos_ppt_base, Bucket, Region, '源站域名');
+  const publicBase = (plain.cos_ppt_cdn_base || PPT_CDN_BASE_DEFAULT).replace(/\/+$/, '');
+  checkPptDomain(publicBase, Bucket, Region, 'CDN 域名');
 
   let SecretId = plain.cos_ppt_secret_id;
   let SecretKey = plain.cos_ppt_secret_key;

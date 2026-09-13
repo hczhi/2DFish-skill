@@ -12,6 +12,7 @@
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import WordExtractor from 'word-extractor';
+import { extractPdf, PDF_MAGIC } from './pdfExtract.js';
 
 /**
  * 一次能传多大。客户给的品牌 PPT 动辄几百兆（整本手册、内嵌视频），给 300MB。
@@ -24,8 +25,14 @@ import WordExtractor from 'word-extractor';
  */
 export const MAX_FILE_BYTES = 300 * 1024 * 1024;
 
-/** 支持的扩展名（`.ppt` 不在里面 —— 见 LEGACY_PPT_HINT）。 */
-export const SUPPORTED_EXTS = ['.txt', '.md', '.docx', '.doc', '.pptx'] as const;
+/**
+ * 支持的扩展名（`.ppt` 不在里面 —— 见 LEGACY_PPT_HINT）。
+ *
+ * 图片（.png/.jpg/…）**不在这里**：它们走的是完全另一条路（大模型识别，要花额度，
+ * 见 imageExtractService.ts），而这个文件的合约是「只做程序提取、不调 AI」。
+ * 把图片混进来的话，一次「提取」会静默扣掉一次他今天 10 次里的额度。
+ */
+export const SUPPORTED_EXTS = ['.txt', '.md', '.docx', '.doc', '.pptx', '.pdf'] as const;
 
 /**
  * `.ppt`（PowerPoint 97-2003 的二进制格式）在 Node 里没有能用的解析库。
@@ -85,6 +92,22 @@ export async function extractFile(filename: string, buf: Buffer): Promise<Extrac
   // 「Can't find end of central directory」—— 用户不知道那是「格式太老」还是「文件坏了」。
   const looksZip = buf.subarray(0, 4).equals(ZIP_MAGIC);
   const looksOle2 = buf.subarray(0, 8).equals(OLE2_MAGIC);
+  const looksPdf = buf.subarray(0, 4).equals(PDF_MAGIC);
+
+  if (looksPdf) {
+    // 「叫 .docx 其实是 PDF」在客户发来的资料里很常见（微信转存、改扩展名图省事）。
+    // 按扩展名走的话下面 jszip 只会回一句「解压失败」，而这份文件本身是好的。
+    if (ext !== '.pdf') {
+      notes.push(`这个文件叫 ${ext}，实际是 PDF（已按 PDF 解析）。`);
+    }
+    return finish(filename, '.pdf', await extractPdf(filename, buf, notes), notes);
+  }
+  if (ext === '.pdf') {
+    throw new ExtractError(
+      `${filename} 的扩展名是 .pdf，但文件头不是 PDF（前四个字节不是 %PDF）——`
+      + '它多半是别的东西改了扩展名，或者下载/传输时坏了。请重新导出一份再传。'
+    );
+  }
 
   if (looksOle2) {
     // OLE2 里 doc 和 ppt 分不出来（都是同一种容器），只能照扩展名的意图给话术。
@@ -97,9 +120,9 @@ export async function extractFile(filename: string, buf: Buffer): Promise<Extrac
 
   if (!looksZip) {
     throw new ExtractError(
-      `${filename} 的文件头既不是 Word/PPT 的新格式（zip），也不是 97-2003 的老格式。`
-      + '它大概是被改过扩展名的别的东西（pdf / 图片 / 压缩包）。请用原来的程序打开它，'
-      + '另存为 .docx / .pptx 再传，或者直接把文字复制进资料框。'
+      `${filename} 的文件头既不是 Word/PPT 的新格式（zip），也不是 97-2003 的老格式，也不是 PDF。`
+      + '它大概是被改过扩展名的别的东西（压缩包 / 视频 / 设计软件的源文件）。请用原来的程序打开它，'
+      + '另存为 .docx / .pptx / .pdf 再传，或者直接把文字复制进资料框。'
     );
   }
 

@@ -67,17 +67,57 @@ export function assembleDeck(sections: string[], meta: DeckMeta, opts: AssembleO
         `按下标对齐的话后面那几页会静默变成 0（没有蒙版），而界面上它们是调过的。`
     );
   }
-  const slides =
-    design +
-    hideFooter +
-    sections.map((s, i) => applyVeil(stripPageNumber(s), opts.veils?.[i] ?? 0)).join('\n');
-  // 一律用函数形式替换：片段正文里的 `$&` / `$1` 在字符串形式下会被当成引用展开，
-  // 悄悄吃掉几个字符。
-  return template
-    .replace(SLOT, () => slides)
+  const slides = sections.map((s, i) => previewSection(s, meta, opts.veils?.[i] ?? 0)).join('\n');
+  return fillMeta(template.replace(SLOT, () => design + hideFooter + slides), meta);
+}
+
+/**
+ * `{{BRAND_CN}}` 这几个占位符。**一律用函数形式替换**：正文里的 `$&` / `$1` 在字符串形式下
+ * 会被当成引用展开，悄悄吃掉几个字符。
+ *
+ * 外壳和每一页各自替换一遍（`previewShell` + `previewSection`）和整份替换一遍等价 ——
+ * 这几个记号是字面量，不会跨接缝断开。等价这件事有测试盯着（`deckShell.test.ts`）。
+ */
+function fillMeta(s: string, meta: DeckMeta): string {
+  return s
     .replace(/\{\{BRAND_CN\}\}/g, () => meta.brandCn)
     .replace(/\{\{BRAND_EN\}\}/g, () => meta.brandEn)
     .replace(/\{\{TOPIC\}\}/g, () => meta.topic);
+}
+
+/**
+ * 前端拼单页预览用的插入点。**故意不是 `SLOT`**：那一个在 template.html 里，
+ * 每次拼装都会被吃掉；这一个是我们发给前端的外壳里留的洞。
+ */
+export const PREVIEW_SLOT = '<!--PPT_PREVIEW_SLIDE-->';
+
+/**
+ * 单页预览的**外壳**（一份 deck 里所有页共用，约 85KB）和**这一页那一段**
+ * （`previewSection`，约 1-2KB）分开发给前端，由前端做一次 `replace(PREVIEW_SLOT, …)`。
+ *
+ * 为什么分：`GET /decks/:id/pages` 原来给每一页都回一整份 `assemblePreview`，也就是把同一份
+ * 外壳抄了 N 遍 —— 实测那份 41 页的稿子响应 3658KB，而库里那些页的 html 合计只有 51.5KB
+ * （`server/scripts/bench-ppt.mts`）。这件事界面上完全看不出来，只是「打开这份稿子有点慢」。
+ *
+ * **前端只做字符串替换、不重算任何东西**：蒙版（097 那层黑）和页码剥离都在
+ * `previewSection` 里，也就是仍然只有服务端这一份实现。前端自己贴蒙版的话，预览里
+ * 和导出的文件里会是两种深浅，而两边各自都是一页正常的幻灯片。
+ */
+export function previewShell(meta: DeckMeta): string {
+  const template = library().template;
+  if (!template.includes(SLOT)) {
+    throw new Error(`template.html 里找不到幻灯片插入点（${SLOT}）—— 拼出来会是一份空白 deck。`);
+  }
+  const design = meta.design ? designStyleBlock(meta.design) : '';
+  return fillMeta(
+    template.replace(SLOT, () => `${design}<style>#footer{display:none}</style>\n${PREVIEW_SLOT}`),
+    meta
+  );
+}
+
+/** 塞进 `PREVIEW_SLOT` 的那一段（贴好蒙版、剥掉页码、填过品牌记号）。 */
+export function previewSection(html: string, meta: DeckMeta, veilOpacity: number): string {
+  return fillMeta(applyVeil(stripPageNumber(html), veilOpacity), meta);
 }
 
 /**

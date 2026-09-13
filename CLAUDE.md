@@ -129,6 +129,13 @@ skills/  workspaces/  docs/
   其余（chat / 咨询 / ui-review / fish）。平台渠道**可能压根没有 strong 那一档**（回落
   default），所以「换成强模型」不是格式错误的解法。
 - `ai_logs.provider_id / provider_owner` 记哪把 key 付了这次的钱。
+- **`maxRetries: 0` 关掉的只该是「重试超时」，别把「上游忙」也关掉。** 那几条写死 0 的路径
+  （consult 出草稿/整理、图片识别）是因为同一个 body 第二次还在同一处超时，重试只把等待翻倍；
+  但上游回的 `503 system cpu overloaded (current: 97.5%)` 是另一回事，隔几秒重发基本就过。
+  用 `GatewayOptions.retryOnBusy`（429/5xx 才算，连接超时的 status 是 undefined 所以不算），
+  **重发在扣额度之后、在同一次 `aiGateway` 里，所以额度只扣一次** —— 调用方自己 catch 再来一遍
+  的话那是新的一次调用，会再扣一次。这类失败的话术必须和「配置错了」分开：透原文出去读起来
+  像我们坏了，用户会去改文件、调参数、一分钟点五次（每次真扣一次），而问题压根不在他那边。
 - **关思维链是唯一让一条路径快起来的开关（`GatewayOptions.noThinking`），实测同一条接入点
   36.6 秒 → 3.5 秒，而正文还长了一点。** 耗时几乎全花在没人看得见的那一段思考上，「上下文太长」
   不是原因（输入拉 16 倍只多 2 秒），所以想快就动这个开关，不是砍 prompt。它在**吐 JSON 的

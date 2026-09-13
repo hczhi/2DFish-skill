@@ -16,7 +16,14 @@ import {
   SUPPORTED_EXTS,
   extFromName,
 } from '../services/consult/fileExtract.js';
-import { tidyExtractedText, planTidy } from '../services/consult/fileTidyService.js';
+import { tidyExtractedText, planTidy, TIDY_BUDGET_CHARS } from '../services/consult/fileTidyService.js';
+import {
+  extractImageText,
+  looksLikeImage,
+  IMAGE_EXTS,
+  MAX_IMAGE_BYTES,
+} from '../services/consult/imageExtractService.js';
+import { buildBrief, MAX_ATTACHMENTS } from '../services/consult/briefCompose.js';
 import {
   listProjects,
   createProject,
@@ -125,16 +132,20 @@ function owner(req: { user?: { id: string }; sdkPk?: string; externalUid?: strin
  *
  * `.ppt` **故意放过这道过滤**，让 fileExtract 去回那句「请另存为 .pptx」——
  * 在这里挡掉只会得到一句笼统的「不支持」，用户不知道下一步该干什么。
+ * 同理 `.heic` / `.bmp` 这些模型不吃的图片格式也放过来，由 imageExtractService 回
+ * 那句「iPhone 的照片请导出成 JPG」。
  */
+const PASSTHROUGH_EXTS = ['.ppt', '.heic', '.heif', '.bmp', '.tif', '.tiff', '.avif'];
+const ACCEPTED_EXTS = [...SUPPORTED_EXTS, ...IMAGE_EXTS];
 const fileUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
     const ext = extFromName(file.originalname);
-    if (ext === '.ppt' || SUPPORTED_EXTS.includes(ext as (typeof SUPPORTED_EXTS)[number])) {
+    if (PASSTHROUGH_EXTS.includes(ext) || ACCEPTED_EXTS.includes(ext as any)) {
       cb(null, true);
     } else {
-      cb(new Error(`不支持 ${ext || '这种没有扩展名的'} 文件。目前支持：${SUPPORTED_EXTS.join(' / ')} / .ppt（会提示你另存为 .pptx）`));
+      cb(new Error(`不支持 ${ext || '这种没有扩展名的'} 文件。目前支持：${ACCEPTED_EXTS.join(' / ')}（老的 .ppt / iPhone 的 .heic 传上来会告诉你怎么转）`));
     }
   },
 });
@@ -142,7 +153,13 @@ const fileUpload = multer({
 /** 把业务错误按自己的状态码透出去；额度用完统一 429（前端 api.ts 认这个）。 */
 function fail(err: unknown, res: any, next: any): void {
   if (err instanceof QuotaExceededError) {
-    res.status(429).json({ error: 'quota_exceeded', remaining: 0, daily_limit: err.dailyLimit });
+    // `error: 'quota_exceeded'` 是给 api.ts 那个全局弹窗认的机器码，**另外要带 detail**：
+    // 撞的是账号总额还是「品牌咨询」这个应用的单独额度、上限是多少，只有 err.message 里有。
+    // 不带的话前端只能写死一句「缺省 10 次/天」—— 而开了专属渠道（后台显示「不限」）
+    // 或者被单独配了应用额度的账号看到这句话完全对不上，只会以为是程序算错了。
+    res.status(429).json({
+      error: 'quota_exceeded', remaining: 0, daily_limit: err.dailyLimit, app: err.app, detail: err.message,
+    });
     return;
   }
   if (err instanceof StageError) {
@@ -177,7 +194,20 @@ function fail(err: unknown, res: any, next: any): void {
     });
     return;
   }
-  // 上游其它失败（模型名不对 / 余额不足 / 网关 5xx）要把原文带出去：
+  // 上游那台机器忙不过来（实测 `503 system cpu overloaded (current: 97.5%, threshold: 90%)`）。
+  // **必须和「配置错了」分开说**：原文透出去的话读起来像我们这边坏了，用户会去改文件、
+  // 调参数、或者一分钟点五次（每次真扣一次额度），而问题压根不在他这边。
+  // 网关已经隔 2.5 秒重发过一次了（`retryOnBusy`），所以这句话是「重发也没过」。
+  if (err instanceof OpenAI.APIError && (err.status === 429 || err.status === 503 || err.status === 500 || err.status === 502)) {
+    res.status(502).json({
+      error:
+        `上游那台机器现在忙不过来（HTTP ${err.status}）：${err.message}\n` +
+        `已经自动重发过一次了，还是这句。**不是你的文件的问题**，改文件、删内容、调参数都没用 ——` +
+        `等几分钟再点一次，或者去「专属 AI」换一条空闲的接入点。（这次的 AI 额度已经扣了）`,
+    });
+    return;
+  }
+  // 上游其它失败（模型名不对 / 余额不足 / 网关 4xx）要把原文带出去：
   // 兜成 500 的话这些只在服务端日志里，而它们全是一句话就能改掉的配置问题。
   if (err instanceof OpenAI.APIError) {
     res.status(502).json({
@@ -316,17 +346,24 @@ consultRouter.put('/admin/stages/:key', (req, res) => {
 });
 
 /**
- * 客户资料文件 → 纯文本。**不调 AI、不落库、不存原文件。**
+ * 客户资料文件 → 纯文本。**不落库、不存原文件。**
  *
  * 不存原文件是有意的：`api/upload.ts` 那条路是转存 COS，而 `file.qiaonan.vip` 是公开
- * 可访问的 —— 客户的品牌资料、预算、竞品名单传上去等于公开。这里只在内存里解析完就丢。
+ * 可访问的 —— 客户的品牌资料、预算、竞品名单传上去等于公开。这里只在内存里解析完就丢
+ * （图片也一样：base64 直接进请求，不落盘、不转存）。
  *
- * 返回的文本给前端**预览**用，由用户确认后自己插进资料框，所以这里**不套** MAX_BRIEF_CHARS：
- * 一份 PPT 提取出三万字是常事，在这里截掉的话用户看到的是一份「看起来完整」的资料。
- * 上限那道闸门在 `POST /projects` 和 `PUT /projects/:id/brief`（只拒不截），
- * 这里只把字数如实回给界面让他自己删。
+ * 两条路，按文件头分派：
+ * - 文件（txt/md/docx/doc/pptx/pdf）：程序提取，**不花 AI 额度**；
+ * - 图片（png/jpg/webp/gif）：**一次 AI 调用**（图里的字只有模型读得出来）。
+ *   所以响应里带 `aiCalls`，界面上必须显示 —— 一次「提取」静默扣掉他今天 10 次里的一次
+ *   是这条路最容易发生的静默扣费（硬规则 1）。图片那份已经是提炼过的，`tidied: true`
+ *   告诉前端**不要再自动整理一遍**（那是白花第二次额度）。
+ *
+ * 返回的文本给前端**预览**用，所以这里**不套** MAX_BRIEF_CHARS：一份 PPT 提取出三万字
+ * 是常事，在这里截掉的话用户看到的是一份「看起来完整」的资料。上限那道闸门在
+ * `POST /projects` 和 `PUT /projects/:id/brief`（只拒不截），这里只把字数如实回给界面。
  */
-consultRouter.post('/extract-file', (req, res) => {
+consultRouter.post('/extract-file', (req, res, next) => {
   fileUpload.single('file')(req, res, async (err) => {
     if (err) {
       // 超大文件必须单独认：multer 的 LIMIT_FILE_SIZE 原文是英文的 'File too large'，
@@ -340,16 +377,53 @@ consultRouter.post('/extract-file', (req, res) => {
     }
     if (!req.file) return res.status(400).json({ error: '请选择要上传的文件' });
 
+    const name = req.file.originalname;
+    const limits = {
+      briefLimit: MAX_BRIEF_CHARS,
+      budgetChars: TIDY_BUDGET_CHARS,
+      maxFiles: MAX_ATTACHMENTS,
+      maxImageBytes: MAX_IMAGE_BYTES,
+    };
     try {
-      const result = await extractFile(req.file.originalname, req.file.buffer);
+      // 图片走大模型识别（花一次额度），其余走程序提取。判据是**文件头 + 扩展名**，
+      // 不只看扩展名：一张改名成 .docx 的截图落到 zip 解析上只会回一句「解压失败」。
+      if (looksLikeImage(extFromName(name), req.file.buffer)) {
+        const img = await extractImageText(req.user!.id, name, req.file.buffer);
+        return res.json({
+          filename: name,
+          ext: extFromName(name),
+          kind: 'image',
+          ...img,
+          ...limits,
+          // 已经是提炼过的了 —— 前端据此**跳过**自动整理（再整一遍是白花第二次额度，
+          // 而且这条路上压根没有原文，第二次只会离图更远）。
+          tidied: true,
+          // 他要是自己点「重新整理」，那一下要花几次额度还是由服务端算（前端不许自己除）。
+          tidyPlan: planTidy(img.text),
+        });
+      }
+      const result = await extractFile(name, req.file.buffer);
       // tidyPlan 由服务端算：前端要照它决定「传完直接自动整理」还是「先问一句这要花
       // 几次额度」。前端自己按字数除一下的话那个数会和真实调用次数漂开，界面上写着
       // 1 次而实际扣了 4 次 —— 他只会以为额度算错了。
-      res.json({ ...result, briefLimit: MAX_BRIEF_CHARS, tidyPlan: planTidy(result.text) });
+      res.json({
+        ...result,
+        kind: 'file',
+        aiCalls: 0,
+        tidied: false,
+        ...limits,
+        tidyPlan: planTidy(result.text),
+      });
     } catch (e: any) {
       // ExtractError 的 message 就是给用户看的那句话（带成因和出路），原样透出去。
       // 兜成一句「提取失败」的话，「扫描件」「老 .ppt」「编码乱了」三种解法完全不同。
       if (e instanceof ExtractError) return res.status(400).json({ error: e.message });
+      // 图片那条路会撞额度（429）、上游超时（504）、模型不认图（502）—— 这几种各是
+      // 一句不同的话，交给 fail()。兜成 500 的话「今天额度用完了」会显示成「服务器出错」，
+      // 他只会一直重传同一张图，而每次都可能真扣一次。
+      if (e instanceof StageError || e instanceof QuotaExceededError || e instanceof OpenAI.APIError) {
+        return fail(e, res, next);
+      }
       console.error('[consult] extract-file failed:', e?.message);
       res.status(500).json({ error: `解析这个文件时出错了：${e?.message || '未知错误'}` });
     }
@@ -385,22 +459,29 @@ consultRouter.get('/projects', (req, res) => {
   res.json(listProjects(owner(req)));
 });
 
-consultRouter.post('/projects', (req, res) => {
+/**
+ * 建项目。body `{ brandName, brief, attachments?: [{filename, text, variant}] }`。
+ *
+ * `attachments` 是上传的那几个文件整理出来的正文 —— 用户**不再逐份点「插入」**，
+ * 提交这一下由服务端合成（`briefCompose.buildBrief`，超长/超单份上限一律只拒不截并点名）。
+ * 合成放服务端的理由见那个文件的头：前端拼好整份回传的话，少带一份在界面上看不出来。
+ */
+consultRouter.post('/projects', (req, res, next) => {
   const brandName = String(req.body?.brandName || '').trim();
-  const brief = String(req.body?.brief || '').trim();
+  const typed = String(req.body?.brief || '').trim();
   if (!brandName) return res.status(400).json({ error: '请填写品牌 / 客户名称' });
   if (brandName.length > MAX_BRAND_NAME_CHARS) {
     return res.status(400).json({ error: `名称最多 ${MAX_BRAND_NAME_CHARS} 字` });
   }
-  // 超长直接拒，不截断：这段资料会进四看每一次调用的 prompt，
-  // 悄悄砍掉后半段的话 AI 是照着不完整的资料出结论的，而结论看起来完全正常。
-  if (brief.length > MAX_BRIEF_CHARS) {
-    return res.status(400).json({
-      error: `资料最多 ${MAX_BRIEF_CHARS} 字，当前 ${brief.length} 字。请自己删减后再提交（不会自动截断，避免 AI 照着半份资料出结论）`,
-    });
+  try {
+    // 超长直接拒，不截断：这段资料会进四看每一次调用的 prompt，
+    // 悄悄砍掉后半段的话 AI 是照着不完整的资料出结论的，而结论看起来完全正常。
+    const brief = buildBrief(typed, req.body?.attachments);
+    const project = createProject(owner(req), brandName, brief);
+    res.json({ project, stages: buildStageRail(project.id), entries: [] });
+  } catch (e) {
+    fail(e, res, next);
   }
-  const project = createProject(owner(req), brandName, brief);
-  res.json({ project, stages: buildStageRail(project.id), entries: [] });
 });
 
 consultRouter.get('/projects/:id', (req, res) => {

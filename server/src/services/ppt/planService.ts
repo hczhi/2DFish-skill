@@ -99,6 +99,13 @@ export interface PlannedPage {
    * 靠 `points` 生成，problems 里会点名（不点名的话那几页和「原文本来就这么短」一样）。
    */
   outlineRange: [number, number] | null;
+  /**
+   * 「这一页的原文里有几行是**代码补进来**的」——`attachOrphanLines` 写的那句话。
+   *
+   * 前端必须在这一页的详情里显示它（和「本页内容」挨着）：并进来的位置不一定对，
+   * 而并进来之后那一段读起来和模型自己认领的一模一样。老 plan_json 里没有这个字段。
+   */
+  coverNote?: string;
   /** 版式名 / 中文标题 / 是否全幅，从库里补上（模型不许自己说这些） */
   layoutName: string;
   layoutTitle: string;
@@ -109,8 +116,12 @@ export interface PlannedPage {
 export interface PlanResult {
   pages: PlannedPage[];
   /**
-   * 每一处「结果能用但有话要说」。**必须显示出来**：这一步的失败形态全是
-   * 「一份看起来完整的规划」——编出来的版式名、被截断只规划了一半、连续五页同版式。
+   * 每一处「结果能用但有话要说」：编出来的版式名、被截断只规划了一半、连续五页同版式。
+   *
+   * 前端那块 deck 级清单（「这次规划有 17 处要注意」）**已经去掉了** —— 十几条一起涌出来时
+   * 一条都不会被读。所以这里面**唯一真的会让用户内容丢掉**的那一条（提纲有几段没进任何
+   * 一页）改成了硬校验：`attachOrphanLines` 直接并进相邻页，并在**那一页**上留
+   * `coverNote`（页级的话他点开那一页就看得见）。这个数组照旧落 `plan_json` 和日志。
    */
   problems: string[];
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -221,6 +232,11 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
   if (!pages.length) {
     throw new PlanError(`模型规划的 ${rows.length} 页全都用了案例库里没有的版式（${problems.join('；')}）。`);
   }
+
+  // 硬校验：没有任何一页认领的提纲段落**在这里并进相邻页**，而不是留一条提示等他去看
+  // （原来那条 deck 级「这次规划有 N 处要注意」的界面已经去掉了）。必须在 fitWarnings
+  // 之前跑 —— 并进去之后那一页可能就装不下了，那句话得算上并进来的字数。
+  attachOrphanLines(pages, outlineLines);
 
   problems.push(
     ...coverageWarnings(pages, outlineLines, badRanges),
@@ -411,11 +427,71 @@ function normalizeSourceLines(raw: any, total: number): { range: [number, number
 const MAX_LISTED_RANGES = 8;
 
 /**
+ * **没有任何一页认领的提纲行，在代码里并进相邻页。**
+ *
+ * 这一条取代了原来那句「提纲里有 N 段没被任何一页认领」的提示：那句话挂在 deck 级
+ * problems 清单里，而那块界面（「这次规划有 17 处要注意」）已经去掉了 —— 靠一条没人读的
+ * 提示护着「用户的内容会不会进成稿」等于没护。模型漏认领是常态（它按语义分页，行号是
+ * 顺手给的），而漏掉的那几行在界面上和「这几段本来就该合并掉」一模一样。
+ *
+ * 并进哪一页由**代码**定（硬规则 3，不再问模型）：优先接在它**前面**那一页的原文末尾
+ * （保持提纲的阅读顺序），前面没有页时接到后面那一页的开头。区间一定是连着的
+ * （孤立段的相邻行必然被某一页认领，否则它就是同一段），所以 `[min, max]` 不会顺手把
+ * 别的页那几行也吞进来。并进去之后**必须在那一页上留一句 `coverNote`**：位置不一定对
+ * （它可能该去下一章那一页），而不说的话那一段读起来和模型自己认领的一模一样。
+ *
+ * 为什么不是「自动补一页」：页数凭空变多，而他以为那是模型规划的。
+ */
+function attachOrphanLines(pages: PlannedPage[], outlineLines: string[]): void {
+  // 一页都没给行号时补不到正确的页上（全部堆到第一页 = 第一页塞整份提纲）。
+  // 那种情况 `coverageWarnings` 里有专门一条说成因。
+  if (!pages.some((p) => p.outlineRange)) return;
+
+  const total = outlineLines.length;
+  const owner: number[] = new Array(total).fill(0);
+  for (const p of pages) {
+    if (!p.outlineRange) continue;
+    const [s, e] = p.outlineRange;
+    for (let i = s; i <= e; i++) owner[i - 1] = owner[i - 1] || p.page;
+  }
+
+  // 先把所有孤立段收完再改（边扫边并的话，刚并进去的行会成为下一段的边界，
+  // 于是两段挨着的漏字会并到同一页去）。
+  const runs: Array<{ s: number; e: number }> = [];
+  for (let i = 0; i < total; i++) {
+    if (owner[i]) continue;
+    const last = runs[runs.length - 1];
+    if (last && last.e === i) last.e = i + 1;
+    else runs.push({ s: i, e: i + 1 });
+  }
+
+  const byPage = new Map(pages.map((p) => [p.page, p]));
+  for (const r of runs) {
+    // 两头的空行退掉：留着的话那句话写成「第 3–6 行」而第 6 行是空的，他数到那儿会以为报错了。
+    while (r.e > r.s + 1 && !outlineLines[r.e - 1].trim()) r.e--;
+    while (r.s < r.e - 1 && !outlineLines[r.s].trim()) r.s++;
+    const text = outlineLines.slice(r.s, r.e).join('\n').trim();
+    if (!text) continue; // 纯空行段：没有内容会丢
+    const host = byPage.get(owner[r.s - 1] || owner[r.e] || 0);
+    if (!host?.outlineRange) continue;
+    const [hs, he] = host.outlineRange;
+    const range: [number, number] = [Math.min(hs, r.s + 1), Math.max(he, r.e)];
+    host.outlineRange = range;
+    host.outlineText = outlineLines.slice(range[0] - 1, range[1]).join('\n').trim();
+    const where = r.e > r.s + 1 ? `第 ${r.s + 1}–${r.e} 行` : `第 ${r.s + 1} 行`;
+    const said =
+      `提纲${where}「${preview(text)}」规划时**没有任何一页认领**，已经并到这一页的本页内容里。` +
+      '位置不合适就把它剪到该去的那一页 —— 直接删掉的话这段内容一个字都不会出现在成稿里。';
+    host.coverNote = host.coverNote ? `${host.coverNote}\n${said}` : said;
+  }
+}
+
+/**
  * 提纲覆盖率审计：**哪几行没有被任何一页认领**。
  *
- * 这是「提纲上的重要内容在成稿里丢了」的唯一可查点。规划出来的 30 页每一页单看都合理、
- * 页数也对得上，而提纲里那六行地产数据 / 那张喜事日历表整段没有任何一页认领 —— 界面上
- * 和「这几段本来就该合并掉」一模一样，一处都不报错，用户只能等成稿翻到那儿才发现。
+ * `attachOrphanLines` 之后这里的「没被认领」正常应该永远是空的（都并进相邻页了）。
+ * 留着是因为它是最后一道网：将来并的规则改出漏洞时，这句话是唯一会喊的地方 ——
+ * 少了它，漏掉的那几段在界面上和「这几段本来就该合并掉」一模一样，一处都不报错。
  *
  * 只报不改（同 `repeatWarnings`）：自动补一页的话页数凭空变多，而他以为那是模型规划的。
  * 空行不算漏（提纲里的空行没有内容），但**夹在两段漏字之间的空行照旧算进区间**，

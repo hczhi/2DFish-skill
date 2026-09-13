@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { getToken, fetchMe } from '../lib/auth';
 import { openLoginModal } from '../lib/loginModal';
-import { isEmbedMode, requestEmbedToken, embedHostOrigin } from '../lib/embed';
+import { isEmbedMode, embedModule, requestEmbedToken, embedHostOrigin } from '../lib/embed';
 
 function getSessionId(): string {
   let sid = sessionStorage.getItem('_sid');
@@ -121,6 +121,9 @@ const router = createRouter({
         // 咨询流程与方法论（088）：改十四步的「分析操法」和「本步必须产出的东西」。
         // 和上面那条 /admin/consult（对外接入 = 发 pk）是两页，别合并。
         { path: 'consult-flow', name: 'admin-consult-flow', component: () => import('../views/admin/ConsultFlow.vue') },
+        // 展示稿对外接入（100）= 发 pk。和 /admin/consult 是两页，别合并：两个模块的 key
+        // 混在一张表里，改错哪一行（停用/删除）看不出来。
+        { path: 'ppt-access', name: 'admin-ppt-access', component: () => import('../views/admin/PptAccess.vue') },
         { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
@@ -173,6 +176,13 @@ const router = createRouter({
     {
       path: '/ppt',
       redirect: '/ppt/decks',
+    },
+    {
+      // 第三方 iframe 的入口（100，写法同 /consult/embed）。**不能带 requiresAuth**
+      // —— 它此刻正是来换凭证的，挂上守卫就会在别人的页面里弹出我们的登录框。
+      path: '/ppt/embed',
+      name: 'ppt-embed',
+      component: () => import('../views/ppt/PptEmbed.vue'),
     },
     {
       path: '/ppt/decks',
@@ -396,7 +406,11 @@ router.beforeEach(async (to, from) => {
   if (!token && to.meta.requiresAuth && isEmbedMode()) {
     token = await requestEmbedToken();
     if (!token) {
-      return { name: 'consult-embed', query: { host: embedHostOrigin() || '', next: to.fullPath } };
+      // 回哪个引导页要**按模块**算：写死 consult 的话展示稿那个 iframe 刷新之后跳进
+      // 咨询的引导页，它再 replace 到 /consult/projects —— 第三方页面里的展示稿工作台
+      // 变成了一个咨询工作台（每个接口 403），而没有一处报错。
+      const name = embedModule() === 'ppt' ? 'ppt-embed' : 'consult-embed';
+      return { name, query: { host: embedHostOrigin() || '', next: to.fullPath } };
     }
   }
 

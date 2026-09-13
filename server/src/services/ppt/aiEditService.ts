@@ -15,8 +15,8 @@ import { jsonGateway, jsonFailMessage } from '../../core/llm/parseJson.js';
 import { templateClasses, templateVars } from './deckShell.js';
 import {
   findRegionByPath, maskRegion, unmaskRegion, eidsIn, domTree, CJK_RE, PageEditError,
-  hardcodedColors,
 } from './pageEdit.js';
+import { checkRegionGuards, classesIn } from './regionGuards.js';
 
 /** 一块结构 1-2KB，剩下的是留给思维链的空间（硬规则 2）。`noThinking` 也一起发。 */
 const MAX_EDIT_TOKENS = 6000;
@@ -121,13 +121,6 @@ export async function aiEditRegion(input: AiEditInput, userId: string): Promise<
   };
 }
 
-/** 这一页里已经用过的类名（模型只许用这些 + template 里定义过的）。 */
-function classesIn(html: string): string[] {
-  const out: string[] = [];
-  for (const m of html.matchAll(/class="([^"]*)"/g)) out.push(...m[1].trim().split(/\s+/).filter(Boolean));
-  return out;
-}
-
 export interface ValidateCtx {
   tokens: Map<string, string>;
   regionName: string;
@@ -194,43 +187,9 @@ export function validateEditedRegion(html: string, ctx: ValidateCtx): void {
     );
   }
 
-  // ④ 脚本 / 样式表 / 事件属性。`<style>` 改的是整份 deck 的每一页，`<script>` 在预览和
-  //    导出的文件里都会真的执行。
-  if (/<(script|style)[\s>]/i.test(html)) {
-    throw new PageEditError('模型写了 <script> 或 <style>（那玩意儿会影响整份 deck 的每一页，或者在导出的文件里真的执行），这一块没改。');
-  }
-  if (/\son[a-z]+\s*=/i.test(html)) {
-    throw new PageEditError('模型写了 onclick 这类事件属性（会在预览和导出的文件里真的执行），这一块没改。');
-  }
-
-  // ⑤ 类名。编出来的类名不报错，那一块只是回到默认流式布局 —— 看起来像「版式塌了」。
-  const unknown = new Set<string>();
-  for (const c of classesIn(html)) if (!ctx.allowedClasses.has(c)) unknown.add(c);
-  if (unknown.size) {
-    throw new PageEditError(
-      `模型用了这一页里没有的类名（${[...unknown].slice(0, 5).join(' / ')}）：模板里没有这几条样式，那几块会变成没排版的文字堆在一起。这一块没改，再试一次。`
-    );
-  }
-
-  // ⑥ 颜色。写死的色值换肤那天不跟着变；编出来的变量名会让浏览器把整条声明丢掉
-  //    （字色掉回继承色，看起来只是「这一版配色淡了点」）。
-  // 这一份和自由改造那条**共用** `hardcodedColors`：各写一份的话改了一边另一边照旧，
-  // 而两边是同一个模型的同一个毛病（它爱写 `rgba(0,0,0,.08)` 那种阴影）。
-  const colors = hardcodedColors(html, ctx.original);
-  if (colors.length) {
-    throw new PageEditError(
-      `模型写死了颜色（${colors.slice(0, 4).join(' / ')}）：换一套配色时这一块不会跟着变，而它读起来完全正常。这一块没改 —— ` +
-        '颜色得用 var(--c-…)（阴影和蒙版那种半透明黑白除外，比如 rgba(0,0,0,.08)）。'
-    );
-  }
-  const badVars = [...html.matchAll(/var\(\s*(--[a-z0-9-]+)/g)]
-    .map((m) => m[1])
-    .filter((v) => !ctx.knownVars.has(v));
-  if (badVars.length) {
-    throw new PageEditError(
-      `模型用了不存在的样式变量（${[...new Set(badVars)].slice(0, 4).join(' / ')}）：浏览器会把整条声明丢掉，那一块的颜色/间距直接没有，而页面照样渲染。这一块没改。`
-    );
-  }
+  // ④⑤⑥ 脚本 / 样式表 / 事件属性 / position:fixed / 编出来的类名 / 写死的颜色 / 不存在的变量名
+  //      —— 和自由改造那条路**共用一份**（`regionGuards.ts`，那里写着为什么）。
+  checkRegionGuards(html, ctx);
 }
 
 function buildPrompt(masked: string, regionName: string, instruction: string): string {
@@ -249,7 +208,7 @@ ${instruction}
 3. 类名只能用这一块里已经出现过的那些。要新样式就写 inline style（\`style="…"\`）。
 4. 颜色只能用 \`var(--c-…)\` 这种变量（用这一块里已经出现过的那几个），**不许写 #hex / rgb()**
    —— 阴影和蒙版那种半透明黑白除外（\`rgba(0,0,0,.08)\` 可以）。
-5. 不许写 \`<script>\` / \`<style>\` / \`onclick\` 这类事件属性。
+5. 不许写 \`<script>\` / \`<style>\` / \`onclick\` 这类事件属性，不许用 \`position:fixed\`。
 6. \`data-eid="…"\` 属性原样留在它现在所在的那个元素上：一个都不能删、不能改、不能新增。
 7. 只回这一块，最外层还是 \`<${regionName}>\`，不要多包一层、不要回整页。
 

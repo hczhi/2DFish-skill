@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe('PPT 专用桶', () => {
-  it('三项配齐、密钥留空时写 PPT 桶并复用默认桶的凭据', () => {
+  it('三项配齐、密钥留空时写 PPT 桶、复用默认桶的凭据，URL 走 CDN 默认域名', () => {
     setConfig({
       cos_ppt_bucket: 'ai-1303208826',
       cos_ppt_region: 'ap-guangzhou',
@@ -36,15 +36,26 @@ describe('PPT 专用桶', () => {
 
     const t = resolveCosTarget('ppt');
     // Bucket 或 publicBase 漏了一处就是「图进了这个桶、URL 指着那个桶」，接口全程 200。
+    // publicBase 回落到源站域名同样是静默的：图照样显示，只是没走 CDN，逐张看 URL 才发现。
     expect(t).toEqual({
       SecretId: 'AKID-old',
       SecretKey: 'sk-old',
       Bucket: 'ai-1303208826',
       Region: 'ap-guangzhou',
-      publicBase: 'https://ai-1303208826.cos.ap-guangzhou.myqcloud.com',
+      publicBase: 'https://ai-cdn01.xiaozancloud.com',
     });
-    // 别的模块不传 profile，照旧走默认桶。
-    expect(resolveCosTarget()?.Bucket).toBe('qiaonan-1318719556');
+    // 别的模块不传 profile，照旧走默认桶（也就不走这个 CDN）。
+    expect(resolveCosTarget()?.publicBase).not.toContain('ai-cdn01');
+  });
+
+  it('填了 CDN 域名就用填的那个（去掉尾斜杠）', () => {
+    setConfig({
+      cos_ppt_bucket: 'ai-1303208826',
+      cos_ppt_region: 'ap-guangzhou',
+      cos_ppt_base: 'https://ai-1303208826.cos.ap-guangzhou.myqcloud.com',
+      cos_ppt_cdn_base: 'https://cdn.example.com/',
+    });
+    expect(resolveCosTarget('ppt')?.publicBase).toBe('https://cdn.example.com');
   });
 
   it('三项只填两项时抛错，不静默回落到默认桶', () => {
@@ -52,7 +63,7 @@ describe('PPT 专用桶', () => {
     expect(() => resolveCosTarget('ppt')).toThrow(/配置不全.*cos_ppt_base/);
   });
 
-  it('公网域名和桶对不上时抛错（否则图写进桶里而页面是裂图）', () => {
+  it('源站域名和桶对不上时抛错（否则图写进桶里而页面是裂图）', () => {
     setConfig({
       cos_ppt_bucket: 'ai-1303208826',
       cos_ppt_region: 'ap-guangzhou',

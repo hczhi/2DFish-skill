@@ -437,8 +437,10 @@ export interface StylePatch {
   justifyContent?: string;
 }
 
-/** inline style 拆成 map（顺序无所谓，同名后者胜 —— 浏览器就是这么读的）。 */
-function parseStyle(attrs: string): Map<string, string> {
+/** inline style 拆成 map（顺序无所谓，同名后者胜 —— 浏览器就是这么读的）。
+ *  `canvasEdit` 也用这一对：各写一份的话「不追加第二个 `style=`」那条会只在一边成立，
+ *  而另一边的现象是「点了/拖了没反应，库里明明是新值」。 */
+export function parseStyle(attrs: string): Map<string, string> {
   const m = attrs.match(/\sstyle\s*=\s*"([^"]*)"/i) || attrs.match(/\sstyle\s*=\s*'([^']*)'/i);
   const out = new Map<string, string>();
   for (const part of (m?.[1] || '').split(';')) {
@@ -449,7 +451,7 @@ function parseStyle(attrs: string): Map<string, string> {
   return out;
 }
 
-function writeStyle(attrs: string, decls: Map<string, string>): string {
+export function writeStyle(attrs: string, decls: Map<string, string>): string {
   const text = [...decls].map(([k, v]) => `${k}:${v}`).join(';');
   // 删到一条不剩时把整个属性摘掉（留一个 `style=""` 不影响渲染，但下一次 `injectEids` /
   // 手工翻 html 时那一块看起来像「有 inline 样式」，找起来指错方向）。

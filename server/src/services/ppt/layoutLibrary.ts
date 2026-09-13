@@ -165,11 +165,6 @@ export function layouts(): PptLayout[] {
   return library().layouts;
 }
 
-/** 能当某种页用的那几条（规划 prompt 里「页型 → 可用版式」那几行、和核对都用它）。 */
-export function layoutsForRole(role: PageRole): PptLayout[] {
-  return layouts().filter((l) => l.roles.includes(role));
-}
-
 export function layoutById(id: string): PptLayout | undefined {
   const key = id.trim().toUpperCase();
   return layouts().find((l) => l.id === key);

@@ -60,7 +60,14 @@
             <!-- 开关必须**显示服务端那份状态**、点完再按返回值重画：本地取反的话
                  「某个页型最后一条不能停用」那种拒绝会变成「开关动了、下次刷新又弹回去」，
                  而拒绝的理由一个字都看不到。 -->
+            <!-- 嵌入模式下只显示状态、不给点（100）：停用是**账号级**的，一个接入方关掉
+                 一条，绑定账号自己和别的接入方从此都排不出它，所以 scope 里就挡着这条接口。
+                 留着按钮的话点下去是一句「没改上」，而开关看着是可点的 —— 他会一直重试。 -->
+            <span v-if="embedded" class="sw ro" :class="{ on: !l.disabled }"
+              title="停用开关是账号级的，嵌入模式下只读"
+            >{{ l.disabled ? '已停用' : '启用中' }}</span>
             <button
+              v-else
               class="sw" :class="{ on: !l.disabled }" :disabled="savingId === l.id"
               @click.stop="toggle(l)"
               :title="l.disabled ? '已停用：规划时 AI 挑不到它' : '启用中：规划时 AI 可以挑它'"
@@ -121,6 +128,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiGet, apiPut } from '../../lib/api'
 import { renderMarkdown } from '../../lib/markdown'
+import { isEmbedMode } from '../../lib/embed'
 
 interface Layout {
   id: string; num: number; name: string; title: string;
@@ -135,6 +143,8 @@ interface Layout {
 
 /** 整份 demo deck（22 页）。单页是它加上 ?only=Lk。 */
 const deckUrl = '/api/ppt/demo-deck.html'
+/** 第三方 iframe 里（100）。只用来关掉账号级的那个开关，别的都照旧。 */
+const embedded = isEmbedMode()
 
 const layouts = ref<Layout[]>([])
 const loading = ref(true)
@@ -225,6 +235,7 @@ h1 { font-size: 26px; margin: 0 0 8px; }
 .sw { margin-left: auto; border: 1px solid #d1d5db; background: #fff; color: #6b7280; font-size: 11px; padding: 2px 9px; border-radius: 99px; cursor: pointer; }
 .sw.on { border-color: #86efac; background: #f0fdf4; color: #15803d; }
 .sw:disabled { opacity: .5; cursor: default; }
+.sw.ro { cursor: default; }
 .hint { color: #6b7280; font-size: 13px; }
 .err { color: #dc2626; font-size: 13px; }
 

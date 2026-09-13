@@ -10,10 +10,10 @@ import { templateClasses } from './deckShell.js';
 // 手测看不出来（页面是好看的，只是不是那个版式），所以必须有测试。
 
 describe('版式案例库', () => {
-  it('44 条案例全部解析出来，且每条都有非空的选型文本和生成文本', () => {
+  it('51 条案例全部解析出来，且每条都有非空的选型文本和生成文本', () => {
     const lib = loadLibrary();
     const ids = lib.layouts.map((l) => l.id);
-    expect(ids).toEqual(Array.from({ length: 44 }, (_, i) => `L${i + 1}`));
+    expect(ids).toEqual(Array.from({ length: 51 }, (_, i) => `L${i + 1}`));
 
     // 空文本进 prompt 等于这一条案例不存在，而它在列表里还是一行
     const empty = lib.layouts.filter((l) => !l.selectText.trim() || !l.buildText.trim());

@@ -46,6 +46,27 @@ const SCOPE_RULES: Record<string, ScopeRule[]> = {
     { methods: ['POST'], path: /^\/api\/consult\/extract-file$/ },
     { methods: ['POST'], path: /^\/api\/consult\/tidy-text$/ },
   ],
+
+  // HTML 展示稿 iframe 嵌入（100）：整个工作台都要能用，所以 decks 那棵子树是**写**权限。
+  // 逐条登记而不是放行 `^/api/ppt/`，被排除在外的三类是故意的：
+  //   ① `/api/ppt/admin/*` —— 发 key 的后台接口（放进来 = 把发 key 的能力给了第三方页面里
+  //      那把公开 pk，而每次调用都是 200）；
+  //   ② `PUT /api/ppt/layouts/:id/enabled` —— 那是**账号级**开关，一个接入方停用一个版式，
+  //      绑定账号自己和其他接入方从此都排不出这个版式，而两边界面上都只是「这个版式没了」；
+  //   ③ `GET /api/ppt/library/assets` —— 那是 deck 外壳的共享 CSS/配色资料，前端一处都没在调，
+  //      放进来只是多一个对外的面。
+  // `/api/ppt/assets*` 是**故意放行**的（101 之后素材库按租户存）：素材在**一家公司内共用**，
+  // 同一把 pk 下的员工看得到彼此生成的图。挡掉的话嵌入版的挑图抽屉是一片 403，而那意味着
+  // 每次要同一张图都得重新生一次（真钱）。
+  'ppt:embed': [
+    { methods: ['GET'], path: /^\/api\/ppt\/(layouts|styles|design-options|edit-palette)$/ },
+    { methods: ['GET'], path: /^\/api\/ppt\/layouts\/[^/]+$/ },
+    {
+      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      path: /^\/api\/ppt\/decks(\/|$)/,
+    },
+    { methods: ['GET', 'POST', 'DELETE'], path: /^\/api\/ppt\/assets(\/|$)/ },
+  ],
 };
 
 export function scopeGuard(req: Request, res: Response, next: NextFunction): void {

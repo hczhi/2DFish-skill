@@ -20,8 +20,9 @@ import { PLACEHOLDERS } from './pageService.js';
 import { findImageSlots } from './imageService.js';
 import {
   findRegionByPath, maskRegion, unmaskRegion, eidsIn, domTree, CJK_RE, PageEditError,
-  assignMissingEids, maxEidNumber, isVoidTag, hardcodedColors,
+  assignMissingEids, maxEidNumber, isVoidTag,
 } from './pageEdit.js';
+import { checkRegionGuards, classesIn } from './regionGuards.js';
 
 /** 自由改造要吐一整块新结构（可能比原来长几倍），剩下的是留给思维链的空间（硬规则 2）。 */
 const MAX_REMAKE_TOKENS = 9000;
@@ -149,13 +150,6 @@ export async function aiRemakeRegion(input: AiRemakeInput, userId: string): Prom
       `<${region.name}${cls.length ? ` class="${cls.join(' ')}"` : ''}>`;
   }
   return { html, region: region.name, summary, notes, usage: r.usage };
-}
-
-/** 这一页里已经用过的类名（模型只许用这些 + template 里定义过的）。 */
-function classesIn(html: string): string[] {
-  const out: string[] = [];
-  for (const m of html.matchAll(/class="([^"]*)"/g)) out.push(...m[1].trim().split(/\s+/).filter(Boolean));
-  return out;
 }
 
 /** 最外层那个标签上的类名（`class="…"` 出现的第一处就是它 —— 上面已经确认只有一个顶层标签）。 */
@@ -292,47 +286,9 @@ export function validateRemadeRegion(html: string, ctx: RemakeValidateCtx): stri
     notes.push(`有 ${eidLost.length} 段字的编辑标记没了（${eidLost.slice(0, 4).join(' ')}）—— 那几段暂时双击改不动，重新生成这一页会补回来。`);
   }
 
-  // ④ 脚本 / 样式表 / 事件属性 / position:fixed。前两个影响整份 deck 的每一页或在导出的
-  //    文件里真的执行；`fixed` 脱出 1920×1080 那层缩放 —— 预览里位置还差不多，导出之后飞到画面外。
-  if (/<(script|style)[\s>]/i.test(html)) {
-    throw new PageEditError('模型写了 <script> 或 <style>（那玩意儿会影响整份 deck 的每一页，或者在导出的文件里真的执行），这一块没改。');
-  }
-  if (/\son[a-z]+\s*=/i.test(html)) {
-    throw new PageEditError('模型写了 onclick 这类事件属性（会在预览和导出的文件里真的执行），这一块没改。');
-  }
-  if (/position\s*:\s*fixed/i.test(html)) {
-    throw new PageEditError('模型用了 position:fixed —— 它脱出这一页 1920×1080 的缩放，预览里看着还行，导出之后那一块会飞到画面外。这一块没改，改用 absolute。');
-  }
-
-  // ⑤ 类名。编出来的类名不报错，那一块只是回到默认流式布局 —— 看起来像「版式塌了」。
-  //    自由改造要的新样子一律写 inline style（那条路不需要类名）。
-  const unknown = new Set<string>();
-  for (const c of classesIn(html)) if (!ctx.allowedClasses.has(c)) unknown.add(c);
-  if (unknown.size) {
-    throw new PageEditError(
-      `模型编了类名（${[...unknown].slice(0, 5).join(' / ')}）：模板里没有这几条样式，那几块会变成没排版的文字堆在一起。这一块没改 —— 新样式得写成 inline style（要么用这一页里已经有的类名）。`
-    );
-  }
-
-  // ⑥ 颜色。写死的色值换肤那天不跟着变；编出来的变量名会让浏览器把整条声明丢掉。
-  const colors = hardcodedColors(html, ctx.original);
-  if (colors.length) {
-    throw new PageEditError(
-      `模型写死了颜色（${colors.slice(0, 4).join(' / ')}）：换一套配色时这一块不会跟着变，而它读起来完全正常。这一块没改 —— ` +
-        '颜色得用 var(--c-…)（阴影和蒙版那种半透明黑白除外，比如 rgba(0,0,0,.08)）。'
-    );
-  }
-  const badVars = [...html.matchAll(/var\(\s*(--[a-z0-9-]+)/g)]
-    .map((m) => m[1])
-    .filter((v) => !ctx.knownVars.has(v));
-  if (badVars.length) {
-    // 报错里要列出**有哪些**：只说「不存在」的话他只能再点一次让模型再猜一个名字（`--c-text`
-    // 猜完猜 `--c-muted`），而每一次都是一次真实花费。
-    throw new PageEditError(
-      `模型用了不存在的样式变量（${[...new Set(badVars)].slice(0, 4).join(' / ')}）：浏览器会把整条声明丢掉，那一块的颜色/间距直接没有，而页面照样渲染。这一块没改。` +
-        `能用的只有这些：${[...ctx.knownVars].sort().join(' ')}`
-    );
-  }
+  // ④⑤⑥ 脚本 / 样式表 / 事件属性 / position:fixed / 编出来的类名 / 写死的颜色 / 不存在的变量名
+  //      —— 和微调那条路**共用一份**（`regionGuards.ts`，那里写着为什么）。
+  checkRegionGuards(html, ctx);
 
   // ⑦ 图片地址。真图是「生成这一页的图」那一步换进来的，模型只能写占位图（硬规则 3）：
   //    编一个地址出来在屏幕上和「这一格本来是空的」长得一样。

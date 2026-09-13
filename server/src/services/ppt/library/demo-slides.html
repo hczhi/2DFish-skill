@@ -1,5 +1,5 @@
 <!--
-  版式 demo 的 44 个 <section> 片段。每个片段前面必须有一行 `<!-- @demo L<编号> -->`，
+  版式 demo 的 51 个 <section> 片段。每个片段前面必须有一行 `<!-- @demo L<编号> -->`，
   demoDeck.ts 靠它切分（顺序 = 页码顺序）。
 
   三条约束，改这个文件时逐条对：
@@ -882,7 +882,7 @@
           <div class="l30-tail">会后补数请求 7 次 → 1 次</div>
         </div>
       </div>
-      <div class="l30-card dark">
+      <div class="l30-card">
         <div class="l30-pic">
           <img src="/ppt-cases/ph-16x9.svg" alt="">
           <div class="l30-no">03</div>
@@ -1151,7 +1151,7 @@
       <h1 class="page-title">先定<em>版式</em>，再写内容</h1>
       <p class="l40-lead">一份三十页的汇报，真正耗时间的从来不是写字，而是每翻到一页都要重新决定「这一页长什么样」。</p>
       <div class="l40-list">
-        <div><b>01</b><span>44 条版式，每条带一份行数上限和禁用项</span></div>
+        <div><b>01</b><span>51 条版式，每条带一份行数上限和禁用项</span></div>
         <div><b>02</b><span>提纲原文跟着每一页走，数字一个都不丢</span></div>
         <div><b>03</b><span>配图、配色、疏密都是选出来的，不是现场发挥</span></div>
       </div>
@@ -1246,5 +1246,349 @@
         <div class="l44-step"><b>第五步</b><h3>批量出稿</h3><p>一份提纲进来，四十分钟出一份可以直接讲的稿子。</p></div>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- @demo L45 -->
+<section class="slide" data-demo="L45">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">三档投入对照</h1>
+      <div class="lead">按一份 30 页提案的实际用量算，从少到多排。三档的交付物口径一致，差别只在页数、生成图数量和陪改轮次。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：元</span>
+      <span>口径：单份成稿</span>
+    </div>
+    <div class="dt-wrap">
+      <table class="dt-table">
+        <thead>
+          <tr>
+            <th style="width:230px">档位</th>
+            <th>适用场合</th>
+            <th class="num">页数</th>
+            <th class="num">生成图</th>
+            <th class="num">出稿用时</th>
+            <th class="num">费用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>速稿</td>
+            <td>内部过会</td>
+            <td class="num">12</td>
+            <td class="num">3</td>
+            <td class="num">18 分钟</td>
+            <td class="num">240</td>
+          </tr>
+          <tr>
+            <td>标准</td>
+            <td>客户初次汇报</td>
+            <td class="num">24</td>
+            <td class="num">9</td>
+            <td class="num">36 分钟</td>
+            <td class="num">680</td>
+          </tr>
+          <tr>
+            <td>完整提案</td>
+            <td>正式投标</td>
+            <td class="num">36</td>
+            <td class="num">16</td>
+            <td class="num">52 分钟</td>
+            <td class="num">1,150</td>
+          </tr>
+          <tr>
+            <td>加配图版</td>
+            <td>发布会 / 展会</td>
+            <td class="num">36</td>
+            <td class="num">28</td>
+            <td class="num">71 分钟</td>
+            <td class="num">1,640</td>
+          </tr>
+          <tr class="on">
+            <td>四档合计</td>
+            <td>—</td>
+            <td class="num">108</td>
+            <td class="num">56</td>
+            <td class="num">177 分钟</td>
+            <td class="num">3,710</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="dt-src">用时含规划、逐页生成与配图，不含人工改稿；费用按当前接入点的实际 token 用量折算。</div>
+    <div class="rp-foot">同一份提纲，<b>页数翻三倍时用时只涨到 2.9 倍</b> —— 涨的那部分几乎全在配图，不在排版。</div>
+  </div>
+</section>
+
+<!-- @demo L46 -->
+<section class="slide" data-demo="L46">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">方案概述</h1>
+      <div class="lead">按「先能用、再好用」的顺序落地：第一周就能在群里直接用，后面两步都是在同一套鉴权和网关上加东西，不推翻已经在用的部分。</div>
+    </div>
+    <div class="l46-list">
+      <div class="l46-item">
+        <div class="l46-no">01</div>
+        <div>
+          <h3>整体思路<em>OVERVIEW</em></h3>
+          <p>把提纲、版式库、生成、导出四段拆成各自可以单独验证的一步，每一步做完都有一个能打开看的页面，不用等整套跑通。提纲进来先做一次清洗和分页，分页的结果逐页可改；版式从案例库里挑，理由和效果 demo 都摊在界面上，挑得准不准当场就能核。</p>
+        </div>
+      </div>
+      <div class="l46-item">
+        <div class="l46-no">02</div>
+        <div>
+          <h3>核心功能<em>FEATURES</em></h3>
+          <p>四十多条版式各自带着行数上限、图槽位比例和禁用项，生成那一页时只把它那一份说明喂进去；提纲原文按行号在代码里切、逐字跟着每一页走，<b>装不下时只喊不改</b>，不会让模型自己把六行数据压成一句结论。配图、导出 PDF、逐页重做都在同一份稿子上做，改一页不动别的页。</p>
+        </div>
+      </div>
+      <div class="l46-item">
+        <div class="l46-no">03</div>
+        <div>
+          <h3>预期效果<em>OUTCOME</em></h3>
+          <p>一份三十页的提纲，从贴进来到拿到可以直接讲的稿子约四十分钟，其中人工只花在两处：核一遍分页、挑几张图。<b>省下来的不是排版时间，是那个反复出现的决定</b>——这一页该用什么版式、这段字该放多大，现在由案例库替你答。</p>
+        </div>
+      </div>
+    </div>
+    <div class="rp-foot">三步都在同一套鉴权和网关上，<b>任何一步停下来，前面那几步都已经在用了</b>。</div>
+  </div>
+</section>
+
+<!-- @demo L47 -->
+<section class="slide" data-demo="L47">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">时间花在哪儿</h1>
+      <div class="lead">一份 30 页提案从贴进提纲到拿到成稿，各段实测耗时。条的长短由数值本身算出来，不是照着眼睛画的。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：分钟</span>
+      <span>口径：单份 30 页</span>
+    </div>
+    <div class="l47-rows" style="--bar-max:19">
+      <div class="l47-row" style="--bar-v:3">
+        <div class="l47-name">提纲清洗<em>OUTLINE</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">3<i>分钟</i></div>
+      </div>
+      <div class="l47-row" style="--bar-v:5">
+        <div class="l47-name">整份规划<em>PLAN</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">5<i>分钟</i></div>
+      </div>
+      <div class="l47-row on" style="--bar-v:19">
+        <div class="l47-name">逐页生成<em>BUILD</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">19<i>分钟</i></div>
+      </div>
+      <div class="l47-row" style="--bar-v:11">
+        <div class="l47-name">配图<em>IMAGES</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">11<i>分钟</i></div>
+      </div>
+      <div class="l47-row dim" style="--bar-v:2">
+        <div class="l47-name">导出 PDF<em>EXPORT</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">2<i>分钟</i></div>
+      </div>
+    </div>
+    <div class="dt-src">同一条接入点、同一份提纲连跑五次取中位数；人工核分页和挑图的时间不计入。</div>
+    <div class="rp-foot">四十分钟里 <b>一半花在逐页生成</b> —— 想再快只有关掉思维链那一个开关，砍 prompt 没用。</div>
+  </div>
+</section>
+
+<!-- @demo L48 -->
+<section class="slide" data-demo="L48">
+  <div class="l48-band"></div>
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="l48-card">
+    <div class="l48-head">
+      <h1 class="page-title">这份稿子怎么走</h1>
+      <div class="l48-en">CONTENTS · 06 CHAPTERS</div>
+    </div>
+    <div class="l48-rows">
+      <div class="l48-item">
+        <div class="l48-no">01</div>
+        <div>
+          <h3>提纲进来之后</h3>
+          <p>贴一份提纲，先整理掉写给自己的备注，再拆成逐页。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">02</div>
+        <div>
+          <h3>版式是怎么挑的</h3>
+          <p>整份一次挑完，相邻页去重，每页给一句理由。</p>
+        </div>
+      </div>
+      <div class="l48-item on">
+        <div class="l48-no">03</div>
+        <div>
+          <h3>逐页生成</h3>
+          <p>四十分钟里一半花在这一步，也是最值得盯的一步。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">04</div>
+        <div>
+          <h3>配图与替换</h3>
+          <p>占位图先上，挑好的图从素材库里换进去。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">05</div>
+        <div>
+          <h3>逐页改与重做</h3>
+          <p>说一句话改一页，改不动的那一页整页重做。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">06</div>
+        <div>
+          <h3>导出与交付</h3>
+          <p>浏览器直接打印成 PDF，字号和留白和预览一致。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L49 -->
+<section class="slide" data-demo="L49">
+  <div class="l49-wrap"></div>
+  <div class="l49-block"></div>
+  <div class="slide-header"><div class="kicker">结尾</div></div>
+  <div class="l49-txt">
+    <div class="l49-en">NEXT STEPS</div>
+    <div class="l49-rule"></div>
+    <h1 class="page-title">下一版<em>今天就跑</em></h1>
+    <p>提纲贴进来、挑好版式、四十分钟出一版，剩下的时间用来改那三页你最在意的。</p>
+  </div>
+  <div class="l49-card">
+    <h2>接下来三件事</h2>
+    <div class="l49-steps">
+      <div class="l49-step">
+        <div class="l49-no">01</div>
+        <div>
+          <h3>贴一份真提纲进来</h3>
+          <p>手上那份提案的提纲就行，备注不用删。</p>
+        </div>
+      </div>
+      <div class="l49-step">
+        <div class="l49-no">02</div>
+        <div>
+          <h3>只盯规划那一步</h3>
+          <p>每页的「本页内容」对了，后面基本不会跑偏。</p>
+        </div>
+      </div>
+      <div class="l49-step">
+        <div class="l49-no">03</div>
+        <div>
+          <h3>把不满意的整页重做</h3>
+          <p>改不动的那一页别硬改，换个版式重来更快。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="l49-foot">
+    <div><b>CONTACT</b>想象数科 · 演示稿模块</div>
+    <div><b>DATE</b>2026 年 9 月</div>
+  </div>
+</section>
+
+<!-- @demo L50 -->
+<section class="slide" data-demo="L50">
+  <div class="l50-wrap"></div>
+  <div class="l50-block"></div>
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="l50-txt">
+    <h1 class="page-title">这套东西是怎么搭的</h1>
+    <p>三层从上往下看：上面几个模块各自独立可用，中间那层是所有模块共用的，最下面一层不对外。</p>
+  </div>
+  <div class="l50-layers">
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>应用层</h3>
+        <b>APPLICATION</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">演示稿</div>
+        <div class="l50-cell">小红书写作台</div>
+        <div class="l50-cell">标讯画像</div>
+        <div class="l50-cell">飞书助理</div>
+      </div>
+    </div>
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>能力层</h3>
+        <b>CAPABILITY</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">AI 网关</div>
+        <div class="l50-cell">鉴权与配额</div>
+        <div class="l50-cell">Skill 注册表</div>
+        <div class="l50-cell">版式案例库</div>
+      </div>
+    </div>
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>数据层</h3>
+        <b>DATA</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">SQLite 主库</div>
+        <div class="l50-cell">素材与图片</div>
+        <div class="l50-cell">调用日志</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L51 -->
+<section class="slide" data-demo="L51">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">三种用法，怎么选</h1>
+      <div class="lead">三档的差别只在「谁来盯那两处人工」——核一遍分页、挑几张图；生成本身三档是同一套。</div>
+    </div>
+    <div class="l51-trio">
+      <div class="l51-plan">
+        <b>SELF-SERVE</b>
+        <h3>自己跑</h3>
+        <div class="l51-price">40<i>分钟出一版</i></div>
+        <div class="l51-feat">贴提纲、核分页、挑版式，全在界面上</div>
+        <div class="l51-feat">改不动的那一页整页重做</div>
+        <div class="l51-feat">配图从素材库里换，导出直接打印 PDF</div>
+        <div class="l51-feat">用平台的额度，每天有次数上限</div>
+        <div class="l51-note">适合：手上已经有一份提纲</div>
+      </div>
+      <div class="l51-plan">
+        <div class="l51-flag">推荐</div>
+        <b>GUIDED</b>
+        <h3>陪跑一版</h3>
+        <div class="l51-price">1<i>天含两轮改稿</i></div>
+        <div class="l51-feat">第一版由我们跑，逐页过一遍再交给你</div>
+        <div class="l51-feat">按你的品牌色和字体调一套配置</div>
+        <div class="l51-feat">留一份改稿说明，之后你自己接着跑</div>
+        <div class="l51-feat">这一版的图我们挑好，不用你自己找</div>
+        <div class="l51-note">适合：第一次用，且这份稿子要对外讲</div>
+      </div>
+      <div class="l51-plan">
+        <b>EMBEDDED</b>
+        <h3>接进你的系统</h3>
+        <div class="l51-price">1<i>周含对接</i></div>
+        <div class="l51-feat">你的系统里点一下就生成，走中转接口</div>
+        <div class="l51-feat">版式和配色按你们的规范做一套</div>
+        <div class="l51-feat">用量走你们自己的 key，不占平台额度</div>
+        <div class="l51-feat">接口和错误码照 OpenAI 那一套</div>
+        <div class="l51-note">适合：每周都要出好几份</div>
+      </div>
+    </div>
+    <div class="rp-foot">三档用的是同一套版式库和同一条网关，换档不用重做已经生成的稿子。</div>
   </div>
 </section>

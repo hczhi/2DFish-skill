@@ -35,7 +35,7 @@ onMounted(async () => {
     return
   }
 
-  markEmbedMode(host)
+  markEmbedMode('consult', host)
   startEmbedHeightReporter()
 
   const token = await requestEmbedToken()

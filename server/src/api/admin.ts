@@ -199,7 +199,7 @@ adminRouter.get('/ai-usage', (req: Request, res: Response) => {
 
 // --- System Config ---
 
-const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
+const ALLOWED_CONFIG_KEYS = ['platform_api_key', 'platform_api_base_url', 'platform_model', 'web_search_api_key', 'cos_secret_id', 'cos_secret_key', 'cos_bucket', 'cos_region', 'cos_ppt_bucket', 'cos_ppt_region', 'cos_ppt_base', 'cos_ppt_cdn_base', 'cos_ppt_secret_id', 'cos_ppt_secret_key', 'tender_scoring_weights', 'tender_scoring_prompt', 'tender_extract_prompt', 'tender_pre_filter_threshold'];
 
 /**
  * 需要加密存储 + 脱敏回显的 key，显式列出。

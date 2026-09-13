@@ -81,6 +81,29 @@ export function invalidOrigins(origins: string[]): string[] {
   });
 }
 
+/** 存得进去但永远匹配不上的白名单条目要**拒**，不能存（见 {@link invalidOrigins}）。
+ *  话术里带上那几条原文：不带的话「哪一条不对」得靠猜（最常见的是漏了 https://）。
+ *  **一份**：consult 和 ppt 各写一遍的话，同一个错误在两个后台页上说法不一样，
+ *  而管理员会以为是两个模块的规则不同。 */
+export function originFormatError(bad: string[]): string {
+  return (
+    `这几条不是合法的域名，存进去只会稳定 403（要 https://example.com 这种形式：带 http/https、不带路径）：${bad.join('、')}。` +
+    '一行一个，或者用逗号/空格分隔。'
+  );
+}
+
+/**
+ * 上限字段的取值（每日 AI 次数 / 项目数 / 稿子数）。**0 是合法值**（等于把这把 key 冻住），
+ * 所以不能写 `Number(x) || 缺省` —— 那样管理员填 0 会被悄悄改回缺省值，他以为已经冻住了
+ * 而第三方那边照样在调。不是 >= 0 的整数就返回 null（由调用方回 400），别兜成缺省值。
+ */
+export function limitOr(raw: unknown, fallback: number): number | null {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return n;
+}
+
 // ---- 每分钟换取 token 的限流（内存计数，按 pk）----
 const exchangeCounts = new Map<string, { count: number; windowStart: number }>();
 

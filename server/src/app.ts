@@ -20,6 +20,7 @@ import { skillsRouter } from './api/skills.js';
 import { consultantRouter } from './api/consultant.js';
 import { consultRouter } from './api/consult.js';
 import { consultFrameAncestors } from './services/consult/sdkLimits.js';
+import { pptFrameAncestors } from './services/ppt/sdkLimits.js';
 import { settingsRouter } from './api/settings.js';
 import { tokensRouter } from './api/tokens.js';
 import { quotaRouter } from './api/quota.js';
@@ -88,11 +89,19 @@ const corsOrigin = (() => {
 })();
 
 // SDK 跨域：第三方域名不在全局 CORS 白名单里，且全局 cors() 会短路 OPTIONS 预检，
-// 所以必须在全局 cors() 之前，专门为 SDK token 换取接口开一个按 pk 白名单校验的口子。
-// 校验哪个 Origin 允许放在 tenderSdk 里做（换取 token 时按 pk 白名单核对）；
-// 这里对预检统一回显 Origin —— 预检不带 pk，真正的准入校验在 POST 时进行，
-// 即使预检放行，Origin 不在某个 pk 白名单里的 POST 仍会被 403 拒绝。
-app.use('/api/tender/sdk/token', (req, res, next) => {
+// 所以必须在全局 cors() 之前，专门为 SDK token 换取接口开一个口子。
+// 真正的准入（这个 Origin 在不在这把 pk 的白名单里）在各模块的 POST 里做 ——
+// 预检不带 pk，所以这里对预检统一回显 Origin；预检放行不等于换得到 token。
+//
+// **三个模块共用这一个中间件**：各写一遍的话，新模块最容易漏的就是这一段（业务代码里
+// `applySdkCors` 全都写了，看起来是通的），而漏掉的后果是浏览器在**预检**那一步就
+// 拦掉请求 —— 接入方页面上一块白、我们这边一条日志都没有（预检压根没进到路由），
+// 换 token 的 POST 从来没发出去过。
+//
+// 只有换 token 这一下是跨域的 —— 之后工作台跑在我们自己的 iframe 里，它发的请求是同源的。
+// 反过来说这一下**必须**由第三方页面自己发：让 iframe 里的页面去换的话，Origin 是我们
+// 自己的域名，那道白名单对每个 pk 都成立。
+const sdkTokenCors: express.RequestHandler = (req, res, next) => {
   const origin = req.headers.origin;
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -106,26 +115,10 @@ app.use('/api/tender/sdk/token', (req, res, next) => {
     return;
   }
   next();
-});
-
-// 品牌咨询 iframe 嵌入（084）：只有换 token 这一下是跨域的 —— 之后工作台跑在我们自己的
-// iframe 里，它发的请求是同源的，不需要 CORS。反过来说这一下**必须**由第三方页面自己发：
-// 让 iframe 里的页面去换的话，Origin 是我们自己的域名，那道白名单对每个 pk 都成立。
-app.use('/api/consult/sdk/token', (req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    res.setHeader('Access-Control-Max-Age', '600');
-  }
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
-  next();
-});
+};
+app.use('/api/tender/sdk/token', sdkTokenCors);   // 034
+app.use('/api/consult/sdk/token', sdkTokenCors);  // 084
+app.use('/api/ppt/sdk/token', sdkTokenCors);      // 100
 
 // SDK 数据接口（带 scope 短 token 的只读 GET）同样需要跨域放行。
 // 注意：浏览器发的预检 OPTIONS 不带 Authorization 头，所以不能靠 Bearer 判断，
@@ -173,17 +166,30 @@ app.use((req, res, next) => {
   //    整个 frame，第三方页面上是一块白，而我们这边每个接口都返回 200。多域名只有
   //    CSP 的 frame-ancestors 做得到。
   // ② 名单为空（没有任何启用的 key）时**照旧 DENY**：这不是「顺便开着」的能力。
-  const embeddable = req.path === '/consult' || req.path.startsWith('/consult/');
-  const ancestors = embeddable ? consultFrameAncestors() : [];
+  //
+  // 展示稿（100）走同一套，但**两份名单各算各的**（不取并集）：只接了咨询的伙伴不该顺带能把
+  // 展示稿工作台套进自己页面，而合并之后两边后台看起来都只是各自配的那几个域名。
+  const consultEmbeddable = req.path === '/consult' || req.path.startsWith('/consult/');
+  const pptEmbeddable = req.path === '/ppt' || req.path.startsWith('/ppt/');
+  const ancestors = consultEmbeddable
+    ? consultFrameAncestors()
+    : pptEmbeddable
+      ? pptFrameAncestors()
+      : [];
   // /ppt 版式案例库把版式 demo 套在**同源** iframe 里（每张卡一个缩略图 + 抽屉里一张大图）。
   // 上面那句 DENY 连同源 iframe 一起拦，而现象是卡片位置一块白 + 控制台一行 CSP/XFO 警告，
-  // 接口自己是 200 —— 读起来像 demo 没生成出来。所以这一条路径单独放行，且只放行 self。
+  // 接口自己是 200 —— 读起来像 demo 没生成出来。所以这一条路径单独放行。
+  // 嵌入模式下这张卡是**套两层**的（伙伴页面 → 我们的 /ppt → demo.html），而 frame-ancestors
+  // 要求**每一层祖先**都在名单里，所以这里得把伙伴域名也带上 —— 只写 'self' 的话第三方页面里
+  // 版式那一格是一块白，而我们自己打开一切正常。
   const selfFrame = req.path === '/api/ppt/demo-deck.html';
   if (ancestors.length) {
     res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors ${ancestors.join(' ')}`);
   } else if (selfFrame) {
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-    res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors 'self'`);
+    const hosts = ["'self'", ...pptFrameAncestors()];
+    // 有伙伴域名时不能再发 X-Frame-Options（它只有 DENY/SAMEORIGIN，会把跨域那层拦死）。
+    if (hosts.length === 1) res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Content-Security-Policy', `${BASE_CSP}; frame-ancestors ${hosts.join(' ')}`);
   } else {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Content-Security-Policy', BASE_CSP);

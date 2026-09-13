@@ -72,12 +72,31 @@
           页面
           <em v-if="pages.length">{{ builtCount }} / {{ pages.length }}</em>
         </div>
+        <!-- 分屏条（一屏 15 个缩略图）。**必须写出这一屏是第几页到第几页** —— 只画几个
+             屏号的话「后面那些页呢」看不出来，而这一栏原来是整份稿子唯一的页清单。
+             屏号上那个红点是「这一屏里有页出错了」：不标的话第 27 页那句错误在第 1 屏上
+             完全看不见，他只会看到批量结束时一句「失败 1 页」然后找不到是哪一页。 -->
+        <div v-if="railCount > 1" class="rail-pager">
+          <button class="rp-arrow" :disabled="railIndex === 0" title="上一屏" @click="railIndex--">‹</button>
+          <button
+            v-for="(w, i) in railWindows"
+            :key="i"
+            class="rp-num"
+            :class="{ on: i === railIndex, bad: w.bad }"
+            :title="`第 ${w.from}–${w.to} 页${w.bad ? '（这一屏里有页出错）' : ''}`"
+            @click="railIndex = i"
+          >{{ i + 1 }}</button>
+          <button class="rp-arrow" :disabled="railIndex >= railCount - 1" title="下一屏" @click="railIndex++">›</button>
+          <em>第 {{ railWindows[railIndex]?.from }}–{{ railWindows[railIndex]?.to }} 页</em>
+        </div>
         <div class="rail-list">
           <!-- 缩略图：生成过的放那一页真的预览（服务端拼的 previewHtml），没生成的放这个版式的
                效果 demo 并盖一层「未生成」—— 不盖的话 demo 看起来就像这一页已经排好了，
-               他会直接去拼整份，而拼整份会 400 说缺页。 -->
+               他会直接去拼整份，而拼整份会 400 说缺页。
+               **只挂这一屏的那 15 个**（`railSlice`）：每个缩略图都是一份完整的 75KB 预览文档，
+               全挂的话低配机器上的表现是「点了没反应」（实测见下面 RAIL_SIZE 那段注释）。 -->
           <button
-            v-for="p in pages"
+            v-for="p in railSlice"
             :key="p.page"
             class="slide-item"
             :class="{ on: view === 'page' && current === p.page, blank: !built[p.page] }"
@@ -86,16 +105,22 @@
             <span class="si-no">{{ p.page }}</span>
             <span class="si-thumb">
               <iframe v-if="built[p.page]" :srcdoc="built[p.page].previewHtml" scrolling="no" :title="`第 ${p.page} 页`"></iframe>
-              <iframe v-else :src="p.demoUrl" loading="lazy" scrolling="no" :title="`${p.layoutId} 效果 demo`"></iframe>
+              <!-- 空白页没有 demo（`demoUrl` 是空串）。**不能让它落到下面那个 iframe 上**：
+                   `src=""` 会把工作台这一页自己再套一层加载进来，缩略图里是一整个界面。 -->
+              <iframe v-else-if="p.demoUrl" :src="p.demoUrl" loading="lazy" scrolling="no" :title="`${p.layoutId} 效果 demo`"></iframe>
               <em v-if="busy[p.page]" class="si-ghost">生成中…</em>
-              <em v-else-if="!built[p.page]" class="si-ghost">未生成</em>
+              <!-- 空白页插进来那一刻就有内容了，所以走到这里 = 库里那一行没写上（少见但会发生）。
+                   照旧说「未生成」的话他会去点生成，而那条路对空白页是拒绝的 —— 两句话对不上。 -->
+              <em v-else-if="!built[p.page]" class="si-ghost">{{ isBlank(p) ? '内容没了' : '未生成' }}</em>
             </span>
             <span class="si-text">
               <b>{{ p.title || '(这一页没标题)' }}</b>
               <span class="si-tags">
                 <!-- 换过版式的显示**换成的那条**（还写规划那条的话，缩略图上这一页的版式
                      和真的用的那条不一样，两边都是一页正常的幻灯片，看不出来）。 -->
-                <i class="tag" :class="{ warn: setupLayout[p.page] }">{{ setupLayout[p.page] || p.layoutId }}</i>
+                <!-- 空白页写「空白页」而不是 `BLANK`：那个词只有我们看得懂，而它出现在
+                     一排 L 编号中间时读起来像某条版式的名字。 -->
+                <i class="tag" :class="{ warn: setupLayout[p.page] }">{{ setupLayout[p.page] || (isBlank(p) ? '空白页' : p.layoutId) }}</i>
                 <i v-if="setupNotes[p.page]" class="tag" :title="setupNotes[p.page]">要求</i>
                 <i v-if="built[p.page] && slotCount(p.page)" class="tag" :class="filledCount(p.page) >= slotCount(p.page) ? 'ok' : 'warn'">
                   图 {{ filledCount(p.page) }}/{{ slotCount(p.page) }}
@@ -132,7 +157,7 @@
           <b v-else>这份稿子还没有规划</b>
           <p v-if="running">一次真实 AI 调用，通常 10–40 秒。它只挑版式、不生成 HTML。</p>
           <p v-else>
-            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 44 个版式</router-link>里给每页挑一个。
+            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 51 个版式</router-link>里给每页挑一个。
           </p>
           <button v-if="!running" class="btn-primary" @click="showSettings = true">去写提纲</button>
         </div>
@@ -176,8 +201,11 @@
               <span class="kicker" v-if="cur.section">{{ cur.section }}</span>
               <h2>P{{ cur.page }} · {{ cur.title }}</h2>
               <div class="stage-tags">
-                <a :href="cur.demoUrl" target="_blank">{{ cur.layoutId }} {{ cur.layoutName }} ↗</a>
-                <span>{{ cur.layoutTitle }}</span>
+                <!-- 空白页没有 demo 可看（`demoUrl` 空串）。留着那个 <a> 的话点下去是当前页面
+                     本身，看起来像「这个链接坏了」。 -->
+                <span v-if="isBlank(cur)" class="tag">空白页 · 你自己排（不走 AI 生成）</span>
+                <a v-else :href="cur.demoUrl" target="_blank">{{ cur.layoutId }} {{ cur.layoutName }} ↗</a>
+                <span v-if="!isBlank(cur)">{{ cur.layoutTitle }}</span>
                 <span v-if="cur.fullbleed" class="tag">全幅</span>
                 <span v-if="cur.images" class="tag">规划要 {{ cur.images }} 张图</span>
                 <span v-if="setupLayout[cur.page]" class="tag warn">已换成 {{ setupLayout[cur.page] }}</span>
@@ -185,7 +213,28 @@
               </div>
             </div>
             <div class="stage-acts">
-              <button class="btn-ghost" :disabled="busy[cur.page] || batchRunning || imgBusy[cur.page]" @click="openSetup(cur)">
+              <!-- 空白页上的唯一入口：加一个文字框（不调 AI、不花额度）。放在这一行最前面 ——
+                   空画布上什么都没有，没有这个按钮的话「往上加东西」这件事在界面上一处也
+                   看不出来（他只会看到一块白，以为这一页坏了）。 -->
+              <button
+                v-if="isBlank(cur) && built[cur.page]"
+                class="btn-ghost"
+                :disabled="editBusy || structBusy || batchRunning"
+                @click="saveCanvas('add-text')"
+              >{{ editBusy ? '处理中…' : '＋ 一个文字框' }}</button>
+              <!-- 往画布上放一张图：走的是已有那个素材库抽屉（挑一张不花钱，抽屉里也能传本地图）。
+                   没有这个入口的话「画布上能放图」这件事一处也看不出来，他只会去插一页普通版式页
+                   再让 AI 生一张（那是一次真花钱的调用，出来的还不是他手上那张）。 -->
+              <button
+                v-if="isBlank(cur) && built[cur.page]"
+                class="btn-ghost"
+                :disabled="editBusy || structBusy || batchRunning"
+                @click="openPicker(cur.page, 0, true)"
+              >＋ 一张图（素材库/本地）</button>
+              <!-- 空白页没有「生成」这一步（⑥）：留着这个按钮的话他点下去是一句拒绝，
+                   而按钮上写着「重新生成」—— 看起来像这一页出了故障。服务端那一道照旧拦着
+                   （另一个标签页/直接调接口）。 -->
+              <button v-if="!isBlank(cur)" class="btn-ghost" :disabled="busy[cur.page] || batchRunning || imgBusy[cur.page]" @click="openSetup(cur)">
                 {{ busy[cur.page] ? '生成中…' : built[cur.page] ? '重新生成…' : '生成这一页…' }}
               </button>
               <button
@@ -217,6 +266,15 @@
                 :disabled="structBusy || batchRunning || busy[cur.page] || imgBusy[cur.page]"
                 @click="openInsert(cur.page)"
               >{{ structBusy ? '处理中…' : '在这后面插一页…' }}</button>
+              <!-- 插一页空白页（不调 AI、不花额度，插进来就是「已生成」的一张空画布）。
+                   和上面那个分成两个按钮、不做成框里的一个勾选框：那两条路收的东西不一样
+                   （空白页不要要点、不挑版式），一个勾选框漏勾就是插进来一页要 AI 生成的页，
+                   而它在界面上和空白页一样都是「新插的一页」。 -->
+              <button
+                class="btn-ghost"
+                :disabled="structBusy || batchRunning || busy[cur.page] || imgBusy[cur.page]"
+                @click="openInsert(cur.page, true)"
+              >{{ structBusy ? '处理中…' : '插一页空白页…' }}</button>
             </div>
           </div>
 
@@ -274,6 +332,16 @@
             <template v-if="editErr[cur.page]">{{ editErr[cur.page] }}</template>
             <template v-else-if="editBusy">正在存这段文字…</template>
             <template v-else-if="editNote">{{ editNote }}</template>
+            <!-- 空白页要单独说一句，而且**必须排在 `canEditText` 前面**：一页还没加东西的空画布
+                 html 里一个 `data-eid` 都没有，跟着走到下面那句的话界面会说「这一页是加就地改文字
+                 之前生成的，重新生成一次就可以」—— 那是一句彻底的谎（空白页压根没有生成这一步，
+                 他会去找那个按钮，而它是藏着的）。 -->
+            <template v-else-if="isBlank(cur)">
+              <b>这是一页空白画布：点上面「＋ 一个文字框」加字、「＋ 一张图」放图</b>（都不调 AI、不花额度）——
+              加完拖着挪位置、拉右下角那个蓝方块改大小、双击改字，单击选中之后浮动条上能改颜色/字号/粗细，🗑 删掉这一块。
+              <span v-if="canEditText">改完立刻存，Esc 取消。</span>
+              <span v-if="paletteErr" class="bad">{{ paletteErr }}</span>
+            </template>
             <template v-else-if="canEditText">
               <b>单击选中一句字改颜色/字号/粗细/对齐，双击直接改文字；点字之间的空处（或「⤢ 选大一点」）选中一整块</b>
               （都不调 AI、不花额度）—— 改完立刻存，Esc 取消。<span v-if="paletteErr" class="bad">{{ paletteErr }}</span>
@@ -371,6 +439,19 @@
                 <ul v-if="cur.points.length" class="points">
                   <li v-for="(pt, i) in cur.points" :key="i">{{ pt }}</li>
                 </ul>
+
+                <!-- 本页内容（= 生成这一页时真正进 prompt 的那一段提纲原文）。
+                     不显示的话「这一页为什么少了那组数据」在界面上无处可查：上面那几条要点
+                     是模型写的摘要，成稿里少掉的东西在要点里本来也看不见。要改就点「生成」
+                     那个对话框（那里才存得下去）—— 这里只读，写在下面那句话里。 -->
+                <div class="ins-h mt">本页内容</div>
+                <p v-if="cur.coverNote" class="banner warn pre">{{ cur.coverNote }}</p>
+                <pre v-if="cur.outlineText?.trim()" class="page-outline">{{ cur.outlineText.trim() }}</pre>
+                <p v-else class="muted-note">
+                  这一页<b>没有对应的提纲原文</b>（规划没给行号，或者是老规划）——
+                  生成时只有上面那几条要点，提纲里的数字、机构名、条款不会出现在页面上。
+                  重新规划一次才会有；也可以在「生成」那个对话框里自己粘一段进去。
+                </p>
               </div>
 
               <div class="ins-col">
@@ -515,10 +596,19 @@
           {{ running ? '进来就自动规划了一次（一次真实调用）——不用再点。' : '这份规划是刚进来时自动跑的；往后每次进来直接用它，不会再花调用。' }}
         </p>
 
-        <label class="field">
+        <!-- 已经规划过之后提纲折成一行（他的提纲动辄八千字，摊开时下面的品牌/画风/设计规范
+             全被推到屏幕外，而那几项才是他这时要动的）。**只在「规划过、且提纲没超字数」时折** ——
+             超字数折起来的话「规划按钮点不动」就没有任何解释（那个 em 是唯一说出「8043 / 12000」
+             的地方），他只会以为按钮坏了。内容本身改到每页详情的「本页内容」里看。 -->
+        <div v-if="outlineFolded" class="outline-fold">
+          <span>提纲 {{ outline.length }} 字 · 已按它规划成 {{ pages.length }} 页</span>
+          <button class="btn-ghost sm" @click="outlineOpen = true">查看 / 修改</button>
+        </div>
+        <label v-else class="field">
           <span class="label">
             提纲
             <em :class="{ over: outline.length > MAX_OUTLINE }">{{ outline.length }} / {{ MAX_OUTLINE }}</em>
+            <button v-if="pages.length" class="btn-ghost sm fold" @click="outlineOpen = false">收起</button>
           </span>
           <textarea
             v-model="outline"
@@ -540,6 +630,35 @@
 四、下一步"
           ></textarea>
         </label>
+
+        <!-- 先整理、再分页。提纲里的备注/待办留着的话，规划那一步会把它们当成内容认领进
+             某一页（每一行都会被某一页认领、逐字进生成 prompt），于是模型认认真真把
+             「这里要补一张图」排成一条要点 —— 那一页看起来完全正常。
+             整理**只删行、不改字**（服务端只让模型给行号，删的动作在代码里），
+             删掉的每一行都列在下面让他核：删错一行时整理后的提纲读起来完全通顺。 -->
+        <div v-if="!outlineFolded" class="clean-row">
+          <button
+            class="btn-ghost sm" :disabled="cleanBusy || running || !outline.trim()"
+            @click="cleanOutlineNow"
+          >{{ cleanBusy ? '整理中…' : '先整理提纲（去掉备注 / 待办）' }}</button>
+          <button
+            v-if="cleanUndo !== null" class="btn-ghost sm" :disabled="cleanBusy" @click="undoClean"
+          >撤销整理</button>
+          <span class="dr-note">一次真实调用。只删行、不改字，删掉的每一行都会列出来。</span>
+        </div>
+        <p v-if="cleanErr" class="banner bad">{{ cleanErr }}</p>
+        <p v-if="cleanNote" class="banner">{{ cleanNote }}</p>
+        <div v-if="cleanRemoved.length" class="banner warn">
+          <b>删掉了这 {{ cleanRemoved.length }} 行 —— 原文只留在这个页面里，现在核一遍：</b>
+          <ul>
+            <li v-for="r in cleanRemoved" :key="r.line">
+              第 {{ r.line }} 行：「{{ r.text }}」<em class="why">{{ r.why }}</em>
+            </li>
+          </ul>
+        </div>
+        <!-- 这几条是「带数字的行被删了」「删掉的字数占了三成」那种话，逐行带原文，
+             所以要保住换行（挤成一段的话那几行原文读不出来，他就不会去核）。 -->
+        <p v-for="p in cleanProblems" :key="p" class="banner bad pre">{{ p }}</p>
 
         <div class="row-fields">
           <label class="field small">
@@ -634,14 +753,13 @@
           </span>
         </div>
 
-        <!-- problems 是「结果能用但有话要说」。规划这一步的失败形态全是一份看起来完整的
-             规划：编出来的版式名、被截断只规划了一半、连续五页同版式 —— 不显示没人发现。 -->
-        <div v-if="problems.length" class="problems">
-          <div class="problems-title">这次规划有 {{ problems.length }} 处要注意</div>
-          <ul><li v-for="(x, i) in problems" :key="i">{{ x }}</li></ul>
-        </div>
+        <!-- 规划那份 problems 清单（原来的「这次规划有 N 处要注意」）**故意不显示了**：
+             十几二十条一次涌出来时他一条都不看，而里面真正要紧的只有一件事 —— 提纲里有几段
+             没被任何一页认领（= 他的内容没进成稿）。那件事改成在分页那一步就不许发生
+             （硬校验，见服务端），不再靠这里一条没人读的提示。服务端照旧返回 problems
+             （落在 `plan_json` 里、也进日志），去掉的只是这块界面。 -->
         <p v-if="usage" class="muted">本次规划 token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }}</p>
-        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 44 个版式 demo ↗</a>
+        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 51 个版式 demo ↗</a>
       </aside>
     </div>
 
@@ -897,7 +1015,8 @@
     <div v-if="insertAfter !== null" class="drawer-mask" @click.self="insertAfter = null">
       <div class="picker" style="width: min(620px, 92vw);">
         <div class="dr-head">
-          <b>{{ insertAfter === 0 ? '插到最前面（成为第 1 页）' : `在第 ${insertAfter} 页后面插一页（成为第 ${insertAfter + 1} 页）` }}</b>
+          <b>{{ insBlank ? (insertAfter === 0 ? '在最前面插一页空白页（成为第 1 页）' : `在第 ${insertAfter} 页后面插一页空白页（成为第 ${insertAfter + 1} 页）`)
+            : insertAfter === 0 ? '插到最前面（成为第 1 页）' : `在第 ${insertAfter} 页后面插一页（成为第 ${insertAfter + 1} 页）` }}</b>
           <button class="btn-ghost sm" @click="insertAfter = null">取消</button>
         </div>
         <label class="field">
@@ -905,9 +1024,12 @@
             这一页的标题
             <em :class="{ over: insTitle.length > MAX_PAGE_TITLE }">{{ insTitle.length }}/{{ MAX_PAGE_TITLE }}</em>
           </span>
-          <input v-model="insTitle" type="text" :maxlength="MAX_PAGE_TITLE" placeholder="这一页的标题" />
+          <!-- 空白页的标题**只在左边那一栏里显示**（画面上是空的）。这句话必须写出来：
+               不写的话他会以为标题会印在页面上，摆完发现没有，只能重新想是哪里没生效。 -->
+          <input v-model="insTitle" type="text" :maxlength="MAX_PAGE_TITLE"
+            :placeholder="insBlank ? '只用来在左边那一栏里认出这一页（画面上不显示）' : '这一页的标题'" />
         </label>
-        <label class="field">
+        <label v-if="!insBlank" class="field">
           <span class="label">
             这一页的要点（一行一条，最多 {{ MAX_POINTS }} 条）
             <em :class="{ over: insPointLines.length > MAX_POINTS }">{{ insPointLines.length }}/{{ MAX_POINTS }} 条</em>
@@ -915,7 +1037,12 @@
           <textarea v-model="insPoints" rows="5" placeholder="一行一条，模型按这几条排版和写文案"></textarea>
         </label>
         <p v-if="insIssue" class="banner bad">{{ insIssue }}</p>
-        <p class="muted">
+        <p v-if="insBlank" class="muted">
+          插进来的是一页<b>空白画布</b>（不花额度、也不走 AI 生成）：后面几页的页码整体往后挪一位，
+          它们已经生成的画面、备好的图、写过的要求都跟着自己那一页走。
+          <b>这一页一开始是真的空的</b> —— 在整份里翻到它和「这一页渲染塌了」分不开，记得往上加东西。
+        </p>
+        <p v-else class="muted">
           插进来的是一页<b>还没生成的空页</b>（不花额度）：后面几页的页码整体往后挪一位，它们已经生成的画面、
           备好的图、写过的要求都跟着自己那一页走。版式先跟着前一页 ——
           <b>插完会直接打开「生成前确认」，在那里挑一条（和前一页一样的话连着两页会很单调）</b>。
@@ -962,13 +1089,24 @@
              看起来像卡在这个窗口里出不去了。 -->
         <div class="pick-top">
           <div class="dr-head">
-            <b>给第 {{ pickFor.page }} 页第 {{ pickFor.index }} 格挑一张（挑图不花额度）</b>
+            <b v-if="pickFor.canvas">往第 {{ pickFor.page }} 页的画布上放一张图（挑图不花额度）</b>
+            <b v-else>给第 {{ pickFor.page }} 页第 {{ pickFor.index }} 格挑一张（挑图不花额度）</b>
             <div class="head-btns">
               <!-- 筛在某一组上时给一个明确的「回全部」：只靠 tab 的话 tab 条横向滚过去之后
                    「全部」那一个会滚出可视区，而计数行还在说「见上面的『全部』」。 -->
               <button
                 v-if="assetDeck" class="btn-ghost sm" :disabled="assetsBusy" @click="pickTab('')"
               >← 回全部（{{ assetAllCount }} 张）</button>
+              <!-- 上传本地图片。素材库原来只进 AI 生成的图，手上一张现成的产品照/截图
+                   没有任何入口 —— 唯一的出路是去点「AI 生成」画一张「像那样」的，
+                   那是一次真花钱的调用，而且出来的不是他要的那张。 -->
+              <label class="btn-ghost sm up-btn" :class="{ off: uploadBusy }">
+                {{ uploadBusy ? '上传中…' : '＋ 上传本地图片' }}
+                <input
+                  type="file" accept="image/png,image/jpeg,image/gif,image/webp"
+                  :disabled="uploadBusy" @change="uploadLocalImage"
+                />
+              </label>
               <button class="btn-ghost sm" @click="pickFor = null">关掉</button>
             </div>
           </div>
@@ -992,6 +1130,10 @@
           </div>
         </div>
 
+        <!-- 上传的结果留在抽屉里（不自动贴进图槽）：贴进去会立刻关掉抽屉，而「这张图只存在
+             本机磁盘上」那句话就跟着消失了 —— 那种图换台机器就打不开，而页面上只是裂图。 -->
+        <p v-if="uploadErr" class="banner bad">{{ uploadErr }}</p>
+        <p v-if="uploadNote" class="banner">{{ uploadNote }}</p>
         <p v-if="assetsErr" class="banner bad">{{ assetsErr }}</p>
         <p v-else-if="assetsBusy" class="muted">读取中…</p>
         <p v-else-if="!assets.length && assetDeck" class="muted">
@@ -1008,7 +1150,10 @@
           挑完会告诉你差在哪（贴进去会被裁 / 笔触不统一）。
         </p>
         <div class="pick-grid">
-          <button v-for="a in assets" :key="a.id" class="pick-cell" :title="a.prompt" @click="pickAsset(a.id)">
+          <button
+            v-for="a in assets" :key="a.id" class="pick-cell" :class="{ fresh: a.id === justUploaded }"
+            :title="a.prompt" @click="pickAsset(a.id)"
+          >
             <img :src="a.url" :alt="a.prompt" />
             <span class="pick-meta">{{ a.ratio || '?' }} · {{ a.style_id || '?' }}</span>
           </button>
@@ -1021,7 +1166,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { apiGet, apiPost, apiPatch, apiDelete } from '../../lib/api'
+import { api, apiGet, apiPost, apiPatch, apiDelete } from '../../lib/api'
 
 interface PlannedImage { subject: string; mode: string; ratio: string }
 interface PlannedPage {
@@ -1034,25 +1179,50 @@ interface PlannedPage {
   /** 这一页的提纲原文（代码按行号切的那几行，逐字进 prompt）。老 deck 没有这个字段 ——
    *  那种页只按上面几条要点生成，所以对话框里要说出来。 */
   outlineText?: string
+  /** 这一页的原文里有几行是**代码补进来**的（规划时没有任何一页认领它们）。老 deck 没有。 */
+  coverNote?: string
   layoutName: string; layoutTitle: string; fullbleed: boolean; demoUrl: string
 }
 
 /** 和服务端 planService.MAX_OUTLINE_CHARS 一致（超了服务端明确拒绝，不截断）。 */
 const MAX_OUTLINE = 12000
 
+/**
+ * 花钱那几条路的错误文案。额度用光时服务端回的是平台那个形状
+ * （`{error:'quota_exceeded'}`，见 server 的 `sendPptError`）：弹窗由 `lib/api.ts` 统一弹，
+ * 但抛上来的 `e.message` 就是 `quota_exceeded` 这个英文记号本身。**不换成人话的话**
+ * 那一栏显示的是一行 `quota_exceeded` —— 看起来像程序出错，而他真正要做的是等明天或找管理员。
+ * 每条路的 `quotaNote` 各写一句：要紧的是「这次到底改没改、花没花」，六条路答案不同。
+ */
+function errText(e: any, fallback: string, quotaNote: string): string {
+  const msg = e?.message || fallback
+  return msg === 'quota_exceeded' ? quotaNote : msg
+}
+
 const outline = ref('')
+/**
+ * 提纲框展开着没有（规划过之后默认折起来）。
+ *
+ * 折的判据里那两条 `!` 是承重的：**没规划过一律展开**（那时提纲框是他唯一要填的东西，
+ * 折起来的话这个抽屉里只剩品牌名和画风，看起来像功能没做完），**超字数也一律展开**
+ * —— 折起来之后「规划按钮点不动」就没有任何解释，而那个 `8043 / 12000` 是唯一说出成因的地方。
+ */
+const outlineOpen = ref(false)
 const running = ref(false)
 const error = ref('')
 const pages = ref<PlannedPage[]>([])
 /**
- * 页序版本号（098）。库里的页数/页序每变一次它就 +1，**按页码写库的那几条请求都要带上它**
- * （生成 / 备图 / 配图 / 重排图位）：不带的话服务端 400，带错了 409。
+ * 页序版本号（098）。库里的页数/页序每变一次它就 +1，**按页码写库的每一条请求都要带上它**
+ * （生成 / 备图 / 配图 / 重排图位，以及就地编辑那七条：改字 / 改样式 / 改整块对齐 / 删这一块 /
+ * ai-edit / ai-remake / 蒙版）：不带的话服务端 400，带错了 409。
  *
- * 为什么不能省：那几条都要等上游几十秒，这期间页序变过的话结果会落在**现在的**那个页码上 ——
+ * 为什么不能省：花钱那几条都要等上游几十秒，这期间页序变过的话结果会落在**现在的**那个页码上 ——
  * 出来是一页完整的幻灯片，只是照着别的一页的提纲排的，而这是一次真实花费。
+ * **不花钱的那几条同样要带**：他在另一个标签页里插了/删了一页之后，这边第 12 页已经是另一份
+ * 内容，改下去接口 200、这一栏写着「已存」，而改的是隔壁那一页（`eids` 交叉核对救不了 ——
+ * eid 是每页从 `t1` 重编的，连着两页同版式时它是空对空）。
  */
 const planRev = ref(0)
-const problems = ref<string[]>([])
 const usage = ref<{ prompt_tokens: number; completion_tokens: number; total_tokens: number } | null>(null)
 
 interface BuiltPage { html: string; previewHtml: string; problems: string[] }
@@ -1143,6 +1313,70 @@ async function saveMeta(): Promise<boolean> {
   } finally {
     savingMeta.value = false
   }
+}
+
+/**
+ * 先整理提纲、再分页（`POST /clean-outline`）。
+ *
+ * 服务端**不写回库**，只把整理后的文本回给这里 —— 于是「撤销整理」才做得到（原文还在
+ * `cleanUndo` 里，库里也还是原文，直到失焦或规划时 `saveMeta()` 把新的存进去）。
+ * 三件事必须出声：删掉的每一行原文（删错一行时整理后的提纲读起来完全通顺）、
+ * 服务端给的每一条 `problems`、以及**「一行都没删」**（不说的话按钮点下去什么都不变，
+ * 看起来像这次调用失败了，而额度已经扣掉了）。
+ */
+const cleanBusy = ref(false)
+const cleanErr = ref('')
+const cleanNote = ref('')
+const cleanProblems = ref<string[]>([])
+const cleanRemoved = ref<{ line: number; text: string; why: string }[]>([])
+/** 整理前那份提纲原文；null = 这次打开还没整理过（撤销按钮也就不出现）。 */
+const cleanUndo = ref<string | null>(null)
+
+async function cleanOutlineNow() {
+  // 和 run() 同一个理由：服务端整理的是**库里那一份**提纲。不先存的话它整理的是上一版，
+  // 而回来的那份「干净提纲」会盖掉他刚敲的那几段 —— 两边都不报错。
+  if (!(await saveMeta())) {
+    cleanErr.value = '提纲没存上，这次没整理（整理用的是库里那一份）—— 上面那行写了没存上的原因。'
+    return
+  }
+  cleanBusy.value = true
+  cleanErr.value = ''
+  cleanNote.value = ''
+  cleanProblems.value = []
+  cleanRemoved.value = []
+  try {
+    const data = await apiPost<{
+      cleaned: string
+      removed: { line: number; text: string; why: string }[]
+      problems: string[]
+      changed: boolean
+      chars: { before: number; after: number }
+    }>(`/api/ppt/decks/${deckId.value}/clean-outline`, {})
+    cleanProblems.value = data.problems || []
+    if (!data.changed) {
+      cleanNote.value = '模型没找到要删的行 —— 这份提纲里没有备注/待办之类的东西，直接规划就行（这次调用的额度已经用掉了）。'
+      return
+    }
+    cleanRemoved.value = data.removed || []
+    cleanUndo.value = outline.value
+    outline.value = data.cleaned
+    cleanNote.value =
+      `整理完了：${data.chars.before} 字 → ${data.chars.after} 字。这只是页面上的改动，失焦或点规划时才存进库 ——` +
+      '删错了就点「撤销整理」，那时候库里还是原文。'
+  } catch (e: any) {
+    cleanErr.value = `整理失败：${e?.message || '请求失败'} —— 你的提纲一个字都没动，可以直接规划。`
+  } finally {
+    cleanBusy.value = false
+  }
+}
+
+function undoClean() {
+  if (cleanUndo.value === null) return
+  outline.value = cleanUndo.value
+  cleanUndo.value = null
+  cleanRemoved.value = []
+  cleanProblems.value = []
+  cleanNote.value = '已经退回整理前那份提纲（还没失焦过的话库里本来就是它）。'
 }
 
 /**
@@ -1268,7 +1502,10 @@ interface AssetGroup { deckId: string; title: string; deckGone: boolean; count: 
  *  那个 tab 点下去回的是全部素材 —— 而 tab 是选中的，看起来像这一组有三百张。 */
 const ASSET_NO_DECK = '__none__'
 
-const pickFor = ref<{ page: number; index: number } | null>(null)
+/** 挑图这个抽屉现在是给谁挑的：图槽（`index` ≥ 1）还是空白页的画布（`canvas`）。
+ *  **两条路必须分开**：画布那条压根没有「格号」，共用一条的话抽屉标题会写「第 0 格」，
+ *  而挑完那张图会走备图那条路 —— 接口说「已备好」，画布上什么都没多出来。 */
+const pickFor = ref<{ page: number; index: number; canvas?: boolean } | null>(null)
 const assets = ref<AssetItem[]>([])
 const assetsTotal = ref(0)
 const assetsErr = ref('')
@@ -1304,8 +1541,13 @@ async function loadAssets() {
   }
 }
 
-async function openPicker(page: number, index: number) {
-  pickFor.value = { page, index }
+async function openPicker(page: number, index: number, canvas = false) {
+  pickFor.value = { page, index, canvas }
+  // 上一次的上传提示必须清掉：那句话里写着页码和格号（「点它贴进第 3 页第 1 格」），
+  // 留着的话它在另一格上照旧读起来完全正常，而他会照那句话把图贴到别的地方。
+  uploadErr.value = ''
+  uploadNote.value = ''
+  justUploaded.value = ''
   // 默认落在本稿那一组：要重用的多半是同一个项目里的图，全库几百张时翻不到。
   assetDeck.value = deckId.value
   await loadAssets()
@@ -1324,10 +1566,82 @@ function pickTab(id: string) {
   loadAssets()
 }
 
+// ── 上传本地图片进素材库 ────────────────────────────
+const uploadBusy = ref(false)
+const uploadErr = ref('')
+const uploadNote = ref('')
+/** 刚上传成功的那一张（网格里高亮它）。列表按时间倒序、它就在最前面，但一屏一百多张时
+ *  「最前面那张」并不比其余的显眼 —— 找不到的话他会以为没传上去，再传一遍。 */
+const justUploaded = ref('')
+const MAX_UPLOAD_MB = 10
+
+/**
+ * 传一张本地图片。**上传完不自动贴进图槽**：贴进去会立刻关掉抽屉，而服务端那句
+ * 「这张图只落在本机磁盘上」就跟着消失了 —— 那种图换台机器/多实例就打不开，
+ * 而页面上只是一张裂图。所以这里只上传 + 高亮，贴不贴由他点。
+ */
+async function uploadLocalImage(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  // 同一个文件连传两次也要能触发 change（不清的话第二次一点反应都没有）。
+  input.value = ''
+  if (!file) return
+  uploadErr.value = ''
+  uploadNote.value = ''
+  justUploaded.value = ''
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    uploadErr.value =
+      `这张图 ${(file.size / 1024 / 1024).toFixed(1)}MB，超过 ${MAX_UPLOAD_MB}MB，没有上传。` +
+      `先压一下再传（截图另存成 JPG 通常能小一个量级）。`
+    return
+  }
+  uploadBusy.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    // 记归属到当前这份稿子：不记的话它落进「没记归属」那一组，而挑图默认落在本稿这一组上
+    // —— 刚传的图在那里看不到，读起来就是「上传没成功」。
+    fd.append('deckId', deckId.value)
+    // 不走 apiPost（它会 JSON.stringify）；api() 认得 FormData，让浏览器自己写 boundary。
+    const res = await api('/api/ppt/assets/upload', { method: 'POST', body: fd })
+    if (!res.ok) {
+      // 413 是**反代**拦下来的（请求压根没到 Node，所以没有我们那句带上限数字的 JSON，
+      // 落下去就是一句「HTTP 413」，读起来像接口挂了）。
+      if (res.status === 413) {
+        throw new Error(
+          `这张图 ${(file.size / 1024 / 1024).toFixed(1)}MB，被服务器前面的反向代理挡下了（HTTP 413），` +
+          `请求没有到达后端。压小再传，或让运维加大 Nginx 的 client_max_body_size。`
+        )
+      }
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as any).error || `HTTP ${res.status}`)
+    }
+    const data: { asset: AssetItem; ratio: string; pixels: string; note: string } = await res.json()
+    justUploaded.value = data.asset.id
+    const at = pickFor.value
+    uploadNote.value =
+      `已上传 ${file.name}（${data.pixels}，按 ${data.ratio} 记进素材库）` +
+      (at ? (at.canvas
+        ? `—— 点下面高亮那张就放到第 ${at.page} 页的画布上。`
+        : `—— 点下面高亮那张就贴进第 ${at.page} 页第 ${at.index} 格。`) : '') +
+      (data.note ? ` ${data.note}` : '')
+    // 切到本稿那一组再刷新：停在别的 tab 上的话刚传的图不在网格里，看起来像没传上去。
+    assetDeck.value = deckId.value
+    await loadAssets()
+  } catch (e: any) {
+    uploadErr.value = `上传失败：${e?.message || '请求失败'}`
+  }
+  uploadBusy.value = false
+}
+
 function pickAsset(assetId: string) {
   const at = pickFor.value
   pickFor.value = null
-  if (at) prepare(at.page, at.index, 'library', assetId)
+  if (!at) return
+  // 空白页画布那条走 canvas 接口。走错的话备图那条会回一句「已备好第 0 格」（那一格不存在），
+  // 而画布上什么都没多出来。
+  if (at.canvas) saveCanvas('add-image', { assetId })
+  else prepare(at.page, at.index, 'library', assetId)
 }
 
 /**
@@ -1384,8 +1698,7 @@ async function prepare(
       invalidateDeck()
     }
   } catch (e: any) {
-    const msg = e.message || '备图失败'
-    prepErr.value[page] = msg === 'quota_exceeded' ? '今天的 AI 额度用完了，这一格没备上。' : msg
+    prepErr.value[page] = errText(e, '备图失败', '今天的 AI 额度用完了，这一格没备上。')
   }
   prepBusy.value[key] = false
 }
@@ -1424,8 +1737,7 @@ async function replanImages() {
     setupNotes.value[data.page] = draftNotes.value
     prepNote.value[data.page] = data.problems || []
   } catch (e: any) {
-    const msg = e?.message || '重排图位失败'
-    prepErr.value[p.page] = msg === 'quota_exceeded' ? '今天的 AI 额度用完了，图位没重排（清单还是原来那份）。' : msg
+    prepErr.value[p.page] = errText(e, '重排图位失败', '今天的 AI 额度用完了，图位没重排（清单还是原来那份）。')
   }
   replanBusy.value = false
 }
@@ -1450,7 +1762,54 @@ const canRun = computed(() =>
 )
 const usedLayouts = computed(() => new Set(pages.value.map(p => p.layoutId)).size)
 const builtCount = computed(() => pages.value.filter(p => built.value[p.page]).length)
+
+// 空白页只认 `layoutId`（和后端 `isBlankPage` 同一个判据，大小写归一后再比）。
+// 不能改判「有没有 demoUrl」：普通页在旧的 plan_json 里也可能没有那个字段，
+// 那时候整份都被当成空白页 —— 生成按钮集体消失，而界面上只是「怎么点不了了」。
+function isBlank(p?: { layoutId?: string } | null): boolean {
+  return String(p?.layoutId || '').trim().toUpperCase() === 'BLANK'
+}
 const pendingCount = computed(() => pages.value.length - builtCount.value)
+
+// ── 左边那条缩略图分屏 ────────────────────────────
+//
+// 一屏挂 15 个，不是全挂。每个缩略图是一个 `srcdoc` iframe，而 srcdoc 是**一份完整的
+// 预览文档**（`assemblePreview` 套的是整份 template.html，实测 75KB/页）—— 浏览器要为每个
+// 缩略图建一个 document、解析一遍那份 CSS、跑一遍它自己的 `fit()`。
+//
+// 实测（`server/scripts/bench-ppt.mts`，Chromium 限速 4 倍 ≈ 一台低配笔记本；
+// load 总时长每次跑有波动，主线程阻塞那一列是稳定的）：
+//   15 个 → 全部 load ~2 秒，主线程被长任务堵住 0.7 秒（最长一个 440ms），JS 堆 12.7MB
+//   41 个 → ~7 秒，堵 2.5 秒，堆 33MB，浏览器里 86 个 document
+//   60 个 → ~7 秒，堵 3.0 秒（最长一个 650ms），堆 47MB，124 个 document
+// 单个长任务到 650ms 就是他说的「点了没反应」（那段时间里点击排在队列里不动），而屏幕上
+// 只是缩略图在陆续出现，没有一处会说是这一栏在占着主线程。
+// `loading="lazy"` 救不了：那只对有 `src` 的 iframe 生效，生成过的页走的是 srcdoc。
+//
+// 这里只挡**渲染**：`built / pending / veil / pageErr` 那十几个按页码索引的 map 照旧是全份的，
+// 批量生成、拼整份、导出都不看这个窗口 —— 把它们也切窗口的话会变成「只生成看得见的那 15 页」，
+// 而拼出来的整份翻起来完全正常，只是少了后面 26 页的内容。
+const RAIL_SIZE = 15
+const railIndex = ref(0)
+const railCount = computed(() => Math.max(1, Math.ceil(pages.value.length / RAIL_SIZE)))
+const railWindows = computed(() =>
+  Array.from({ length: railCount.value }, (_, i) => {
+    const slice = pages.value.slice(i * RAIL_SIZE, i * RAIL_SIZE + RAIL_SIZE)
+    return {
+      from: slice[0]?.page ?? 0,
+      to: slice[slice.length - 1]?.page ?? 0,
+      // 出错的页在别的屏上时要在屏号上标出来（见模板里那段注释）。
+      bad: slice.some(p => pageErr.value[p.page] || imgErr.value[p.page] || prepErr.value[p.page]),
+    }
+  })
+)
+const railSlice = computed(() => pages.value.slice(railIndex.value * RAIL_SIZE, railIndex.value * RAIL_SIZE + RAIL_SIZE))
+
+/** 第 N 页在第几屏（页码不一定从 1 连续数 —— 按位置找，别拿页码除）。 */
+function railOf(page: number): number {
+  const i = pages.value.findIndex(p => p.page === page)
+  return i < 0 ? railIndex.value : Math.floor(i / RAIL_SIZE)
+}
 
 // ── 工作台（左缩略图菜单 + 右当前页）────────────────────────────
 /** 右边这块在放什么：某一页，还是拼好的整份。 */
@@ -1557,6 +1916,10 @@ const MAX_PAGE_OUTLINE = 4000
 
 const draftPointLines = computed(() =>
   draftPoints.value.split('\n').map(s => s.trim()).filter(Boolean)
+)
+
+const outlineFolded = computed(
+  () => !outlineOpen.value && pages.value.length > 0 && outline.value.length <= MAX_OUTLINE
 )
 
 /**
@@ -1745,9 +2108,26 @@ const curIssues = computed(() => {
     (built.value[n]?.problems.length || 0) +
     (imgInfo.value[n]?.problems.length || 0) +
     (prepNote.value[n]?.length || 0) +
+    // 代码往这一页补进来的提纲段（规划时没人认领它）：并进来的位置不一定对，
+    // 而收起详情之后这一页读起来完全正常 —— 不算进这个数字的话他永远不会点开去核。
+    (p.coverNote ? 1 : 0) +
     // 还是占位图的那几格：预览里它就是「这一版设计得比较空」
     (built.value[n] ? Math.max(0, slotCount(n) - filledCount(n)) : 0)
 })
+// 左边那条缩略图窗口要跟着**当前页**和**批量生成正在跑的那一页**走。不跟的话：右边在改
+// 第 27 页而左边挂着第 1–15 页那一屏（他会以为这一页从列表里消失了），批量生成跑到窗口外
+// 之后左边十几个缩略图一动不动 —— 而顶栏那句「生成中… 第 27 页」照常在走，看起来像卡死。
+watch([current, batchAt], ([p, at]) => {
+  const page = batchRunning.value && at ? at : p
+  if (page) railIndex.value = railOf(page)
+})
+// 页数变了（重新规划 / 删页 / 插页）要夹回去：删掉最后几页时窗口下标会落在范围外，
+// 而那时左边是**空的一栏** —— 和「这份稿子没有页」长得一模一样。
+watch(() => pages.value.length, () => {
+  if (railIndex.value > railCount.value - 1) railIndex.value = railCount.value - 1
+  if (railIndex.value < 0) railIndex.value = 0
+})
+
 // 只在**同一页**的问题数变多时弹开：翻页也弹的话他每按一次方向键都要再收一次。
 let issueMark = { page: 0, n: 0 }
 watch([current, curIssues], ([p, n]) => {
@@ -1835,6 +2215,17 @@ const EDITOR_JS = `
      他只能靠点下去之后那句读数去猜。 */
   [data-hov]{outline:1px dotted rgba(74,144,217,.75);outline-offset:2px}
   [data-region]{outline:2px solid #f0a020!important;outline-offset:3px;background:rgba(240,160,32,.07)}
+  /* 空白页画布上的块：整块可拖，右下角那个蓝方块是缩放手柄。**手柄画在块里面**
+     （::after，不是块外面）：画外面的话它会伸进旁边那一块的地盘，按下去按到的是那一块 ——
+     他以为自己在缩放这一块，动的是另一块。悬停/选中才显形，否则导出前的预览上一堆蓝点，
+     看起来像页面上真有这些方块。 */
+  .bl-el{cursor:move}
+  .bl-el::after{content:'';position:absolute;right:0;bottom:0;width:36px;height:36px;
+    background:#4a90d9;border:3px solid #fff;border-radius:6px;opacity:0;cursor:nwse-resize}
+  .bl-el:hover::after,.bl-el[data-sel]::after{opacity:.95}
+  /* 拖的时候别让浏览器顺手选中文字：不挡的话整块蓝底一片，看起来像出错了（而且松手时
+     那次 selection 会把 contentEditable 的插入点带走）。 */
+  body.bl-drag,body.bl-drag *{user-select:none!important}
 </style>
 <script>
 (function(){
@@ -2039,6 +2430,17 @@ const EDITOR_JS = `
     // 删掉这一整块。**也要排在下面那条「容器不能改样式」之前**（同 ralign）：排后面的话
     // 选中一整块时点 🗑 会被那条挡掉，现象是这个键点了没反应。
     if(act === 'del'){
+      // 空白页画布上的块走另一条路（服务端的 canvas 接口）。**必须排在下面那两条拒绝之前**：
+      // applyDelete 一是「这一块里有图就拒」（画布上摆的图从此删不掉），二是「删完一个
+      // data-eid 都不剩就拒」，而它给出的理由是「重新生成一次这一页才能改文字」——
+      // 对着一页空白画布那句话完全指错方向（空白页压根没有生成这一步）。
+      var cel = selEl.closest ? selEl.closest('.bl-el') : null
+      if(cel && cel.getAttribute('data-bel')){
+        post({type:'ppt-canvas-del', bel: cel.getAttribute('data-bel'),
+          texts: (cel.textContent || '').replace(/\\s+/g,' ').trim().slice(0,40),
+          imgs: cel.querySelectorAll('img').length})
+        return
+      }
       var i2 = info(selEl)
       var nimg = i2.imgs + (selEl.tagName === 'IMG' ? 1 : 0)
       // 三种都要出声：静默 return 的话和「按钮坏了」在屏幕上一模一样。
@@ -2086,6 +2488,74 @@ const EDITOR_JS = `
       return
     }
   }
+
+  // ── 空白页画布：拖着挪位置 / 拉右下角改大小 ──────────────────
+  /**
+   * #stage 是被 scale() 缩过的那一层，鼠标位移**必须除掉那个倍数**再写进坐标：不除的话
+   * 窗口小一点时拖 100px 会写进去 250px —— 那一块窜到鼠标前面老远，看起来像「拖动很飘」，
+   * 而每一次都存得好好的。
+   */
+  function stageScale(){
+    var st = document.getElementById('stage')
+    var r = st && st.getBoundingClientRect()
+    return (r && r.width) ? r.width / 1920 : 1
+  }
+  /** 手柄边长（和 CSS 里那个 36px 是同一个数：两处漂开的话，看得见的方块和按得着的范围
+   *  错开一圈 —— 他按在方块上却拖动了整块，或者按在空处却开始缩放）。 */
+  var HANDLE = 36
+  /** 这一块现在的坐标。**先读 inline style**（服务端写的就是它），拿不到才退回 offset*：
+   *  offsetWidth 是**取整之后**的渲染值，拿它当起点的话每拖一次都会掉 0.x px，拖十次
+   *  这一块自己缩小了一圈，而每一次都「已存」。 */
+  function pxOf(el, k, dflt){ var v = parseFloat(el.style[k]); return isFinite(v) ? v : dflt }
+  document.addEventListener('mousedown', function(e){
+    if(e.button !== 0) return
+    if(bar && e.target && bar.contains(e.target)) return
+    var el = e.target && e.target.closest ? e.target.closest('.bl-el') : null
+    if(!el || el.isContentEditable) return
+    var bel = el.getAttribute('data-bel')
+    // 没有 data-bel = 这一块不是从画布接口加进来的（手工改过 html）。静默拖的话画面上它跟着
+    // 鼠标走，松手一句「已存」，而库里没有这一块 —— 刷新之后它回到原位。
+    if(!bel){ post({type:'ppt-canvas-nobel'}); return }
+    var s = stageScale()
+    var r = el.getBoundingClientRect()
+    var resize = e.clientX >= r.right - HANDLE * s && e.clientY >= r.bottom - HANDLE * s
+    var x0 = e.clientX, y0 = e.clientY, moved = false
+    var b0 = {
+      left: pxOf(el,'left', el.offsetLeft), top: pxOf(el,'top', el.offsetTop),
+      width: pxOf(el,'width', el.offsetWidth), height: pxOf(el,'height', el.offsetHeight),
+    }
+    // 骨架在 window 上挂着「点画面一下翻下一页」，而浏览器默认会把这次拖动当成选文字/拖图。
+    // 两个都要挡：不挡的话拖一下同时翻页，或者拖出来一张半透明的图片影子。
+    e.preventDefault(); e.stopPropagation()
+    document.body.classList.add('bl-drag')
+    function onMove(ev){
+      if(!moved && Math.abs(ev.clientX-x0) + Math.abs(ev.clientY-y0) <= 3) return
+      moved = true
+      var dx = (ev.clientX - x0) / s, dy = (ev.clientY - y0) / s
+      if(resize){
+        // 这里也夹一次下限（服务端夹的是权威的那一份）：不夹的话拖过头会出现负宽度，
+        // 那一块当场消失，而松手之后服务端把它夹回 40px —— 中间那一下看起来像「删掉了」。
+        el.style.width = Math.max(40, Math.round(b0.width + dx)) + 'px'
+        el.style.height = Math.max(40, Math.round(b0.height + dy)) + 'px'
+      }else{
+        el.style.left = Math.round(b0.left + dx) + 'px'
+        el.style.top = Math.round(b0.top + dy) + 'px'
+      }
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove, true)
+      document.removeEventListener('mouseup', onUp, true)
+      document.body.classList.remove('bl-drag')
+      // 没挪动 = 他只是点了一下：什么都不发（选中交给 click 那个处理器）。发的话每次单击
+      // 选中都会走一趟接口，而 html 一个字都没变。
+      if(!moved) return
+      post({type:'ppt-canvas-box', bel: bel,
+        left: pxOf(el,'left',0), top: pxOf(el,'top',0),
+        width: pxOf(el,'width',0), height: pxOf(el,'height',0)})
+    }
+    document.addEventListener('mousemove', onMove, true)
+    document.addEventListener('mouseup', onUp, true)
+  }, true)
 
   // 捕获阶段接，且**接住的那些点击不再往上传**：骨架自己在 window 上挂着「点画面一下翻下一页」，
   // 不挡的话选一块字这个动作同时会翻页（单页预览里是「点了没反应」，整份里是跳走）。
@@ -2319,6 +2789,27 @@ function onFrameMsg(e: MessageEvent) {
     )
     return
   }
+  // 空白页画布：拖完/拉完一块（松手才发这一次），和删掉画布上的一块。
+  if (d.type === 'ppt-canvas-box') {
+    saveCanvas('box', {
+      bel: String(d.bel || ''),
+      left: Number(d.left) || 0, top: Number(d.top) || 0,
+      width: Number(d.width) || 0, height: Number(d.height) || 0,
+    })
+    return
+  }
+  if (d.type === 'ppt-canvas-del') {
+    const bel = String(d.bel || '')
+    const what = d.texts ? `「${String(d.texts)}」` : d.imgs ? '这张图' : '这一块'
+    // 撤销还没做：删错了这一块就得重新摆一遍（画布上没有「重新生成」这条退路）。
+    if (!bel || !window.confirm(`删掉${what}？\n\n撤销还没做 —— 删了只能自己重新加一个摆回去。`)) return
+    saveCanvas('delete', { bel })
+    return
+  }
+  if (d.type === 'ppt-canvas-nobel') {
+    editNote.value = '这一块不是从「＋ 一个文字框」加进来的（没有画布编号），拖不动也删不了 —— 拖了的话画面上它跟着鼠标走，而库里没有这一块，刷新之后就回到原位了。'
+    return
+  }
   if (d.type === 'ppt-style') saveStyle(String(d.eid || ''), d.style || {}, !!d.noRoom)
   if (d.type === 'ppt-edit') saveText(String(d.eid || ''), String(d.oldText ?? ''), String(d.newText ?? ''))
 }
@@ -2337,7 +2828,7 @@ async function saveText(eid: string, oldText: string, newText: string) {
   try {
     const data = await apiPost<{ html: string; previewHtml: string; text: string }>(
       `/api/ppt/decks/${deckId.value}/edit-text`,
-      { page, eid, oldText, newText }
+      { page, eid, oldText, newText, planRev: planRev.value }
     )
     // 用服务端回的那一版覆盖（画面上于是显示的是库里真的那份，不是他浏览器里改出来的样子）。
     const b = built.value[page]
@@ -2367,7 +2858,7 @@ async function saveStyle(eid: string, style: Record<string, unknown>, noRoom = f
   try {
     const data = await apiPost<{ html: string; previewHtml: string; style: Record<string, unknown> }>(
       `/api/ppt/decks/${deckId.value}/edit-style`,
-      { page, eid, style }
+      { page, eid, style, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
@@ -2391,6 +2882,51 @@ async function saveStyle(eid: string, style: Record<string, unknown>, noRoom = f
 }
 
 /**
+ * 空白页画布上的摆放（加文字框 / 拖动缩放 / 删一块，都不调 AI、不花额度）。和 `saveText`
+ * 同一套成败处理：**存不上就把画面退回库里那一版并说出来** —— 留着他刚拖出来的位置的话，
+ * 屏幕上一切正常而导出的还是旧的那一版。
+ *
+ * 加完之后把新那一块**选回来**（`selEid`）：不选的话加进来的框在一堆块里认不出是哪个新的，
+ * 他会以为「点了加没反应」，再点几次 —— 于是画布上叠着好几个一样的框。
+ */
+async function saveCanvas(op: 'add-text' | 'add-image' | 'box' | 'delete', body: Record<string, unknown> = {}) {
+  const p = cur.value
+  if (!p) return
+  const page = p.page
+  editBusy.value = true
+  editErr.value[page] = ''
+  editNote.value = ''
+  try {
+    const data = await apiPost<{
+      html: string; previewHtml: string; eid?: string; bel?: string; ratio?: string
+      box?: { left: number; top: number; width: number; height: number }
+    }>(`/api/ppt/decks/${deckId.value}/canvas`, { page, op, ...body, planRev: planRev.value })
+    const b = built.value[page]
+    if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
+    if (op === 'add-text' && data.eid) { selEid = data.eid; selPath = null }
+    // 删掉的那一块要把选中清掉：留着的话浮动条吸在一块空气上，再点一下换回一句「找不到这一块」。
+    if (op === 'delete') { selEid = ''; selPath = null; aiSel.value = null }
+    const box = data.box
+    editNote.value = op === 'add-text'
+      ? '加了一个文字框（已经选中它了）—— 双击改字，按住拖着挪位置，拉右下角那个蓝方块改大小。'
+      // 比例要说出来：这一张是按它自己的比例摆的，拉成别的比例会被裁掉两边（图本身没变，
+      // 只是构图缺一块）—— 不说的话他会以为「这张图本来就是这么构图的」。
+      : op === 'add-image'
+        ? `放上去一张图（${data.ratio || '?'}，${box?.width}×${box?.height}）—— 拖着挪位置，拉右下角改大小；改成别的比例会裁掉两边，按住比例拉就不会。`
+      : op === 'delete'
+        ? '已删掉这一块（撤销还没做）。'
+        // 坐标要报出来：服务端会把摆到画布外面的块夹回画布里，报数是他唯一能看出「刚才那一下
+        // 被夹回来了」的地方（画布是 1920×1080）。
+        : `已存这一块的位置：左 ${box?.left} / 上 ${box?.top}，${box?.width}×${box?.height}（画布 1920×1080）。`
+    invalidateDeck()
+  } catch (e: any) {
+    editErr.value[page] = `这一块没摆上：${e?.message || '请求失败'}（画面已经回到库里那一版）`
+    previewKey.value++
+  }
+  editBusy.value = false
+}
+
+/**
  * 存这一整块的对齐（`align-items`，不调 AI）。**eid 那一串要一起发过去**：容器没有 eid，
  * 只能按下标路径定位 —— 服务端拿这一串交叉核对，对不上就 400。不核的话浏览器和库里差一层时，
  * 对齐写到了隔壁那一块上：页面照样渲染、接口 200，只是他点的那一块没动、另一块动了。
@@ -2405,7 +2941,7 @@ async function saveRegionStyle(path: number[], eids: string[], style: Record<str
   try {
     const data = await apiPost<{ html: string; previewHtml: string; style: Record<string, unknown>; region: string; prev: Record<string, string> }>(
       `/api/ppt/decks/${deckId.value}/edit-region-style`,
-      { page, path, eids, style }
+      { page, path, eids, style, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
@@ -2454,7 +2990,7 @@ async function deleteNode(path: number[], eids: string[], label: string, texts: 
   try {
     const data = await apiPost<{ html: string; previewHtml: string; removed: { name: string; cls: string; eids: string[]; text: string } }>(
       `/api/ppt/decks/${deckId.value}/delete-node`,
-      { page, path, eids }
+      { page, path, eids, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
@@ -2497,7 +3033,7 @@ async function aiEdit() {
   try {
     const data = await apiPost<{ html: string; previewHtml: string; summary: string }>(
       `/api/ppt/decks/${deckId.value}/ai-edit`,
-      { page, path: sel.path, eids: sel.eids, instruction: wish }
+      { page, path: sel.path, eids: sel.eids, instruction: wish, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
@@ -2509,7 +3045,7 @@ async function aiEdit() {
     aiSel.value = null
     aiWish.value = ''
   } catch (e: any) {
-    aiErr.value = e?.message || '这一块没改上'
+    aiErr.value = errText(e, '这一块没改上', '今天的 AI 额度用完了，这一块没改（画面还是原来那版）。')
     previewKey.value++
   }
   aiBusy.value = false
@@ -2540,7 +3076,7 @@ async function aiRemake() {
       images?: FilledImage[]; plan?: { images: number; imageSpecs: PlannedImage[] }
     }>(
       `/api/ppt/decks/${deckId.value}/ai-remake`,
-      { page, path: sel.path, eids: sel.eids, instruction: wish }
+      { page, path: sel.path, eids: sel.eids, instruction: wish, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
@@ -2566,7 +3102,7 @@ async function aiRemake() {
     aiSel.value = null
     aiWish.value = ''
   } catch (e: any) {
-    aiErr.value = e?.message || '这一块没改上'
+    aiErr.value = errText(e, '这一块没改上', '今天的 AI 额度用完了，这一块没改（画面还是原来那版）。')
     previewKey.value++
   }
   aiBusy.value = false
@@ -2641,9 +3177,8 @@ async function build(
   } catch (e: any) {
     // 失败要说在那一页上（顶上一条全局错误看不出是哪一页），而且上一版留着 ——
     // 清掉的话「重新生成失败」和「还没生成过」在界面上是同一个样子。
-    const msg = e.message || '这一页生成失败'
-    pageErr.value[p.page] = msg === 'quota_exceeded' ? '今天的 AI 额度用完了，这一页没生成。' : msg
-    outcome = /quota_exceeded|额度/.test(msg) ? 'quota' : 'fail'
+    pageErr.value[p.page] = errText(e, '这一页生成失败', '今天的 AI 额度用完了，这一页没生成。')
+    outcome = e?.message === 'quota_exceeded' ? 'quota' : 'fail'
   }
   busy.value[p.page] = false
   return outcome
@@ -2781,9 +3316,8 @@ async function fillImages(p: PlannedPage, force = false): Promise<BuildOutcome> 
     if (data.quotaExceeded) outcome = 'quota'
     else if (data.images.some(i => !i.url)) outcome = 'fail'
   } catch (e: any) {
-    const msg = e.message || '生图失败'
-    imgErr.value[p.page] = msg === 'quota_exceeded' ? '今天的 AI 额度用完了。' : msg
-    outcome = /quota_exceeded|额度/.test(msg) ? 'quota' : 'fail'
+    imgErr.value[p.page] = errText(e, '生图失败', '今天的 AI 额度用完了，这一页的图没配上。')
+    outcome = e?.message === 'quota_exceeded' ? 'quota' : 'fail'
   }
   imgBusy.value[p.page] = false
   return outcome
@@ -2896,7 +3430,6 @@ async function loadDeck() {
       try {
         const p = JSON.parse(deck.plan_json)
         pages.value = p.pages || []
-        problems.value = p.problems || []
         usage.value = p.usage || null
       } catch {
         loadErr.value = '这份稿子存着的规划读不出来（plan_json 坏了）。点「重新规划」会重新花一次调用。'
@@ -2910,7 +3443,16 @@ async function loadDeck() {
 }
 
 interface StoredPage {
-  page: number; layoutId: string; html: string; previewHtml: string
+  page: number; layoutId: string; html: string
+  /**
+   * 这一页那一段（贴好蒙版、剥掉页码），要塞进那份共用外壳的 `previewSlot` 里。
+   *
+   * **列表接口只回这一段，不回整份预览**：整份预览是「85KB 的外壳 + 这一页」，逐页回等于把
+   * 同一份外壳抄 N 遍 —— 实测 41 页的稿子响应 3658KB，改完 141KB
+   * （`server/scripts/bench-ppt.mts`）。别的接口（生成 / 配图 / 就地编辑）照旧回整份 previewHtml：
+   * 那是一次一页，抄不出量来。
+   */
+  section: string
   problems: string[]; images: FilledImage[]; imageStyleId: string
   /** 生成 HTML 之前先备好的图（091）。这一页可能只有备图、还没有 html。 */
   pendingImages: PreparedImage[]
@@ -2923,14 +3465,36 @@ interface StoredPage {
 }
 
 /**
- * 读已经生成的那几页（`previewHtml` 是服务端现拼的，同一份 `deckShell`）。
+ * 把服务端那份共用外壳和这一页那一段拼成可以丢进 iframe 的一整份。
+ *
+ * **这里只做一次字符串替换，不算任何东西**：蒙版（那层黑）和页码剥离都在服务端
+ * `previewSection` 里，也就是仍然只有一份实现 —— 这边自己贴一层的话预览和导出的文件会是
+ * 两种深浅，而两边各自都是一页正常的幻灯片（服务端 `deckShell.test.ts` 按「两条路逐字相同」
+ * 对账）。**替换一律用函数形式**：那一段正文里的 `$&` / `$1` 在字符串形式下会被当成引用
+ * 展开，悄悄吃掉几个字符（服务端那份也是为这个用函数形式的）。
+ */
+function previewOf(shell: string, slot: string, section: string): string {
+  return shell.replace(slot, () => section)
+}
+
+/**
+ * 读已经生成的那几页。预览由**服务端回的那份外壳** + 每页那一段拼起来（`previewOf`）——
+ * 蒙版和页码都是服务端算的，这边只做一次字符串替换（见 `previewOf` 上的注释）。
  *
  * 读不进来**必须出声**：静默当成「还没生成」的话，界面上是「生成全部 12 页」，
  * 而那十几次调用其实已经花过 —— 他会照着按钮再花一遍。
  */
 async function loadPages() {
   try {
-    const { pages: rows } = await apiGet<{ pages: StoredPage[] }>(`/api/ppt/decks/${deckId.value}/pages`)
+    const { pages: rows, shell, previewSlot } = await apiGet<{ pages: StoredPage[]; shell: string; previewSlot: string }>(
+      `/api/ppt/decks/${deckId.value}/pages`
+    )
+    // 外壳/插入点缺一样就**不要静默继续**：拼出来是一份没有幻灯片的空外壳，
+    // 每一页的缩略图和画面都是一块白 —— 和「这一页排版塌了」长得一模一样。
+    if (rows.some(r => r.html) && (!shell || !previewSlot || !shell.includes(previewSlot))) {
+      loadErr.value = '这份稿子的预览外壳没拿到（服务端回的 shell/previewSlot 对不上）—— 已经生成的那几页现在显示不出来，别重新生成（那是重新花钱），刷新一下再试。'
+      return
+    }
     for (const r of rows) {
       // 备好图但还没生成 HTML 的那几页也会回来（`html = ''`）。**不能当成「已生成」**：
       // 那样右边是一块白，读起来像这一页排版塌了，而它压根没生成过。
@@ -2942,12 +3506,13 @@ async function loadPages() {
       if (r.veilOpacity) veil.value[r.page] = r.veilOpacity
       if (!r.html) continue
       builtLayout.value[r.page] = r.layoutId
-      built.value[r.page] = { html: r.html, previewHtml: r.previewHtml, problems: r.problems || [] }
+      const previewHtml = previewOf(shell, previewSlot, r.section)
+      built.value[r.page] = { html: r.html, previewHtml, problems: r.problems || [] }
       // 配图结果也存着（哪张成了、用的哪套画风）。只显示「配了几张」的话，
       // 失败的那几格在预览里就是「设计上留白」。
       if (r.images?.length) {
         imgInfo.value[r.page] = {
-          html: r.html, previewHtml: r.previewHtml, images: r.images,
+          html: r.html, previewHtml, images: r.images,
           problems: [], quotaExceeded: false,
           style: r.imageStyleId
             ? { id: r.imageStyleId, name: styleList.value.find(x => x.id === r.imageStyleId)?.name || '' }
@@ -2978,7 +3543,7 @@ async function saveVeil(page: number, next: number) {
   veil.value[page] = next
   try {
     const r = await apiPatch<{ veilOpacity: number; previewHtml: string }>(
-      `/api/ppt/decks/${deckId.value}/pages/${page}/veil`, { opacity: next }
+      `/api/ppt/decks/${deckId.value}/pages/${page}/veil`, { opacity: next, planRev: planRev.value }
     )
     veil.value[page] = r.veilOpacity
     if (r.previewHtml && built.value[page]) {
@@ -3099,6 +3664,9 @@ async function removePage(p: PlannedPage) {
 // ── 插一页（结构改动，098）──────────────────────────
 /** 插在第几页后面（0 = 最前面）。null = 那个框没开。 */
 const insertAfter = ref<number | null>(null)
+/** 这次插的是空白页（⑥）。**和上面那个位置分开存**：合成一个 mode 字符串的话拼错一个字
+ *  就静默走另一条路 —— 插进来的是一页要 AI 生成的页，而它在界面上和空白页一样是「新插的一页」。 */
+const insBlank = ref(false)
 const insTitle = ref('')
 const insPoints = ref('')
 const insPointLines = computed(() =>
@@ -3114,6 +3682,10 @@ const insertedHint = ref<{ page: number; text: string } | null>(null)
 /** 和 `outlineIssue` 同一套判据（服务端 `insertPage` 也会拒）—— 少了这一层他要等一次往返。 */
 const insIssue = computed(() => {
   if (insertAfter.value === null) return ''
+  if (insBlank.value) {
+    // 空白页只校验标题（服务端同样只校验它）：那是左边那一栏里认出这一页的唯一线索。
+    return insTitle.value.trim() ? '' : '标题是空的 —— 左边那一栏里这一页会是一格没有名字的空卡，和「这一页渲染塌了」分不开。'
+  }
   if (!insTitle.value.trim()) return '标题是空的 —— 生成出来会是一页没有标题的幻灯片，看起来像版式本来就这样。'
   const lines = insPointLines.value
   if (!lines.length) return '一条要点都没有 —— 只给标题的话模型会自己编这一页的内容，出来那一页读着通顺但不是你的东西。'
@@ -3123,10 +3695,13 @@ const insIssue = computed(() => {
   return ''
 })
 
-function openInsert(after: number) {
+function openInsert(after: number, blank = false) {
   insertAfter.value = after
   // 每次打开都清空：留着上一次的话他以为这是「已经填好的这一页」，一按插入就多出一页
   // 内容重复的幻灯片（而两页各自都读得通）。
+  // `insBlank` 也要每次重置：上一次插空白页留下的 true 会让下一次「在这后面插一页」
+  // 静默插成空白页 —— 那个框里少了要点那一栏，而他不一定会注意到。
+  insBlank.value = blank
   insTitle.value = ''
   insPoints.value = ''
   structNote.value = ''
@@ -3147,10 +3722,13 @@ async function doInsert() {
   structBusy.value = true
   structNote.value = ''
   structErr.value = false
+  const blank = insBlank.value
   try {
-    const r = await apiPost<{ page: number; shifted: number; layoutId: string; layoutInherited: boolean; planRev: number }>(
+    const r = await apiPost<{ page: number; shifted: number; layoutId: string; layoutInherited: boolean; planRev: number; blank?: boolean }>(
       `/api/ppt/decks/${deckId.value}/insert-page`,
-      { after, title: insTitle.value.trim(), points: insPointLines.value }
+      // 空白页**一条要点都不发**（服务端收到要点会直接拒）：它不进任何 prompt，
+      // 发过去等于让他写一段永远不会出现在页面上的字。
+      { after, title: insTitle.value.trim(), points: blank ? [] : insPointLines.value, ...(blank ? { blank: true } : {}) }
     )
     insertAfter.value = null
     resetPageState()
@@ -3158,15 +3736,25 @@ async function doInsert() {
     invalidateDeck()
     await loadDeck()
     planRev.value = r.planRev
-    structNote.value =
-      `插好了：新的第 ${r.page} 页「${insTitle.value.trim()}」（还没生成）` +
-      (r.shifted ? `，后面 ${r.shifted} 页的页码往后挪了一位` : '') +
-      (r.layoutInherited ? `。版式先跟着前一页（${r.layoutId}）—— 在打开的这个框里挑一条，连着两页同一个版式会很单调。` : '。')
+    // 报的是**服务端说的那件事**（`r.blank`），不是这边点的那个按钮：两处不一样的时候
+    // 库里那份才算数（比如这个版本的服务端还不认 `blank`，那插进来的是一页要生成的页 ——
+    // 照着按钮报「空白页已插好」的话他会一直等着在上面摆东西，而它是「未生成」）。
+    structNote.value = r.blank
+      ? `插好了：新的第 ${r.page} 页「${insTitle.value.trim()}」是一张空画布` +
+        (r.shifted ? `，后面 ${r.shifted} 页的页码往后挪了一位` : '') +
+        '。它不走 AI 生成，也不会被「生成剩下的 N 页」碰到 —— 现在它是真的空的，翻到它和「渲染塌了」分不开。'
+      : `插好了：新的第 ${r.page} 页「${insTitle.value.trim()}」（还没生成）` +
+        (r.shifted ? `，后面 ${r.shifted} 页的页码往后挪了一位` : '') +
+        (r.layoutInherited ? `。版式先跟着前一页（${r.layoutId}）—— 在打开的这个框里挑一条，连着两页同一个版式会很单调。` : '。')
     current.value = r.page
     const fresh = pages.value.find(p => p.page === r.page)
     // 找不到就**不要静默跳过**：那说明重读回来的规划和服务端说的页码对不上（他会以为
     // 版式已经挑好了，而这一页用的是继承来的那条）。
-    if (fresh) {
+    // 空白页**不开那个框**：它压根没有「生成」这一步，开了的话他会在里面按「生成这一页」
+    // （服务端会拦，但那一刻他已经以为空白页也要花一次调用才出得来）。
+    if (r.blank) {
+      view.value = 'page'
+    } else if (fresh) {
       await openSetup(fresh)
       // openSetup 会先清掉，所以这一句必须写在它之后
       if (r.layoutInherited) insertedHint.value = {
@@ -3207,8 +3795,9 @@ async function run() {
     // 重新规划也会让页序版本号 +1（旧页全清了）。**必须跟上**：不跟的话规划完点第一次生成
     // 就是一句 409，而他刚刚才在这里成功规划过（读起来像这个按钮坏了）。
     if (data.planRev !== undefined) planRev.value = data.planRev
-    problems.value = data.problems || []
     usage.value = data.usage || null
+    // 规划成功之后提纲折回去（他刚才可能是展开改了一段才重新规划的）。
+    outlineOpen.value = false
     // 规划完把工作台落回第一页（旧的选中页可能压根不在这份规划里了）。
     view.value = 'page'
     current.value = 0
@@ -3239,7 +3828,7 @@ async function run() {
     exportWarnings.value = []
     exportErr.value = ''
   } catch (e: any) {
-    error.value = e.message || '排版规划失败'
+    error.value = errText(e, '排版规划失败', '今天的 AI 额度用完了，这份提纲没拆页（下面还是上一次的结果）。')
     // 上一次的结果留在页面上：清掉的话失败之后是一片空白，读起来像「这份提纲拆不出页」。
   }
   running.value = false
@@ -3369,6 +3958,13 @@ async function run() {
 .banner.warn { background: rgba(255, 251, 235, 0.1); border-color: rgba(253, 230, 138, 0.35); color: #FDE68A; }
 .banner ul { margin: 6px 0 0; padding-left: 18px; }
 .banner a { color: var(--brand-yellow); }
+/* 服务端那几条警告里逐行带原文，挤成一段的话那几行读不出来，他就不会去核 */
+.banner.pre { white-space: pre-line; }
+.banner .why { color: var(--color-soft); font-style: normal; }
+.banner .why::before { content: '　它说：'; }
+
+/* ── 提纲整理那一行 ── */
+.clean-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ── 主体：左缩略图 + 画面撑满剩下的空间，详情浮在右侧滑进滑出 ── */
 .wb-body {
@@ -3393,6 +3989,29 @@ async function run() {
 }
 .rail-head em { font-style: normal; font-family: var(--font-mono); font-size: 11px; color: var(--color-soft); }
 .rail-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+
+/* 分屏条。屏号上那个红点（.bad）不能只靠颜色深浅——出错的那一屏必须一眼看出来。 */
+.rail-pager {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.rail-pager em {
+  font-style: normal; margin-left: auto;
+  font-family: var(--font-mono); font-size: 11px; color: var(--color-soft);
+}
+.rp-arrow, .rp-num {
+  min-width: 24px; height: 24px; padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 7px;
+  background: transparent; color: var(--color-text);
+  font-size: 12px; font-family: var(--font-mono); cursor: pointer;
+}
+.rp-arrow:disabled { opacity: .3; cursor: default; }
+.rp-num.on { background: rgba(255, 255, 255, 0.16); font-weight: 700; }
+.rp-num.bad { position: relative; }
+.rp-num.bad::after {
+  content: ''; position: absolute; top: -2px; right: -2px;
+  width: 6px; height: 6px; border-radius: 50%; background: #ff5f56;
+}
 
 .slide-item {
   display: flex; align-items: center; gap: 10px; text-align: left;
@@ -3603,6 +4222,14 @@ async function run() {
 .ins-col { min-width: 0; }
 .ins-h { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 15px; font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); margin-bottom: 10px; }
 .ins-h.muted { color: var(--color-soft); font-weight: 400; }
+.ins-h.mt { margin-top: 18px; }
+/* 本页内容：换行照原文（提纲的层级全在换行和缩进里，挤成一段就核不动了） */
+.page-outline {
+  margin: 0; padding: 10px 12px; max-height: 34vh; overflow: auto;
+  background: rgba(0, 0, 0, 0.22); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;
+  font-family: inherit; font-size: 12px; line-height: 1.9; color: var(--color-soft);
+  white-space: pre-wrap; word-break: break-word;
+}
 .why { font-size: 13px; line-height: 1.8; color: var(--text-secondary); margin: 0; }
 .why.missing { color: #FDE68A; }
 .points { margin: 8px 0 0; padding-left: 18px; }
@@ -3722,6 +4349,12 @@ async function run() {
 .pick-cell:hover { background: rgba(255, 255, 255, 0.1); transform: scale(0.98); }
 .pick-cell img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
 .pick-meta { padding: 4px 6px; font-family: var(--font-mono); font-size: 10px; color: var(--color-soft); }
+/* 刚上传的那一张。一屏一百多张时「最前面那张」并不显眼，找不到就等于没传上去。 */
+.pick-cell.fresh { outline: 2px solid var(--brand-yellow); outline-offset: 1px; }
+/* 上传按钮是个 label（里面藏着 file input）—— 按钮上没有 pointer 的话它看起来不能点。 */
+.up-btn { cursor: pointer; }
+.up-btn input { display: none; }
+.up-btn.off { opacity: 0.55; cursor: default; }
 
 .imgs ul { margin: 0; padding-left: 16px; }
 .imgs li { font-family: var(--font-mono); font-size: 11px; line-height: 1.9; color: var(--color-soft); word-break: break-all; }
@@ -3768,6 +4401,13 @@ async function run() {
 .dr-note.bad { color: #FCA5A5; }
 .field { display: block; }
 .field.small { flex: 1; min-width: 150px; }
+/* 折起来的提纲：一行字 + 一个「查看 / 修改」。 */
+.outline-fold {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px;
+  background: rgba(255, 255, 255, .03); font-size: 13px; color: var(--color-soft);
+}
+.label .fold { font-size: 12px; font-weight: 400; padding: 0 6px; }
 .row-fields { display: flex; gap: 12px; flex-wrap: wrap; }
 .label { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
 .label em { font-style: normal; font-family: var(--font-mono); font-weight: 400; color: var(--color-soft); }

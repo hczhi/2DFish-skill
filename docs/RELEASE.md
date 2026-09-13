@@ -67,7 +67,9 @@ Nginx 直接提供前端静态文件，只将 API 请求转发给 Node。
 │   └── dist/             # 对外接入 SDK 的构建产物（Node 按 `../sdk/dist` 相对 cwd 找它）
 │       ├── tender-sdk.umd.cjs    # 标讯 SDK（UMD，window.TenderSDK）
 │       ├── consult-sdk.umd.cjs   # 品牌咨询嵌入 SDK（UMD，window.ConsultSDK）
-│       └── consult-demo.html     # 接入方能直接打开的样例页
+│       ├── ppt-sdk.umd.cjs       # 展示稿嵌入 SDK（UMD，window.PptSDK）
+│       ├── consult-demo.html     # 接入方能直接打开的样例页
+│       └── ppt-demo.html         # 同上，展示稿那一份
 ├── skills/               # AI 技能定义
 ├── workspaces/           # 用户工作区数据（运行时生成）
 ├── data/                 # SQLite 数据库（运行时生成）
@@ -115,15 +117,19 @@ npm run build               # vite build → dist/
 npm run build:sdk           # = cd sdk && npm install && npm run build
 ```
 
-一条命令里是**两次 vite lib 构建 + 一次 tsc 声明**：UMD 不支持多入口，所以标讯和品牌咨询
-各构建一次（第二次 `emptyOutDir: false`，否则它会把第一次的 `tender-sdk.*` 抹掉，而两次
-构建都打印成功 —— 线上那些 `<script src=".../tender-sdk.umd.cjs">` 从此 404）。
+一条命令里是**三次 vite lib 构建 + 一次 tsc 声明**：UMD 不支持多入口，所以标讯、品牌咨询、
+展示稿各构建一次（第一次清 `dist`，**后两次必须 `emptyOutDir: false`** —— 否则它会把前面
+那几个 `tender-sdk.*` / `consult-sdk.*` 抹掉，而三次构建都打印成功，线上那些
+`<script src=".../tender-sdk.umd.cjs">` 从此 404）。样例页在 `sdk/public/`，每次构建都会
+原样复制进 `dist`。
 
 | 文件 | 说明 |
 |------|------|
 | `sdk/dist/tender-sdk.umd.cjs` | 标讯 SDK（`window.TenderSDK`） |
 | `sdk/dist/consult-sdk.umd.cjs` | 品牌咨询嵌入 SDK（`window.ConsultSDK`），后台「咨询接入」那段接入代码引的就是它 |
+| `sdk/dist/ppt-sdk.umd.cjs` | 展示稿嵌入 SDK（`window.PptSDK`），后台「展示稿 · 对外接入」那段接入代码引的就是它 |
 | `sdk/dist/consult-demo.html` | 假的第三方站点外壳 + 那几行 `mountConsult`，接入方直接打开 `<域名>/sdk/consult-demo.html` |
+| `sdk/dist/ppt-demo.html` | 同上，`mountPpt` 那一份（`<域名>/sdk/ppt-demo.html`） |
 
 **这一步不能跳，而跳过之后没有一处会报错**：`server` 和 `client` 的构建都成功、后台那行
 key 好好地列着、接入代码也复制得出来，只有接入方页面上是一块白 + 控制台一句

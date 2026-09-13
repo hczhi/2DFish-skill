@@ -220,6 +220,8 @@
       填了这三项（桶名 / 地域 / 公网域名），/ppt 生成的图就转存到这个桶，其它模块照旧走上面那套。
       三项要么都填、要么都留空 —— 只填一两项会被当成没配（生图仍然写上面那个桶，图能正常显示，看不出来）。
       公网域名必须和这个桶对得上、必须 https，且桶要开公有读：域名填错时上传照样成功，页面上是裂图。
+      <strong>这个桶的文件一律走 CDN 域名访问</strong>（下面那格，留空 = ai-cdn01.xiaozancloud.com），
+      源站域名只用来核对桶名/地域，不参与拼图片 URL。改了域名只影响新生成的图，已有稿子里存的是完整 URL。
       下面两个密钥留空 = 复用上面那对 SecretId/SecretKey（同账号同权限时不用填）。
     </p>
 
@@ -243,12 +245,23 @@
       </div>
 
       <div class="form-group">
-        <label>公网访问域名</label>
+        <label>源站域名（只用于核对桶名/地域）</label>
         <div class="input-row">
           <input v-model="form.cos_ppt_base" placeholder="https://ai-1303208826.cos.ap-guangzhou.myqcloud.com" class="input" />
           <button class="btn-primary" @click="save('cos_ppt_base', form.cos_ppt_base)">保存</button>
         </div>
         <span class="hint" v-if="current.cos_ppt_base">当前: {{ current.cos_ppt_base.value }}</span>
+      </div>
+
+      <div class="form-group">
+        <label>CDN 访问域名（图片 URL 用这个）</label>
+        <div class="input-row">
+          <input v-model="form.cos_ppt_cdn_base" placeholder="留空 = https://ai-cdn01.xiaozancloud.com" class="input" />
+          <button class="btn-primary" @click="save('cos_ppt_cdn_base', form.cos_ppt_cdn_base)">保存</button>
+          <!-- 清空输入框点「保存」是静默不做事（save() 遇空串直接 return），所以恢复默认必须有自己的按钮 -->
+          <button class="btn-secondary" v-if="current.cos_ppt_cdn_base?.value" @click="resetConfig('cos_ppt_cdn_base')">恢复默认</button>
+        </div>
+        <span class="hint">当前: {{ current.cos_ppt_cdn_base?.value || 'https://ai-cdn01.xiaozancloud.com（默认）' }}</span>
       </div>
 
       <div class="form-group">
@@ -278,7 +291,7 @@
 import { ref, onMounted } from 'vue'
 import { apiGet, apiPost, apiDelete } from '../../lib/api'
 
-const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '', web_search_api_key: '', cos_secret_id: '', cos_secret_key: '', cos_bucket: '', cos_region: '', cos_ppt_bucket: '', cos_ppt_region: '', cos_ppt_base: '', cos_ppt_secret_id: '', cos_ppt_secret_key: '' })
+const form = ref<Record<string, string>>({ platform_api_key: '', platform_api_base_url: '', platform_model: '', web_search_api_key: '', cos_secret_id: '', cos_secret_key: '', cos_bucket: '', cos_region: '', cos_ppt_bucket: '', cos_ppt_region: '', cos_ppt_base: '', cos_ppt_cdn_base: '', cos_ppt_secret_id: '', cos_ppt_secret_key: '' })
 const current = ref<Record<string, { value: string; updated_at: string }>>({})
 const saved = ref(false)
 
@@ -383,6 +396,14 @@ async function removeProvider(id: string) {
   if (!confirm('删除这个 provider？')) return
   await apiDelete(`/api/admin/providers/${id}`)
   await loadProviders()
+}
+
+async function resetConfig(key: string) {
+  await apiDelete(`/api/admin/config/${key}`)
+  saved.value = true
+  setTimeout(() => saved.value = false, 2000)
+  await loadConfig()
+  form.value[key] = ''
 }
 
 async function save(key: string, value: string) {

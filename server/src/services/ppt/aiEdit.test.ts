@@ -66,6 +66,18 @@ describe('ppt AI 编辑', () => {
     expect(() => validateEditedRegion(masked, ctx)).not.toThrow();
   });
 
+  it('position:fixed 这条路上也拦（原来只有自由改造那条拦着）', () => {
+    // 微调这条路的 prompt 正让模型「要新样式就写 inline style」，所以它写出 fixed 的概率更高，
+    // 而这条校验原来只在自由改造那份里 —— 走这条路写进去之后，预览里那一块位置只是差一点，
+    // **导出成文件之后飞到画面外**（它脱出 1920×1080 那层缩放），而接口 200、摘要写着
+    // 「拉开了间距」、库里也存了。两条路共用 `regionGuards` 才不会只修一边。
+    const region = findRegionByPath(PAGE, [0, 1]);
+    const ctx = ctxOf(region.html, region.name);
+    const masked = maskRegion(region.html).masked;
+    expect(() => validateEditedRegion(masked.replace('<div class="l02-body"', '<div style="position:fixed;top:40px" class="l02-body"'), ctx))
+      .toThrow(/position:fixed/);
+  });
+
   it('按路径定位选中那一块，路径对不上就拒', () => {
     // 按 eid 求公共祖先的话，他框住的是整块、算出来的是里面那一层（图和装饰条没有 eid）——
     // 于是 AI 改的不是他框的那一块，而摘要和画面都读得通。

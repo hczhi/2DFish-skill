@@ -141,16 +141,20 @@ describe('排版规划', () => {
     }
   });
 
-  it('提纲里没被任何一页认领的段落要点名，并且带出原文', async () => {
-    // 这是「提纲上的重要内容在成稿里丢了」唯一的可查点：页数对得上、每一页单看都合理，
-    // 而那几行数据整段没有任何一页认领 —— 不说的话和「这几段本来就该合并掉」一模一样，
-    // 他只能等成稿翻到那儿才发现。
+  it('没被任何一页认领的段落并进相邻页，并在那一页上说出来', async () => {
+    // 「提纲上的重要内容在成稿里丢了」唯一会发生的地方：页数对得上、每一页单看都合理，
+    // 而那几行数据整段没有任何一页认领 —— 界面上和「这几段本来就该合并掉」一模一样。
+    // 所以不是提示，是**并进去**（接在前面那一页的原文末尾，保持阅读顺序）。
     const outline = ['封面：年度合作方案', '', '1.1 市场规模', '全国 3.2 万亿，华东占 38%', '同比 +12%', '', '1.2 结论', '优先打华东'].join('\n');
     gateway.mockResolvedValue(reply([{ ...page('L2'), lines: [1, 2] }, { ...page('L7'), lines: [7, 8] }]));
-    const said = (await planDeck(outline, 'u1')).problems.join('\n');
-    expect(said).toMatch(/没有被任何一页认领/);
-    expect(said).toContain('第 3–5 行');
-    expect(said).toContain('全国 3.2 万亿'); // 只给行号的话他得回去数行
+    const r = await planDeck(outline, 'u1');
+    expect(r.pages[0].outlineText).toContain('全国 3.2 万亿');
+    expect(r.pages[0].outlineRange).toEqual([1, 5]);
+    // 并到哪一页不一定对（这几行更该跟着 1.2 走），所以那一页上必须有话
+    expect(r.pages[0].coverNote).toContain('第 3–5 行');
+    expect(r.pages[1].coverNote).toBeUndefined();
+    // 并进去之后 deck 级那条「没被认领」就不该再出现（它是最后一道网，不是常态）
+    expect(r.problems.join('\n')).not.toMatch(/没有被任何一页认领/);
   });
 
   it('这一页的原文按行号在代码里切，不用模型回传的文本', async () => {

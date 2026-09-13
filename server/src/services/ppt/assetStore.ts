@@ -1,8 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../../db/index.js';
+import { type PptOwner, tenantSql, tenantArgs } from './tenant.js';
 
-// PPT 素材库的读写（migration 090）。**所有查询都带 user_id** —— 少了它，换个账号
+// PPT 素材库的读写（migration 090/101）。**所有查询都带归属键** —— 少了它，换个账号
 // 就能列到（甚至删掉）别人生成的图，而返回的是一份正常的列表，界面上一句错都没有。
+//
+// 归属键 = 租户 = **一家公司** = `(绑定账号, 那把 pk)`，判定和稿子共用同一份
+// （`tenant.ts`）：素材按员工隔离而稿子按公司共用的话，现象是「同事的稿子我打得开，
+// 里面那几张图我在挑图抽屉里找不到」，两边都不报错。`external_uid` 只记「谁生成的」。
 //
 // 写入点只有一个：`imageService` 里每张图**转存成功之后**（见那里的 `rememberAsset`）。
 // 在生图成功前就写的话，素材库里会出现一批点开是破图的卡片，而它们和「COS 挂了」
@@ -41,14 +46,15 @@ export const ASSETS_NO_DECK = '__none__';
  * 全部素材，而 tab 是选中的 —— 读起来就是「这一组有三百张」。
  */
 export function listAssets(
-  userId: string,
+  owner: PptOwner,
   opts: { deckId?: string; limit?: number } = {}
 ): { assets: PptAsset[]; total: number } {
   const db = getDatabase();
   const limit = opts.limit ?? ASSETS_PAGE_SIZE;
   const deckId = opts.deckId === ASSETS_NO_DECK ? '' : opts.deckId || '';
-  const where = deckId || opts.deckId === ASSETS_NO_DECK ? 'user_id = ? AND deck_id = ?' : 'user_id = ?';
-  const args = deckId || opts.deckId === ASSETS_NO_DECK ? [userId, deckId] : [userId];
+  const byDeck = !!deckId || opts.deckId === ASSETS_NO_DECK;
+  const where = byDeck ? `${tenantSql()} AND deck_id = ?` : tenantSql();
+  const args: Array<string | null> = byDeck ? [...tenantArgs(owner), deckId] : [...tenantArgs(owner)];
   const total = (
     db.prepare(`SELECT COUNT(*) AS n FROM ppt_assets WHERE ${where}`).get(...args) as { n: number }
   ).n;
@@ -83,18 +89,20 @@ export interface AssetGroup {
  * 而它读起来完全正常（「这个项目 3 张」），他会以为那个项目的图丢了。
  * 所以这里单独一条 `GROUP BY`，不复用列表那次查询。
  */
-export function assetGroups(userId: string): AssetGroup[] {
+export function assetGroups(owner: PptOwner): AssetGroup[] {
   const rows = getDatabase()
     .prepare(
       `SELECT a.deck_id AS deckId, COUNT(*) AS count, MAX(a.created_at) AS lastAt,
               d.id AS foundId, d.title AS title
          FROM ppt_assets a
-         LEFT JOIN ppt_decks d ON d.id = a.deck_id AND d.user_id = a.user_id
-        WHERE a.user_id = ?
+         -- JOIN 也要带 sdk_pk（列之间同样用 NULL 安全的 IS）：只按 user_id 接的话，
+         -- 同一个账号下另一个租户里恰好有同 id 的稿子时会接上它的标题
+         LEFT JOIN ppt_decks d ON d.id = a.deck_id AND d.user_id IS a.user_id AND d.sdk_pk IS a.sdk_pk
+        WHERE ${tenantSql('a.')}
         GROUP BY a.deck_id
         ORDER BY lastAt DESC`
     )
-    .all(userId) as Array<{ deckId: string; count: number; lastAt: string; foundId: string | null; title: string | null }>;
+    .all(...tenantArgs(owner)) as Array<{ deckId: string; count: number; lastAt: string; foundId: string | null; title: string | null }>;
   return rows.map((r) => ({
     deckId: r.deckId || '',
     title: r.title || '',
@@ -107,20 +115,38 @@ export function assetGroups(userId: string): AssetGroup[] {
 }
 
 /**
- * 取一条素材（备图那一步要按 id 挑图）。**带 user_id**：不带的话另一个账号的素材 id
+ * 取一条素材（备图那一步要按 id 挑图）。**带归属键**：不带的话别的租户的素材 id
  * 就能被备进这份稿子里，而界面上是一张正常的图。
  *
  * 找不到时回 null 由调用方明确拒 —— 拿不到就当成一个空 url 备上去的话，那一格在
  * 回填时是「这一格本来是空的」，没有一处会说他挑的那张已经被删了。
  */
-export function getAsset(id: string, userId: string): PptAsset | null {
+export function getAsset(id: string, owner: PptOwner): PptAsset | null {
   return (
     (getDatabase()
       .prepare(
         `SELECT id, url, prompt, mode, style_id, ratio, model, storage, deck_id, page, created_at
-           FROM ppt_assets WHERE id = ? AND user_id = ?`
+           FROM ppt_assets WHERE id = ? AND ${tenantSql()}`
       )
-      .get(id, userId) as PptAsset | undefined) || null
+      .get(id, ...tenantArgs(owner)) as PptAsset | undefined) || null
+  );
+}
+
+/**
+ * 按 url 取一条。上传接口用它把「刚记进去的那一条」整个回给前端（`rememberAsset` 只回
+ * 成没成，不回 id），前端要拿那个 id 立刻把这张图贴进正在挑的那一格。
+ *
+ * 查不到时调用方必须喊出来：图已经存进 COS 了而库里没有这一行，素材库里看不到它 ——
+ * 他会以为「上传失败」再传一遍，而每传一遍都在桶里多留一份孤儿文件。
+ */
+export function findAssetByUrl(owner: PptOwner, url: string): PptAsset | null {
+  return (
+    (getDatabase()
+      .prepare(
+        `SELECT id, url, prompt, mode, style_id, ratio, model, storage, deck_id, page, created_at
+           FROM ppt_assets WHERE ${tenantSql()} AND url = ?`
+      )
+      .get(...tenantArgs(owner), url) as PptAsset | undefined) || null
   );
 }
 
@@ -135,7 +161,7 @@ export function getAsset(id: string, userId: string): PptAsset | null {
  * 以为「这批图没存进去是正常的」，下次重用时再花一次钱。
  */
 export function rememberAsset(
-  userId: string,
+  owner: PptOwner,
   data: {
     url: string;
     prompt?: string;
@@ -151,14 +177,18 @@ export function rememberAsset(
   const db = getDatabase();
   const r = db
     .prepare(
+      // 去重键仍是 `UNIQUE(user_id, url)`（不含 sdk_pk）—— 见 101 的头注：
+      // 加上 sdk_pk 之后 NULL 互不相等，网页登录那批行同一个 url 能重复插进去。
       `INSERT INTO ppt_assets
-         (id, user_id, url, prompt, mode, style_id, ratio, model, storage, deck_id, page, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (id, user_id, sdk_pk, external_uid, url, prompt, mode, style_id, ratio, model, storage, deck_id, page, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, url) DO NOTHING`
     )
     .run(
       uuidv4(),
-      userId,
+      ...tenantArgs(owner),
+      // 生成这一张的人，只用来显示，不参与筛选（同公司的同事要挑得到）
+      owner.externalUid,
       data.url,
       data.prompt || '',
       data.mode || '',
@@ -180,9 +210,9 @@ export function rememberAsset(
  * 「把这张图从稿子里去掉」，删完去翻那份 deck，图还在，而这边刚回了一句「已删除」。
  * 反过来真去删 COS 文件的话，正在用它的那几页立刻变破图，而那几页看起来只是「没配图」。
  */
-export function deleteAsset(id: string, userId: string): boolean {
+export function deleteAsset(id: string, owner: PptOwner): boolean {
   const r = getDatabase()
-    .prepare('DELETE FROM ppt_assets WHERE id = ? AND user_id = ?')
-    .run(id, userId);
+    .prepare(`DELETE FROM ppt_assets WHERE id = ? AND ${tenantSql()}`)
+    .run(id, ...tenantArgs(owner));
   return r.changes > 0;
 }

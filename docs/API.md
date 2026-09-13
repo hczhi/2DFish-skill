@@ -118,8 +118,40 @@ SSE 流式端点，消耗额度。
 `intake_pending` 前端必须显示出来 —— 那一轮没提交就意味着客户资料还缺一块，
 而这一行的进度数照样在涨，和资料齐全的项目长得一模一样。
 
+### POST /api/consult/extract-file
+`multipart/form-data`，字段名 `file`，一次一个（前端逐个传，最多 5 个）。**不落库、不存原文件**
+（图片也是 base64 直接进请求，不转存 COS —— `file.qiaonan.vip` 是公开的）。
+按**文件头**分派两条路，回 `{ filename, ext, kind, text, chars, notes, aiCalls, tidied,
+briefLimit, budgetChars, maxFiles, maxImageBytes, tidyPlan:{calls,chunkChars,maxChars} }`：
+
+- `kind:'file'`（.txt/.md/.docx/.doc/.pptx/.pdf）：程序提取，`aiCalls: 0`、`tidied: false`，
+  前端接着调 `/tidy-text`。PDF 只读**文字层**，最多 200 页（截了页要看 `notes`）；
+  整份没有文字层（扫描件）→ **400 并让用户把那几页导出成 PNG/JPG 当图片传**（不做服务端栅格化）。
+- `kind:'image'`（.png/.jpg/.jpeg/.webp/.gif，单张 ≤ `maxImageBytes` 5MB）：**一次 AI 调用**，
+  `aiCalls: 1`、`tidied: true`（读图那一次已经按同一套 `##` 类目归好，前端**不要**再调
+  `/tidy-text`，那是白花第二次额度），另带 `overBudget`、`truncated`、`reasoningTokens`。
+  模型回 `NO_IMAGE`（网关把图悄悄丢了、default 档配的是纯文本模型）→ **502 并点名成因**；
+  图里一个字都没有（纯产品照）→ **照样 200**，`text` 是模型对画面的描述，`notes` 里那一条
+  明说「这是描述，不是图里的原文」（模型连描述都没给才 400）。`.heic/.bmp/.tiff/.avif`
+  在**花额度之前**拒掉并说怎么转成 JPG。
+
+`notes` 是「提取成功了但可能不是你要的」（文本框漏字、整页是图、GBK 乱码、PDF 缺文字层的那几页、
+**图片这条路没有原文可比对数字**），前端必须显示。
+`aiCalls` 必须显示在卡片上 —— 一次「提取」静默扣掉他今天 10 次里的一次是这条路最容易发生的静默扣费。
+`tidyPlan.calls` 是**服务端算的**整理调用次数，前端不许自己按字数除（会和真实扣费漂开）。
+
+### POST /api/consult/tidy-text
+`{ filename, text }` → 交给模型提炼（只删不编）。回 `{ text, chars, rawChars, truncated,
+addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
+`calls` 是真花了几次额度（长文本分段 = 多次）；`addedNumbers` 是整理后多出来、原文里没有的
+数字（模型编了东西时唯一露馅的地方）；`overBudget` = 没压进 `budgetChars`（3500）——
+**这里不截**，前端要出声，否则提交那一下才被拒。三者前端都必须显示。
+
 ### POST /api/consult/projects
-`{ brandName, brief }`。超长直接 400，**不截断**。
+`{ brandName, brief, attachments?: [{filename, text, variant:'tidy'|'raw'}] }`（最多 5 份）。
+`attachments` 是上传文件整理出来的正文，**由服务端合成进 brief**（`briefCompose.ts`），
+用户不再手动插入。单份 > 3500 字、合计 > 20000 字、有空的那份 → 一律 **400 并点名是哪个文件**，
+**不截断也不跳过**（少一份在资料里就是少一节，而剩下的读起来完全正常）。
 新建后前端**先去 `/consult/projects/:id/intake`**（补料问卷页）而不是工作台，
 第一轮提交前进工作台会被送回那一页（只挡第一轮）。
 
@@ -951,6 +983,7 @@ POST /decks/:id/edit-text      就地改第 N 页的一段文字（不调 AI、�
 POST /decks/:id/edit-style     改第 N 页某一块的颜色/字号/字重/对齐（不调 AI）
 POST /decks/:id/edit-region-style  改第 N 页某一整块（容器）的 align-items（不调 AI）
 POST /decks/:id/delete-node    删掉第 N 页选中的那一整块（不调 AI；含图的一律 400）
+POST /decks/:id/canvas         空白页画布上摆东西：加文字框/加图 / 拖动缩放 / 删一块（不调 AI）
 PATCH /decks/:id/pages/:page/veil  调第 N 页那层黑蒙版的透明度（不调 AI）
 GET  /edit-palette             浮动条能用的那几个颜色（服务端白名单，前端不自己写一份）
 POST /decks/:id/ai-edit        让 AI 改选中那一块的结构（1 次真实调用，文案打码后发出去）
@@ -1036,6 +1069,37 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 `{ "ok": true }`；不是自己的回 404。同一个事务里把它的页一起删（`ppt_deck_pages`），
 生成过的图**留在素材库里**（那些是真花过钱的），COS 上的文件也不动。
 
+### POST /api/ppt/decks/:id/clean-outline `PROTECTED`
+先整理、再分页：把提纲里的无效信息（他写给自己的备注/待办、会议记录的口头语、文件路径、
+重复标题）挑出来删掉。一次 AI 调用，body 不用带东西（**提纲取库里那一份**，同 `/plan`）。
+
+```json
+{
+  "cleaned": "整理后的提纲全文（原文逐字去掉下面那几行，其余一个字没动）",
+  "removed": [{ "line": 12, "text": "（备注：这里要补一张图）", "why": "他自己的待办" }],
+  "problems": ["删掉的行里有 2 行带数字，逐行核一遍…"],
+  "changed": true,
+  "chars": { "before": 3120, "after": 2870 }
+}
+```
+
+**模型只输出行号，删的动作在代码里**（硬规则 3）。让它回一份「整理好的提纲全文」的话，
+那份文本读起来更顺、层级更整齐，而中间某个数字被改了、两行被合成一行、一句结论被换了
+说法 —— 一处都对不出来（和原文没有任何可校验的对应关系）。只回行号的话留下来的每一行
+都是逐字的，`removed` 里每一行都能原样列给他核。
+
+**服务端不写回库**（`deck.outline` 一个字没动）：前端拿 `cleaned` 替换编辑框的内容，
+存进库是后面 `PATCH /decks/:id` 那一次的事 —— 于是「撤销整理」做得到，而删错一行时
+整理后的提纲读起来完全通顺。`changed`（= `removed.length > 0`）要单独用：**「模型认为没有
+要删的」和「这次调用其实失败了」在界面上必须分得开**，不然按钮点下去什么都不变，而额度
+已经扣了。`problems` 逐条显示 —— 里面是「删掉的行里有几行带数字」（唯一真会造成损失的
+事故：`营收 12.4 亿` 被判成备注，整理后读起来完全通顺）、「删掉的字数占了三成」（那是
+精简、不是去备注）、以及被截断时「后半截没看过」。模型给的行号越界时**不夹到边界**
+（夹一下删的是别的一行），忽略并在 `problems` 里说有几个用不了。
+
+400：提纲空 / 超 12000 字（**只拒不截**）、拿不到 JSON（带思维链 token 数）、
+模型把整份都当成无效信息（整理后是空的，这时**不改动他的提纲**）。404：不是自己的稿子。
+
 ### POST /api/ppt/decks/:id/plan `PROTECTED`
 排版规划：这份稿子的提纲 → 每页挑一个版式（**不生成 HTML**），一次 AI 调用，结果落库。
 **不收 body 里的 outline**，提纲取库里那一份 —— 收 body 的话前端那个还没保存的编辑框成了
@@ -1069,7 +1133,15 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 只用来核对版式挑得对不对（对不上时 `problems` 里有一条，页型和版式**都不会被改**）——
 老 deck 的 `plan_json` 里没有这个字段。
 
-`problems` **必须逐条显示**，这一步的失败形态全是「一份看起来完整的规划」：
+每一页还有 `outlineText`（代码按模型给的行号从提纲里**逐字**切出来的那几行，生成时它才是
+真正上屏的内容）和 `outlineRange`。**没有任何一页认领的提纲段落由代码并进相邻页**
+（接在前面那一页的原文末尾，保持阅读顺序），并在那一页上留一句 `coverNote` —— 前端必须
+把它显示在「本页内容」旁边：并进来的位置不一定对，而并进来之后那一段读起来和模型自己认领
+的一模一样。老 deck 的 `plan_json` 里没有 `coverNote`。
+
+`problems` **落库和日志，前端那块 deck 级清单已经去掉了**（十几条一起涌出来时一条都不会被
+读）。里面唯一真会让用户内容丢掉的那一条（提纲有几段没进任何一页）就是上面那个硬校验；
+剩下的这些照旧只在 `plan_json` 里 —— 这一步的失败形态全是「一份看起来完整的规划」：
 模型给了库里没有的版式（那一页被丢掉并点名，绝不静默替换成某一条）、被截断只规划到第 N 页
 （断点前那几页救回来了）、连续 ≥3 页同版式（只报不改）、`kind` 和版式的 `归属` 对不上
 （封面那一页排出来是四栏矩阵，而编号完全合法）、图的规格被归一、备选被丢掉。
@@ -1094,7 +1166,7 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
     {
       "page": 3, "layoutId": "L12",
       "html": "<section …>",
-      "previewHtml": "单页 deck（现拼，不带页脚）；html 为空时是空串",
+      "section": "这一页那一段（贴好蒙版、剥掉页码）；html 为空时是空串",
       "problems": ["生成那次留下的问题"],
       "images": [{ "index": 1, "url": "…", "ratio": "16:9 landscape" }],
       "imageStyleId": "S-A",
@@ -1104,14 +1176,26 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
       "veilOpacity": 0,
       "updatedAt": "2026-09-03T…"
     }
-  ]
+  ],
+  "shell": "这份稿子所有页共用的预览外壳（约 85KB），里面留一个插入点",
+  "previewSlot": "<!--PPT_PREVIEW_SLIDE-->"
 }
 ```
 
-`previewHtml` **服务端现拼**（`deckShell`，不存也不让前端拼一遍）：存下来的话改过骨架之后
-老 deck 用旧骨架渲染、导出用新的，两边都不报错。**`html === ''` 的行会出现**（先备了图、
-还没生成 HTML），那种行的 `previewHtml` 是空串，前端**不许**把它当成「已生成」——
-照拼一份空 deck 的话右边是一块白，读起来像那一页排版塌了。
+单页预览 = `shell.replace(previewSlot, () => page.section)`，**外壳整份只回一次**：原来给每页
+都回一整份拼好的 deck，也就是把同一份外壳抄了 N 遍 —— 那份 41 页的稿子响应 3658KB，而库里
+那些页的 html 合计只有 51.5KB，改成这样是 141KB。这件事界面上看不出来，只是「打开有点慢」。
+
+**前端只做字符串替换、不重算任何东西**（一律用函数形式的 `replace`：字符串形式下正文里的
+`$&` 会被当引用展开，悄悄吃掉几个字符）。蒙版（097）和页码剥离都在服务端的 `previewSection`
+里，也就是仍然只有 `deckShell` 这一份实现 —— 前端自己贴蒙版的话预览和导出是两种深浅，
+而两边各自都是一页正常的幻灯片。外壳和每一页现拼、都不存：存下来的话改过骨架之后老 deck 用
+旧骨架渲染、导出用新的，两边都不报错。
+
+`shell` / `previewSlot` 缺失或对不上时前端**必须出声并且不要重新生成**：拿一份对不上的外壳去
+replace，出来的是一份没有幻灯片的 deck —— 页脚、缩放全正常，只是一块白，读起来像那一页塌了。
+**`html === ''` 的行会出现**（先备了图、还没生成 HTML），那种行的 `section` 是空串，前端
+**不许**把它当成「已生成」。
 
 `images`（配图跑完的结果 / 贴进去的备图）和 `pendingImages`（备着、还没贴）**分开回**：
 合成一个的话「这一页图配好了」和「图只是备着」分不开，他会直接去拼整份（那几格还是占位图）。
@@ -1154,9 +1238,17 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 {
   "plan": { "pages": ["改完的整份规划，page 已按数组顺序重编"], "problems": ["…"] },
   "planRev": 5, "page": 4, "shifted": 8,
-  "layoutId": "L17", "section": "五、行业实践", "layoutInherited": false
+  "layoutId": "L17", "section": "五、行业实践", "layoutInherited": false, "blank": false
 }
 ```
+
+**`blank: true`（103）= 插一页空白页**（他自己往上摆文字和图那种）：`layoutId` 是 `BLANK`
+（不在案例库里、没有 demo），库里**当场就建行并写好 html**（一个空的 `.bl-canvas`），所以它一插进来
+就是「已生成」。请求里同时给 `points` 或 `layoutId` 一律 **400**：空白页不走 AI 生成，那几条要点
+一个字都不会出现在页面上，而插进来那一下是成功的、左边列表里那一页也在。只认 `blank === true`，
+`"true"` / `1` 都当没传（当成普通插页的话，回来的是一页要挑版式、要点还在的普通页）。
+**对空白页调 `POST /decks/:id/pages`（生成/重新生成）一律 400** —— 生成会按案例库的版式把整页换掉，
+他摆的文字和图全没了，而返回的是一页读得通的幻灯片。前端也要据 `layoutId === 'BLANK'` 藏掉生成按钮。
 
 `layoutId` 可以不传 —— 那时跟着插入位置**前一页**那条（`layoutInherited: true`）。前端必须据此催他去挑
 一条：继承来的那条会让连着两页同一个版式（规范是 ≤2 页），而规划里那几条跨页提示是上一次算的
@@ -1169,21 +1261,27 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 每条 200 字），超了一律拒不截断。响应和删页同形状，**前端同样要重读整份、换上 `planRev`、
 清掉按页码索引的本地状态**（见上一条）。
 
-#### `planRev`（098）：按页码写库的那几条都要带
+#### `planRev`（098）：按页码写库的**每一条**都要带
 `POST /decks/:id/pages`、`POST /decks/:id/images`、`POST /decks/:id/prepare-images`、
-`POST /decks/:id/replan-images` 的 body **必须带 `planRev`**（`GET /decks/:id` 的
-`deck.plan_rev`，删页和重新规划的响应里都会回新值）。**不带 400，对不上 409，两种都不执行。**
+`POST /decks/:id/replan-images`，以及**就地编辑那八条**（`edit-text`、`edit-style`、
+`edit-region-style`、`delete-node`、`canvas`、`ai-edit`、`ai-remake`、`PATCH …/pages/:page/veil`）的 body
+**必须带 `planRev`**（`GET /decks/:id` 的 `deck.plan_rev`，删页和重新规划的响应里都会回新值）。
+**不带 400，对不上 409，两种都不执行。**
 
-这几条都按页码写库、而且都要等上游几十秒：这期间页数/页序变过的话，结果会落在**现在的**
-那个页码上 —— 出来是一页完整的幻灯片，只是照着别的一页的提纲排的，两边都不报错，而那是一次
-真实花费。不带时当成「跳过检查」的话，任何一处前端漏传都会让这道保护静默失效。
+这几条都按页码写库：这期间页数/页序变过的话，结果会落在**现在的**那个页码上 —— 出来是一页
+完整的幻灯片，只是照着别的一页的提纲排的，两边都不报错。要等上游几十秒的那几条还多花了一次
+真实费用。**不花钱的那几条同样要带**：他在另一个标签页删了一页之后，这边双击改一句字 /
+拖蒙版拿到的是 200 加一句「已修改」，而改的是隔壁那一页 —— 手测测不出来（`pptPlanRev.test.ts`
+逐条核 409/400 时库里那一行一个字都没动）。不带时当成「跳过检查」的话，任何一处前端漏传都会
+让这道保护静默失效。**这道检查排在「第 N 页还没生成」前面**：反过来的话旧页序的客户端会被
+那句 400 引去点「生成这一页」，而那是一次真花钱、落在错的页码上。
 409 的文案里两个版本号都要有，不然和网络错误在界面上是同一句话。
 
 ### PATCH /api/ppt/decks/:id/pages/:page/veil `PROTECTED`
 调这一页那层黑蒙版的透明度。**不调 AI、不花额度。**
 
 ```json
-{ "opacity": 0.4 }
+{ "opacity": 0.4, "planRev": 4 }
 ```
 
 ```json
@@ -1293,7 +1391,9 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 和 `GET /api/ppt/assets`（用户自己的配图）不是一回事。
 
 ### GET /api/ppt/assets `PROTECTED`
-配图素材库：当前用户生成过的每一张配图（每张都是一次真实的生图调用）。
+配图素材库：当前**租户**生成过的每一张配图（每张都是一次真实的生图调用）。
+租户 = 网页登录的这个账号，或者（嵌入模式下）那把 pk 代表的**那家公司** —— 同一把 key 下的
+员工共用一个素材库，`POST /assets/upload`、`DELETE /assets/:id` 同一个边界。
 和 `GET /api/ppt/library/assets` 不是一回事 —— 那条是 deck 外壳的共享 CSS / 配色资料。
 
 ```json
@@ -1341,6 +1441,37 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 筛到一张都没有时回 `note` 而不是空对象（一屏空白和「素材库是空的」长得一样）。
 `deckGone` 按 deck 行**在不在**判、不按标题空不空判：标题本来就可能是空的，
 混成一个之后「稿子删了」和「这份稿子没名字」在界面上是同一句话。
+
+### POST /api/ppt/assets/upload `PROTECTED`
+上传一张**本地图片**进素材库（`multipart/form-data`；字段 `file`，可带 `deckId` 记归属）。
+不花 AI 额度，之后就能像 AI 生成的图一样挑进任一图槽。
+
+```json
+{
+  "asset": { "id": "uuid", "url": "https://cdn/ppt-uploads/…png", "ratio": "3:4", "mode": "", "model": "本地上传", "storage": "cos | local", "…": "同 GET /assets 那一行" },
+  "ratio": "3:4",
+  "pixels": "1080×1920",
+  "note": "storage=local 时那句话（说清为什么没进对象存储），否则空串"
+}
+```
+
+上限 10MB（超了 400）。四件事是承重的：
+
+- **比例在服务端按图片字节算**（`imageSize` + `nearestRatio`，只在 `16:9 / 1:1 / 3:4`
+  里挑最近的一档），不信前端量的那个数、读不出尺寸时**直接 400 而不缺省成 16:9**。
+  这一档是「贴进这一格会被裁掉两边」那句提醒的唯一依据 —— 记错时那张图照旧贴得进去、
+  照旧是一页完整的幻灯片，只是主体被裁掉一半，接口全程 200。
+- **`mode` 存空串**（不是 `concept`）：挑进图槽时 `asset.mode || spec.mode` 会回落成那一格
+  本来要的画法。写死一个的话上传的图会被当成概念插画，数据页那一格的检查就放过去了。
+- **转存走和生图同一条路**（`storeUploadedImage` → `persistImage`，PPT 专用桶 + 魔术字节
+  核一遍是不是图）。COS 没配时落本机磁盘，`note` 必须带出来并说出成因 —— 那种图换机器 /
+  多实例部署就 404，而那时页面上只是一张裂图。改名成 `.png` 的 pdf 一律 400（`mime`
+  是浏览器按扩展名猜的，所以魔术字节优先）。
+- **存进桶了但没记进素材库回 500**（带上那个 url）：库里没有这一行时素材库里看不到它，
+  用户只会以为上传失败再传一遍，而每传一遍都在存储里多留一份孤儿文件。
+
+前端（`PptPlan.vue` 的挑图抽屉）上传完**不自动贴进图槽**：贴进去会立刻关掉抽屉，
+那句「只落在本机磁盘上」跟着消失。
 
 ### DELETE /api/ppt/assets/:id `PROTECTED`
 `{ "ok": true }`；不是自己的或不存在回 404。
@@ -1549,7 +1680,7 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 就地改一段文字：他在预览里双击一段字改完失焦，这里改**库里那份 html**。不调 AI、不花额度。
 
 ```json
-{ "page": 3, "eid": "t7", "oldText": "改之前那一块显示的那句", "newText": "他打的那句" }
+{ "page": 3, "eid": "t7", "oldText": "改之前那一块显示的那句", "newText": "他打的那句", "planRev": 4 }
 ```
 
 ```json
@@ -1581,7 +1712,7 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 定位和存法都和 `edit-text` 同一套（`data-eid` + 只写 `html` 这一列）。
 
 ```json
-{ "page": 3, "eid": "t7", "style": { "color": "var(--c-brand)", "fontSize": 40, "fontWeight": 700, "textAlign": "center" } }
+{ "page": 3, "eid": "t7", "style": { "color": "var(--c-brand)", "fontSize": 40, "fontWeight": 700, "textAlign": "center" }, "planRev": 4 }
 ```
 
 ```json
@@ -1613,7 +1744,7 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 那三个键。不调 AI、不花额度，只写 `html` 这一列。
 
 ```json
-{ "page": 3, "path": [1, 0], "eids": ["t7", "t8"], "style": { "alignItems": "center" } }
+{ "page": 3, "path": [1, 0], "eids": ["t7", "t8"], "style": { "alignItems": "center" }, "planRev": 4 }
 ```
 
 ```json
@@ -1646,7 +1777,7 @@ center」，不说的话那一整块变了样而他不知道该点回哪个键�
 定位和交叉核对与 `edit-region-style` 完全同一套（`path` + `eids`，同一份 `pickRegion`）。
 
 ```json
-{ "page": 3, "path": [1, 2], "eids": ["t7"] }
+{ "page": 3, "path": [1, 2], "eids": ["t7"], "planRev": 4 }
 ```
 
 ```json
@@ -1674,6 +1805,50 @@ center」，不说的话那一整块变了样而他不知道该点回哪个键�
 
 **撤销还没做**，所以前端删之前有一个确认框，写明「删错了只能重新生成这一页（一次真实调用）」。
 
+### POST /api/ppt/decks/:id/canvas `PROTECTED`
+**只对空白页**（`layoutId: "BLANK"`，见「插一页空白页」）：往画布上加一个文字框、放一张
+素材库里的图、拖动/缩放一块、删掉一块。不调 AI、不花额度，只写 `html` 这一列，和别的就地
+编辑同一套前置（`planRev` 对账 + 这一页已生成）。
+
+```json
+{ "page": 3, "op": "add-text", "planRev": 4 }
+{ "page": 3, "op": "add-image", "assetId": "a_xxx", "planRev": 4 }
+{ "page": 3, "op": "box", "bel": "b1", "left": 240, "top": 300, "width": 720, "height": 160, "planRev": 4 }
+{ "page": 3, "op": "delete", "bel": "b1", "planRev": 4 }
+```
+
+```json
+{ "page": 3, "op": "add-text", "bel": "b1", "eid": "t1",
+  "box": { "left": 160, "top": 200, "width": 560, "height": 120 }, "html": "…", "previewHtml": "…" }
+```
+
+- **「是不是空白页」按 html 里有没有 `.bl-canvas` 算，不按 `layout_id`**（判据只有一处）：
+  要改的东西是 html，两处各判一次的话总有一处先放行 —— 往普通版式页上写 `position:absolute`
+  的块，那个元素当场从 flex 项变成脱离文档流的绝对定位块，**同一行里别的内容跟着塌**，
+  而接口 200、那一块本身摆在他指的位置上，翻起来只是「这一页设计得有点怪」。
+- 画布元素形状固定、只由服务端生成：
+  `<div class="bl-el bl-text" data-bel="b1" data-eid="t1" style="left/top/width/height">字</div>`。
+  **两个编号都得有**：`data-bel` 是这条接口定位用的，`data-eid` 是 `edit-text` / `edit-style`
+  那套（双击改字、改字色字号）用的 —— 空白页永远不经过 `injectEids`（它只在生成那一步跑），
+  不当场写上的话浮动条那几个键对着画布上的文字全部「点了没反应」，而这一页显示得好好的。
+- `add-image` **只收 `assetId`（素材库里、他自己的那几张），不收 `url`**：收 url 的话贴进去的
+  外站图在导出的那份 html 里换台机器打开是一张裂图/一块白，而这边显示得好好的；`getAsset`
+  带 userId，别人的素材 id 一律 404。图元素**不带 `data-img-prompt`** —— 带上的话
+  `findImageSlots` 会把他自己摆的这张数成「这一页的第 N 格」，下一次配图/换一批图直接盖上去
+  （画面上还是一页有图的幻灯片，只是图换了，而面板照旧写着「1/1 张有图」）。落点按**这张图
+  自己的比例**摆（`.bl-img img` 是 `object-fit:cover`，比例不对会裁掉两边，图本身没变、
+  只是构图缺一块），响应里回 `ratio`，前端要把它显示出来。
+- `eid` 按**整页现有最大号 +1**（`maxEidNumber`），不按画布上的块数：删过一块之后按块数算会
+  撞上还在的那一块，于是改这一块的字落到另一块上（两块都是正常的文字，一处都不说）。
+- 坐标一律夹进 1920×1080、宽高下限 40px，四个数**一起写**（响应里回夹过之后的 `box`，前端
+  要把这几个数显示出来 —— 那是他唯一能看出「刚才那一下被夹回来了」的地方）。
+- `bel` 找不到、`op` 认不出、这一页不是空白画布：**一律 400**。静默当成「什么都没做」的话，
+  iframe 里那一块已经跟着鼠标挪好了、接口 200，而库里是旧坐标 —— 刷新之后它自己跳回去，
+  看起来像「拖动有时候不保存」。
+- 删画布上的块**必须走这条**、不能走 `delete-node`：那条一是「块里有图就拒」（画布上摆的图
+  从此删不掉），二是「删完一个 `data-eid` 都不剩就拒」，而它的理由是「重新生成一次这一页」——
+  对着空白页完全指错方向（空白页压根没有生成这一步）。画布**允许删成空的**。
+
 ### GET /api/ppt/edit-palette `PROTECTED`
 `{ "colors": ["var(--c-ink-deep)", …] }` —— 浮动条上那几个色块。前端**不自己写一份**：
 两份一漂开，他点的那个颜色会被 `edit-style` 400 拒掉，而界面上那个色块看着完全正常。
@@ -1683,7 +1858,7 @@ center」，不说的话那一整块变了样而他不知道该点回哪个键�
 改完直接覆盖库里那一页（和 `edit-text` 同一条存法，只写 `html` 这一列）。
 
 ```json
-{ "page": 3, "path": [0, 1], "eids": ["t7", "t8"], "instruction": "这三条排成两列" }
+{ "page": 3, "path": [0, 1], "eids": ["t7", "t8"], "instruction": "这三条排成两列", "planRev": 4 }
 ```
 
 ```json
@@ -1871,6 +2046,63 @@ http，混合内容被浏览器拦掉，那几格照样只是「没配图」。
 缺页照旧 400（同 `/deck`）。**任何一页改过之后「已导出 xxx.html」那句话要改口**，
 留着的话他以为手上那个文件是最新的。
 
+### GET|POST|PATCH|DELETE /api/ppt/admin/sdk-keys `ADMIN`
+展示稿对外接入（migration 100）的 pk CRUD：绑账号 / 配 Origin 白名单 / 启停 / 换取限流 /
+每把 key 的天花板。和 consult 那套（084）同一个 pk 模型、同一份 `core/sdkKeys.ts`
+（Origin 归一化各写一份的话，同一个域名在一个模块放行、另一个 403，看起来像「配了不生效」）。
+
+- `allowedOrigins` **不许为空**：空清单的 key 换不到 token，而后台那一行看起来是建好的。
+- `dailyAiLimit`（缺省 **120**）/ `maxDecks`（缺省 50）：**新 key 一定有上限**。这里不照抄
+  consult 的 50 —— ppt 一次操作不等于一次调用（规划 1 次、生成 12 页 12 次、每张图一次
+  **生图**），50 在这条路上是「一份半稿子」，而接入方看到的只是「生成到第 8 页就一直失败」。
+  两个字段必须是 >= 0 的整数（不是就 400），**`0` 是合法值** = 把这把 key 冻住。
+- GET 每行额外回 `ai_used_today` / `decks`（用量按日期归零后再回，直接读那一列的话昨天打满的
+  key 今天显示还是 120/120，管理员会去调高一个压根没满的上限）。
+- **删 key 不删它名下的稿子**：那些是接入方真花钱做出来的，跟着 DELETE 掉的话管理员点一下
+  就静默销毁几十份，而界面上只有一句「已删除」。删掉后没有入口能打开它们（归属键里的 pk
+  再也换不到 token）。
+- 停用/删掉 key 立刻生效（`pptSdkLimits` 每个请求查一次），不用等那把短 token 过期；
+  对外统一回 403 `{ code: 'sdk_key_disabled' }`「接口已关闭，请联系管理员」。
+
+### POST /api/ppt/sdk/token `PUBLIC`
+第三方**纯前端**页面换一把 15 分钟短 token，用来 iframe 嵌入 /ppt 工作台（100）。
+Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_uid }`。
+规则和 `POST /api/consult/sdk/token` 逐条相同（必须由第三方页面自己发、`externalUid` 必填且
+只是展示隔离、Origin 不在白名单回 403 且带上收到的那一行），差别只在 scope 和放行清单：
+
+- 换出的 token `scope=ppt:embed`，能碰哪些端点由全局 `auth/scopeGuard.ts` 管（默认拒绝）：
+  放行 `GET /api/ppt/{layouts,layouts/:id,styles,design-options,edit-palette}`、
+  `/api/ppt/decks` 子树（含写）和 `/api/ppt/assets*`（素材库，见下）。**其余一律 403**，
+  被排除的三类是故意的：`/api/ppt/admin/*`（发 key）、`PUT /api/ppt/layouts/:id/enabled`
+  （**账号级**开关，一个接入方关掉一个版式会让绑定账号和其他接入方都排不出它）、
+  `GET /api/ppt/library/assets`（deck 外壳的共享 CSS/配色资料，前端一处都没在调）。
+- **租户是「一家公司」= `(绑定账号, 那把 pk)`，稿子和素材库同一个边界（101）：同一把 key 下
+  所有员工看到全部稿子和全部素材。** `externalUid` 只记「谁建的/谁生成的」，不参与筛选 ——
+  参与的话公司里每个人各自一个空工作台 + 空素材库，接口全 200；反过来只按绑定账号筛就是
+  另一家公司的稿子和客户产品图出现在这个列表里，同样读起来完全正常。
+
+### 上限被触发时的两种 429（带 `code`，都写着真实数字）
+- `sdk_deck_cap`：`POST /api/ppt/decks` 超过 `maxDecks`。
+- `sdk_ai_quota`：会花钱的端点超过 `dailyAiLimit`（`/decks/:id/` 下的 `clean-outline`、`plan`、
+  `pages`、`replan-images`、`prepare-images`、`ai-edit`、`ai-remake`、`images`），服务器时间
+  0 点重置。**先扣再放行**；纯代码那几条（改文字/改样式/画布/蒙版/拼整份/导出/插页删页）不计费。
+  `POST /decks/:id/images` 一次可能生 4 张图，中间件只扣 1，差额由 `chargeExtraPptSdkAiCalls`
+  **按张补扣** —— 不补的话生图那条路对第三方相当于打了 N 折，而后台显示的用量完全正常。
+
+### /ppt 的 iframe 响应头
+和 `/consult` 同一套（不发 `X-Frame-Options`，改用 `frame-ancestors`），但**两个模块各一份
+名单、不取并集**：只接了咨询的伙伴不该顺带能把展示稿工作台套进自己页面。
+`/api/ppt/demo-deck.html`（版式卡里那层同源 iframe）在嵌入模式下是**套两层**的，所以它的
+`frame-ancestors` 是 `'self'` + ppt 那几个伙伴域名 —— 只写 `'self'` 的话第三方页面里版式那一格
+是一块白，而我们自己打开一切正常。
+
+- **接入方那一侧只有 `mountPpt`（`/sdk/ppt-sdk.umd.cjs`，UMD 全局名 `PptSDK`）**：iframe 指向
+  `/ppt/embed?host=…&next=…`（引导页，无 `requiresAuth`），换 token 那一下**在宿主页面里发**。
+  `POST /api/ppt/sdk/token` 的**预检**必须在全局 `cors()` 之前放行（`app.ts` 的 `sdkTokenCors`，
+  三个模块共用）—— 漏了的话浏览器在预检就拦掉，接入方页面一块白而我们连日志都没有。
+  消息通道是 `qn-ppt`（咨询是 `qn-consult`）：共用一个的话同页嵌两个工作台时展示稿会拿到一把
+  `consult:embed` 的 token，握手看起来成功而每个接口都 403。样例页 `/sdk/ppt-demo.html`。
+
 ---
 
 ## Error Responses
@@ -1884,6 +2116,13 @@ http，混合内容被浏览器拦掉，那几格照样只是「没配图」。
 ```json
 { "error": "quota_exceeded", "remaining": 0, "daily_limit": 10 }
 ```
+`error` 是**机器码**（`lib/api.ts` 认它来弹全局那个额度提示框），前端不要显示它本身。
+consult / ppt 另带 `detail`（人话，说清撞的是账号总额还是这个应用的单独额度）和 `app`；
+有 `detail` 就显示它 —— 前端自己写死一句「缺省 10 次/天」的话，对开了专属渠道
+（后台显示「不限」）或被单独配了应用额度的账号是句假话。
+**判「是不是额度用完」只许看 HTTP 429 + 这个机器码**，不许拿文案里有没有「额度」两个字去猜：
+本平台的失败文案普遍带着「这次的 AI 额度已经扣了」（如实交代花掉的钱），拿文案匹配会把
+空返回/超时显示成「额度用完，明天 0 点重置」，而真实成因完全是另一件事。
 
 ### 限流 (429)
 ```json

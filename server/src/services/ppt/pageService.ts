@@ -573,6 +573,11 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
   const lib = library();
   return `你是演示稿的前端实现。把下面这一页的内容，用指定的版式排成**一个** \`<section>\`。
 
+**你的活是排版和设计，不是编辑。** 给你的内容已经是他要上屏的那份了：一条都不要精简、
+不要挑重点、不要「为了版面干净」少排两块 —— 你要做的是把它们**全部**漂亮地排上去
+（装不下就收字号、拆小块、加栏，见第 7 条）。少排的那一块不会有任何地方报错，
+出来是一页干干净净的幻灯片，而他要逐字对提纲才发现。
+
 ## 输出格式（硬规则）
 1. 只输出一个 \`<section class="slide" …>…</section>\`，前后不要任何解释、不要 markdown 围栏。
 2. **不要**输出 \`<html>\` / \`<head>\` / \`<style>\` / \`<script>\` —— 骨架 CSS 已经在 deck 外壳里了，这一页只能**用已有的类名**。要微调用 inline \`style="…"\`。
