@@ -13,8 +13,9 @@ initDatabase();
 
 const USER = '55555555-5555-5555-5555-555555555555';
 const bodies: any[] = [];
-/** 下一次请求要不要回一句「不认识 enable_thinking」的 400 */
-let reject400 = false;
+/** 接下来几次请求回 400；内容由 reject400Message 决定（两种 400 的解法相反） */
+let reject400 = 0;
+let reject400Message = 'Unrecognized request argument supplied: enable_thinking';
 let server: Server;
 let port = 0;
 
@@ -33,12 +34,10 @@ beforeAll(async () => {
     req.on('data', (c) => (raw += c));
     req.on('end', () => {
       bodies.push(JSON.parse(raw || '{}'));
-      if (reject400) {
-        reject400 = false;
+      if (reject400 > 0) {
+        reject400--;
         res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(
-          JSON.stringify({ error: { message: 'Unrecognized request argument supplied: enable_thinking' } })
-        );
+        res.end(JSON.stringify({ error: { message: reject400Message } }));
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -60,7 +59,8 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
 beforeEach(() => {
   bodies.length = 0;
-  reject400 = false;
+  reject400 = 0;
+  reject400Message = 'Unrecognized request argument supplied: enable_thinking';
   getDatabase().prepare('DELETE FROM ai_quota').run();
 });
 
@@ -101,11 +101,42 @@ describe('关思维链的参数', () => {
   it('上游因为这几个键回 400 时，摘掉重发一次而不是把整次调用报废', async () => {
     // 严格的网关（OpenAI 官方）会拒未知字段。不重发的话换一条接入点之后
     // consult 每次分析都是一句 400 —— 这个开关是为了「快」加的，不该变成「用不了」。
-    reject400 = true;
+    reject400 = 1;
     const { response } = await call(true);
     expect(response.choices[0].message.content).toBe('ok');
     expect(bodies).toHaveLength(2);
     expect(bodies[1].enable_thinking).toBeUndefined();
     expect(bodies[1].messages).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('上游说这个模型「始终思考、关不掉」时退到 low，而不是把那几个键摘干净', async () => {
+    // 反过来的那一种（实测 glm-5.3-flash）。摘干净重发在这里是错的：换来的是一次
+    // 思维链全开的调用，而写 noThinking 的那几条路关它治的是截断 —— 退回全开之后
+    // 现象只是「抄到一半就断了」，指不到「模型选错了」。上游自己说的是「用 low/high/max」，
+    // 所以退到 low（压得最短），并且**只发这一个键**：另外三个是不是也被拒无从判断。
+    reject400 = 1;
+    reject400Message = '该模型始终思考，不支持关闭思考；请使用 low、high 或 max。';
+    const { response, noThinkingRefused } = await call(true);
+    expect(response.choices[0].message.content).toBe('ok');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1].reasoning_effort).toBe('low');
+    expect(bodies[1].enable_thinking).toBeUndefined();
+    expect(bodies[1].chat_template_kwargs).toBeUndefined();
+    // 调用方要靠这个标记分岔话术：截断时该说「这个模型关不掉」，
+    // 不能说「去后台勾上关思维链」—— 那个勾选框在这条接入点上是死路。
+    expect(noThinkingRefused).toBe(true);
+  });
+
+  it('连 low 都被拒时才报错，报错里说得出出路', async () => {
+    // 到这里真的没有能压住思维链的发法了。这时候**不能**摘干净再来一次：
+    // 那一次思维链全开，结果断在半句上，而那种失败读起来只像「模型没答完」。
+    reject400 = 2;
+    reject400Message = '该模型始终思考，不支持关闭思考；请使用 low、high 或 max。';
+    const err: any = await call(true).catch((e) => e);
+    expect(bodies).toHaveLength(2);
+    expect(err.name).toBe('NoThinkingUnsupportedError');
+    expect(String(err.message)).toMatch(/关不掉思维链/);
+    expect(String(err.message)).toMatch(/AI 模型 Provider/);   // 换哪里得说清楚
+    expect(String(err.message)).toContain('该模型始终思考');   // 上游原话也带上
   });
 });

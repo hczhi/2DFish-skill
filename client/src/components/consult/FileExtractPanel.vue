@@ -20,7 +20,7 @@
 // 这个面板是**唯一**一份文件上传 UI。不要在别处再抄一份：抄出去的那份必然缺掉 notes、
 // 缺掉那笔额度账、或者缺掉字数上限的提示，而它跑起来一切正常。
 
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { api } from '../../lib/api'
 
 const props = defineProps<{
@@ -63,6 +63,14 @@ interface Extracted {
   tidied: boolean
   /** 图片这条路超预算也要出声（它不走 /tidy-text，没有那边的 overBudget）。 */
   overBudget?: boolean
+  /**
+   * 有几页一个字都没提取到（整页是图 / 文字画在图里）。图片那条路没有这个字段。
+   *
+   * 显示在卡片的字数那一行，**不进 notes 那一栏黄框**：每份 PPT 都顶一条的话，
+   * 真出问题的那条就淹了。但也不能一个字不说 —— 剩下那些页拼起来读着完整，
+   * 没人会发现少了几页，而这几页的解法不一样（导成图片单独传）。
+   */
+  emptyPages?: number
   /** 整理这份文字要花几次 AI 调用 —— **服务端算的**，前端不许自己按字数除（会漂）。 */
   tidyPlan: { calls: number; chunkChars: number; maxChars: number }
 }
@@ -101,7 +109,10 @@ interface FileCard {
   notes: string[]
   addedNumbers: string[]
   fallbackChunks: number
-  overBudget: boolean
+  // 服务端回的 overBudget **故意不存在卡片上**：整理成功那一份必然在预算内，
+  // 而真会被拒的那种（带进资料的是原文）它是 false —— 那条警告按现在显示的字数判。
+  /** 有几页一个字都没提取到（见 Extracted.emptyPages），显示在字数那一行。 */
+  emptyPages: number
   /** 这份花了几次 AI 额度。 */
   calls: number
   /** 这份要分几次调用（服务端算的），整理前先显示出来。 */
@@ -228,7 +239,14 @@ async function onFiles(e: Event) {
 }
 
 async function addOne(file: File) {
-  const card: FileCard = {
+  // **必须是 reactive 的**：下面这些 `card.xxx = …` 是在 push 进数组之后、await 回来才发生的。
+  // 写成普通对象的话 `cards.value.push(card)` 存进去的是**原始对象**（Vue 只在读数组时才
+  // 包一层代理），而这个闭包一直握着原始对象 —— 改它绕过了代理，`ready` / `anyBusy` /
+  // `spentCalls` 这几个 computed 收不到通知，永远停在 push 那一刻的值。
+  // 症状正是「一直是处理中」：卡片自己显示得好好的（模板每次重渲染都是从原始对象上读的），
+  // 而按钮写着「文件还在处理中…」、上面写着「0 个文件 0 字 / 花了 0 次额度」，
+  // 于是整理好的那几份一份都带不进资料 —— 每一处看起来都对，只有那个按钮点不下去。
+  const card = reactive<FileCard>({
     id: ++seq,
     filename: file.name,
     kind: IMAGE_RE.test(file.name) ? 'image' : 'file',
@@ -240,11 +258,11 @@ async function addOne(file: File) {
     notes: [],
     addedNumbers: [],
     fallbackChunks: 0,
-    overBudget: false,
+    emptyPages: 0,
     calls: 0,
     plannedCalls: 1,
     open: false,
-  }
+  })
   cards.value.push(card)
 
   try {
@@ -269,6 +287,7 @@ async function addOne(file: File) {
     card.filename = data.filename
     card.kind = data.kind || card.kind
     card.notes = [...data.notes]
+    card.emptyPages = data.emptyPages || 0
     card.plannedCalls = data.tidyPlan?.calls || 1
     // 图片这一步已经花掉的额度要如实累上去 —— 不累的话卡片上写着 0 次，
     // 而他今天的 10 次里已经少了一次。
@@ -280,7 +299,6 @@ async function addOne(file: File) {
     if (data.tidied) {
       card.tidy = data.text
       card.use = 'tidy'
-      card.overBudget = !!data.overBudget
       card.status = 'ready'
       return
     }
@@ -328,7 +346,6 @@ async function runTidy(card: FileCard) {
     card.calls += data.calls
     card.addedNumbers = data.addedNumbers
     card.fallbackChunks = data.fallbackChunks
-    card.overBudget = data.overBudget
     card.notes = [...card.notes, ...data.notes]
     card.status = 'ready'
   } catch (e: any) {
@@ -395,20 +412,31 @@ function remove(id: number) {
         <strong :title="c.filename">{{ c.filename }}</strong>
         <span class="fx-state" :class="{ bad: c.status === 'failed' }">
           <template v-if="c.status === 'extracting'">
+            <svg class="spin-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;">
+              <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10"></path>
+            </svg>
             <!-- 图片这一步就在花额度，等的那几十秒里必须先说出来（等完再说等于事后通知）。 -->
             <template v-if="c.kind === 'image'">AI 读图中…（1 次额度）</template>
             <template v-else>提取文字中…</template>
           </template>
           <template v-else-if="c.status === 'tidying'">
+            <svg class="spin-icon" viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;">
+              <circle cx="12" cy="12" r="10" opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10"></path>
+            </svg>
             AI 提炼中…<template v-if="c.plannedCalls > 1">（{{ c.plannedCalls }} 段）</template>
           </template>
           <template v-else-if="c.status === 'failed'">提取失败</template>
           <template v-else>
             {{ textOf(c).length }} / {{ limits.budgetChars }} 字
             <!-- 「这一份是谁写的」不能省：AI 读图那份没有原文可比对，可信度和抠出来的字不一样。 -->
-            <template v-if="c.kind === 'image'">· AI 读图（无原文）</template>
+            <template v-if="c.kind === 'image'">· AI 读图</template>
             <template v-else-if="c.use === 'tidy'">· AI 整理</template>
             <template v-else>· 原文</template>
+            <!-- 整页是图的那几页：不显示的话剩下的页拼起来读着完整，没人发现少了几页。
+                 放在这一行而不是下面的黄框里 —— 每份 PPT 都顶一条黄框的话真问题就淹了。 -->
+           
             <template v-if="c.calls">· {{ c.calls }} 次额度</template>
           </template>
         </span>
@@ -439,10 +467,12 @@ function remove(id: number) {
       <p v-if="c.fallbackChunks > 0" class="fx-warn">
         ⚠️ 有 {{ c.fallbackChunks }} 段没整理成，用的是<strong>原文</strong>。
       </p>
-      <p v-if="c.overBudget" class="fx-warn">
-        ⚠️ 超出单份上限 {{ textOf(c).length - limits.budgetChars }} 字（提交会被拒）——
-        请自己删掉，或点「重试整理」。
-      </p>
+      <!-- 「超过单份上限 N 字，点重试整理」那条警告去掉了。两个理由：① 整理成功的那一份
+           **必然**在预算内（服务端自己压、压不动按小节切），所以正常路径上它压根不该出现 ——
+           而它照旧闪出来过：`textOf` 在整理跑完前拿到的是原文（11873 字），于是「AI 提炼中…」
+           底下顶着一句「提交会被拒」，那是在为一件正在被解决的事报警；② 剩下那种真超预算的
+           （整理失败 / 额度用完 → 带的是原文）已经各有一句说明成因的话在下面，再加一句
+           「请点重试整理」只是把同一件事说第二遍。 -->
       <!-- notes = 「成功了，但可能不是你要的」。吞掉它，碎片和干净的结果长得一样。 -->
       <p v-for="(n, i) in c.notes" :key="i" class="fx-note">⚠️ {{ n }}</p>
 
@@ -579,4 +609,6 @@ function remove(id: number) {
 .fx-total > span:first-child { color: rgba(255, 255, 255, 0.75); font-weight: 600; }
 .fx-total > span:first-child.over { color: #FCA5A5; }
 .fx-tip { color: rgba(255, 255, 255, 0.5); line-height: 1.7; }
+.spin-icon { animation: spin 1s linear infinite; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
 </style>

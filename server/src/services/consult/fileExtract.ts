@@ -58,6 +58,15 @@ export interface ExtractResult {
   chars: number;
   /** 「提取成功了，但可能不是你要的」——必须显示给用户。 */
   notes: string[];
+  /**
+   * 有几页一个字都没读到（整页是图 / 图表 / 文字画在图里 / 文字被转成曲线）。
+   *
+   * **不进 `notes`**：那一栏是黄框，每份文件都顶一条的话真出问题的那条就淹了。
+   * 但也不能一个字不说 —— 剩下那些页拼起来读着完整，没人会发现少了几页，
+   * 而这几页的解法和别的都不一样（导成 PNG/JPG 当图片传，走大模型识图）。
+   * 所以它显示在卡片的字数那一行（`· N 页没读到`）。
+   */
+  emptyPages: number;
 }
 
 export function extFromName(filename: string): string {
@@ -100,7 +109,8 @@ export async function extractFile(filename: string, buf: Buffer): Promise<Extrac
     if (ext !== '.pdf') {
       notes.push(`这个文件叫 ${ext}，实际是 PDF（已按 PDF 解析）。`);
     }
-    return finish(filename, '.pdf', await extractPdf(filename, buf, notes), notes);
+    const pdf = await extractPdf(filename, buf, notes);
+    return finish(filename, '.pdf', pdf.text, notes, pdf.emptyPages);
   }
   if (ext === '.pdf') {
     throw new ExtractError(
@@ -141,11 +151,20 @@ export async function extractFile(filename: string, buf: Buffer): Promise<Extrac
   if (ext !== realExt) {
     notes.push(`这个文件叫 ${ext}，实际是 ${realExt} 格式（已按 ${realExt} 解析）。`);
   }
-  const text = isPpt ? await extractPptx(zip, notes) : await extractDocx(zip, buf, notes);
-  return finish(filename, realExt, text, notes);
+  if (isPpt) {
+    const ppt = await extractPptx(zip);
+    return finish(filename, realExt, ppt.text, notes, ppt.emptyPages);
+  }
+  return finish(filename, realExt, await extractDocx(zip, buf, notes), notes);
 }
 
-function finish(filename: string, ext: string, raw: string, notes: string[]): ExtractResult {
+function finish(
+  filename: string,
+  ext: string,
+  raw: string,
+  notes: string[],
+  emptyPages = 0
+): ExtractResult {
   const text = normalizeBlankLines(raw);
   if (!text.trim()) {
     // 这是这条链路上最贵的一种失败，所以宁可报错也不返回空串。
@@ -154,7 +173,7 @@ function finish(filename: string, ext: string, raw: string, notes: string[]): Ex
       + '程序读不到，AI 也没法凭空梳理。请把文字部分复制出来直接贴进资料框。'
     );
   }
-  return { filename, ext, text, chars: text.length, notes };
+  return { filename, ext, text, chars: text.length, notes, emptyPages };
 }
 
 /**
@@ -240,7 +259,7 @@ function safeCall(fn: () => string): string {
  * 备注页（notesSlide）也取 —— 咨询类 PPT 的真内容经常全在备注里，漏掉它提取出来
  * 就只有一堆标题，而「只有标题」和「这份 PPT 本来就很简略」看不出区别。
  */
-async function extractPptx(zip: JSZip, notes: string[]): Promise<string> {
+async function extractPptx(zip: JSZip): Promise<{ text: string; emptyPages: number }> {
   const slides = numbered(zip, /^ppt\/slides\/slide(\d+)\.xml$/);
   if (!slides.length) {
     throw new ExtractError('这个 .pptx 里找不到任何幻灯片（ppt/slides/ 是空的），文件可能损坏了。');
@@ -264,13 +283,8 @@ async function extractPptx(zip: JSZip, notes: string[]): Promise<string> {
     if (note) parts.push(`（备注）${note}`);
     blocks.push(parts.join('\n'));
   }
-  if (emptyPages) {
-    notes.push(
-      `有 ${emptyPages} 页一个字都没提取到（整页是图片 / 图表 / 文字画在图里）。`
-      + '这几页的内容不在下面的正文里。'
-    );
-  }
-  return blocks.join('\n\n');
+  // 「有几页一个字都没读到」走计数、不进 notes —— 理由见 ExtractResult.emptyPages。
+  return { text: blocks.join('\n\n'), emptyPages };
 }
 
 /** 文件头已经确认是 zip 了才会走到这里，所以打不开就是文件本身坏了/被截断了。 */

@@ -1,4 +1,5 @@
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
+import { EXTRACT_CHANNEL } from '../../core/llm/apps.js';
 import { StageError } from './draftService.js';
 import { MAX_BRIEF_CHARS } from './projectStore.js';
 
@@ -33,12 +34,23 @@ export const MAX_TIDY_INPUT_CHARS = 80_000;
  * （见 briefCompose.ts），所以这个数乘 5 必须还装得进资料框的
  * {@link MAX_BRIEF_CHARS}（20000）—— 剩下的空间留给他自己手打的那段。
  *
- * 它是**发给模型的预算**，不是事后截断：截到 3500 字的那一份在界面上和「模型自己压到
- * 3500 字」长得一模一样，而断掉的正好是排在后面的类目（用户与客群 / 当前问题与目标 ——
- * 提炼时越靠后越是结论性的东西）。模型压不下来时走 `overBudget` 出声，由他自己删
- * （卡片里那份是可编辑的），提交那一下再拒一次并点名是哪个文件。
+ * 它首先是**发给模型的预算**（`budgetRule`），压不进去时**再让 AI 压一次**
+ * （{@link MAX_SQUEEZE_PASSES}），而不是甩一句「超了 1120 字，请自己删掉」——
+ * 那句话是把这一步的活退回给用户，而他上传文件正是为了不干这个。
+ * 只有 AI 压完还超（很少见）才在代码里按小节切掉尾巴，那一下**必须出声**：
+ * 切掉的正好是排在后面的类目（用户与客群 / 当前问题与目标 —— 越靠后越是结论性的东西），
+ * 而切完的那一份在界面上和「模型自己压到 3500 字」长得一模一样。
  */
 export const TIDY_BUDGET_CHARS = 3_500;
+
+/**
+ * 超预算时最多让 AI 再压几次。
+ *
+ * 每一次都真花一次额度，所以有两道刹车：压完没变短、或者只缩了不到 5% 就停
+ * （模型在原地打转时再来一次也只是把同一份东西换个说法，而额度是一次一次真扣的）。
+ * 2 次是因为第一次常常擦着预算过（模型不会数字，只会「大概短一点」）。
+ */
+const MAX_SQUEEZE_PASSES = 2;
 
 /**
  * 每次调用喂多少字。超过这个数就分几次调用（{@link splitForTidy}）。
@@ -99,8 +111,9 @@ export interface TidyResult {
   /** 这份文件的字数预算（{@link TIDY_BUDGET_CHARS}）。界面上和 chars 并排显示。 */
   budgetChars: number;
   /**
-   * 没压进预算。**这里不截**（截掉的是排在后面的类目，而那一份读起来照样完整），
-   * 所以这一位要显眼地回给界面：他得自己在卡片里删到预算以内，否则提交那一下会被拒。
+   * 还是没进预算。整理成功的那一份走到这里**必然是 false**（AI 压过、压不动就按小节切过），
+   * 所以它现在只剩一种真值：有段落退回了原文（那时故意不压不切，理由见 `tidyExtractedText`）。
+   * 留着这一位是最后一道保险 —— 真超了的话提交会被拒，界面上得有话说得出为什么。
    */
   overBudget: boolean;
 }
@@ -184,13 +197,37 @@ const MISSING_SECTION_RULE = `
  */
 export function budgetRule(budget: number, no = 8): string {
   return `
-${no}. **这一段的输出控制在 ${budget} 字以内**（含小标题和符号）。装不下时按这个优先级砍：
-   数字 / 定位语 slogan / 竞品名 / 用户与客群 / 当前问题与目标 一律留到最后；先删描述性的
-   形容词、重复的表述、能从别的事实推出来的话。
+${no}. **这一段的输出必须 ≤ ${budget} 字（含小标题和符号）——这是硬上限，不是"尽量"。**
+   装不下就**删内容**：允许整条要点删掉，也允许整节删掉（那一节的小标题跟着删）。
+   宁可少几条事实，也不许超字数 —— 超了的部分谁都用不上。
+   按这个优先级砍：数字 / 定位语 slogan / 竞品名 / 用户与客群 / 当前问题与目标 一律留到最后；
+   先删描述性的形容词、重复的表述、能从别的事实推出来的话，还不够就从最不相干的那一节起整节删。
    **压缩不许改写事实**：不许把几个具体名字并成"多家客户""若干竞品"，不许把两个数字加成
    一个总数，不许把一条带数字的事实概括成"增长明显"。删掉一条，好过把它改成一句
    读起来更顺、但已经不是原文说法的概括。`;
 }
+
+/**
+ * 「已经整理过一遍，但还是超预算」时再压那一次用的 system。
+ *
+ * 和 SYSTEM 分开写，因为这一次的活完全不同：那一次是从碎原文里挑，这一次是**从一份
+ * 干净的资料里删**。拿 SYSTEM 再跑一遍的话模型会重新组织一遍语言（它以为自己在整理），
+ * 而重写出来的句子里那些客户原话、slogan、行业黑话会被改成书面语 —— 读起来更顺，
+ * 但已经不是客户的说法了，而这件事在界面上没有任何痕迹。
+ *
+ * 第 3 条顺手治另一件事：分段整理的结果里同一个小标题会出现好几次（各段独立提炼），
+ * 原来是靠一条 note 让用户自己去合并的。
+ */
+const SQUEEZE_SYSTEM = `你是品牌咨询项目的资料整理员。下面这份资料已经整理过一遍了，现在只做一件事：**删到字数以内**。
+
+1. **只删，不改写。** 留下来的每一条都照抄现在的写法（标点、口语、行业黑话、"我们"都保持原样）。
+2. 保留 \`## \` 小标题的结构和顺序。整节都删掉时，那个小标题也一起删掉。
+3. 同一个小标题出现了好几次（上一步是分段整理的）就**合并成一节**：里面的要点原样保留，
+   只删真正重复的那几条。
+4. **字数是硬上限，必须删够。** 删完还超就接着删：允许删掉整条要点、允许删掉整节
+   （从最不相干的那一节开始）。**不许**为了凑字数把句子改短、改虚、并成概括 ——
+   删一条好过留一句已经不是原文说法的话。
+5. **直接输出正文，第一个字就是 \`##\`。** 不要写"以下是压缩后的资料"、不要写收尾的说明。`;
 
 /** 分段时追加：说清这是第几段，并且**不要**报缺料清单（理由见 MISSING_SECTION_RULE）。 */
 function chunkRule(index: number, total: number): string {
@@ -266,7 +303,7 @@ async function tidyOneChunk(
 ): Promise<ChunkOutcome> {
   const where = total > 1 ? `（第 ${index + 1}/${total} 段）` : '';
   try {
-    const { response, usage, duration_ms } = await aiGateway(
+    const { response, usage, duration_ms, noThinkingRefused } = await aiGateway(
       {
         ...SAMPLING.analytic, // 低温：这一步要的是照抄和删，不是发挥
         messages: [
@@ -289,6 +326,8 @@ async function tidyOneChunk(
       {
         userId,
         source: 'consult',
+        // 同图片提取：接入点单独走「内容提取」通道，额度和日志还记在 consult 上。
+        channel: EXTRACT_CHANNEL,
         operation: 'consult:tidy-file',
         requestSummary: `整理上传资料：${filename}${where}（${chunk.length} 字）`,
         // 有人在屏幕前等着，而且这条路上关它治的是截断（硬规则 2）：思维链算进
@@ -319,8 +358,13 @@ async function tidyOneChunk(
             `模型一个字都没返回（用了 ${usage.output_tokens} 输出 token，其中 ${reasoningTokens} 花在思维链上，`
             + `耗时 ${(duration_ms / 1000).toFixed(1)} 秒）。`
             + (reasoningTokens > 0
-              ? '思维链没关掉 —— 它算进 max_tokens 却不出现在正文里，所以额度全被想掉了。'
-                + '去「AI 模型 Provider」把这条接入点的「关思维链」勾上，或者换一个支持关的模型。'
+              ? noThinkingRefused
+                // 上游已经说过这个模型「关不掉」，那个勾选框在它上面是死路 ——
+                // 指过去的话他勾了、界面写着「已关闭」，而这句话照旧出现。
+                ? '额度全被思维链想掉了（它算进 max_tokens 却不出现在正文里），而这个模型关不掉思维链'
+                  + '（这次已经退到 reasoning_effort: \'low\'）—— 后台那个勾选框对它没用，要换一个能关思维链的模型。'
+                : '思维链没关掉 —— 它算进 max_tokens 却不出现在正文里，所以额度全被想掉了。'
+                  + '去「AI 模型 Provider」把这条接入点的「关思维链」勾上，或者换一个支持关的模型。'
               : '这多半是上游抖动，重试一次通常就好了。'),
           error: null,
           emptyReturn: true,
@@ -336,6 +380,68 @@ async function tidyOneChunk(
       failure: { message: e?.message || '未知错误', error: e, emptyReturn: false },
     };
   }
+}
+
+/**
+ * 「还是超了，再压一次」的那一次调用。失败**不抛**：压不下来的时候上一版是完好的，
+ * 抛出去等于把一份已经整理好的资料换成一句报错。
+ */
+async function squeezeOnce(
+  userId: string,
+  filename: string,
+  text: string,
+  budget: number
+): Promise<{ out: string; reasoningTokens: number }> {
+  try {
+    const { response } = await aiGateway(
+      {
+        ...SAMPLING.analytic,
+        messages: [
+          // 条目编号接着 SQUEEZE_SYSTEM 往下（它到第 5 条）—— 重复编号的 prompt 里，
+          // 模型对着两个"5."常常只照办一个，而照办哪个不确定。
+          { role: 'system', content: `${SQUEEZE_SYSTEM}\n${budgetRule(budget, 6)}` },
+          { role: 'user', content: `文件名：${filename}\n\n以下是已经整理过一遍的资料：\n\n${text}` },
+        ],
+        max_tokens: MAX_TOKENS_TIDY,
+      },
+      {
+        userId,
+        source: 'consult',
+        channel: EXTRACT_CHANNEL, // 同整理那一步：接入点走「内容提取」通道
+        operation: 'consult:squeeze-file',
+        requestSummary: `压到字数以内：${filename}（${text.length} → ${budget} 字）`,
+        noThinking: true,
+        timeoutMs: AI_TIMEOUT_MS,
+        maxRetries: 0,
+        retryOnBusy: true,
+        tier: 'fast',
+      }
+    );
+    const choice = response.choices?.[0];
+    return {
+      out: (choice?.message?.content || '').trim(),
+      reasoningTokens: (response.usage as any)?.completion_tokens_details?.reasoning_tokens || 0,
+    };
+  } catch {
+    // 额度打满 / 上游超时都走这里。上一版留着，下面按小节切尾巴那一支接手并出声。
+    return { out: '', reasoningTokens: 0 };
+  }
+}
+
+/**
+ * AI 压完还超预算时，按**小节 / 要点边界**切掉尾巴（绝不切在一句话中间）。
+ *
+ * 切在半句上的那一份读起来像模型没写完，用户会去点「重试整理」——而重试的结果一样。
+ *
+ * 图片识别那条路也用它（`imageExtractService`）：那边没有「再压一次」这一步
+ * （一张图就一次额度，读一遍还要再花一次去压不合适），超了直接切。
+ */
+export function cutToBudget(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const head = text.slice(0, budget);
+  // 优先切到最后一个完整小节，其次最后一个完整要点；两个都找不到才按字数切。
+  const at = Math.max(head.lastIndexOf('\n## '), head.lastIndexOf('\n- '));
+  return (at > budget * 0.5 ? head.slice(0, at) : head).trimEnd();
 }
 
 export async function tidyExtractedText(
@@ -419,7 +525,44 @@ export async function tidyExtractedText(
     );
   }
 
-  const out = outs.join('\n\n').trim();
+  let out = outs.join('\n\n').trim();
+
+  // 超预算时**自己压**，不甩一句「超了 1120 字，请自己删掉」——那是把这一步的活退回给
+  // 用户，而他上传文件正是为了不干这个。压不动就停（两道刹车见 MAX_SQUEEZE_PASSES：
+  // 额度是一次一次真扣的，模型在原地打转的时候多打几次只是多花钱）。
+  //
+  // **有段落退回原文时（fallbackChunks > 0）既不压也不切**，两个理由：① 刚刚那一段是
+  // 打失败的（额度打满 / 上游超时 / 空返回），紧接着再打一次基本是同一句失败，而那是
+  // 再等一个 240 秒；② 这时候 `out` 里有一大段没删过的原文，按小节切尾巴会把它整片切掉，
+  // 而界面上只有一句「切掉末尾 N 字」—— 用户以为丢的是几条要点。这一份就让它超着，
+  // 上面那条「这一段用的是原文」已经说了成因，卡片上按现在的字数提示他点「重试整理」。
+  if (fallbackChunks === 0) {
+    for (let pass = 0; pass < MAX_SQUEEZE_PASSES && out.length > TIDY_BUDGET_CHARS; pass++) {
+      const before = out.length;
+      const sq = await squeezeOnce(userId, filename, out, TIDY_BUDGET_CHARS);
+      calls++;
+      reasoningTokens += sq.reasoningTokens;
+      // 压出来是空的 / 反而变长 = 这一次没用（可能已经开始自己写了），留着上一版。
+      if (!sq.out || sq.out.length >= before) break;
+      out = sq.out;
+      if (before - out.length < before * 0.05) break; // 缩不动了，再来一次也一样
+    }
+    // AI 压完还超（很少见）才在代码里按小节切。
+    //
+    // **这一刀不进用户看的 notes**（作者定的：这一步的活是「AI 自己搞定 3500 字」，
+    // 而那句「已按小节切掉末尾 N 字」把一件已经处理好的事又摆到他面前）。补偿是两头都收紧：
+    // 一头是 budgetRule / SQUEEZE_SYSTEM 里那句「硬上限、允许整条整节删」，让模型自己删够；
+    // 另一头是这里的 console.warn —— 它是唯一的线索，删掉的话「模型压到 3500」和
+    // 「我们切掉了一段」在服务端也分不出来了（那时候只有逐字对着原文看才发现）。
+    if (out.length > TIDY_BUDGET_CHARS) {
+      const cut = cutToBudget(out, TIDY_BUDGET_CHARS);
+      console.warn(
+        `[consult] ${filename}：AI 压了 ${MAX_SQUEEZE_PASSES} 遍仍有 ${out.length} 字，`
+          + `已按小节切掉末尾 ${out.length - cut.length} 字（预算 ${TIDY_BUDGET_CHARS}）。`
+      );
+      out = cut;
+    }
+  }
 
   // 这一步的活是挑和删，输出**应该明显比原文短**。反而变长了几乎只有一个成因：
   // 模型开始自己写了 —— 而写出来的那几段读起来和客户资料完全一样，没有别的地方会提醒他。
@@ -429,28 +572,17 @@ export async function tidyExtractedText(
         + '变长基本意味着模型自己补了内容，请对着「原文」核一遍。'
     );
   }
-  // 分段是各段独立提炼的，所以同一个类目的小标题会出现好几次。不说的话他会以为
-  // 「AI 把资料重复了一遍」而去删，删的时候很容易连着删掉后面几段里独有的那几条。
-  if (chunks.length > 1) {
-    notes.push(
-      `分了 ${chunks.length} 段整理，同一个小标题（如"## 产品与服务"）会出现好几次 ——`
-        + '里面的内容不一样，可以自己并到一起，别整节删掉。'
-    );
-  }
-  // 没压进预算。这份文字是**自动带进资料**的（不用他点插入），所以这里不说的话，
-  // 他要到点「创建项目」那一下才撞上一句「超了 4310 字」—— 而那时他已经离开这个面板了。
+  // 「分了 N 段整理，同一个小标题会出现好几次，自己并一下」那条 note 去掉了：
+  // 合并这件事交给上面那次压缩（SQUEEZE_SYSTEM 第 3 条），没超预算时重复的小标题
+  // 也不值得让他动手 —— 界面上多一个 `## 产品与服务` 不会让后面十二步出错。
+  //
+  // 「超出上限，请自己删掉 N 字」那条也去掉了：上面已经压过/切过，走到这里必然在预算内。
+  // overBudget 保留着回给前端**只作最后一道保险**（真超了的话提交会被拒，那时界面上
+  // 得有一句话说得出为什么）。
   const overBudget = out.length > TIDY_BUDGET_CHARS;
-  if (overBudget) {
-    notes.push(
-      `整理后 ${out.length} 字，超过单份上限 ${TIDY_BUDGET_CHARS} 字`
-        + `${fallbackChunks > 0 ? '（有几段退回了原文，见上面那条）' : ''}，`
-        + `请自己删掉 ${out.length - TIDY_BUDGET_CHARS} 字（这里不替你截，截掉的正好是后面几节）。`
-    );
-  }
-  if (reasoningTokens > 0) {
-    // 后台核不到这一条的话，用户只会觉得「整理一次要等三分钟」，日志里一切正常。
-    notes.push(`这条接入点没关掉思维链（一共想了 ${reasoningTokens} token），又慢又容易截断 —— 去「AI 模型 Provider」勾上「关思维链」。`);
-  }
+  // 「这条接入点没关掉思维链」不再放进 notes（同 imageExtractService）：那是接入点配置的事，
+  // 用户改不了，而它每次整理都会出现。管理员那边的线索没丢 —— gateway 里 console.warn，
+  // 后台点接入点的「测试」也会明说。它真害到人的时候说话的是上面那条「被截断了」。
 
   return {
     text: out,

@@ -50,7 +50,11 @@ const NO_TEXT_LAYER_HINT =
  * 换个写法的话切段会退回「按字数硬切」，而切在一页中间的两段会各自把半截内容
  * 当完整的一节整理，拼起来读得通但是重复的。
  */
-export async function extractPdf(filename: string, buf: Buffer, notes: string[]): Promise<string> {
+export async function extractPdf(
+  filename: string,
+  buf: Buffer,
+  notes: string[]
+): Promise<{ text: string; emptyPages: number }> {
   // 懒加载：pdfjs 是十几兆的一整份解析器，放在模块顶上会拖慢每次服务启动和
   // 每个用不到 PDF 的测试文件。
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -108,15 +112,10 @@ export async function extractPdf(filename: string, buf: Buffer, notes: string[])
 
   if (!blocks.length) throw new ExtractError(NO_TEXT_LAYER_HINT);
 
-  if (emptyPages.length) {
-    // 「有几页是纯图」和「整份是扫描件」的解法是同一个（导成图片再传），
-    // 但只有这几页缺内容 —— 不说的话剩下那些页拼起来读着完整，没人会发现少了什么。
-    notes.push(
-      `有 ${emptyPages.length} 页一个字都没提取到（整页是图 / 文字被转成了曲线）：第 `
-      + `${listPages(emptyPages)} 页。这几页的内容**不在**下面的正文里 —— `
-      + '要用它们的话，把这几页导出成 PNG/JPG 再作为图片传上来。'
-    );
-  }
+  // 「有几页一个字都没读到」**不进 notes**（那一栏现在只留「这一份和你以为的不一样」，
+  // 每份都顶几条黄框的话真出问题的那条就淹了）—— 它走 emptyPages 计数，
+  // 显示在卡片的字数那一行。要它一个字都不说是不行的：剩下那些页拼起来读着完整，
+  // 没人会发现少了几页（这几页的解法也不一样 —— 导成 PNG/JPG 当图片传）。
 
   const out = blocks.join('\n\n');
   const bad = countGarbled(out);
@@ -138,7 +137,7 @@ export async function extractPdf(filename: string, buf: Buffer, notes: string[])
       + '请扫一眼下面的正文，乱码多的那几段自己删掉 —— 留着的话 AI 会照常识把它们补成通顺的句子。'
     );
   }
-  return out;
+  return { text: out, emptyPages: emptyPages.length };
 }
 
 /**
@@ -175,8 +174,3 @@ function countGarbled(s: string): number {
   return (s.match(/[\uFFFD\uE000-\uF8FF]/g) || []).length;
 }
 
-/** 页码列表，多了就省略中间 —— 一屏页码没人读，反而把后面那句出路埋掉了。 */
-function listPages(pages: number[]): string {
-  if (pages.length <= 12) return pages.join('、');
-  return `${pages.slice(0, 10).join('、')} … ${pages[pages.length - 1]}`;
-}

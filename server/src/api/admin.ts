@@ -13,9 +13,16 @@ import {
   createRelayKey, listRelayKeys, getRelayKeyById, revokeRelayKey,
 } from '../services/relayKeyService.js';
 import { relayUsage } from '../services/relayService.js';
-import { AI_APPS, isValidAppScope } from '../core/llm/apps.js';
+import { AI_APPS, PROVIDER_SCOPES, isValidAppScope, isValidProviderScope } from '../core/llm/apps.js';
 import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
-import { getAppQuotaStatus } from '../core/llm/gateway.js';
+import {
+  getAppQuotaStatus,
+  // 探测「关不关得掉思维链」用的是**业务真正会发的那组键**和同一份 400 识别，
+  // 不在 admin 里另抄一份（抄的那份和业务发的对不上时，后台会显示一个假的结论）。
+  NO_THINKING_BODY,
+  NO_THINKING_KEYS,
+  isAlwaysThinking,
+} from '../core/llm/gateway.js';
 import { generateImage } from '../core/image/imageGateway.js';
 import { parsePagination, patchRow } from '../core/http.js';
 import { encryptSecret, maskSecret } from '../core/secrets.js';
@@ -273,7 +280,9 @@ adminRouter.get('/providers', (req: Request, res: Response) => {
   const owner = req.query.owner_user_id ? String(req.query.owner_user_id) : undefined;
   // apps 一并下发：scope_app 下拉框的选项必须来自服务端的同一份白名单。
   // 前端自己抄一份的话，加了新模块只更新一边 —— 抄的那份漏了谁，谁就永远配不上。
-  res.json({ providers: listProviders(owner).map(maskProvider), apps: AI_APPS });
+  // 这里给的是 PROVIDER_SCOPES（真应用 + 解析通道）：通道也要能在下拉里选到，
+  // 否则「文件/图片内容提取单独指一个模型」这件事在后台压根没有入口。
+  res.json({ providers: listProviders(owner).map(maskProvider), apps: PROVIDER_SCOPES });
 });
 
 adminRouter.post('/providers', (req: Request, res: Response) => {
@@ -298,9 +307,10 @@ adminRouter.post('/providers', (req: Request, res: Response) => {
   // scope_app 同理，而且更隐蔽：它靠字符串等于 GatewayOptions.source 来匹配，
   // 写成 'XHS' 或 'ui_review' 的表现是「保存成功、界面正常、永远不生效」。
   // 白名单在 core/llm/apps.ts。
-  if (b.scope_app && !isValidAppScope(String(b.scope_app))) {
+  // 这一处用宽的那个校验（应用 + 解析通道），额度那一处仍用严的 isValidAppScope。
+  if (b.scope_app && !isValidProviderScope(String(b.scope_app))) {
     res.status(400).json({
-      error: `scope_app「${b.scope_app}」不是已知应用。可选：${AI_APPS.map((a) => a.id).join(' / ')}`,
+      error: `scope_app「${b.scope_app}」不是已知应用。可选：${PROVIDER_SCOPES.map((a) => a.id).join(' / ')}`,
     });
     return;
   }
@@ -383,12 +393,14 @@ adminRouter.get('/users/:id/dedicated-ai', (req: Request, res: Response) => {
     providers: listProviders(req.params.id).map(maskProvider),
     status: dedicatedChannelStatus(req.params.id),
     required_tiers: REQUIRED_LLM_TIERS,
-    apps: AI_APPS,
+    // 应用 + 解析通道（extract）：通道也要能在这一页选到并看到解析结果，
+    // 否则「提取单独换个模型」只能靠改代码。它**不能**配额度，见下面 app-quota 那处。
+    apps: PROVIDER_SCOPES,
     // 逐个应用、逐档报告「实际会用哪条配置」。
     // 关键是 fallbackToShared：只配了 xhs 的 fast、忘了 strong 时，
     // strong 会静默回落到通用配置（可能是很贵的模型），运行时完全看不出来。
     app_resolutions: Object.fromEntries(
-      AI_APPS.map((a) => [a.id, appChannelStatus(req.params.id, a.id)])
+      PROVIDER_SCOPES.map((a) => [a.id, appChannelStatus(req.params.id, a.id)])
     ),
     app_quotas: getAppQuotaStatus(req.params.id),
     // 对外中转 key。已吊销的也回：下游收到「接口已关闭」时管理员要能在这里
@@ -412,8 +424,14 @@ adminRouter.put('/users/:id/app-quota', (req: Request, res: Response) => {
   const user = db.prepare('SELECT id FROM user WHERE id = ?').get(req.params.id);
   if (!user) { res.status(404).json({ error: 'User not found' }); return; }
 
+  // 这里**只认真应用**，不认解析通道（extract）：通道不是任何一次调用的 source，
+  // 给它配上限的话那一行永远不会被计数 —— 界面上写着「已限 10 次/天」而实际不限，
+  // 是最难发现的一种「配了没生效」。提取花的是它所属应用（consult）的额度。
   if (!isValidAppScope(app) || !app) {
-    res.status(400).json({ error: `app 必须是已知应用之一：${AI_APPS.map((a) => a.id).join(' / ')}` });
+    res.status(400).json({
+      error: `app 必须是已知应用之一：${AI_APPS.map((a) => a.id).join(' / ')}`
+        + `（「${app}」若是解析通道，它只用来指定接入点、不计额度，提取的额度记在所属应用上）`,
+    });
     return;
   }
 
@@ -538,6 +556,7 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
       model: r.model || provider.model,
       json_object_supported: wantsJson ? true : undefined,
       reply: reply.slice(0, 200),
+      no_thinking: await probeNoThinking(client, provider.model || 'gpt-4o'),
       // 推理模型必须在配置阶段就说出来：它会静静吃掉 max_tokens 预算。
       reasoning_tokens: reasoningTokens || undefined,
       reasoning_hint: reasoningTokens
@@ -564,6 +583,68 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * 「这条接入点关得掉思维链吗」—— 连通测试之后**再发一次**同样的最小请求，只是带上
+ * 业务路径真正会发的那四个键（从 gateway 里 import，不在这里另抄一份：抄的那份迟早和
+ * 业务发的不是同一组，后台显示「能关」而业务照旧慢/照旧 400）。
+ *
+ * 为什么值得多花一次调用：这件事**在配置阶段完全看不出来**，而它决定了半个平台能不能用。
+ * 实测 glm-5.3-flash 连通 ✓、回复正常，但它「始终思考」—— 写死 `noThinking: true` 的那些
+ * 路径（品牌咨询的图片提取/文件整理/出草稿、标讯抽取和评分）在它上面只能退到
+ * `reasoning_effort: 'low'` 跑，而那条退路上思维链照旧吃 `max_tokens` —— 症状是偶发的
+ * 「抄到一半就断了」，管理员唯一的线索是用户来说「提取出来的资料不全」。
+ *
+ * 四种结果各对应一句不同的话：能关 / 发了但没照办（照旧慢、max_tokens 被思维链吃）/
+ * 这个模型关不掉（退到 low，有截断风险）/ 这条网关不认这几个键（运行时自动摘掉重发，跑慢的那版）。
+ * 探测本身失败（超时等）不影响连通结论，只说「没测出来」。
+ */
+async function probeNoThinking(
+  client: OpenAI,
+  model: string
+): Promise<{ verdict: 'ok' | 'ignored' | 'unsupported' | 'keys-rejected' | 'unknown'; note?: string }> {
+  try {
+    const r = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: TEST_MAX_TOKENS,
+      temperature: 0,
+      ...NO_THINKING_BODY,
+    } as any);
+    const reasoning = (r.usage as any)?.completion_tokens_details?.reasoning_tokens ?? 0;
+    if (reasoning > 0) {
+      return {
+        verdict: 'ignored',
+        note:
+          `发了「关思维链」的参数，但它还是想了 ${reasoning} token —— 这条接入点或这个模型不认那几个键`
+          + `（宽松的网关对不认识的键既不报错也不照办）。写死 noThinking 的路径在它上面照旧慢，`
+          + `而且思维链和正文分同一份 max_tokens，结果可能断在半句上。`,
+      };
+    }
+    return { verdict: 'ok' };
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    if (e?.status === 400 && isAlwaysThinking(msg)) {
+      return {
+        verdict: 'unsupported',
+        note:
+          `这个模型**始终思考、关不掉**（上游原话：${msg.slice(0, 120)}）。`
+          + `写死「不深度思考」的那些路径（品牌咨询的图片提取 / 文件整理 / 出草稿、标讯的抽取和评分）`
+          + `在它上面会退到 reasoning_effort: 'low' 跑 —— 能用，但它还是在想，且这段思维链和正文`
+          + `分同一份 max_tokens：长文件、整页截图有断在半句上的风险。要稳就换一个能关思维链的模型。`,
+      };
+    }
+    if (e?.status === 400 && NO_THINKING_KEYS.some((k) => msg.includes(k))) {
+      return {
+        verdict: 'keys-rejected',
+        note:
+          '这条网关不认「关思维链」那几个键（回 400）。运行时会自动摘掉重发，所以业务能用，'
+          + '但跑的是带思维链那一版：慢，而且 max_tokens 要和思维链分。',
+      };
+    }
+    return { verdict: 'unknown', note: `没测出来能不能关思维链（${msg.slice(0, 120)}）。` };
+  }
+}
 
 /**
  * 生图接入点的连通性测试：真的生成一张图并把它显示出来。

@@ -73,13 +73,22 @@ describe('consult 上传资料的 AI 整理', () => {
     expect(sentSystems[1]).toContain('第 2 段（共 2 段）');
   });
 
-  it('没压进单份字数预算时出声而不是截断（整理稿是自动带进资料的，他不会去数字数）', async () => {
+  it('超预算时自己再压一遍、压不动就按小节切到上限以内（不留一句「请自己删掉」）', async () => {
+    // 「超了 N 字，请自己删掉」是把这一步的活退回给用户 —— 而他上传文件正是为了不干这个。
+    // 这一条守的是「这一份最后到底有没有 ≤3500」：漏了的话卡片上写着 4620 字一切正常，
+    // 点「创建项目」才撞一句 400，而他不知道该改哪份。
     const { TIDY_BUDGET_CHARS } = await import('./fileTidyService.js');
-    replies.push({ text: `## 品牌与公司\n${'甲'.repeat(TIDY_BUDGET_CHARS)}` });
-    const r = await tidyExtractedText('u1', 'x.pptx', '乙'.repeat(TIDY_BUDGET_CHARS + 500));
-    expect(r.overBudget).toBe(true);
-    expect(r.text.length).toBeGreaterThan(TIDY_BUDGET_CHARS); // 一个字都没被截掉
-    expect(r.notes.join('\n')).toMatch(/自己删掉 \d+ 字/);
+    const lines = (n: number) => Array.from({ length: n }, () => `- ${'甲'.repeat(48)}`).join('\n');
+    // 第一次整理出来超预算 → 再压一次（还是超一点）→ 第三次没有返回值（mock 抛错，
+    // 等于上游失败）→ 代码按小节切。
+    replies.push({ text: `## 品牌与公司\n${lines(90)}` });
+    replies.push({ text: `## 品牌与公司\n${lines(74)}` });
+    const r = await tidyExtractedText('u1', 'x.pptx', '乙'.repeat(TIDY_BUDGET_CHARS + 2000));
+
+    expect(r.text.length).toBeLessThanOrEqual(TIDY_BUDGET_CHARS); // 用户不用自己删一个字
+    expect(r.overBudget).toBe(false);
+    expect(sentSystems[1]).toContain('只删，不改写'); // 第二次走的是「压缩」那份 system
+    expect(r.notes).toEqual([]); // 已经替他处理好了，不再回一句提示
   });
 
   it('分段整理时失败的那一段退回原文并点名，不静默丢掉，也不谎报花了几次额度', async () => {

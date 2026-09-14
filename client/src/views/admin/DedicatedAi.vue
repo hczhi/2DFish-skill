@@ -667,8 +667,17 @@ async function testDed(p: Provider) {
   testingId.value = p.id
   delete testResults.value[p.id]
   try {
-    const r = await apiPost<{ duration_ms: number; model: string }>(`/api/admin/providers/${p.id}/test`, {})
-    testResults.value[p.id] = { ok: true, msg: `连通 ✓ ${r.model} · ${r.duration_ms}ms` }
+    const r = await apiPost<{
+      duration_ms: number; model: string;
+      reasoning_hint?: string;
+      no_thinking?: { verdict: string; note?: string };
+    }>(`/api/admin/providers/${p.id}/test`, {})
+    let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
+    // 专属接入点更要显示这两条：它没有平台回落，这一条不能关思维链就是
+    // 「这个用户的提取/抽取全废」，而连通测试原来只说一句 ✓。
+    if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
+    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
+    testResults.value[p.id] = { ok: true, msg }
   } catch (e: any) {
     testResults.value[p.id] = { ok: false, msg: e.message || '测试失败' }
   }
@@ -771,7 +780,9 @@ onMounted(loadDedicated)
 
 .create-row { display: flex; gap: 16px; align-items: center; }
 
-.test-result { font-size: 12px; margin: 12px 0 0; line-height: 1.4; font-weight: 500; }
+/* pre-line：msg 现在是多行（连通行 + 关思维链/推理模型那两条提示），
+   不留这一句的话几行会挤成一长串，那句「这个模型关不掉思考」读不出来。 */
+.test-result { font-size: 12px; margin: 12px 0 0; line-height: 1.4; font-weight: 500; white-space: pre-line; }
 .test-result.ok { color: #16a34a; }
 .test-result.err { color: #dc2626; }
 

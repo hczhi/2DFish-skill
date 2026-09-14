@@ -27,12 +27,12 @@ describe('fileExtract', () => {
     await expect(extractFile('全是图.pptx', buf)).rejects.toThrow(/没有提取到任何文字/);
   });
 
-  it('部分页提不到字时，要在 notes 里报出漏了几页', async () => {
-    // 这一条最像成功：正文有内容、分页也整齐，只是少了三页。不报数的话
-    // 「这份 PPT 本来就很简略」和「三页内容画在图里没提出来」在界面上是同一个样子。
-    const { text, notes } = await extractFile('半图.pptx', await pptx({ 1: ['品牌定位'], 2: [], 3: [] }));
+  it('部分页提不到字时，要把漏掉的页数报出来', async () => {
+    // 这一条最像成功：正文有内容、分页也整齐，只是少了两页。不报数的话
+    // 「这份 PPT 本来就很简略」和「两页内容画在图里没提出来」在界面上是同一个样子。
+    const { text, emptyPages } = await extractFile('半图.pptx', await pptx({ 1: ['品牌定位'], 2: [], 3: [] }));
     expect(text).toContain('品牌定位');
-    expect(notes.join(' ')).toMatch(/有 2 页一个字都没提取到/);
+    expect(emptyPages).toBe(2);
   });
 
   it('按页分节输出，slide10 排在 slide2 后面，备注也取进来', async () => {

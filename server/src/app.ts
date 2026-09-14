@@ -395,6 +395,14 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     return;
   }
 
+  // 接入点配的模型关不掉思维链（见 core/llm/gateway.ts 的 NoThinkingUnsupportedError）。
+  // 同样必须透原文：兜成 'Internal server error' 的话，管理员看到的是「某功能坏了」，
+  // 而真正的出路（换一个能关思维链的模型）只在服务端日志里 —— 而这种失败每次都真扣一次额度。
+  if (err.name === 'NoThinkingUnsupportedError') {
+    res.status(502).json({ error: err.message, code: 'no_thinking_unsupported' });
+    return;
+  }
+
   res.status(500).json({ error: 'Internal server error' });
 });
 

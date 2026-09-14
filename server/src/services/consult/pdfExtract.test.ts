@@ -55,16 +55,16 @@ describe('PDF 文字层提取', () => {
     await expect(extractFile('扫描版手册.pdf', buf)).rejects.toThrow(/PNG \/ JPG/);
   });
 
-  it('只有几页是图时点名是哪几页，其余照常提取', async () => {
+  it('只有几页是图时报出漏了几页，其余照常提取', async () => {
     // 这一条最像成功：正文有内容、分页整齐，只是第 2、4 页的内容压根不在里面。
-    const { text, notes, ext } = await extractFile(
+    // 页数走 emptyPages（显示在卡片的字数那一行），不进 notes —— 见 ExtractResult.emptyPages。
+    const { text, emptyPages, ext } = await extractFile(
       '半扫描.pdf',
       makePdf([['Brand positioning'], [], ['Revenue 1234'], []])
     );
     expect(ext).toBe('.pdf');
     expect(text).toContain('Brand positioning');
-    expect(notes.join(' ')).toMatch(/有 2 页一个字都没提取到/);
-    expect(notes.join(' ')).toMatch(/第 2、4 页/);
+    expect(emptyPages).toBe(2);
   });
 
   it('按页分节，分页标记和 pptx 用同一种写法', async () => {

@@ -14,6 +14,19 @@ export interface GatewayOptions {
    * 否则那个应用永远匹配不到自己的配置。有测试扫这件事。
    */
   source: string;
+  /**
+   * 用**哪条接入点**（`ai_providers.scope_app`），只影响解析，缺省跟着 {@link source} 走。
+   *
+   * 存在的理由：模块里个别步骤想用另一个模型，而「应用」这一维粒度太粗 ——
+   * 给 consult 配一条 scope_app='consult' 就把对话、出草稿、出方向全换掉了，
+   * 而这里想换的只有「提取图片文字 / 整理上传的文件」那两步。取值见
+   * core/llm/apps.ts 的 AI_CHANNELS（用 EXTRACT_CHANNEL 常量，不要手写字面量）。
+   *
+   * **配额和 `ai_logs.source` 不受它影响**：提取是 consult 的一步，钱记在 consult 上。
+   * 把扣额度也改成按 channel 的话，提取会变成不计任何应用额度的免费调用 ——
+   * 后台那条「品牌咨询 10 次/天」看起来配着，而每天能白跑几百次提取。
+   */
+  channel?: string;
   operation: string;
   requestSummary?: string;
   /** 任务档位：'strong' 用于吐 JSON/结构化的硬任务，'fast' 用于走量成文，缺省走 default。 */
@@ -86,13 +99,58 @@ export interface GatewayOptions {
  * 关思维链的请求参数。**四个键一起发**，因为各家网关认的不是同一个
  * （实测这条接入点四个一起发和单发效果一样：3.5s / reasoning 为空，不互相顶）。
  */
-const NO_THINKING_BODY: Record<string, unknown> = {
+export const NO_THINKING_BODY: Record<string, unknown> = {
   enable_thinking: false, // DeepSeek / vLLM / SGLang 这一系
   thinking: { type: 'disabled' }, // Claude / 通义那套
   chat_template_kwargs: { enable_thinking: false }, // 自己套 chat template 的网关
   reasoning_effort: 'minimal', // OpenAI 官方唯一认的那个（也是唯一的标准字段）
 };
-const NO_THINKING_KEYS = Object.keys(NO_THINKING_BODY);
+export const NO_THINKING_KEYS = Object.keys(NO_THINKING_BODY);
+
+/**
+ * 「关不掉」的退路：**只发 `reasoning_effort: 'low'` 这一个键**。
+ *
+ * 上游（glm-5.3-flash 那家）的原话就是「请使用 low、high 或 max」，所以它拒的是
+ * `minimal` 这个值，不是这个字段；那四个键里另外三个是不是也一起被拒无从判断，
+ * 一起再发一遍的话很可能换来第二次同样的 400 —— 按上游自己说的那样发一个，最稳。
+ *
+ * 选 low 不选 high/max：这条退路存在的意义是**把思维链压到最短**，因为它和正文分同一份
+ * `max_tokens`（硬规则 2）。high/max 只会把截断的概率推回去。
+ *
+ * 退到这里之后**它还是在想**（reasoning_tokens > 0），所以：① 必须喊一句（下面那个
+ * console.warn）；② 调用方拿得到 `noThinkingRefused`，长文件/整页图截断时那句话要说
+ * 「这个模型关不掉、只能退到 low」，**不能**说「去后台勾上关思维链」—— 后者是条死路，
+ * 他勾了、界面显示「已关闭」，而现象一模一样。
+ */
+export const LOW_EFFORT_BODY: Record<string, unknown> = { reasoning_effort: 'low' };
+
+/** `withNoThinking` 往外带的一件事：这次是不是退到了 low（见 LOW_EFFORT_BODY 的 ②）。 */
+type NoThinkingOutcome = { refused?: boolean };
+
+/**
+ * 这个模型**始终思考、关不掉**，而且连上面那条 `low` 的退路也不收（实测
+ * glm-5.3-flash 的网关原话：«该模型始终思考，不支持关闭思考；请使用 low、high 或
+ * max。» —— 它连 `reasoning_effort: 'minimal'` 都不收）。
+ *
+ * 和「不认识这几个键」（OpenAI 官方那句 «Unrecognized request argument»）是**两件事**：
+ * 那种把键摘干净重发就好；这种摘干净换来的是一次**思维链全开**的调用 —— 而写
+ * `noThinking: true` 的那几条路（提取图片文字 / 整理文件 / 出草稿 / 标讯抽取）关它治的
+ * 正是截断：思维链算进 `max_tokens` 却不进 `content`（硬规则 2），悄悄退回全开之后现象
+ * 只是「抄到一半就断了」「解析失败」，指不到模型选错上。所以这一支退到 low 而不是摘干净，
+ * 连 low 都被拒时才抛这个错（那时候真的没有能压住思维链的发法了）。
+ */
+export class NoThinkingUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoThinkingUnsupportedError';
+  }
+}
+
+/** 认出上面那种 400。中英各一条，别铺成一堆变体 —— 认不出的后果只是退回透传原文。 */
+export function isAlwaysThinking(msg: string): boolean {
+  return /始终思考|不支持关闭(?:深度)?(?:思考|思维链?)/.test(msg)
+    || /(?:cannot|can'?t|not|unable to|does\s*n'?o?t support)[^.;]{0,40}(?:disabl\w*|turn(?:ing)?\s*off)[^.;]{0,20}(?:thinking|reasoning)/i.test(msg);
+}
 
 /**
  * 带上关思维链的参数发一次；**上游因为这几个键回 400 就摘掉重发，并且喊一句。**
@@ -102,17 +160,49 @@ const NO_THINKING_KEYS = Object.keys(NO_THINKING_BODY);
  * 不摘掉重发的话，换一条接入点之后 consult 每次分析都是一句 400 —— 这个开关是为了
  * 「快」加的，不该让它变成「压根用不了」。而摘掉之后跑的就是慢那一版，所以必须喊出来：
  * 不喊的话现象只是「怎么又变回四分钟了」，日志里一切正常。
+ *
+ * 另一种 400（「这个模型始终思考、关不掉」）退到 {@link LOW_EFFORT_BODY} 而不是摘干净，
+ * 并把 `outcome.refused` 置上 —— 见那两处的注释。
  */
 async function withNoThinking<T>(
   noThinking: boolean | undefined,
   operation: string,
-  run: (extra: Record<string, unknown>) => Promise<T>
+  run: (extra: Record<string, unknown>) => Promise<T>,
+  outcome: NoThinkingOutcome = {}
 ): Promise<T> {
   if (!noThinking) return run({});
   try {
     return await run(NO_THINKING_BODY);
   } catch (err) {
     const msg = err instanceof OpenAI.APIError ? String(err.message || '') : '';
+    // 这一支必须排在「摘干净重发」**前面**：上游说的是「这个模型压根关不掉」，
+    // 摘干净换来的是一次思维链全开的调用（见 NoThinkingUnsupportedError）。
+    if (err instanceof OpenAI.APIError && err.status === 400 && isAlwaysThinking(msg)) {
+      outcome.refused = true;
+      // 降级必须出声（硬规则 1）：跑成了，但跑的是「想得少一点」而不是「不想」，
+      // 思维链照旧算进 max_tokens。不喊的话唯一的现象是偶发的「抄到一半就断了」。
+      console.warn(
+        `[llm] ${operation}: 这个模型关不掉思维链（${msg.slice(0, 140)}），已退到 reasoning_effort: 'low' 重发一次 —— `
+          + `它还是会想，只是想得短，而这段思维链照旧和正文分同一份 max_tokens（可能因此截断）。`
+          + `要治本得把这一步用的那条接入点换成一个能关思维链的模型。`
+      );
+      try {
+        return await run(LOW_EFFORT_BODY);
+      } catch (err2) {
+        const msg2 = err2 instanceof OpenAI.APIError ? String(err2.message || '') : '';
+        // 连 low 都被拒 = 没有任何能压住思维链的发法了。这里**不再**摘干净重发：
+        // 那一次是思维链全开，结果会断在半句上，而那种失败读起来只像「模型没答完」。
+        if (err2 instanceof OpenAI.APIError && err2.status === 400) {
+          throw new NoThinkingUnsupportedError(
+            `这条接入点的模型关不掉思维链，退到 reasoning_effort: 'low' 也被拒了，所以这一步（${operation}）没跑成（这次的 AI 额度已经扣了）。\n`
+              + `上游原话：${msg2.slice(0, 200)}\n`
+              + `去后台「AI 模型 Provider」把这一步用的那条接入点换成一个支持关思维链的模型`
+              + `（文件/图片内容提取用的是「应用 = 文件/图片内容提取（解析通道）」那条）。`
+          );
+        }
+        throw err2;
+      }
+    }
     if (err instanceof OpenAI.APIError && err.status === 400 && NO_THINKING_KEYS.some((k) => msg.includes(k))) {
       console.warn(
         `[llm] ${operation}: 这条接入点不认「关思维链」的参数（${msg.slice(0, 140)}），已摘掉重发一次 —— ` +
@@ -308,6 +398,19 @@ export function resolveLLMConfigForProvider(providerId: string): ResolvedLLM {
   };
 }
 
+/**
+ * 一次调用该用哪条接入点。优先级：绑死的 providerId > 解析通道 > 应用（source）。
+ *
+ * **两个入口（`aiGateway` / `aiGatewayStream`）共用这一个函数**，而不是各写一遍：
+ * 各写一遍的话，新加一维（当年的 providerId、现在的 channel）永远只加在其中一个上，
+ * 而漏掉的那个入口会静默解析成另一条接入点 —— 花的是另一把 key、答的是另一个模型，
+ * 返回读起来完全正常（流式那条更隐蔽，症状只是「首字慢一点」）。
+ */
+function resolveForCall(options: GatewayOptions): ResolvedLLM {
+  if (options.providerId) return resolveLLMConfigForProvider(options.providerId);
+  return resolveLLMConfig(options.tier, options.userId, options.channel || options.source);
+}
+
 export function checkAndDeductQuota(userId: string): void {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
@@ -415,13 +518,19 @@ export async function aiGateway(
    * 看到的是「已关闭」，再劝他去关一次就是把他往一条走不通的路上指（见 jsonFailMessage）。
    */
   noThinking: boolean;
+  /**
+   * 上游回了「这个模型始终思考、关不掉」，这次是**退到 `reasoning_effort: 'low'`** 跑完的
+   * （见 {@link LOW_EFFORT_BODY}）。它跑成了，但思维链还在，照旧和正文分同一份 `max_tokens`。
+   *
+   * 调用方要用它分岔那句话：截断/慢的时候说「这个模型关不掉思维链」，**不要**说
+   * 「去后台勾上关思维链」—— 那个勾选框在这条接入点上没有用，用户勾了、界面写着
+   * 「已关闭」，而现象一模一样，他只会反复回去核那个开关。
+   */
+  noThinkingRefused: boolean;
 }> {
-  // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
-  // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
-  // 那条接入点 —— 花的是另一把 key，而返回完全正常。
-  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = options.providerId
-    ? resolveLLMConfigForProvider(options.providerId)
-    : resolveLLMConfig(options.tier, options.userId, options.source);
+  // 接入点解析（providerId 绑死 / channel 通道 / 按应用+档位）全在 resolveForCall 里，
+  // 两个入口共用 —— 见那个函数的注释。
+  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = resolveForCall(options);
 
   // 后台那个开关和调用方传的值取**或**：接入点勾了就一律不思考，但它反过来**开不回来**。
   // 能强制开的话，标讯抽取/评分、consult 出草稿那几条写死 `noThinking: true` 的路径
@@ -436,6 +545,7 @@ export async function aiGateway(
   if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
+  const ntOutcome: NoThinkingOutcome = {};
   const response = await withNoThinking<OpenAI.Chat.Completions.ChatCompletion>(
     noThinking,
     options.operation,
@@ -451,7 +561,8 @@ export async function aiGateway(
             maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
           }
         )
-      )
+      ),
+    ntOutcome
   );
   const duration = Date.now() - startTime;
 
@@ -462,7 +573,8 @@ export async function aiGateway(
   // （实测这条接入点连乱造的键都回 200）。那种情况下唯一的现象是「还是很慢」，
   // 日志里一切正常 —— 所以这里对着 usage 核一眼，没关掉就喊出来。
   const reasoningTokens = (response.usage as any)?.completion_tokens_details?.reasoning_tokens || 0;
-  if (noThinking && reasoningTokens > 0) {
+  // 退到 low 的那次上面已经喊过一句（而且成因说得更准），这里不重复喊。
+  if (noThinking && !ntOutcome.refused && reasoningTokens > 0) {
     console.warn(
       `[llm] ${options.operation}: 要求关思维链，但 ${model} 这次还是想了 ${reasoningTokens} token（共 ${outputTokens} 输出 / ${(duration / 1000).toFixed(1)} 秒）——` +
         `这条接入点或这个模型不支持关，得换模型才快得起来。`
@@ -482,6 +594,7 @@ export async function aiGateway(
     usage: { input_tokens: inputTokens, output_tokens: outputTokens, total_tokens: inputTokens + outputTokens },
     duration_ms: duration,
     noThinking,
+    noThinkingRefused: !!ntOutcome.refused,
   };
 }
 
@@ -503,12 +616,8 @@ export async function aiGatewayStream(
   params: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming, 'model' | 'stream'>,
   options: GatewayOptions
 ): Promise<StreamGatewayResult> {
-  // 传了 providerId 就只认那一条，不走档位解析（见 GatewayOptions.providerId）。
-  // 两个入口都要认它：只在其中一个认的话，另一个入口会静默用回按档位解析出来的
-  // 那条接入点 —— 花的是另一把 key，而返回完全正常。
-  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = options.providerId
-    ? resolveLLMConfigForProvider(options.providerId)
-    : resolveLLMConfig(options.tier, options.userId, options.source);
+  // 解析和 aiGateway 走同一个 resolveForCall（providerId / channel / 应用+档位都在里面）。
+  const { client, model, providerId, providerOwner, noThinking: providerNoThinking } = resolveForCall(options);
   // 取或，同 aiGateway。这里漏掉后台那个开关的话，勾了它之后流式路径照旧带思维链跑，
   // 而流式的现象只是「首字来得慢」—— 看起来像网络，日志里一切正常。
   const noThinking = options.noThinking || providerNoThinking;

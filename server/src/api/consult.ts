@@ -81,7 +81,7 @@ import {
   MAX_SOURCES_PER_PROJECT,
 } from '../services/consult/sourceStore.js';
 import { webSearch, isSearchEnabled } from '../services/webSearchService.js';
-import { QuotaExceededError } from '../core/llm/gateway.js';
+import { QuotaExceededError, NoThinkingUnsupportedError } from '../core/llm/gateway.js';
 import { registerConsultSdkRoutes, registerConsultSdkAdminRoutes } from './consultSdk.js';
 import { consultSdkLimits, chargeExtraSdkAiCalls } from '../services/consult/sdkLimits.js';
 import { requireAdmin } from '../auth/guards.js';
@@ -140,6 +140,14 @@ const ACCEPTED_EXTS = [...SUPPORTED_EXTS, ...IMAGE_EXTS];
 const fileUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_BYTES, files: 1 },
+  // **中文文件名必须显式声明 utf8。** multer/busboy 缺省按 `latin1` 解
+  // Content-Disposition 里的 filename，而浏览器发的是 UTF-8 字节 —— 缺省下
+  // 「品牌全案 0910.pptx」变成「å ç ä¼ ... 0910.pptx」。它不报错：文件内容是好的、
+  // 提取整理全部正常，只是文件名一路乱码地进卡片、进 `briefCompose` 的那行
+  // 「以下来自 <文件名>」，最后进客户资料 —— 而那一行是十二步里唯一说得清
+  // 「这段话是哪份文件里的」的地方。扩展名是 ASCII，所以 fileFilter 照常放行，
+  // 一切看起来只是「显示有点怪」。
+  defParamCharset: 'utf8',
   fileFilter: (_req, file, cb) => {
     const ext = extFromName(file.originalname);
     if (PASSTHROUGH_EXTS.includes(ext) || ACCEPTED_EXTS.includes(ext as any)) {
@@ -421,7 +429,13 @@ consultRouter.post('/extract-file', (req, res, next) => {
       // 图片那条路会撞额度（429）、上游超时（504）、模型不认图（502）—— 这几种各是
       // 一句不同的话，交给 fail()。兜成 500 的话「今天额度用完了」会显示成「服务器出错」，
       // 他只会一直重传同一张图，而每次都可能真扣一次。
-      if (e instanceof StageError || e instanceof QuotaExceededError || e instanceof OpenAI.APIError) {
+      // NoThinkingUnsupportedError 也走 fail()（它最终由 app.ts 透原文回 502）：
+      // 落到下面那句的话，「接入点的模型关不掉思维链」会被套上「解析这个文件时出错了」，
+      // 而他会以为是这张图/这个文件的问题，一路重传。
+      if (
+        e instanceof StageError || e instanceof QuotaExceededError || e instanceof OpenAI.APIError
+        || e instanceof NoThinkingUnsupportedError
+      ) {
         return fail(e, res, next);
       }
       console.error('[consult] extract-file failed:', e?.message);

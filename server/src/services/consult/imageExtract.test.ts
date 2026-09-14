@@ -61,14 +61,15 @@ describe('consult 图片识别', () => {
     expect(r.notes.join('\n')).toMatch(/对画面的描述/);
   });
 
-  it('成功时必须说出「这份没有原文可比对」，并如实回花掉的一次额度', async () => {
-    // 吞掉这条的话，图片读出来的资料在界面上和文件提取出来的一样可信 —— 而它是模型
-    // 一个人读出来的，看错一个数字（12.8 → 128）没有任何一处会露馅。
+  it('顺利读完的那张图不说话（notes 是空的），并如实回花掉的一次额度', async () => {
+    // notes 是「成功了，但可能不是你要的」那一栏（截断 / 超预算 / 这是描述不是原文）。
+    // 每张图都顶一句「这份是大模型读出来的，请核一眼数字」的话，每次上传都是一片黄框，
+    // 而真出问题的那一条就淹在里面了 —— 卡片上本来就写着「AI 读图（无原文）」。
     replies.push({ text: '## 品牌与公司\n- 玉林制药\n\n## 经营与销量数据\n- 年营收 8600 万' });
     const r = await extractImageText('u1', '第3页.png', png);
     expect(r.text).toContain('8600');
     expect(r.calls).toBe(1);
-    expect(r.notes.join('\n')).toMatch(/没有程序抠出来的原文可以比对/);
+    expect(r.notes).toEqual([]);
     // 图片要真的发出去（而且是 data URL —— 不落 COS，客户资料不公开）
     const parts = sent[0].params.messages.at(-1).content;
     expect(parts.some((p: any) => p.type === 'image_url' && p.image_url.url.startsWith('data:image/png;base64,'))).toBe(true);

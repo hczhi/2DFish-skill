@@ -128,6 +128,18 @@ skills/  workspaces/  docs/
   structure/validate/diagnose、标讯画像、飞书意图解析），`fast` = 大段散文，`default` =
   其余（chat / 咨询 / ui-review / fish）。平台渠道**可能压根没有 strong 那一档**（回落
   default），所以「换成强模型」不是格式错误的解法。
+- **解析通道 `GatewayOptions.channel`（`core/llm/apps.ts` 的 `AI_CHANNELS`，目前只有
+  `extract` = 文件/图片内容提取）只影响「用哪条接入点」，配额和 `ai_logs.source` 一律还记在
+  `source` 上。** 存在的理由是「应用」这一维太粗：给 consult 配一条就把对话和出草稿一起换掉了，
+  而想换的只有提取那两步（`consult:extract-image` / `consult:tidy-file`）。三条不能动的边界：
+  ① 通道**不进 `AI_APPS`** —— 没有任何调用点写 `source: 'extract'`，进去会让 `aiAppRegistry`
+  反向断言变红，更要紧的是后台「按应用额度」会多出一个配了永远不触发的选项（界面显示
+  「已限 10 次/天」而实际不限）。所以 provider 的 scope_app 校验用 `isValidProviderScope`（宽），
+  额度校验仍用 `isValidAppScope`（严）；② 扣额度/写日志**不能**跟着 channel 走，跟了的话提取
+  变成不计任何应用额度的免费调用，而后台那条限额看起来还配着；③ 解析只在
+  `gateway.ts` 的 `resolveForCall` 一处（两个入口共用）—— 各写一遍的话新加的维度永远只加在
+  一个入口上，漏掉的那个静默解析成另一条接入点（流式那条的症状只是「首字慢一点」）。
+  没配这条通道时行为和以前完全一样（回落到按应用+档位解析）。
 - `ai_logs.provider_id / provider_owner` 记哪把 key 付了这次的钱。
 - **`maxRetries: 0` 关掉的只该是「重试超时」，别把「上游忙」也关掉。** 那几条写死 0 的路径
   （consult 出草稿/整理、图片识别）是因为同一个 body 第二次还在同一处超时，重试只把等待翻倍；
@@ -145,6 +157,38 @@ skills/  workspaces/  docs/
   也不等于生效（宽松网关对不认识的键既不报错也不照办），所以还要回头核 `reasoning_tokens`
   并在没关掉时喊出来。两处入口（`aiGateway` / `aiGatewayStream`）都要认，只在一处认的话
   流式那条静默照旧慢，而现象只是「首字来得慢」，看起来像网络。
+- **上游 400 有两种，退法不同，别合成一支。** ①「不认识这几个键」（OpenAI 官方那句
+  «Unrecognized request argument»）→ 把四个键**摘干净**重发；②「这个模型**始终思考、
+  关不掉**」（实测 glm-5.3-flash：«该模型始终思考，不支持关闭思考；请使用 low、high 或
+  max。» —— 它拒的是 `minimal` 这个值）→ 退到 `LOW_EFFORT_BODY`，也就是**只发
+  `reasoning_effort: 'low'` 这一个键**，连 low 都被 400 才抛 `NoThinkingUnsupportedError`
+  （`app.ts` 全局处理器透原文回 502 + `code: no_thinking_unsupported`）。第二种要是也摘干净，
+  换来的是一次**思维链全开**的调用，而写 `noThinking: true` 的那几条路关它治的正是截断 ——
+  悄悄退回全开之后现象只是「抄到一半就断了」「解析失败」，谁都想不到是模型选错了；
+  选 low 不选 high/max 同理（这条退路的意义就是把思维链压到最短）。只发一个键是因为另外三个
+  是不是也被拒无从判断，一起再发很可能换来第二次同样的 400。识别这条 400 的
+  `isAlwaysThinking` 认不出新的文案时，退化成透传上游原文（读起来像我们坏了），
+  所以碰到新的网关文案要往那两条正则里加，而不是回去改成「一律摘干净」。
+- **退到 low 之后它还在想，所以 `aiGateway` 回一个 `noThinkingRefused`，调用方那句话必须跟着分岔。**
+  这是个降级（硬规则 1）：跑成了，但思维链照旧和正文分同一份 `max_tokens`，症状是**偶发**的
+  「抄到一半就断了」。不分岔的话报错/提示里写的是「去「AI 模型 Provider」勾上「关思维链」」——
+  而那个勾选框在这条接入点上是死路：他勾了、列表上写着「已关闭」，现象一模一样，他只会
+  反复回去核那个开关。目前分岔的两处都是**报错**话术（`imageExtractService` / `fileTidyService`
+  的「模型一个字都没返回」）—— 成功态的 `notes` 里压根不再提思维链这件事（用户改不了，而它每次
+  提取都会出现；管理员的线索在 `console.warn` 和后台那个「测试」按钮上）。
+  流式入口不回这个标记（它压根不报 token 数），加新的 `noThinking: true` 路径时记得看一眼。
+- **连通测试（`POST /providers/:id/test`）在主请求之后**多发一次带那四个键的最小请求
+  （`probeNoThinking`），把结论回在 `no_thinking.{verdict,note}` 里。理由是上面那种失败
+  **在配置阶段完全看不出来** —— glm-5.3-flash 连通 ✓、回复正常，而管理员唯一的线索是用户来说
+  「提取出来的资料不全」，而每次失败都真扣一次额度。四个 verdict 各对应一句不同的话（能关 /
+  发了但它照旧想了 `reasoning_tokens` 个 / 这个模型关不掉=运行时退到 low、长文件有截断风险 /
+  这条网关不认这几个键=运行时摘干净重发）。
+  两条边界：① 键从 gateway 里 import（`NO_THINKING_BODY`/`NO_THINKING_KEYS`/`isAlwaysThinking`），
+  在 admin 里另抄一份的话后台会显示一个和业务实际发的对不上的假结论；② 探测自己失败
+  （超时等）**不改连通结论**，只说「没测出来」—— 让它翻红的话「key 错了」和「关不掉思考」
+  会混成同一句。两个后台页面（`SystemConfig.vue` / `DedicatedAi.vue`）都要把 note 显示出来
+  且 `.test-result` 要 `white-space: pre-line`，漏一个的话在那个页面上配的接入点照旧只有一句
+  「连通 ✓」（专属接入点全在 DedicatedAi 那页配）。
 - **后台那个开关是 `ai_providers.no_thinking`（087），和调用方传的值取「或」—— 只能强制关，
   开不回来。** 能强制开的话，标讯抽取/评分、consult 对话/草稿那几条写死 `noThinking: true` 的
   路径会被后台一个勾选框换回慢的那一版，而那几处关它治的是截断和「等四分钟」，退回去之后现象

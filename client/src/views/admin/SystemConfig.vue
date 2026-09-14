@@ -324,12 +324,19 @@ async function testProvider(p: Provider) {
       duration_ms: number; model: string;
       image_url?: string; protocol?: string; protocol_inferred?: boolean;
       storage?: string; storage_hint?: string; url_warning?: string;
+      reasoning_hint?: string;
+      no_thinking?: { verdict: string; note?: string };
     }>(`/api/admin/providers/${p.id}/test`, {})
     let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
     if (r.protocol) msg += ` · 协议 ${r.protocol}${r.protocol_inferred ? '（按 Base URL 猜的，extra_json 里没写 protocol）' : ''}`
     if (r.storage) msg += ` · 存储 ${r.storage === 'cos' ? 'COS' : '本机磁盘'}`
     if (r.storage_hint) msg += `\n${r.storage_hint}`
     if (r.url_warning) msg += `\n⚠ ${r.url_warning}`
+    // 「连通 ✓」不等于能用：这两条都是配置阶段看不出、到业务里才变成
+    // 「解析失败 / 提取用不了」的成因（思维链吃 max_tokens、模型关不掉思考），
+    // 不显示的话管理员唯一的线索是用户来报错，而每次失败都真扣一次额度。
+    if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
+    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
     // 生图必须把那张图显示出来：只显示「连通 ✓」的话，回了个 mp4、回了张
     // 纯黑图、回错了模型这几种在文字上都长得一样。
     testResults.value[p.id] = { ok: true, msg, img: r.image_url }

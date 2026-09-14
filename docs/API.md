@@ -125,7 +125,10 @@ SSE 流式端点，消耗额度。
 briefLimit, budgetChars, maxFiles, maxImageBytes, tidyPlan:{calls,chunkChars,maxChars} }`：
 
 - `kind:'file'`（.txt/.md/.docx/.doc/.pptx/.pdf）：程序提取，`aiCalls: 0`、`tidied: false`，
-  前端接着调 `/tidy-text`。PDF 只读**文字层**，最多 200 页（截了页要看 `notes`）；
+  另带 `emptyPages` = 有几页一个字都没读到（整页是图）。前端把它显示在卡片的字数那一行
+  （`· N 页没读到`）而**不是**塞进 `notes` 的黄框；一个字不说也不行 —— 剩下那些页拼起来读着完整，
+  没人会发现少了几页，而这几页的解法是导成图片单独传。
+  PDF 只读**文字层**，最多 200 页（截了页要看 `notes`）；
   整份没有文字层（扫描件）→ **400 并让用户把那几页导出成 PNG/JPG 当图片传**（不做服务端栅格化）。
 - `kind:'image'`（.png/.jpg/.jpeg/.webp/.gif，单张 ≤ `maxImageBytes` 5MB）：**一次 AI 调用**，
   `aiCalls: 1`、`tidied: true`（读图那一次已经按同一套 `##` 类目归好，前端**不要**再调
@@ -135,17 +138,20 @@ briefLimit, budgetChars, maxFiles, maxImageBytes, tidyPlan:{calls,chunkChars,max
   明说「这是描述，不是图里的原文」（模型连描述都没给才 400）。`.heic/.bmp/.tiff/.avif`
   在**花额度之前**拒掉并说怎么转成 JPG。
 
-`notes` 是「提取成功了但可能不是你要的」（文本框漏字、整页是图、GBK 乱码、PDF 缺文字层的那几页、
-**图片这条路没有原文可比对数字**），前端必须显示。
+`notes` 是「**这一份的结果和你以为的不一样**」，只放真出了问题的那几条（文本框漏字、GBK 乱码、
+扩展名和真实格式不一致、截断、图里没字只有描述）。顺利读完的那一份 `notes` 是**空数组** ——
+「每份都提醒一句」的那些话已经删掉了（每次上传一片黄框，真出问题的那条就淹在里面）。前端必须显示。
 `aiCalls` 必须显示在卡片上 —— 一次「提取」静默扣掉他今天 10 次里的一次是这条路最容易发生的静默扣费。
 `tidyPlan.calls` 是**服务端算的**整理调用次数，前端不许自己按字数除（会和真实扣费漂开）。
 
 ### POST /api/consult/tidy-text
 `{ filename, text }` → 交给模型提炼（只删不编）。回 `{ text, chars, rawChars, truncated,
 addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
-`calls` 是真花了几次额度（长文本分段 = 多次）；`addedNumbers` 是整理后多出来、原文里没有的
-数字（模型编了东西时唯一露馅的地方）；`overBudget` = 没压进 `budgetChars`（3500）——
-**这里不截**，前端要出声，否则提交那一下才被拒。三者前端都必须显示。
+`calls` 是真花了几次额度（长文本分段 = 多次，**超预算时再压一遍也算一次**）；`addedNumbers` 是整理后
+多出来、原文里没有的数字（模型编了东西时唯一露馅的地方）。
+**结果必然 ≤ `budgetChars`（3500）**：压不进去时服务端最多再让 AI 压 2 遍，还超就按小节切尾巴
+（**不回提示**，那一刀只写服务端日志）—— 不再回一句「请自己删掉 N 字」。所以 `overBudget` 只剩一种真值：有段落整理失败
+退回了原文（那时故意不压不切，理由见 `docs/modules/consult.md`），前端要出声，否则提交那一下才被拒。
 
 ### POST /api/consult/projects
 `{ brandName, brief, attachments?: [{filename, text, variant:'tidy'|'raw'}] }`（最多 5 份）。

@@ -10,14 +10,16 @@
 // ① prompt 里「看不清就写［看不清］，不许猜」是硬规则；
 // ② 每一份图片结果都带一条 note，明说这份没有原文可比对，请他对着图核一眼数字。
 //
-// 第二件必须认出来的事：**这条接入点的模型可能压根不认图片**（视觉能力跟着 default 档
-// 那条接入点走）。宽松的网关会把 image_url 那一段悄悄丢掉，然后模型照着剩下的文字说明
+// 第二件必须认出来的事：**这条接入点的模型可能压根不认图片**（这一步走「内容提取」通道，
+// 后台可以给它单独指一条接入点，没指就还是 default 档那条 —— 两种情况都可能是纯文本模型）。
+// 宽松的网关会把 image_url 那一段悄悄丢掉，然后模型照着剩下的文字说明
 // 编一份「客户资料」—— 那份东西读起来完全正常。所以 prompt 里要求「收不到图片就只回
 // NO_IMAGE」，代码认这个标记并报出真实成因（去换一个支持视觉的模型）。
 
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
+import { EXTRACT_CHANNEL } from '../../core/llm/apps.js';
 import { StageError } from './draftService.js';
-import { budgetRule, CATEGORY_LIST, TIDY_BUDGET_CHARS } from './fileTidyService.js';
+import { budgetRule, CATEGORY_LIST, cutToBudget, TIDY_BUDGET_CHARS } from './fileTidyService.js';
 
 /** 认得的图片扩展名。**能不能真的解析看文件头**（{@link sniffImage}）。 */
 export const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'] as const;
@@ -176,7 +178,7 @@ export async function extractImageText(
   }
 
   const notes: string[] = [];
-  const { response, usage, duration_ms } = await aiGateway(
+  const { response, usage, duration_ms, noThinkingRefused } = await aiGateway(
     {
       ...SAMPLING.analytic, // 低温：这一步是抄和归类，不是发挥
       messages: [
@@ -196,6 +198,11 @@ export async function extractImageText(
     {
       userId,
       source: 'consult',
+      // 提取走「内容提取」通道：后台可以单独给它指一条便宜快的接入点，而 consult 其余
+      // 步骤（对话 / 出草稿 / 出方向）照旧走 consult 那条。额度和日志仍记在 consult 上。
+      // 注意这条路要**认图**：指到一个纯文本模型上时，模型会回 NO_IMAGE，
+      // 下面那段专门把它翻成「去后台换一个能读图的模型」——不是编一份客户资料出来。
+      channel: EXTRACT_CHANNEL,
       operation: 'consult:extract-image',
       requestSummary: `识别上传图片：${filename}（${(buf.length / 1024).toFixed(0)}KB）`,
       // 有人在屏幕前等着，而且这条路上关它治的是截断：思维链算进 max_tokens 却不进
@@ -206,8 +213,9 @@ export async function extractImageText(
       // 上游回「忙」（`503 system cpu overloaded`）时重发一次：不重发的话这张图直接失败，
       // 而他刚刚已经为它扣掉了一次额度（重发在同一次调用里，不会再扣一次）。
       retryOnBusy: true,
-      // 视觉能力跟着 default 档那条接入点走（同 uiReview）。不写 'fast'：
-      // 走量的那一档常常配的是纯文本模型，而那种情况下图片是被**悄悄丢掉**的。
+      // 不写 tier：视觉能力跟着 default 档走（同 uiReview）。写 'fast' 的话走量那一档
+      // 常常配的是纯文本模型，而那种情况下图片是被**悄悄丢掉**的。
+      // 通道也一样：给「内容提取」指的那条接入点必须认图，否则这里会走到下面 NO_IMAGE。
     }
   );
 
@@ -221,7 +229,10 @@ export async function extractImageText(
       `模型一个字都没返回（${usage.output_tokens} 输出 token，其中 ${reasoningTokens} 在思维链上，`
         + `耗时 ${(duration_ms / 1000).toFixed(1)} 秒）。这次的 AI 额度已经扣了。\n`
         + (reasoningTokens > 0
-          ? '思维链没关掉，额度全被想掉了 —— 去「AI 模型 Provider」勾上「关思维链」。'
+          ? noThinkingRefused
+            // 同下面那条 note：这条接入点上「去勾一下」是死路，说了等于把他往回指。
+            ? '额度全被思维链想掉了，而这个模型关不掉思维链（这次已经退到 reasoning_effort: \'low\'）—— 去「AI 模型 Provider」把这一步用的那条换成一个能关思维链的模型。'
+            : '思维链没关掉，额度全被想掉了 —— 去「AI 模型 Provider」勾上「关思维链」。'
           : '多半是上游抖动，也可能这条接入点的模型不认图片。重试一次，还是空的话换个支持视觉的模型。'),
       502
     );
@@ -232,7 +243,8 @@ export async function extractImageText(
   if (/^NO_IMAGE\b/.test(out)) {
     throw new StageError(
       '模型说它没有收到图片，所以这张图一个字都没读到（这次的 AI 额度已经扣了）。\n'
-        + '成因是 default 档配的模型不支持看图 —— 去「AI 模型 Provider」换一个支持视觉的模型。',
+        + '成因是这次用的模型不支持看图 —— 去「AI 模型 Provider」里改那条「应用 = 文件/图片内容提取」'
+        + '的配置（没配过这一条的话，改 default 档那条），换一个支持视觉的模型。',
       502
     );
   }
@@ -255,26 +267,38 @@ export async function extractImageText(
     out = desc;
   }
 
-  // 这条路少一道闸门，每一份都要说一次。这不是"提示"，是这份资料的可信度说明：
-  // 文件那条路有原文可以逐字比对，这条没有。
-  notes.push(
-    described
-      ? '这张图里没有文字，这份是模型**对画面的描述**（不是图里的原文）—— 请把不是客户说过的判断删掉。'
-      : '这份是大模型从图里读出来的，没有程序抠出来的原文可以比对 —— 请对着原图核一眼数字和品牌名。'
-  );
+  // `notes` 只留「这一份的结果和你以为的不一样」那几条（截断 / 超预算 / 这是描述不是原文）。
+  // **顺利读完的那张图不说话** —— 原来每张都顶一句「这份是大模型读出来的，请核一眼数字」，
+  // 每次上传都是一片黄框，而卡片上本来就写着「AI 读图（无原文）」，那一句是重复的。
+  // 这一条不同：它说的是这份内容**压根不是图里的字**，而是模型看着图编的一段描述 ——
+  // 不说的话它在资料里和客户亲口说的长得一模一样，后面十二步会把它当成事实。
+  if (described) {
+    notes.push('这张图里没有文字，这份是模型对画面的描述（不是图里的原文）。');
+  }
   if (choice?.finish_reason === 'length') {
     notes.push(
       `结果被截断了（顶到 ${MAX_TOKENS_IMAGE} token${reasoningTokens > 0 ? `，${reasoningTokens} 花在思维链上` : ''}）`
         + '，这张图后半部分没抄进来。请把图裁成两张分别传。'
     );
   }
+  // 超预算时**自己切**，不甩一句「请自己删掉 N 字」——那是把这一步的活退回给用户。
+  // 这边没有「再让 AI 压一次」那一步（文件那条路有）：一张图读一遍就一次额度，
+  // 为了几十个字再花一次不划算，而一张图读出三千五百字以上本来就极少见。
+  // 同文件那条路：这一刀**不进用户看的 notes**，线索留在 console.warn 里
+  // （prompt 里那句「必须 ≤ N 字，允许整条整节删」是让它压根走不到这里的那一头）。
+  if (out.length > TIDY_BUDGET_CHARS) {
+    const cut = cutToBudget(out, TIDY_BUDGET_CHARS);
+    console.warn(
+      `[consult] ${filename}：读图读出 ${out.length} 字，已按小节切掉末尾 ${out.length - cut.length} 字`
+        + `（预算 ${TIDY_BUDGET_CHARS}）。`
+    );
+    out = cut;
+  }
   const overBudget = out.length > TIDY_BUDGET_CHARS;
-  if (overBudget) {
-    notes.push(`读出来 ${out.length} 字，超过单份上限 ${TIDY_BUDGET_CHARS} 字，请自己删掉 ${out.length - TIDY_BUDGET_CHARS} 字（这里不替你截）。`);
-  }
-  if (reasoningTokens > 0) {
-    notes.push(`这条接入点没关掉思维链（想了 ${reasoningTokens} token），又慢又容易截断 —— 去「AI 模型 Provider」勾上「关思维链」。`);
-  }
+  // 「这条接入点没关掉思维链」不再往用户面前放：那是接入点配置的事，他改不了，
+  // 而这一句每次读图都会出现。管理员那边的线索没丢 —— gateway 里 console.warn 一句，
+  // 后台点接入点的「测试」按钮也会明说（见 admin.ts 的 probeNoThinking）。
+  // 它真的害到人的时候（读一半就断了）说话的是上面那条截断提示，那条带着思维链 token 数。
 
   return {
     text: out,
