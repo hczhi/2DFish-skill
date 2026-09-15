@@ -28,10 +28,13 @@
 4. **每边**（一个裸 `<div>`）三层：
    - `<div class="kicker" style="margin-bottom:14px">` 标签 —— 写成 `改造前 · 11.6 小时`：
      **状态词 + 那个状态下的关键数**。只写"改造前"的话这一页就没有量化，读者只能凭图猜差别。
-   - `<img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;border-radius:12px;border:1px solid var(--c-hairline)">`
-     —— 这三条 inline 样式**必须写全**：这里的 `<img>` **不在 `.gallery` 里**，
-     没有任何类兜住它（`.gallery img` 只管 L8）。不写 `width:100%` 的话图按原始像素铺开，
-     一张 1920 宽的截图会把那一列撑爆、压掉另一边，而页面照样渲染。
+   - `<img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid var(--c-hairline)">`
+     —— 这几条 inline 样式**必须写全、而且左右两张写得一模一样**：这里的 `<img>` **不在
+     `.gallery` 里**，没有任何类兜住它（`.gallery img` 只管 L8）。不写 `width:100%` 的话图按
+     原始像素铺开，一张 1920 宽的截图会把那一列撑爆、压掉另一边；不写 `aspect-ratio` 的话
+     高度由图自己的比例决定 —— **改造前后两张图比例不一样时，那两张图一高一矮、下面两行说明
+     错开一行**，而占位图阶段两边一样高（占位图是同一个文件），要等真图配上来才看得出来，
+     那时图已经生成过、钱已经花了。两张写不同的值同样算错。
    - `<p style="font-size:18px;margin-top:14px;line-height:1.8">` 一句，说**这个状态下发生了什么**，≤ 30 字。
 5. **中间箭头**（`<div style="text-align:center;font-size:76px;font-weight:800;color:var(--c-brand)">→</div>`）
    —— 用文本 `→`，不要用图片或 SVG。
@@ -49,13 +52,13 @@
     <div style="flex:1;display:grid;grid-template-columns:1fr 96px 1fr;align-items:center;gap:18px">
       <div>
         <div class="kicker" style="margin-bottom:14px">{{改造前 · 关键数}}</div>
-        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;border-radius:12px;border:1px solid var(--c-hairline)" data-img-prompt="改造前的画面（中文一句话）" data-img-mode="case">
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid var(--c-hairline)" data-img-prompt="改造前的画面（中文一句话）" data-img-mode="case">
         <p style="font-size:18px;margin-top:14px;line-height:1.8">{{这个状态下发生了什么}}</p>
       </div>
       <div style="text-align:center;font-size:76px;font-weight:800;color:var(--c-brand)">→</div>
       <div>
         <div class="kicker" style="margin-bottom:14px">{{改造后 · 关键数}}</div>
-        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;border-radius:12px;border:1px solid var(--c-hairline)" data-img-prompt="改造后的画面（中文一句话）" data-img-mode="case">
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid var(--c-hairline)" data-img-prompt="改造后的画面（中文一句话）" data-img-mode="case">
         <p style="font-size:18px;margin-top:14px;line-height:1.8">{{这个状态下发生了什么}}</p>
       </div>
     </div>

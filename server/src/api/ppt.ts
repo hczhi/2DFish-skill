@@ -24,6 +24,7 @@ import {
   PageEditError,
 } from '../services/ppt/pageEdit.js';
 import { isBlankPage } from '../services/ppt/blankPage.js';
+import { rechartEdited } from '../services/ppt/chartData.js';
 import { addCanvasText, addCanvasImage, setCanvasBox, deleteCanvasEl } from '../services/ppt/canvasEdit.js';
 import { aiEditRegion } from '../services/ppt/aiEditService.js';
 import { aiRemakeRegion } from '../services/ppt/aiRemakeService.js';
@@ -1478,11 +1479,16 @@ pptRouter.post('/decks/:id/edit-text', (req: Request, res: Response) => {
   if (!t) return;
   const { owner, deck, page, row } = t;
   try {
-    const { html, text } = applyTextEdit(row.html, {
+    const edited = applyTextEdit(row.html, {
       eid: String(req.body?.eid || ''),
       oldText: String(req.body?.oldText ?? ''),
       newText: String(req.body?.newText ?? ''),
     });
+    const text = edited.text;
+    // 改过字之后图表的量要重算（`rechartEdited`）：图表页上改的往往就是那个数，而条长写在
+    // style 里不会跟着变 —— 「40」改成「85」之后是一条短条配一个大数字，接口 200、图表
+    // 渲染完整，只有照条长读出来的结论是错的。`chartNotes` 必须显示出来（同一件事的另一半）。
+    const { html, notes: chartNotes } = rechartEdited(edited.html);
     if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上是你改过的那句，而库里还是原来那句（拼整份和导出用的都是它）。刷新一下再改一次。`,
@@ -1496,6 +1502,7 @@ pptRouter.post('/decks/:id/edit-text', (req: Request, res: Response) => {
       html,
       // 单页预览不带页脚（同 pageService / imageService）。
       previewHtml: previewOf(deck, row, html),
+      chartNotes,
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
@@ -1616,7 +1623,7 @@ pptRouter.post('/decks/:id/edit-region-style', (req: Request, res: Response) => 
  * 都要原样回给界面：合成一句「删不了」的话，「这一块有图」和「这一页只剩这一段字」下一步
  * 完全不同（前者去重新生成，后者压根不该删）。
  *
- * **撤销还没做**（下一片），所以前端那个确认框必须写明「删错了只能重新生成这一页（一次真实调用）」。
+ * **撤销还没做**（下一片），所以前端那个确认框必须写明「删错了只能重新生成这一页」。
  */
 pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
   const t = editTarget(req, res, '，没有可以删的内容。');
@@ -1624,7 +1631,12 @@ pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
   const { owner, deck, page, row } = t;
   try {
     const { path } = pickRegion(row.html, req.body);
-    const { html, removed } = applyDelete(row.html, { path });
+    const cut = applyDelete(row.html, { path });
+    const removed = cut.removed;
+    // 删完要重算图表的量（`rechartEdited`）：删掉的正好是最长那一行时，轨道上限还是按那个
+    // 被删掉的数算的 —— 剩下几行永远到不了满格，看起来像「这几项都还差得远」，而这一页
+    // 渲染完整、接口 200。上限变了就出声，不说的话别的条突然变长他会以为是自己删坏了。
+    const { html, notes: chartNotes } = rechartEdited(cut.html);
     if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上那一块像是删掉了，而库里还在（拼整份和导出用的都是它）。刷新一下再删一次。`,
@@ -1636,6 +1648,7 @@ pptRouter.post('/decks/:id/delete-node', (req: Request, res: Response) => {
       removed,
       html,
       previewHtml: previewOf(deck, row, html),
+      chartNotes,
     });
   } catch (e: any) {
     const code = e instanceof PageEditError ? 400 : 500;
@@ -1737,7 +1750,10 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
       },
       owner.userId
     );
-    if (!savePageEditedHtml(deck.id, owner, { page, html: result.html })) {
+    // 模型只改结构和 inline style，但那份 inline style 里就有 `--bar-v`/`--bar-max`：它把一根
+    // 条的量写成自己算的数之后，图表读起来完全正常而条长不是旁边那个数。重算一遍并出声。
+    const { html, notes: chartNotes } = rechartEdited(result.html);
+    if (!savePageEditedHtml(deck.id, owner, { page, html })) {
       res.status(500).json({
         error: `第 ${page} 页改出来了但没存上（这次调用已经花掉了）。刷新一下，别直接重试。`,
       });
@@ -1747,9 +1763,10 @@ pptRouter.post('/decks/:id/ai-edit', async (req: Request, res: Response) => {
       page,
       summary: result.summary,
       region: result.region,
-      html: result.html,
-      previewHtml: previewOf(deck, row, result.html),
+      html,
+      previewHtml: previewOf(deck, row, html),
       usage: result.usage,
+      chartNotes,
     });
   } catch (e: any) {
     sendPptError(res, e, e instanceof PageEditError, '这一块没改上');
@@ -1777,6 +1794,14 @@ pptRouter.post('/decks/:id/ai-remake', async (req: Request, res: Response) => {
       },
       owner.userId
     );
+    // 这条路放开了「新写文案」，所以它会改数字：把「40%」重写成「85%」而条长那一格照旧，
+    // 出来是一条短条配一个大数字（图表颜色、单位、结论条全在，一处都不报错）。所以先按现在
+    // 印出来的那些数把量重算一遍，再往下走 —— 后面几步读的都得是存进库的那一份 html。
+    // 重算的说明并进 `notes`（那一份本来就是「改了什么、必须显示出来」），不另开一个字段：
+    // 另开的话前端要多认一条，而这两种都是「画面正常、读出来不对」的同一类。
+    const rechart = rechartEdited(result.html);
+    result.html = rechart.html;
+    result.notes.push(...rechart.notes);
     // 加/删了图槽之后配图记录要按新 html 重排一次（`realignImageRecords`）：图的序号是按
     // 出现顺序数的，不重排的话面板上写着「配图 1/1 张」而画面里全是占位图，或者下一次贴
     // 备好的图落到隔壁那一格上 —— 两种都是页面渲染完全正常、接口 200。

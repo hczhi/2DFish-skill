@@ -93,15 +93,15 @@
 .bio-portrait img{width:100%;height:100%;object-fit:cover;display:block}
 .bio-portrait::after{content:"";position:absolute;inset:-6px;border-radius:50%;
   border:2px solid var(--c-brand);opacity:.35;z-index:-1}
-.bio-badge{position:absolute;bottom:-10px;right:-10px;background:var(--c-brand);color:#fff;
-  font-size:13px;font-weight:700;letter-spacing:2px;padding:8px 16px;border-radius:20px;
+.bio-badge{position:absolute;bottom:-10px;right:-10px;background:var(--c-brand);color:var(--c-brand-on);
+  font-size:14px;font-weight:700;letter-spacing:2px;padding:8px 16px;border-radius:20px;
   box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:4}
 .bio-bleed{position:absolute;bottom:0;left:0;right:0;height:56px;background:linear-gradient(90deg,var(--c-brand-deep) 0%,var(--c-brand) 50%,var(--c-brand-deep) 100%);border-radius:0 0 24px 24px;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:0 72px}
-.bio-bleed .bleed-text{color:rgba(255,255,255,.85);font-size:13px;font-weight:600;letter-spacing:6px}
+.bio-bleed .bleed-text{color:var(--c-brand-on);opacity:.85;font-size:14px;font-weight:600;letter-spacing:6px}
 .bio-bleed .bleed-dots{display:flex;gap:8px}
-.bio-bleed .bleed-dots span{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.4)}
-.bio-bleed .bleed-dots span:first-child{background:rgba(255,255,255,.9)}
-.bio-corner-tag{position:absolute;top:28px;right:32px;font-size:11px;font-weight:700;
+.bio-bleed .bleed-dots span{width:8px;height:8px;border-radius:50%;background:var(--c-brand-on);opacity:.4}
+.bio-bleed .bleed-dots span:first-child{opacity:.9}
+.bio-corner-tag{position:absolute;top:28px;right:32px;font-size:14px;font-weight:700;
   color:var(--c-ink-soft);letter-spacing:3px;z-index:5;display:flex;align-items:center;gap:10px}
 .bio-corner-tag::before{content:"";width:24px;height:2px;background:var(--c-brand)}
 /* .bio-page-num 已删除：页面上不显示页码（当前页和总页数都不要）。 */

@@ -41,7 +41,7 @@
 .l30-card{display:flex;flex-direction:column;overflow:hidden;background:var(--c-card);border:1px solid var(--c-hairline)}
 .l30-pic{position:relative;flex:0 0 62%;overflow:hidden;background:var(--c-bg-alt)}
 .l30-pic img{width:100%;height:100%;object-fit:cover;display:block}
-.l30-no{position:absolute;left:0;bottom:0;padding:6px 18px;background:var(--c-brand);color:#fff;font-family:var(--num);font-size:26px;font-weight:800;line-height:1.3}
+.l30-no{position:absolute;left:0;bottom:0;padding:6px 18px;background:var(--c-brand);color:var(--c-brand-on);font-family:var(--num);font-size:26px;font-weight:800;line-height:1.3}
 .l30-body{flex:1;display:flex;flex-direction:column;padding:28px 30px 30px}
 .l30-body h3{font-size:27px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);margin-bottom:12px}
 .l30-body p{font-size:19px;line-height:1.8;color:var(--c-ink)}

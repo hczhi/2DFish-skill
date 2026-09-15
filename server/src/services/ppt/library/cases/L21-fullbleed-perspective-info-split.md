@@ -46,7 +46,7 @@
 .l21-right{position:absolute;top:50%;transform:translateY(-50%);right:80px;display:flex;gap:56px;z-index:2}
 .l21-stat .num{font-size:64px;font-weight:700;color:#fff;font-family:var(--serif);line-height:1}
 .l21-stat .lab{font-size:14px;color:#fff;margin-top:10px;font-weight:500}
-.l21-stat .lab-en{font-size:12px;color:rgba(255,255,255,.7);margin-top:4px;font-style:italic}
+.l21-stat .lab-en{font-size:14px;color:rgba(255,255,255,.7);margin-top:4px;font-style:italic}
 .l21-nav{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;z-index:2}
 .l21-nav .dot{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.4)}
 .l21-nav .dot.on{width:24px;border-radius:4px;background:#fff}

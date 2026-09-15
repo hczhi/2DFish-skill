@@ -47,13 +47,13 @@
 .l20-stat{display:flex;align-items:baseline;gap:10px;margin-top:36px}
 .l20-stat .num{font-size:104px;font-weight:700;color:var(--c-brand);font-family:var(--serif);line-height:1}
 .l20-stat .lab{font-size:16px;color:var(--c-ink-soft)}
-.l20-stat .lab small{display:block;font-size:13px;margin-top:4px}
+.l20-stat .lab small{display:block;font-size:14px;margin-top:4px}
 .l20-body{font-size:15px;color:var(--c-ink-soft);line-height:1.7;margin-top:24px;max-width:92%}
 .l20-icons{display:flex;gap:32px;margin-top:auto;padding-top:48px}
 .l20-icon{display:flex;flex-direction:column;align-items:center;gap:8px}
 .l20-icon .dot{width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.85);border:1px solid var(--c-hairline);display:flex;align-items:center;justify-content:center}
 .l20-icon .dot svg{width:24px;height:24px;color:var(--c-brand)}
-.l20-icon .lab{font-size:13px;color:var(--c-ink-deep);font-weight:500}
+.l20-icon .lab{font-size:16px;color:var(--c-ink-deep);font-weight:500}
 .l20-hero{position:relative;overflow:hidden}
 .l20-hero img{width:100%;height:100%;object-fit:cover;display:block}
 ```

@@ -101,6 +101,7 @@ import { migration_098 } from './098_ppt_plan_rev.js';
 import { migration_099 } from './099_ppt_cdn_urls.js';
 import { migration_100 } from './100_ppt_sdk_keys.js';
 import { migration_101 } from './101_ppt_asset_tenant.js';
+import { migration_102 } from './102_ppt_chart_bar_max.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -203,4 +204,5 @@ export const allMigrations: Migration[] = [
   migration_099,
   migration_100,
   migration_101,
+  migration_102,
 ];

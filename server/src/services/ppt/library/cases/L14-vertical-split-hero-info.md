@@ -87,7 +87,7 @@
 .l14-info{position:relative;z-index:2;flex:1;background:var(--c-bg);padding:48px 80px 64px;display:grid;grid-template-columns:1fr 1fr;gap:64px}
 .l14-info-col h3{font-size:20px;font-weight:700;color:var(--c-ink-deep);margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--c-hairline)}
 .l14-cn-p{font-size:15px;line-height:1.85;color:var(--c-ink);margin-bottom:12px}
-.l14-en-p{font-size:13px;line-height:1.65;color:var(--c-ink-soft);font-style:italic;opacity:.85}
+.l14-en-p{font-size:14px;line-height:1.65;color:var(--c-ink-soft);font-style:italic;opacity:.85}
 ```
 
 ## build-part 结构模板

@@ -84,9 +84,9 @@
 .l16-cell-img{flex:0 0 70%;background:var(--c-bg-alt);border-radius:4px;overflow:hidden;margin-bottom:14px}
 .l16-cell-img img{width:100%;height:100%;object-fit:cover;display:block}
 .l16-cell-title{font-size:18px;font-weight:800;color:var(--c-ink-deep);padding-left:12px;border-left:2px solid var(--c-accent);margin-bottom:4px}
-.l16-cell-title-en{font-size:12px;font-weight:600;color:var(--c-ink-soft);letter-spacing:2px;padding-left:12px;margin-bottom:14px}
-.l16-cell-desc{font-size:13px;line-height:1.7;color:var(--c-ink);padding-left:14px}
-.l16-cell-desc .en{font-size:11px;color:var(--c-ink-soft);font-style:italic;opacity:.8;margin-top:6px}
+.l16-cell-title-en{font-size:14px;font-weight:600;color:var(--c-ink-soft);letter-spacing:2px;padding-left:12px;margin-bottom:14px}
+.l16-cell-desc{font-size:16px;line-height:1.7;color:var(--c-ink);padding-left:14px}
+.l16-cell-desc .en{font-size:14px;color:var(--c-ink-soft);font-style:italic;opacity:.8;margin-top:6px}
 ```
 
 ## build-part 结构模板

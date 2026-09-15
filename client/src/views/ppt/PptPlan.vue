@@ -21,8 +21,12 @@
             <span v-if="pages.length">共 {{ pages.length }} 页 · 已生成 {{ builtCount }} · 用到 {{ usedLayouts }} 个版式</span>
             <span v-else-if="running">正在规划…</span>
             <span v-else>还没规划</span>
-            <span class="sep">·</span>
-            <span>{{ saveLabel }}</span>
+            <!-- 空闲时那句「改动失焦即存」已经去掉（头部不留提示）—— 只剩「保存中… / 已保存
+                 hh:mm / 没保存上」这三个**状态**，没状态时连分隔点一起不显示。 -->
+            <template v-if="saveLabel">
+              <span class="sep">·</span>
+              <span>{{ saveLabel }}</span>
+            </template>
           </div>
         </div>
       </div>
@@ -58,12 +62,10 @@
       <p v-if="styleMismatch" class="banner warn">{{ styleMismatch }}</p>
       <p v-if="deckErr" class="banner bad">{{ deckErr }}</p>
       <p v-if="exportErr" class="banner bad">{{ exportErr }}</p>
-      <!-- 导出的那份文件依赖什么必须写在界面上：那几句话是唯一能解释「转给同事打开图全是
-           破的」的地方，而下载下来的文件本身打开一片正常。 -->
-      <div v-if="exportNote" class="banner">
-        <b>{{ exportNote }}</b>
-        <ul v-if="exportWarnings.length"><li v-for="(w, i) in exportWarnings" :key="i">{{ w }}</li></ul>
-      </div>
+      <!-- 「已导出 xxx.html（N 页）—— 双击就能放映」那条回执连着它下面那几条依赖说明
+           （字体走 Google Fonts、图走 COS）**故意删了**（他要的）。代价：那几句话原来是唯一能
+           解释「转给同事打开之后字变瘦了 / 图全是破的」的地方，而下载下来的文件自己打开一切正常。
+           导出失败（`exportErr`）照旧出声。 -->
     </div>
 
     <div class="wb-body">
@@ -130,7 +132,8 @@
                      得逐页点开才看得出来，而每一张都是花过钱的。 -->
                 <i v-if="pending[p.page]?.length" class="tag">备 {{ pending[p.page].length }}</i>
                 <i v-if="pageErr[p.page] || imgErr[p.page] || prepErr[p.page]" class="tag bad">出错</i>
-                <i v-else-if="built[p.page]?.problems.length" class="tag warn">{{ built[p.page].problems.length }} 处</i>
+                <!-- 「N 处」那个标签跟着右栏那一块一起去掉了（见那边的注释）：留着的话缩略图上
+                     挂着一个数字，而点进去右栏什么都没有 —— 他会在界面上找一块已经不存在的东西。 -->
               </span>
             </span>
           </button>
@@ -157,7 +160,7 @@
           <b v-else>这份稿子还没有规划</b>
           <p v-if="running">一次真实 AI 调用，通常 10–40 秒。它只挑版式、不生成 HTML。</p>
           <p v-else>
-            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 51 个版式</router-link>里给每页挑一个。
+            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 61 个版式</router-link>里给每页挑一个。
           </p>
           <button v-if="!running" class="btn-primary" @click="showSettings = true">去写提纲</button>
         </div>
@@ -200,17 +203,10 @@
             <div class="sh-left">
               <span class="kicker" v-if="cur.section">{{ cur.section }}</span>
               <h2>P{{ cur.page }} · {{ cur.title }}</h2>
-              <div class="stage-tags">
-                <!-- 空白页没有 demo 可看（`demoUrl` 空串）。留着那个 <a> 的话点下去是当前页面
-                     本身，看起来像「这个链接坏了」。 -->
-                <span v-if="isBlank(cur)" class="tag">空白页 · 你自己排（不走 AI 生成）</span>
-                <a v-else :href="cur.demoUrl" target="_blank">{{ cur.layoutId }} {{ cur.layoutName }} ↗</a>
-                <span v-if="!isBlank(cur)">{{ cur.layoutTitle }}</span>
-                <span v-if="cur.fullbleed" class="tag">全幅</span>
-                <span v-if="cur.images" class="tag">规划要 {{ cur.images }} 张图</span>
-                <span v-if="setupLayout[cur.page]" class="tag warn">已换成 {{ setupLayout[cur.page] }}</span>
-                <span v-if="setupNotes[cur.page]" class="tag" :title="setupNotes[cur.page]">带额外要求</span>
-              </div>
+              <!-- 标题下面那行版式读数（`L48 agenda-offset-card ↗ · 目录页：… · 全幅 · 规划要 N 张图 ·
+                   已换成 Lxx · 带额外要求）**故意删了**（他要的）。别再加回来：换过的版式和「要求」
+                   在左边缩略图那一列上每页都有一个标（`.tag.warn` / 「要求」），版式详情在
+                   「生成前改一下」里点开就是缩略图，所以这里去掉不会让任何改动变得看不见。 -->
             </div>
             <div class="stage-acts">
               <!-- 空白页上的唯一入口：加一个文字框（不调 AI、不花额度）。放在这一行最前面 ——
@@ -297,7 +293,7 @@
                        这一页已经排好了（读起来完全正常，只是文字全是示例）。 -->
                   <p>下面看到的是 {{ cur.layoutId }} 的效果 demo（生成时照的就是这个骨架），<b>不是这一页的内容</b>。</p>
                   <button class="btn-primary" :disabled="busy[cur.page] || batchRunning" @click="openSetup(cur)">
-                    {{ busy[cur.page] ? '生成中…' : '生成这一页（一次真实调用）' }}
+                    {{ busy[cur.page] ? '生成中…' : '生成这一页' }}
                   </button>
                 </div>
               </template>
@@ -307,15 +303,28 @@
                    他会当成没生效再点一次（每次一次真实调用）。 -->
               <div v-if="busy[cur.page] || imgBusy[cur.page] || aiBusy" class="screen-overlay busy">
                 <div class="ios-loading-bar"><div class="ios-loading-fill"></div></div>
-                <b>{{ busy[cur.page] ? '正在生成这一页…' : aiBusy ? '正在按你那句话改这一块…' : '正在生成这一页的图…' }}</b>
+                <!-- 重排图位那一步要单独说：它和生成一样是十几秒的真实调用，都写「正在生成这一页…」
+                     的话这一下等的是两段（重排 + 生成），读起来像「这次特别慢」。 -->
+                <b>{{ replanBusy[cur.page] ? '正在按新版式重排图位…'
+                  : busy[cur.page] ? '正在生成这一页…' : aiBusy ? '正在按你那句话改这一块…' : '正在生成这一页的图…' }}</b>
+                <!-- 这一条必须排在链子最前面（重排期间 `busy` 也是 true —— 见 `startBuild`），
+                     不然这里会同时挂两句「一次真实调用」。 -->
+                <p v-if="replanBusy[cur.page]">
+                  生成前的第 1 步（一次真实调用，不生图）：先把图位的格数和比例按这条版式对齐，接着自动生成这一页。
+                </p>
                 <!-- AI 编辑也要盖这一层：不盖的话画面十几秒一动不动（下面挂的是改之前那一版），
                      读起来就是「已经改完了、没什么变化」，他会再点一次 —— 那是再花一次额度。 -->
-                <p v-if="aiBusy">一次真实 AI 调用，通常十几秒。下面看到的还是改之前那一版。</p>
+                <p v-else-if="aiBusy">一次真实 AI 调用，通常十几秒。下面看到的还是改之前那一版。</p>
                 <p v-else-if="busy[cur.page]">
                   一次真实 AI 调用，通常 20–60 秒，回来之后画面会自己换。
                   <b v-if="built[cur.page]">下面看到的还是上一版，不是这次的结果。</b>
                 </p>
                 <p v-else>一张图几十秒，逐张来；已经生成好的那几张不会重做。</p>
+              </div>
+              <!-- 底下那一条藏起来之后，存失败的那几句话唯一的出口（见 `SHOW_EDIT_DOCK`）：
+                   只在**失败**时出现（成功的读数和说明不再显示），`absolute` 所以不占高度。 -->
+              <div v-if="!SHOW_EDIT_DOCK && (editErr[cur.page] || paletteErr)" class="edit-flash">
+                {{ editErr[cur.page] || paletteErr }}
               </div>
             </div>
           </div>
@@ -324,7 +333,7 @@
                就立刻缩一圈。而这里长出一行的时机正是「他点下第一下」（选中读数 + AI 那一栏
                同时出现）—— 于是双击的第二下落在缩过之后的画面上，点到的是别的元素，
                现象是「双击改不动文字了」，而屏幕上一切正常，没有一处报错。 -->
-          <div class="stage-foot">
+          <div v-if="SHOW_EDIT_DOCK" class="stage-foot">
           <!-- 这一行是「就地改文字」唯一的入口说明：不写的话双击能改这件事没有一处
                看得出来（hover 那圈虚线只有把鼠标放上去才出现）。存失败那句必须留在
                这里而不是只写进右边抽屉 —— 那是收起来的。 -->
@@ -558,10 +567,11 @@
               <div class="problems-title">生图有 {{ imgInfo[cur.page].problems.length }} 处要注意</div>
               <ul><li v-for="(x, i) in imgInfo[cur.page].problems" :key="i">{{ x }}</li></ul>
             </div>
-            <div v-if="built[cur.page]?.problems.length" class="problems">
-              <div class="problems-title">这一页有 {{ built[cur.page].problems.length }} 处要注意</div>
-              <ul><li v-for="(x, i) in built[cur.page].problems" :key="i">{{ x }}</li></ul>
-            </div>
+            <!-- 这一页的 `problems`（`checkPage` 那八条 + 贴图/对齐那几句）**故意不显示了**。
+                 代价记在这里：类名不对掉回默认流式布局、提纲被压成三成、图位数和规划对不上、
+                 巨标题字号照案例抄、领句抄了标题 —— 这些从此在界面上一个字都没有，而那一页
+                 渲染出来都是一页完整正常的幻灯片。库里照旧存着（`problems_json`），要看只能
+                 查库或看服务端日志。生成失败 / 配图失败 / 备图失败那几条红字不在这里，照旧出声。 -->
 
             <div v-if="built[cur.page]" class="src-box">
               <button class="btn-ghost sm" @click="toggleSrc(cur.page)">
@@ -759,7 +769,7 @@
              （硬校验，见服务端），不再靠这里一条没人读的提示。服务端照旧返回 problems
              （落在 `plan_json` 里、也进日志），去掉的只是这块界面。 -->
         <p v-if="usage" class="muted">本次规划 token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }}</p>
-        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 51 个版式 demo ↗</a>
+        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 61 个版式 demo ↗</a>
       </aside>
     </div>
 
@@ -810,17 +820,12 @@
             placeholder="规划那一步从你的提纲里切出来的那几行。粘补充材料、改错别字、把不要的段删掉都在这里。"
           ></textarea>
         </label>
-        <!-- 老规划（这个字段之前跑的）没有原文。不说的话上面那个框是空的，看起来像
-             「这一页的提纲丢了」，而它其实只是按要点生成 —— 两种情况在界面上长得一样。 -->
-        <p v-if="!draftOutline.trim()" class="banner warn">
-          这一页没有提纲原文，生成时只有上面那几条要点（摘要）—— 提纲里的数字、机构名、条款
-          进不了 prompt。老的规划都没有这个字段：重新规划一次会有，或者直接把这一页对应的
-          提纲原文粘到上面那个框里。
-        </p>
+        <!-- 「这一页没有提纲原文，生成时只有那几条要点」那条黄条、和「提纲跟着这次生成一起存」
+             那句话**故意删了**（他要的）。留下的两处代价，加回来之前先知道：老规划（没有这个
+             字段）的那几页，上面那个框空着和「提纲真的丢了」在界面上长得一样；提纲是**点了生成
+             按钮才存**的，直接关掉这个框不保存 —— 现在没有一处会说。
+             `outlineIssue`（超长/切错行那种真错误）照旧留着。 -->
         <p v-if="outlineIssue" class="banner bad">{{ outlineIssue }}</p>
-        <p class="muted">
-          提纲跟着这次生成一起存 —— <b>点了下面那个生成按钮才存，直接关掉这个框不保存</b>。
-        </p>
 
         <!-- 版式**挑缩略图，不挑名字**：「L5 数据网格」这几个字对他没有形状，
              挑一条装不下这一页内容的出来照样是一页完整的幻灯片（内容挤成一团），
@@ -860,13 +865,13 @@
           </div>
           <p v-if="layoutList.length && !showAllLayouts && suggestedItems.length && otherItems.length" class="prep-acts">
             <button class="btn-ghost sm" type="button" @click="showAllLayouts = true">
-              展开其余 {{ otherItems.length }} 条版式（点了才加载缩略图）
+              展开其余 {{ otherItems.length }} 条版式
             </button>
           </p>
         </div>
         <!-- 老规划里没有备选。不说的话上面那组只有一条，读起来像「模型认为只有这个版式合适」。 -->
         <p v-if="layoutList.length && !setupFor.alts?.length" class="muted">
-          规划没给备选版式（重新规划一次才有），可用的一共 {{ enabledCount }} 条 —— 装不装得下看缩略图。
+          规划没给备选版式（重新规划一次才有），可用的一共 {{ enabledCount }} 条 。
         </p>
         <p v-if="draftLayoutItem" class="muted">
           <a :href="draftLayoutItem.demoUrl" target="_blank">单开 {{ draftLayoutItem.id }} 的 demo 看大图 ↗</a>
@@ -888,16 +893,9 @@
         <!-- 图位清单是**整份规划那一次**定的，而版式是他在这里换的 —— 两者从此对不上而一处都
              不报错：这个面板照旧列着规划那几格（换到三图版式之后还是只备 1 张），生成时 prompt 里
              「正好 N 个图位」又压着案例里的图位数，出来是一页排得下但空了两格的幻灯片。
-             **不做成「换版式就自动重排」**：那是一次真实调用，点一下下拉就扣一次额度。 -->
-        <p class="prep-acts">
-          <button class="btn-ghost sm" :disabled="replanBusy || busy[setupFor.page] || batchRunning" @click="replanImages">
-            {{ replanBusy ? '重排中…' : `按这个版式和这一页的内容重排图位（现在 ${setupFor.imageSpecs?.length || 0} 格，一次真实调用，不生图）` }}
-          </button>
-        </p>
-        <p class="muted">
-          图位数按<b>真实内容</b>定，不照案例抄：这一页有 4 块分类就是 4 张图，哪怕 {{ draftLayout }} 的案例里画的是 3 张。
-          重排只改清单 —— 已经生成过的页要重新生成才会按新清单排（备好的图会自动贴回去，不用重新花钱）。
-        </p>
+             以前这里有个「重排图位」按钮要他自己点。现在**换过版式的话，下面那个生成按钮会先
+             自动重排一次**（见 `needsReplan` / `startBuild`）—— 所以那一下是两次真实调用，
+             这件事只能写在按钮上（写在这里等于没说：点完才看到的话那次调用已经花了）。 -->
 
         <!-- 图放在这里而不是只在右栏：他在这个对话框里做的决定就是「这一页长什么样」，
              而图是先备好、生成时按序号贴进去的 —— 不在这里给入口的话，他点了生成才发现
@@ -1002,7 +1000,8 @@
             :disabled="busy[setupFor.page] || batchRunning || !!outlineIssue"
             @click="startBuild"
           >
-            {{ built[setupFor.page] ? '按这些重新生成（一次真实调用）' : '开始生成（一次真实调用）' }}
+            {{ (built[setupFor.page] ? '重新生成' : '开始生成')
+              + (needsReplan ? '（先重排图位）' : '') }}
           </button>
         </div>
       </div>
@@ -1273,7 +1272,9 @@ const saveLabel = computed(() => {
   if (metaErr.value) return '没保存上'
   if (savingMeta.value) return '保存中…'
   if (metaSavedAt.value) return `已保存 ${metaSavedAt.value}`
-  return '改动失焦即存'
+  // 还没存过时**什么都不说**（头部不留提示）：三个状态里只有「没保存上」是会骗人的那个，
+  // 它照旧在这里出声，另外在 `banners` 里还有一条红字（`metaErr`）。
+  return ''
 })
 
 /**
@@ -1705,26 +1706,29 @@ async function prepare(
 
 /**
  * 按现在挑的这条版式 + 这一页的真实内容重排图位清单（一次真实调用，**不生图**）。
+ * 没有按钮了：换过版式时由 `startBuild` 在生成前自动跑一次（见那边）。
  *
- * 三件事在这里：**整份规划里那条 `imageSpecs` 要就地换掉**（不换的话面板上还是旧那几格，
+ * 四件事在这里：**整份规划里那条 `imageSpecs` 要就地换掉**（不换的话面板上还是旧那几格，
  * 而库里已经是新的 —— 他在旧格子上备的图下一次生成时贴不进去）；**输入框里那几句也要跟着换**
  * （留着旧的那份的话，随便一次失焦就把旧提示词写回库了，而两处都读起来正常）；
  * **服务端顺手把这次挑的版式/要求存了**（同「开始生成」那条路），所以本地那两个标记要跟上，
- * 不然关掉对话框之后这一页的标签写的还是旧版式。
+ * 不然关掉对话框之后这一页的标签写的还是旧版式；**`specsLayout` 要记下这份清单是按哪条版式
+ * 排的** —— 不记的话下一次点生成还会再重排一次（结果一模一样，只是又扣一次额度）。
+ *
+ * 参数是显式传进来的（不读 `setupFor`）：调用它的时候对话框已经关了。
  */
-const replanBusy = ref(false)
-async function replanImages() {
-  const p = setupFor.value
-  if (!p) return
-  replanBusy.value = true
+const replanBusy = ref<Record<number, boolean>>({})
+async function replanImages(p: PlannedPage, layoutId: string, notes: string) {
+  replanBusy.value[p.page] = true
   prepErr.value[p.page] = ''
+  const before = p.imageSpecs?.length || 0
   try {
     const data = await apiPost<{
       page: number; layoutId: string; imageSpecs: PlannedImage[]; problems: string[]
     }>(`/api/ppt/decks/${deckId.value}/replan-images`, {
       page: p.page,
-      layoutId: draftLayout.value,
-      notes: draftNotes.value,
+      layoutId,
+      notes,
       planRev: planRev.value,
     })
     const row = pages.value.find(x => x.page === data.page)
@@ -1733,13 +1737,19 @@ async function replanImages() {
       row.images = row.imageSpecs.length
       setupLayout.value[data.page] = data.layoutId === row.layoutId ? '' : data.layoutId
     }
+    specsLayout.value[data.page] = data.layoutId
     ;(data.imageSpecs || []).forEach((s, i) => { draftSubject.value[subjectKey(data.page, i + 1)] = s.subject })
-    setupNotes.value[data.page] = draftNotes.value
+    setupNotes.value[data.page] = notes
     prepNote.value[data.page] = data.problems || []
   } catch (e: any) {
-    prepErr.value[p.page] = errText(e, '重排图位失败', '今天的 AI 额度用完了，图位没重排（清单还是原来那份）。')
+    // 重排失败**不挡生成**（见 `startBuild`），所以这句话要把降级说完：成因 + 这一页接下来
+    // 是按哪份清单排的。只说「重排图位失败」的话，紧接着那一页照旧生成出来、读起来完全正常，
+    // 而备图面板上还是旧那几格 —— 他对不回是这一步没成。
+    prepErr.value[p.page] = `${errText(e, '重排图位失败', '今天的 AI 额度用完了，图位没重排。')}` +
+      ` 这一页接着按旧的那份清单（${before} 格）生成了：新版式的图位数/比例可能对不上，` +
+      '备图面板上列的也还是旧那几格。想重排就再点一次生成（会先重试这一步）。'
   }
-  replanBusy.value = false
+  replanBusy.value[p.page] = false
 }
 
 /** 这一页有几个图槽位（生图那一步认的就是 data-img-prompt）。 */
@@ -2091,13 +2101,28 @@ const orphanPlaceholder = computed(() => {
 })
 /** 换版式会连图位一起换：备好的图是按序号贴的，图位少了那几张就没地方贴（服务端会点名）。 */
 const draftLayoutChanged = computed(() => !!setupFor.value && draftLayout.value !== setupFor.value.layoutId)
+/**
+ * 这一页现在那份 `imageSpecs` 是按**哪条版式**排的：规划那条（没重排也没生成过时就是它）、
+ * 上一次重排那条、或者上一次生成完服务端按真实图槽对齐用的那条（`build` 里一起记）。
+ */
+const specsLayout = ref<Record<number, string>>({})
+/**
+ * 点生成之前要不要先自动重排一次图位（**一次额外的真实调用**）。
+ * 比的是上面那个「清单按哪条版式排的」，不是 `draftLayoutChanged`（那个比的是规划那条）——
+ * 用后者的话，换过版式之后**每一次**重新生成都会再重排一遍，两次结果一模一样，只是每次多扣
+ * 一次额度，而界面上看不出多花了这一次。
+ */
+const needsReplan = computed(() => !!setupFor.value &&
+  draftLayout.value !== (specsLayout.value[setupFor.value.page] || setupFor.value.layoutId))
 
 // ── 这一页的详情（浮在画面右侧，可收起）──────────────────────────
-// 默认收起（画面因此能撑到最大），但收起来之后 problems、生图失败的那几格「还是占位图」
-// 就全看不见了，而画面上那一页读起来完全正常。所以两处补偿是承重的：
+// 默认收起（画面因此能撑到最大），但收起来之后生图失败的那几格「还是占位图」就看不见了，
+// 而画面上那一页读起来完全正常。所以两处补偿是承重的：
 // **把手上带「N 处要注意」的数字**（去掉的话收起状态和「这一页干干净净」分不开），
 // 以及**这一页的问题数一变多就自动弹开** —— 刚跑完的生成/配图那几条必须撞到眼前，
 // 不然他会拿着一份还带占位图的稿子去拼整份/导出，而那两步都不会拦。
+// 注意这个数字里**已经不算 `built[n].problems`** 了（那一块不显示了，见模板那边的注释）：
+// 算进去的话把手上写着「1 处」而点开右栏什么都没有。
 const insOpen = ref(false)
 const curIssues = computed(() => {
   const p = cur.value
@@ -2105,7 +2130,6 @@ const curIssues = computed(() => {
   const n = p.page
   return (pageErr.value[n] ? 1 : 0) + (imgErr.value[n] ? 1 : 0) + (prepErr.value[n] ? 1 : 0) +
     (layoutMismatch.value ? 1 : 0) + (specMismatch.value ? 1 : 0) + (orphanPlaceholder.value ? 1 : 0) +
-    (built.value[n]?.problems.length || 0) +
     (imgInfo.value[n]?.problems.length || 0) +
     (prepNote.value[n]?.length || 0) +
     // 代码往这一页补进来的提纲段（规划时没人认领它）：并进来的位置不一定对，
@@ -2135,18 +2159,15 @@ watch([current, curIssues], ([p, n]) => {
   issueMark = { page: p, n }
 })
 
-function startBuild() {
+async function startBuild() {
   const p = setupFor.value
   if (!p) return
   // 提纲不合规就不发（服务端也会拒，但那时对话框已经关了，那句话会落在这一页的错误里，
   // 而他要改的输入框已经不在眼前了）。
   if (outlineIssue.value) return
-  setupFor.value = null
-  // 上一版的配图记录先清掉：留着的话生成期间界面上写着「3/3 张有图」，而新 html 里
-  // 图槽位已经换回占位图（build 回来之后再按服务端那份重新填）。
-  imgInfo.value[p.page] = undefined as any
-  imgErr.value[p.page] = ''
-  build(p, {
+  // 对话框马上就关，而下面要 await —— 这几个值必须**先取出来**：await 之后 `setupFor`
+  // 已经是 null（或者他又打开的另一页那份），那时再读 `draftLayout` 就是拿别的一页的输入去生成。
+  const setup = {
     layoutId: draftLayout.value,
     notes: draftNotes.value.trim(),
     // 提纲随这次调用一起发（服务端先写回 plan_json 再按新的那份生成）。
@@ -2156,7 +2177,25 @@ function startBuild() {
     // 的生成会走进服务端「没传 outlineText」那条分支 —— 那一次是对的（用库里那份），但
     // 这里少一个字段就等于把「他刚清空了原文」和「他没动原文」变成同一个请求。
     outlineText: draftOutline.value.trim(),
-  })
+  }
+  const replan = needsReplan.value
+  setupFor.value = null
+  // 上一版的配图记录先清掉：留着的话生成期间界面上写着「3/3 张有图」，而新 html 里
+  // 图槽位已经换回占位图（build 回来之后再按服务端那份重新填）。
+  imgInfo.value[p.page] = undefined as any
+  imgErr.value[p.page] = ''
+  // 换过版式的话先重排图位（以前是对话框里一个按钮，他不点就等于不重排 —— 而不重排排出来
+  // 是「一页排得下但空了两格」，一处都不报错）。两件事是承重的：
+  // ① 这一段先把 `busy` 立起来 —— 重排要十几秒，`build` 还没进去，所有按「生成中」变灰/盖
+  //    遮罩的地方都还是可点的空档，他会再点一次（那是又两次真实调用）；
+  // ② 重排失败**不挡生成**：挡的话额度用完/上游抽风那天这一页连旧清单那一版都出不来。
+  //    降级那句话在 `prepErr` 里说了成因和「接着按旧清单生成了」，它算进 `curIssues`，
+  //    右边那栏会自己弹开。
+  if (replan) {
+    busy.value[p.page] = true
+    await replanImages(p, setup.layoutId, setup.notes)
+  }
+  await build(p, setup)
 }
 
 type BuildOutcome = 'ok' | 'fail' | 'quota'
@@ -2665,6 +2704,19 @@ const editSrcdoc = computed(() => {
  */
 const canEditText = computed(() => !!cur.value && (built.value[cur.value.page]?.html || '').includes('data-eid'))
 
+/**
+ * 画面底下那一条（就地编辑说明 + AI 改这一块）**暂时藏起来**（他要的：那两段说明和输入框
+ * 占掉画面下面一大片）。改回 `true` 就整条回来 —— 用开关不删代码，是因为「AI 微调 / 自由改造」
+ * 这两个入口只在那一栏里，删掉之后接口还在、界面上却再也点不到。
+ *
+ * **藏起来之后存失败那几句话跟着一起没了**，而那正是这一页唯一会骗人的地方：双击改一句字、
+ * 浮动条改颜色、拖一块、删一块**照旧能点**（它们在画面上，不在这一条里），接口失败时 iframe
+ * 会退回库里那一版 —— 画面上就是「他改的那一下没生效」，看起来像点空了，他会再改一遍。
+ * 所以下面那条浮在画面底部的 `.edit-flash` 只在**失败**时出现，且 `position:absolute`
+ * （不占高度：这一条一长高，`.screen` 那块 16:9 就缩一圈，双击的第二下会落到别的元素上）。
+ */
+const SHOW_EDIT_DOCK = false
+
 const editErr = ref<Record<number, string>>({})
 const editNote = ref('')
 const editBusy = ref(false)
@@ -2815,6 +2867,15 @@ function onFrameMsg(e: MessageEvent) {
 }
 
 /**
+ * 服务端回的 `chartNotes`（改完/删完之后图表的量被代码重算了）接在那句「已存」后面。
+ * **必须显示出来**：条长和它旁边那个数对不上时，画面上是一张干净完整的图表 —— 一处都不报错，
+ * 只有照条长读出来的结论是错的。反过来重算之后别的条会当场变长，不说一句他会以为是自己改坏了。
+ */
+function chartTail(notes?: string[]): string {
+  return Array.isArray(notes) && notes.length ? `　⚠ ${notes.join('　')}` : ''
+}
+
+/**
  * 存这一段改动。**页码在发出去的那一刻就定死**（`cur` 会跟着他翻页变，用它的话存完回来
  * 会把新文字记到另一页上，而两页画面各自都读得通）。
  */
@@ -2826,14 +2887,15 @@ async function saveText(eid: string, oldText: string, newText: string) {
   editErr.value[page] = ''
   editNote.value = ''
   try {
-    const data = await apiPost<{ html: string; previewHtml: string; text: string }>(
+    const data = await apiPost<{ html: string; previewHtml: string; text: string; chartNotes?: string[] }>(
       `/api/ppt/decks/${deckId.value}/edit-text`,
       { page, eid, oldText, newText, planRev: planRev.value }
     )
     // 用服务端回的那一版覆盖（画面上于是显示的是库里真的那份，不是他浏览器里改出来的样子）。
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
-    editNote.value = `已存：「${data.text.slice(0, 24)}${data.text.length > 24 ? '…' : ''}」`
+    editNote.value =
+      `已存：「${data.text.slice(0, 24)}${data.text.length > 24 ? '…' : ''}」` + chartTail(data.chartNotes)
     // 拼好的整份和「已导出」那句话要作废：那一页已经不是文件里的那一版了。
     invalidateDeck()
   } catch (e: any) {
@@ -2988,7 +3050,7 @@ async function deleteNode(path: number[], eids: string[], label: string, texts: 
   editErr.value[page] = ''
   editNote.value = ''
   try {
-    const data = await apiPost<{ html: string; previewHtml: string; removed: { name: string; cls: string; eids: string[]; text: string } }>(
+    const data = await apiPost<{ html: string; previewHtml: string; chartNotes?: string[]; removed: { name: string; cls: string; eids: string[]; text: string } }>(
       `/api/ppt/decks/${deckId.value}/delete-node`,
       { page, path, eids, planRev: planRev.value }
     )
@@ -3004,7 +3066,9 @@ async function deleteNode(path: number[], eids: string[], label: string, texts: 
     editNote.value = `已删掉 <${r.name}${r.cls ? ` class="${r.cls}"` : ''}>` +
       (r.text ? `：「${r.text}」` : '') +
       (r.eids.length ? `（${r.eids.length} 段字）` : '') +
-      ' —— 剩下那几段字的编辑标记没变，接着双击就能改。'
+      ' —— 剩下那几段字的编辑标记没变，接着双击就能改。' +
+      // 删掉图表里一行之后轨道上限会跟着降，剩下几条当场变长 —— 不说的话看起来像删坏了数据。
+      chartTail(data.chartNotes)
     invalidateDeck()
   } catch (e: any) {
     editErr.value[page] = `这一块没删掉：${e?.message || '请求失败'}（画面已经回到库里那一版）`
@@ -3031,13 +3095,16 @@ async function aiEdit() {
   aiNote.value = ''
   aiNotes.value = []
   try {
-    const data = await apiPost<{ html: string; previewHtml: string; summary: string }>(
+    const data = await apiPost<{ html: string; previewHtml: string; summary: string; chartNotes?: string[] }>(
       `/api/ppt/decks/${deckId.value}/ai-edit`,
       { page, path: sel.path, eids: sel.eids, instruction: wish, planRev: planRev.value }
     )
     const b = built.value[page]
     if (b) built.value[page] = { ...b, html: data.html, previewHtml: data.previewHtml }
     aiNote.value = data.summary
+    // 模型改的 inline style 里就有 `--bar-v` / `--bar-max`：被服务端重算过的话逐条列出来
+    // （和「自由改造」那几条走同一个位置）—— 不列的话那一页的条长和数字对不上，而图表读起来正常。
+    aiNotes.value = Array.isArray(data.chartNotes) ? data.chartNotes : []
     // 这一页已经不是拼好的那份整份/导出文件里的那一版了。
     invalidateDeck()
     // 预览是重挂的，选中框跟着没了 —— 那一栏也要收起来，留着的话他会对着一块没被框住的
@@ -3155,6 +3222,10 @@ async function build(
       builtLayout.value[p.page] = data.setup.layoutId
       setupLayout.value[p.page] = data.setup.layoutId === p.layoutId ? '' : data.setup.layoutId
       setupNotes.value[p.page] = data.setup.notes || ''
+      // 上面那份 `plan.imageSpecs` 是服务端按**这一版真的排出来的图槽**对齐过的，也就是说
+      // 清单现在跟的是这条版式。记下来，不然换过版式生成完之后再点一次生成，`needsReplan`
+      // 还是 true —— 又多一次重排调用，而结果和刚才那份一样。
+      specsLayout.value[p.page] = data.setup.layoutId
     }
     built.value[p.page] = { html: data.html, previewHtml: data.previewHtml, problems: data.problems || [] }
     // 备好的图是服务端在生成完当场贴进去的（`applyPreparedImages`）。贴上了几张要接过来 ——
@@ -3589,6 +3660,10 @@ function resetPageState() {
   prepBusy.value = {}
   prepErr.value = {}
   prepNote.value = {}
+  replanBusy.value = {}
+  // 这一份也按页码存：错位之后「这一页的图位清单是按哪条版式排的」记的是隔壁那页的版式 ——
+  // 于是生成前该自动重排的那一次被跳掉（`needsReplan` 算成 false），出来是空了两格的一页。
+  specsLayout.value = {}
   setupLayout.value = {}
   setupNotes.value = {}
   // 图片提示词的草稿也按「页码:格号」存（`subjectKey`）：留着的话生成前那个对话框里显示的是
@@ -4091,6 +4166,14 @@ async function run() {
    文字，而屏幕上一切正常）。用 min-height 不用 height：存失败那种长句要能撑开，
    截掉的话报错只剩半句。 */
 .stage-foot { flex: 0 0 auto; min-height: 92px; }
+/* 存失败那一句浮在画面底部（`SHOW_EDIT_DOCK` 关掉时它是唯一的出口）。`pointer-events:none`：
+   盖在画面上的话那一片区域双击不到，而他要改的正是刚才没存上的那句字。 */
+.edit-flash {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
+  padding: 8px 14px; border-radius: 10px; text-align: center;
+  background: rgba(11, 16, 32, 0.9); border: 1px solid rgba(255, 180, 180, 0.5);
+  font-size: 12px; line-height: 1.6; color: #ffb4b4;
+}
 .edit-tip {
   margin: 8px 0 0; flex: 0 0 auto; text-align: center;
   font-size: 12px; line-height: 1.7; color: var(--text-secondary);

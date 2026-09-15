@@ -18,10 +18,12 @@ import { aiGateway } from '../../core/llm/gateway.js';
 import { layoutById, library, type PptLayout } from './layoutLibrary.js';
 import { enabledLayouts } from './layoutState.js';
 import { outlineFitProblem, longformLayouts } from './outlineFit.js';
-import { designPromptBlock, DEFAULT_DESIGN, type DesignSpec } from './designSpec.js';
+import { designPromptBlock, DEFAULT_DESIGN, MIN_FONT_PX, type DesignSpec } from './designSpec.js';
 import { type PlannedImage } from './imageSpec.js';
 import { assembleDeck, assemblePreview, templateClasses, stripPageNumber, type DeckMeta } from './deckShell.js';
-import { injectEids } from './pageEdit.js';
+import { injectEids, domTree, type HtmlNode } from './pageEdit.js';
+import { normalizeChartData } from './chartData.js';
+import { imageGroupProblems } from './imageGroups.js';
 
 /** 一页正文 2-4KB，剩下的是留给思维链的空间（硬规则 2）。`noThinking` 也一起发。 */
 const MAX_PAGE_TOKENS = 6000;
@@ -135,8 +137,11 @@ export async function generatePage(input: PageInput, userId: string): Promise<Pa
   // 统一页眉由**代码**贴（`applyHeader`）：模块名是提纲里那一条，交给模型写的话它会顺手
   // 改写成「案例」「第二章」，于是每一页左上角那行字都不太一样（硬规则 3）。
   const head = applyHeader(injectEids(stripPageNumber(html)), input, layout);
-  const fixed = head.html;
-  problems.push(...head.problems, ...checkPage(fixed, layout, input));
+  // 图表页的条长/上限由**代码**按印出来的那几个数算（硬规则 3，见 chartData.ts）：交给模型
+  // 的话「40% 那一条顶满整条轨道」这种页排出来是一张干净完整的图表，一处都不报错。
+  const chart = normalizeChartData(head.html);
+  const fixed = chart.html;
+  problems.push(...head.problems, ...chart.problems, ...checkPage(fixed, layout, input));
 
   return {
     page: input.page,
@@ -479,6 +484,36 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
     problems.push(`${layout.id} 的 section 需要 has-card 类（色带要溢出卡片边缘），这一页没加。`);
   }
 
+  // ③b 表格页的张数和口径行。用户报的就是这件事：他给的资料里其实是**两组口径不同的数**
+  //     （报价 + 工期、去年 + 今年），而单表版式只有一张表 —— 模型把两组并进去，列头只能取
+  //     一个口径，读的人拿它去套另一组数。并出来的那张表列数、斑马纹、合计行全都正常，
+  //     一处都不报错，所以这三条只能在这里喊。按**类名**判（不按版式编号）：他在案例库里
+  //     关掉某一条之后编号就不该再出现在代码里，而画面上真正决定这一页是几张表的是类名。
+  const tables = (html.match(/class="[^"]*\bdt-table\b/g) || []).length;
+  if (tables) {
+    const dual = /class="[^"]*\bl57-stack\b/.test(html);
+    if (dual && tables !== 2) {
+      problems.push(
+        tables < 2
+          ? `${layout.id} 是双表版式（一页上下两张各带自己表头和单位的表），但这一页只排出了 1 张表 —— 下面那一格空着，看起来只是「这一页留白多」。两组口径不同的数要各占一张表；如果这一页真的只有一组数，在「生成前改一下」里换成单表的那一档表格页。`
+          : `这一页排了 ${tables} 张表，而双表版式只有上下两格 —— 第 3 张会从下沿漏出去压在脚注和结论条上（字叠字）。第三组数拖到下一页。`
+      );
+    }
+    if (!dual && tables > 1) {
+      problems.push(
+        `${layout.id} 是单表版式，这一页却排了 ${tables} 张表 —— 第二张从表格区下沿漏出去压在脚注和结论条上，出来是字叠字的一页。两组口径不同的数请在「生成前改一下」里换成双表版式（一页两张各带表头和单位/口径行的表）。`
+      );
+    }
+    // 单位/口径行的条数必须跟着表的张数走：只写一行的话读的人默认它管两张表，
+    // 「元」被套到下面那张的「工作日」上，而这一页排得整整齐齐。
+    const units = (html.match(/class="[^"]*\b(?:dt-unit|l57-unit)\b/g) || []).length;
+    if (tables > 1 && units < tables) {
+      problems.push(
+        `这一页有 ${tables} 张表，但只写了 ${units} 行单位/口径 —— 少的那张表，读的人只能拿另一张的单位去套（「3.2」是万元还是工作日）。每张表各写一行。`
+      );
+    }
+  }
+
   // ④ 图。图槽位空着的版式出来是一块灰，读起来像「这一页本来就没图」。
   const imgs = (html.match(/<img[\s>]/g) || []).length + (html.match(/background-image:/g) || []).length;
   if (input.images > 0 && imgs === 0) {
@@ -515,12 +550,105 @@ function checkPage(html: string, layout: PptLayout, input: PageInput): string[] 
         `${slots < specs ? '多出来的那几张没地方贴' : '多出来的那几格贴不到图（会停在占位图上）'}。` +
         // 现在版式的图位数只是参考、块数按真实内容排（buildPrompt 第 8 条），所以这条经常
         // 不是「模型排错了」而是「这一页真实内容就不是 N 块」。只说「重新生成」的话他会
-        // 一直重生成同一页拿同一个数字，而每次都花一次钱 —— 必须指到重排图位那一步。
-        `如果这一页的内容本来就是 ${slots} 块，就在「生成前改一下」里点「按这个版式和这一页的内容重排图位」把规划改成 ${slots} 个；` +
-        '真是模型排错了才重新生成这一页。'
+        // 一直重生成同一页拿同一个数字，而每次都花一次钱 —— 必须说清「不用再点什么」。
+        // （那个「重排图位」按钮已经没有了：换过版式的话点生成会自动先重排一次。指着一个
+        //  界面上找不到的按钮说话，等于让他在对话框里翻半天，最后回来一直重新生成这一页。）
+        `如果这一页的内容本来就是 ${slots} 块，规划那份清单在这次生成之后已经按画面对齐了（不用再点什么）；` +
+        '真是模型排错了才重新生成这一页 —— 想换版式就在「生成前改一下」里换，点生成会先按新版式重排图位。'
     );
   }
+
+  // ⑥ 自己写小字。内容塞不下的时候，**压字号是模型最省力的那条路**：它不改结构、不删一个字，
+  //    出来是一页排得满满当当、每个字都在的幻灯片 —— `overflow:hidden` 没触发、类名全对、
+  //    图位数也对，`problems` 里一个字都没有。而 1920 舞台上的 12px 投到屏幕上就是 12px
+  //    （预览窗口更小时还要再乘一次缩放），后排根本读不出来，他在自己电脑上却看得清。
+  //    所以这条只认 inline style（骨架里的字号是库里定好的，有测试按下界对账）。
+  const tiny = new Set<string>();
+  for (const m of html.matchAll(/style="([^"]*)"/g)) {
+    for (const f of m[1].matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
+      if (Number(f[1]) < MIN_FONT_PX) tiny.add(`${f[1]}px`);
+    }
+  }
+  if (tiny.size) {
+    problems.push(
+      `这一页自己把字号压到了 ${[...tiny].join(' / ')}（最小 ${MIN_FONT_PX}px）—— 投屏时后排读不出来。` +
+        '内容塞不下要删一句、拆成两页或者换一条容量更大的版式，不能压字号。'
+    );
+  }
+
+  // ⑦ 同一组图不等高（见 imageGroups.ts：一行里矮 40px 的那一格，页面照样渲染，
+  //    而图下面那几行小字全错开一行；混比例那种要等真图配上来才看得见，那时钱已经花了）。
+  problems.push(...imageGroupProblems(html));
+
+  // ⑧ 领句和标题写了同一句话（见 leadEchoProblem）。
+  problems.push(...leadEchoProblem(html, input));
+
   return problems;
+}
+
+/** 领句：那行小字（`.kicker` / `.l34-eyebrow` / `.l59-kicker` …）。 */
+const LEAD_CLASS = /(?:^|-)(?:kicker|eyebrow)$/;
+/** 这一页的大标题（`.page-title` / `.l13-title` / `.l18-headline` / `<h1>`…）。
+ *  副标题和 L16 那种格子内的小标题不算：那两处和领句重复是另一回事（层级不同）。 */
+const TITLE_CLASS = /(?:^|-)(?:title|headline)$/;
+
+/**
+ * **领句不许把标题抄一遍。** 页面上那行小字（16–24px、加宽字距）和下面 64px 的大标题写着
+ * 同一句话时，这一页占了两行却只说了一件事 —— 而它渲染出来完全正常、类名全对、
+ * 一处都不报错，看起来就像这个版式本来就有一行小字（模型爱这么写：领句那一格它不知道填
+ * 什么，最省力的就是把标题抄上去，或者抄标题的前半句）。
+ *
+ * 三条边界：
+ * - **只报不改**（同 `dupSectionProblem`）：领句在 L59/L61 那种深色面板里是承重的一行，
+ *   剪掉留下一块空隙 —— 而那个洞比重复的一行字更难看，且他看不出是我们剪的。
+ * - **跳过统一页眉里那一行**：那是代码贴的模块名，标题恰好等于模块名（章节页）时报出来
+ *   等于让他去删一行他删不掉的字。文字本身等于模块名的也跳过 —— 那条由 ⑤ 负责，
+ *   两条一起报的话同一件事在右侧那个报警上占两格，真正要看的那条被挤成噪音（migration 094）。
+ * - 半句重复也算，但短语（4 个字以内）不算：「路径」「概览」这种词在标题里出现属于正常。
+ */
+export function leadEchoProblem(html: string, input: { title?: string; section?: string }): string[] {
+  const norm = (s: string) =>
+    s
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/[\s　]+/g, '')
+      .replace(/[，。、；：！？·—–…"'「」《》()（）|/\\,.:;!?"'-]+/g, '')
+      .toLowerCase();
+  const titles = new Set<string>();
+  const leads: { raw: string; key: string }[] = [];
+  const walk = (nodes: HtmlNode[], inHeader: boolean) => {
+    for (const n of nodes) {
+      const open = html.slice(n.start, n.innerFrom);
+      const cls = (/class="([^"]*)"/.exec(open)?.[1] || '').trim().split(/\s+/);
+      const header = inHeader || cls.includes('slide-header');
+      const inner = html.slice(n.innerFrom, n.innerTo);
+      const text = norm(inner);
+      if (text) {
+        if (/^h[1-3]$/.test(n.name) || cls.some((c) => TITLE_CLASS.test(c))) titles.add(text);
+        if (!header && cls.some((c) => LEAD_CLASS.test(c))) leads.push({ raw: inner.replace(/<[^>]*>/g, ' ').trim(), key: text });
+      }
+      walk(n.children, header);
+    }
+  };
+  walk(domTree(html), false);
+  if (input.title?.trim()) titles.add(norm(input.title));
+  const section = normSection(input.section || '');
+  const dup = new Set<string>();
+  for (const lead of leads) {
+    if (!lead.key || (section && normSection(lead.raw) === section)) continue;
+    for (const t of titles) {
+      const [short, long] = lead.key.length <= t.length ? [lead.key, t] : [t, lead.key];
+      if (short.length >= 5 && long.includes(short)) dup.add(lead.raw.replace(/\s+/g, ' ').slice(0, 40));
+    }
+  }
+  if (!dup.size) return [];
+  return [
+    `领句${[...dup].map((s) => `「${s}」`).join('、')}和这一页的标题写的是同一句话 —— ` +
+      '标题上方那行小字要给另一个维度的信息（这一页属于哪一类 / 第几步 / 什么口径 / 对应的英文名），' +
+      '抄标题一遍的话这一页占了两行只说了一件事，而它在画面上看起来像版式自带的装饰。' +
+      '要么用就地编辑把那行改成别的信息，要么整行删掉。',
+  ];
 }
 
 /**
@@ -586,6 +714,7 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
    **左上角那行模块名（\`.slide-header\`）也不要写** —— 整份统一由代码贴（版式案例里那一行是给你看整体效果的）。你写了会被摘掉，而**正文里再出现一次模块名**就会和它重复显示。${input.section && !layout.noHeader
       ? `\n   所属模块「${input.section}」这几个字**在这一页的正文里一次都不要出现**：不要写成 \`.kicker\` 小标签、不要写进标题、不要放在顶栏或 pill 里。这一页的标题要写这一页自己的信息，不是它属于哪个模块。`
       : ''}
+   **领句和标题不许写同一句话**：\`.kicker\` / \`-eyebrow\` 那行小字是**另一个维度**的信息（这一页属于哪一类、第几步、什么口径、对应的英文名），不许是标题的复制或标题的前半句。想不出来写什么就**不写这一行**，宁可空着 —— 同一句话上下出现两遍在画面上看起来像版式自带的装饰，一处都不会报错。
 5. ${layout.fullbleed
       ? `${layout.id} 是**全幅**版式：内容**不要**包进 \`.slide-inner\`（包进去会变成一张四边留白的「全幅」图）。`
       : layout.hasCard
@@ -595,7 +724,8 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
         : `${layout.id} 不是全幅版式：正文必须包在 \`<div class="slide-inner">…</div>\` 里（不包的话内容会贴到画面边缘）。`}${layout.hasCard ? `\n   另外 section 上要加 \`has-card\` 类（色带要溢出卡片边缘）。` : ''}
 6. 图槽位：一律先用占位图 ${PLACEHOLDERS.join(' / ')}（按构图比例挑），并给每个图元素加两个属性：
    - \`data-img-prompt="这一格要什么图（中文一句话）"\` —— 真图是下一步按这句话生成后替换进来的，**漏了这个属性那一格就永远配不上图**；
-   - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。${imageSpecBlock(input)}
+   - \`data-img-mode="concept|case|data"\` —— concept 是概念/框架/阶段/趋势，case 是案例/产品/业务场景，data 是数据/图表。填错的话这一格会用错一路画风模板（出来的图是漂亮的概念插画，而这一页要的是信息图）。
+   - **并排的那几张图必须一样高**：同一行/同一个网格里的图，要么都不写高度（跟骨架走），要么每一张都写**同一个** \`height\` / \`aspect-ratio\`。写了两张漏了第三张、或者三张写三个值，出来是一行参差不齐的图、下面那几行小字跟着错开 —— 现在看占位图看不出来（占位图是同一个文件），真图配上来才露出来。${imageSpecBlock(input)}
 7. 文案照给定的内容写，不要编数字、不要编客户名。要点可以润色成更适合上屏的短句。${input.outlineText?.trim()
       ? `\n   **下面「提纲原文」那一段是这一页真正要上屏的内容**（「要点」只是它的骨架）：里面的每一个数字、机构名、年份、条款都要出现在页面上，一条都不许合并、不许省略、不许改写成「等多项」「若干」。装不下的时候用 inline \`style\` 把字号收小一档、或者把段落拆成更多小块，**不要删内容**。`
       : ''}

@@ -64,7 +64,7 @@
 /* L51 三档方案 */
 .l51-trio{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;align-items:stretch;margin:48px 0 44px}
 .l51-plan{position:relative;background:var(--c-card);border:1px solid var(--c-hairline);padding:36px 32px;display:flex;flex-direction:column}
-.l51-plan b{font-family:var(--num);font-size:13px;font-weight:700;letter-spacing:.2em;color:var(--c-ink-soft)}
+.l51-plan b{font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;color:var(--c-ink-soft)}
 .l51-plan h3{font-size:30px;font-weight:800;line-height:1.25;color:var(--c-ink-deep);margin-top:10px}
 .l51-price{font-family:var(--num);font-size:44px;font-weight:800;line-height:1;letter-spacing:-.01em;color:var(--c-brand);margin-top:20px;font-variant-numeric:tabular-nums}
 .l51-price i{font-style:normal;font-family:var(--sans);font-size:16px;font-weight:700;color:var(--c-ink-soft);margin-left:8px}

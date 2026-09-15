@@ -22,15 +22,44 @@
 
 /** 一套配色要覆盖的全部变量。变量名的 `-o` / `warm` 是**品牌色系**，`-b` / `cool` 是**强调色系**
  *（名字按默认那套橙+蓝取的色相，换成别的色相时含义不变 —— 按名字里的冷暖填的话，
- * 品牌色和它的浅底色会分家，出来是一页配色不成立但完整的幻灯片）。 */
+ * 品牌色和它的浅底色会分家，出来是一页配色不成立但完整的幻灯片）。
+ *
+ * 两个 `--mask-rgb*` 是**照片页那层幕帘的底色**，必须等于它压着的那一页的底色：
+ * `--mask-rgb` = `--c-bg`（普通页），`--mask-rgb-alt` = `--bg-cool`（`.slide.cool` 那一档页的底色，
+ * 见 template 里 `.slide.cool{background:var(--bg-cool)}` 和 `.slide.cool.has-bg .case-bg::after`）。
+ * 填成别的浅色**不报错**：那一页照片渐隐进去的是另一个色相，于是画面中间横着一道能看出来的接缝，
+ * 而浏览器、`checkPage`、导出全都正常（P-B/P-C 原来就填成了 `--c-bg-alt` 那一档的冷色，
+ * cool 页上的暖底和蓝白幕帘对不上 —— 有测试盯着这条了）。
+ *
+ * 两个 `--c-*-on` 是**压在那个色块实底上的字色**（`.l60-go` 圆按钮、`.l30-no` 角标、`.bio-badge`、
+ * H-C 那档页眉色块）。**它不是「白色」的别名**：白字只在深底上成立，而品牌色深浅由配色决定 ——
+ * 默认那套的橙对白字是 2.6:1、天青 2.3:1（AA 要 4.5），所以那两档压的是墨色；蓝/绿/红三套的
+ * 品牌色够深，压白字 5.8–6.4:1。把它当白色填的话，浅色品牌色那套上的那几处字直接读不出来，
+ * 而每一页都是一页完整正常的幻灯片（有测试按对比度对账）。 */
 export const PALETTE_VARS = [
   '--c-brand', '--c-brand-deep', '--c-accent', '--c-accent-deep',
+  '--c-brand-on', '--c-accent-on',
   '--c-bg', '--c-bg-alt', '--c-ink', '--c-ink-deep', '--c-ink-soft',
   '--c-card', '--c-hairline',
   '--bg-warm', '--bg-cool', '--bg-plain',
   '--card-o', '--card-b', '--hl-o', '--hl-b',
   '--mask-rgb', '--mask-rgb-alt',
 ] as const;
+
+/**
+ * 舞台上允许的**最小字号**（1920×1080 那张舞台的 px）。
+ *
+ * 两处按它对账：库里那份 `template.html`（`caseLibrary.test.ts` 扫每条 `font-size`）和模型
+ * 每一页写的 inline style（`checkPage` ⑥）。**压字号是「内容塞不下」时最省力的那条路** ——
+ * 模型不用改结构、不用删一个字，出来是一页排得满满当当、每个字都在的幻灯片，`overflow:hidden`
+ * 没触发、类名全对、`problems` 里一个字都没有，而后排读不出来（1920 舞台投到 1080p 就是 1:1，
+ * 预览窗口更小时还要再乘一次缩放）。
+ *
+ * 14 是**底线，不是目标**：guizang 那套的下界是 1600×900 画布上的 14px，折到我们这张舞台上
+ * 是 17px。库里现在还有 40 多处 14–15px 的说明文字/英文标记卡在这条线上，整体提一档是一次
+ * 全库重排字号，跟这条下界不是同一件事 —— 先把线钉在这里，别再有新的往下走。
+ */
+export const MIN_FONT_PX = 14;
 
 export interface DesignOption {
   id: string;
@@ -76,13 +105,14 @@ export const PALETTES: DesignOption[] = [
     vars: {
       '--c-brand': '#2A5DB0', '--c-brand-deep': '#1E4585',
       '--c-accent': '#E8A33D', '--c-accent-deep': '#CE8A26',
+      '--c-brand-on': '#FFFFFF', '--c-accent-on': '#1F2733',
       '--c-bg': '#F7F8FA', '--c-bg-alt': '#EDF2F9',
       '--c-ink': '#4A5260', '--c-ink-deep': '#1F2733', '--c-ink-soft': '#8B93A1',
       '--c-card': '#FFFFFF', '--c-hairline': 'rgba(16,24,40,.10)',
       '--bg-warm': '#EEF3FA', '--bg-cool': '#FDF6EA', '--bg-plain': '#F7F8FA',
       '--card-o': '#E9F0FA', '--card-b': '#FDF3E3',
       '--hl-o': 'rgba(42,93,176,.14)', '--hl-b': 'rgba(232,163,61,.14)',
-      '--mask-rgb': '247,248,250', '--mask-rgb-alt': '237,242,249',
+      '--mask-rgb': '247,248,250', '--mask-rgb-alt': '253,246,234',
     },
   },
   {
@@ -92,13 +122,44 @@ export const PALETTES: DesignOption[] = [
     vars: {
       '--c-brand': '#2F6B52', '--c-brand-deep': '#235340',
       '--c-accent': '#C4703A', '--c-accent-deep': '#A85A2A',
+      '--c-brand-on': '#FFFFFF', '--c-accent-on': '#141A16',
       '--c-bg': '#F8F7F2', '--c-bg-alt': '#EDF3EF',
       '--c-ink': '#4C534E', '--c-ink-deep': '#232A26', '--c-ink-soft': '#8D948F',
       '--c-card': '#FFFFFF', '--c-hairline': 'rgba(20,30,25,.10)',
       '--bg-warm': '#EDF3EF', '--bg-cool': '#FBF2EB', '--bg-plain': '#F8F7F2',
       '--card-o': '#E9F1EC', '--card-b': '#FAEFE7',
       '--hl-o': 'rgba(47,107,82,.14)', '--hl-b': 'rgba(196,112,58,.14)',
-      '--mask-rgb': '248,247,242', '--mask-rgb-alt': '237,243,239',
+      '--mask-rgb': '248,247,242', '--mask-rgb-alt': '251,242,235',
+    },
+  },
+  {
+    id: 'P-D',
+    name: '党建红',
+    hint: '正红 + 金，暖白底。党政机关、党建汇报、政府工作报告',
+    // 三处取色是有理由的，改的时候别按「更红更亮更喜庆」来动：
+    // ① 品牌色取深正红 `#C1272D`，不取国旗红 `#E60012`。这一套里红是**大面积**用的
+    //    （章节页整块色块、L60 那条 82px 通栏色带、H-C 那档页眉色块、圆按钮），上面压的是白字：
+    //    国旗红对白字是 4.8:1，**刚过 4.5 那条线**，碰上细字重或小字号就发飘，而浏览器、
+    //    `checkPage`、导出全都不报错，只有肉眼觉得「这一页字有点看不清」；深正红是 5.8:1，留了余量。
+    // ② 强调色取金，但**金只能当装饰**（线、色片、格顶那条 2px）：`--c-accent` 在库里有 8 处
+    //    当文字色用，它一直是低对比的装饰色（默认那套的天青也才 2.2:1）—— 要拿来写字的一律走
+    //    `--c-accent-deep`（深金 5:1，`.slide-header .kicker` 和各版式的领句走的就是它）。
+    //    把这两个反过来填（亮金当 deep）的话，左上角那行模块名在白底上几乎看不见，而它确实在那儿。
+    // ③ `--hl-o` 这块浅底调的是**深红**（`--c-brand-deep`）而不是品牌红：正红兑到 .14 出来是
+    //    一片糖粉色，铺到 L60 那条 82px 通栏色带和表格合计行上，读起来像这一页换了个主题色；
+    //    深红同浓度偏砖红，稳得住。alpha 跟着另两套留在 .14（表格合计行靠它和斑马纹分开，
+    //    调淡了那一行就看不出是合计行了，而表格本身完整正常）。
+    vars: {
+      '--c-brand': '#C1272D', '--c-brand-deep': '#94191F',
+      '--c-accent': '#C8A15A', '--c-accent-deep': '#8A6A1E',
+      '--c-brand-on': '#FFFFFF', '--c-accent-on': '#2A2422',
+      '--c-bg': '#FAF7F4', '--c-bg-alt': '#FBF4E8',
+      '--c-ink': '#544C4A', '--c-ink-deep': '#2A2422', '--c-ink-soft': '#928A87',
+      '--c-card': '#FFFFFF', '--c-hairline': 'rgba(42,20,20,.10)',
+      '--bg-warm': '#FBF1EF', '--bg-cool': '#FBF4E8', '--bg-plain': '#FAF7F4',
+      '--card-o': '#F8E9E7', '--card-b': '#FAF0DC',
+      '--hl-o': 'rgba(148,25,31,.14)', '--hl-b': 'rgba(200,161,90,.18)',
+      '--mask-rgb': '250,247,244', '--mask-rgb-alt': '251,244,232',
     },
   },
 ];
@@ -172,8 +233,11 @@ export const HEADERS: DesignOption[] = [
   {
     id: 'H-C',
     name: '品牌色块',
-    hint: '白字压在品牌色小色块上，最显眼。政企、方案汇报',
-    rules: '.slide-header .kicker{font-size:15px;font-weight:700;letter-spacing:.1em;color:var(--c-card);background:var(--c-brand);padding:7px 16px;border-radius:8px;display:inline-block}',
+    hint: '反色字压在品牌色小色块上，最显眼。政企、方案汇报',
+    // 字色走 `--c-brand-on` 而不是 `--c-card`（那个恒等于白）：这一档是**15px 小字**压在实底上，
+    // AA 要 4.5:1，而默认那套的橙对白字只有 2.6:1 —— 写死白的话左上角那行模块名在橙色块上发飘，
+    // 而它确实在那儿、每一页都正常。见 `PALETTE_VARS` 上那段。
+    rules: '.slide-header .kicker{font-size:15px;font-weight:700;letter-spacing:.1em;color:var(--c-brand-on);background:var(--c-brand);padding:7px 16px;border-radius:8px;display:inline-block}',
   },
   {
     id: 'H-D',

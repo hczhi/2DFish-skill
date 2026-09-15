@@ -26,6 +26,75 @@ describe('deck 设计规范', () => {
     }
   });
 
+  it('照片页那层幕帘的底色和它压着的那一页底色是同一个（不然中间横着一道接缝）', () => {
+    // `--mask-rgb` 只在 `.case-bg::after` 那类幕帘上用，`--mask-rgb-alt` 用在 `.slide.cool` 上
+    // （那一档的底色是 `--bg-cool`）。填成别的浅色时照片渐隐进去的是另一个色相，画面中间
+    // 横着一道看得出来的接缝 —— 而浏览器、checkPage、导出全都正常，problems 里一个字都没有。
+    const rgb = (hex: string) =>
+      [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',');
+    for (const p of PALETTES) {
+      if (!p.vars) continue; // 默认那套跟着 template 的 :root 走（那一份已经是配对的）
+      expect(p.vars['--mask-rgb'], `${p.id} 的 --mask-rgb 要等于 --c-bg`).toBe(rgb(p.vars['--c-bg']));
+      expect(p.vars['--mask-rgb-alt'], `${p.id} 的 --mask-rgb-alt 要等于 --bg-cool`).toBe(rgb(p.vars['--bg-cool']));
+    }
+  });
+
+  it('色块上那个字色（--c-*-on）在每套配色里都读得出来', () => {
+    // 白字只在深底上成立，而品牌色/点缀色的深浅是每套配色自己定的：默认那套的橙对白字 2.6:1、
+    // 天青 2.3:1（AA 要 4.5）。写死 `#fff` 或者照着「反色就是白色」填的话，浅色品牌色那套上
+    // 徽章/圆按钮/H-C 页眉色块里的字直接读不出来 —— 而浏览器、checkPage、导出全都正常，
+    // 现象只是「这一页字有点看不清」。**量哪几个底色是从 template 里扫出来的**（谁真的被
+    // 当过 background），不写死一份名单：`--c-brand-deep` 是渐变色块（`.bio-bleed`）的两头、
+    // 只量 `--c-brand` 的话那两头会悄悄掉到线下；而 `--c-accent-deep` 现在只当文字色用
+    // （kicker），写进名单反倒会逼着 `--c-accent-on` 去同时满足两个明度差很远的底
+    // （墨绿那套的陶土色深浅版一个要白字一个要黑字，无解）—— 哪天有版式拿它铺底，
+    // 这条测试自己就开始管它了。
+    const lum = (hex: string) =>
+      [1, 3, 5]
+        .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((s, v, i) => s + [0.2126, 0.7152, 0.0722][i] * v, 0);
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const tpl = library().template.replace(/\/\*[\s\S]*?\*\//g, '');
+    const root = /:root\{([\s\S]*?)\n\}/.exec(tpl)![1];
+    const base: Record<string, string> = {};
+    for (const m of root.matchAll(/(--[\w-]+):\s*([^;]+);/g)) base[m[1]] = m[2].trim();
+    const backgrounds = new Set<string>();
+    for (const m of tpl.matchAll(/background(?:-color)?:[^;}]*/g)) {
+      for (const v of m[0].matchAll(/var\((--c-(?:brand|accent)(?:-deep)?)\)/g)) backgrounds.add(v[1]);
+    }
+    expect(backgrounds.has('--c-brand'), 'template 里连一处品牌色底都扫不出来 = 这条正则失效了').toBe(true);
+    for (const p of PALETTES) {
+      const v = { ...base, ...(p.vars || {}) }; // 默认那套（P-A）就是 template 的 :root
+      for (const bg of backgrounds) {
+        const on = bg.startsWith('--c-brand') ? '--c-brand-on' : '--c-accent-on';
+        expect(
+          ratio(v[bg], v[on]),
+          `${p.id}：${on}(${v[on]}) 压在 ${bg}(${v[bg]}) 上只有 ${ratio(v[bg], v[on]).toFixed(2)}:1`
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('template 里不许再出现「品牌色/点缀色实底 + 写死白字」', () => {
+    // 上一条量的是变量本身，管不到「有人又写了一次 color:#fff」—— 那一处不跟着配色走，
+    // 于是浅色品牌色那套上它是白压浅橙。跨规则的那种（父元素铺色块、子元素写白字）静态扫不出来，
+    // 只能靠这一条挡住同一条声明里的写法，剩下的靠 PALETTE_VARS 那段注释。
+    const css = library().template.replace(/\/\*[\s\S]*?\*\//g, '');
+    const bad: string[] = [];
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const body = m[2];
+      if (!/background(-color)?:[^;]*var\(--c-(brand|accent)\b/.test(body)) continue;
+      if (/color:\s*(#fff|#ffffff|white|rgba?\(255,\s*255,\s*255)/i.test(body)) {
+        bad.push(m[1].trim().replace(/\s+/g, ' '));
+      }
+    }
+    expect(bad, '这几条要改成 var(--c-brand-on) / var(--c-accent-on)').toEqual([]);
+  });
+
   it('认不出的 id 一律抛，不回落成默认那套', () => {
     expect(() => readDesignSpec({ palette: 'P-Z', font: 'F-A', density: 'D-B' })).toThrow(DesignSpecError);
     // 缺一项也抛：缺的那项悄悄回默认的话，界面上三个下拉都对，而整份混了两套规范。

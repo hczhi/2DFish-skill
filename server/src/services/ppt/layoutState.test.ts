@@ -11,14 +11,15 @@ initDatabase();
 
 describe('版式停用', () => {
   it('把某个页型停到一条不剩时拒绝，库里那份状态一个字都不动', () => {
-    // 目录页版式就这三条 —— 停到一条不剩的话，下一份稿子的目录页会排成一页
+    // 目录页版式就这四条 —— 停到一条不剩的话，下一份稿子的目录页会排成一页
     // 数据网格或者四栏矩阵，看起来只是「这份稿子没有目录」。
     const toc = layouts().filter((l) => l.roles.includes('目录'));
-    expect(toc.map((l) => l.id)).toEqual(['L17', 'L33', 'L48']);
+    expect(toc.map((l) => l.id)).toEqual(['L17', 'L33', 'L48', 'L65']);
 
     // 停到只剩一条是允许的，再停那最后一条才拒绝。
     setLayoutEnabled('L33', false);
     setLayoutEnabled('L48', false);
+    setLayoutEnabled('L65', false);
     expect(() => setLayoutEnabled('L17', false)).toThrow(LayoutStateError);
     expect(() => setLayoutEnabled('L17', false)).toThrow(/目录页最后一条/);
 
@@ -28,5 +29,6 @@ describe('版式停用', () => {
 
     setLayoutEnabled('L33', true);
     setLayoutEnabled('L48', true);
+    setLayoutEnabled('L65', true);
   });
 });

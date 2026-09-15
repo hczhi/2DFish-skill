@@ -82,7 +82,7 @@
 .tri-col::after{content:"";position:absolute;inset:0;z-index:2;background:linear-gradient(to top,rgba(6,14,24,.85) 0%,rgba(6,14,24,.35) 50%,rgba(6,14,24,.1) 80%,transparent 100%),linear-gradient(to right,rgba(6,14,24,.25) 0%,transparent 35%)}
 .tri-col+.tri-col::before{content:"";position:absolute;top:0;bottom:0;left:0;width:1px;background:rgba(255,255,255,.18);z-index:3}
 .tri-num{position:absolute;top:48px;right:48px;font-family:var(--serif);font-size:132px;font-weight:700;line-height:.85;color:rgba(255,255,255,.82);z-index:4;text-shadow:0 4px 24px rgba(0,0,0,.5);letter-spacing:-3px}
-.tri-num .step{display:block;font-family:var(--sans);font-size:12px;font-weight:700;letter-spacing:4px;color:var(--c-accent);margin-bottom:4px}
+.tri-num .step{display:block;font-family:var(--sans);font-size:14px;font-weight:700;letter-spacing:4px;color:var(--c-accent);margin-bottom:4px}
 .tri-text{position:absolute;bottom:48px;left:48px;right:36px;color:#fff;z-index:4}
 .tri-label{font-size:16px;font-weight:500;letter-spacing:1.5px;opacity:.9;display:inline-flex;align-items:center;gap:8px}
 .tri-label::before{content:"";width:18px;height:1.5px;background:var(--c-accent)}

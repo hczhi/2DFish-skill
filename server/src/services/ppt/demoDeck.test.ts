@@ -52,9 +52,9 @@ describe('版式 demo deck', () => {
     expect(bad).toEqual([]);
   });
 
-  it('拼出来的整份 deck 有 44 页且不留占位符', () => {
+  it('拼出来的整份 deck 有 65 页且不留占位符', () => {
     const html = demoDeck();
-    expect(html.match(/<section class="slide/g)?.length).toBe(51);
+    expect(html.match(/<section class="slide/g)?.length).toBe(65);
     // 占位符没填的话页脚上是一行 {{BRAND_CN}}，而 deck 其他地方全正常
     expect(html).not.toContain('{{');
     // 插入点被改掉时 replace 什么都不做，出来是一份全白但页脚/目录都正常的 deck

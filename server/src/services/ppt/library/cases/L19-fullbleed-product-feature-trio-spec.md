@@ -95,7 +95,7 @@
 .l19-bg img{width:100%;height:100%;object-fit:cover;}
 .l19-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.15) 0%,rgba(0,0,0,.35) 60%,rgba(0,0,0,.7) 100%);}
 .l19-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.16em;font-weight:600;z-index:2;}
-.l19-logo small{display:block;font-size:13px;margin-top:4px;font-weight:400;letter-spacing:.12em;opacity:.8;}
+.l19-logo small{display:block;font-size:14px;margin-top:4px;font-weight:400;letter-spacing:.12em;opacity:.8;}
 .l19-title{position:absolute;top:18%;left:5%;max-width:55%;z-index:2;color:#fff;}
 .l19-title h1{font-size:clamp(40px,5vw,64px);font-weight:600;letter-spacing:-.005em;line-height:1.1;margin-bottom:12px;}
 .l19-title .sub{font-size:15px;color:rgba(255,255,255,.75);letter-spacing:.04em;}
@@ -105,7 +105,7 @@
 .l19-specs{position:absolute;bottom:5%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;z-index:3;}
 .l19-spec{background:var(--c-card);padding:18px 22px;border-radius:4px;min-height:84px;}
 .l19-spec .v{font-size:30px;font-weight:700;color:var(--c-ink-deep);line-height:1;letter-spacing:-.01em}
-.l19-spec .k{font-size:12px;color:var(--c-ink-soft);margin-top:8px;letter-spacing:.04em}
+.l19-spec .k{font-size:14px;color:var(--c-ink-soft);margin-top:8px;letter-spacing:.04em}
 ```
 
 ---

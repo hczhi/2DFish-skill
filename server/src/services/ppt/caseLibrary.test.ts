@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { libraryRoot, layoutById } from './layoutLibrary.js';
+import { MIN_FONT_PX } from './designSpec.js';
+import { imageGroupProblems } from './imageGroups.js';
+import { leadEchoProblem } from './pageService.js';
 import { templateClasses } from './deckShell.js';
 
 // `cases/*.md` 是**喂给模型的说明**（那一条的 buildText），`library/template.html` 才是真的渲染
@@ -175,6 +178,63 @@ describe('版式详情 md 与 template.html 对不对得上', () => {
           bad.push(`${f}:${i + 1}:${m[0]}`);
         }
       });
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('骨架和结构模板里没有低于下界的字号', () => {
+    // 小字是这套库长出来的方式：一条版式为了塞下双语/单位/口径，就把那一行压到 11–13px，
+    // 每一页单看都排得下、都好看 —— 而 1920 舞台投到 1080p 就是 1:1，13px 在会议室后排
+    // 读不出来，浏览器、`checkPage`、导出一处都不报错（原来有 23 处这样的声明）。
+    // 骨架和 md 里的结构模板要一起扫：md 那份是**发给模型的范本**，它会照着写 inline style。
+    // 运行时那一半在 `checkPage` ⑥（模型自己压字号）。
+    // 播放器自己的 UI（页脚目录面板、提示条）不算舞台内容，它们跟着浏览器窗口显示，不投屏。
+    const bad: string[] = [];
+    const scan = (label: string, css: string, ignore?: RegExp) => {
+      for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const sel = m[1].trim().replace(/\s+/g, ' ');
+        if (ignore?.test(sel)) continue;
+        for (const f of m[2].matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
+          if (Number(f[1]) < MIN_FONT_PX) bad.push(`${label}:${sel} → ${f[1]}px`);
+        }
+      }
+    };
+    scan('template.html', readFileSync(join(dir, '../template.html'), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, ''), /^[#]|\.toc-/);
+    for (const f of files) {
+      for (const block of htmlBlocks(readFileSync(join(dir, f), 'utf-8'))) {
+        for (const m of stripComments(block).matchAll(/style="([^"]*)"/g)) {
+          for (const s of m[1].matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
+            if (Number(s[1]) < MIN_FONT_PX) bad.push(`${f}:inline → ${s[1]}px`);
+          }
+        }
+      }
+      // md 里那份 CSS 骨架和 template 是逐条对账的（上面那条测试），所以只扫 inline style 就够。
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('结构模板里并排的那几张图是同一个高度', () => {
+    // 案例 md 是**发给模型的范本**：范本里一行三张图有两张写了 height、第三张没写，模型每一页
+    // 都照着排，出来是一行参差不齐的图 + 下面几行错开的小字，而 `checkPage` ⑦ 会把这句话
+    // 报在每一页上（他改不掉，因为范本就是这么写的）。运行时那一半在 `checkPage` ⑦。
+    const bad: string[] = [];
+    for (const f of files) {
+      for (const block of htmlBlocks(readFileSync(join(dir, f), 'utf-8'))) {
+        for (const p of imageGroupProblems(block)) bad.push(`${f}:${p}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('结构模板里的领句不是标题的复制', () => {
+    // 范本里那行小字写着和大标题一样的话，模型每一页都照着抄（那一格它本来就不知道填什么）——
+    // 出来是一行 20px 加宽字距的小字 + 同一句话的大标题，看起来像版式自带的装饰，
+    // 而 `checkPage` ⑧ 会把这句话报在每一页上，他照 md 改不掉。运行时那一半在 `checkPage` ⑧。
+    const bad: string[] = [];
+    for (const f of files) {
+      for (const block of htmlBlocks(readFileSync(join(dir, f), 'utf-8'))) {
+        for (const p of leadEchoProblem(stripComments(block), {})) bad.push(`${f}:${p}`);
+      }
     }
     expect(bad).toEqual([]);
   });

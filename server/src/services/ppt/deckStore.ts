@@ -833,7 +833,8 @@ export interface PageInsertResult {
  *    因为空版式生成出来是「模型自己看着办」的一页。
  * ④ **`images: 0` / `imageSpecs: []`**：新页不配图。凭空给几格的话备图面板上挂着几个
  *    没人定过内容的图位，他备完图生成出来贴不进去（版式的图位数是另一回事）。
- *    要配图走「按这个版式和这一页的内容重排图位」那条（一次真实调用，他自己点）。
+ *    图位是在生成之后按真的排出来的图槽补上的（`specsFromSlots`，不花钱）；在那之前想先备图，
+ *    就在「生成前改一下」里换一条版式 —— 点生成会自动先重排一次图位（一次真实调用）。
  */
 export function insertPage(deckId: string, owner: DeckOwner, input: PageInsertInput): PageInsertResult {
   const db = getDatabase();

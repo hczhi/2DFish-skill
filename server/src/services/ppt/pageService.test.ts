@@ -78,6 +78,21 @@ describe('生成一页 HTML', () => {
     expect(r.problems.join(' ')).toMatch(/L13 是全幅版式/);
   });
 
+  it('双表版式只排出一张表时点名说出来', async () => {
+    // 用户报的就是这件事：他给的资料里其实是两组口径不同的数（报价 + 工期），模型把它们
+    // 并进同一张表 —— 列头只能取一个口径，读的人拿它去套另一组数。并出来的那一页列数、
+    // 斑马纹、合计行全都正常，下面那一格只是空着，看起来像「这一页留白多」，一处都不报错。
+    reply(
+      '<section class="slide"><div class="slide-inner"><div class="rp-head"><h1 class="page-title">投入与产出</h1></div>' +
+        '<div class="l57-stack"><div class="l57-block"><div class="l57-cap"><h3>三档投入</h3>' +
+        '<div class="l57-unit"><span>单位：元</span></div></div>' +
+        '<table class="dt-table"><tbody><tr><td>速稿</td><td class="num">240</td></tr></tbody></table>' +
+        '</div></div></div></section>'
+    );
+    const r = await generatePage({ ...base, layoutId: 'L57' }, 'u1');
+    expect(r.problems.join(' ')).toMatch(/只排出了 1 张表/);
+  });
+
   it('整份那段和这一页那段的要求都进了 prompt，而且排在版式骨架和配色 token 之后', async () => {
     // 两件事：夹在近 8000 字的版式骨架前面的话模型照旧按版式建议排；页级那段顶掉整份那段
     // 的话，他在这一页补一句话，整份定的语气就在这一页悄悄失效了 —— 两种出来都是一页
@@ -188,7 +203,7 @@ describe('生成一页 HTML', () => {
     const said = r.problems.join('\n');
     expect(said).toContain('900 字');
     expect(said).toMatch(/L1（形状：分屏）一页大约装 \d+ 字/);
-    expect(said).toContain('L37'); // 装得下的那几条要点名，不然他只能自己翻 51 个版式
+    expect(said).toContain('L37'); // 装得下的那几条要点名，不然他只能自己翻 61 个版式
   });
 
   it('用了 template 里没有的类名要点名，且预览是套好外壳的整页', async () => {
@@ -199,6 +214,58 @@ describe('生成一页 HTML', () => {
     // 换了骨架」两边都不报错），所以占位符必须已经填掉。
     expect(r.previewHtml).toContain('mega-title');
     expect(r.previewHtml).not.toContain('{{');
+  });
+
+  it('模型自己把字号压到下界以下时要点名（内容塞不下最省力的那条路）', async () => {
+    // 塞不下时压字号是模型最省力的一条路：不用删一句、不用换版式，出来是一页排得满满当当、
+    // 每个字都在的幻灯片 —— `overflow:hidden` 没触发、类名全对、problems 里一个字都没有，
+    // 而 1920 舞台投到 1080p 就是 1:1，11px 在会议室后排读不出来。手测时他坐在屏幕前 50cm，
+    // 看到的是「这一页信息量真大」。要点名压到了多少，不然他不知道该删一句还是换版式。
+    reply(
+      '<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2>' +
+        '<p style="font-size:11px;color:var(--c-ink)">试点期口径见附录</p></div></section>'
+    );
+    const r = await generatePage({ ...base, layoutId: 'L1' }, 'u1');
+    expect(r.problems.join(' ')).toMatch(/11px/);
+    expect(r.problems.join(' ')).toMatch(/删一句|拆成两页|换一条/);
+  });
+
+  it('领句把标题抄了一遍时要点名（那行小字看起来像版式自带的装饰）', async () => {
+    // 领句那一格模型不知道填什么，最省力的就是把标题抄上去（或抄它的前半句）：出来是一行
+    // 20px 加宽字距的小字 + 下面一个大标题，写着同一句话 —— 类名全对、字号没压、图位数也对，
+    // 没有一处报错，看起来就是「这个版式本来就有一行小字」，而这一页占了两行只说了一件事。
+    reply(
+      '<section class="slide"><div class="slide-inner">' +
+        '<div class="kicker">三阶段路径</div><h2 class="page-title">三阶段路径：从试点到平台化</h2></div></section>'
+    );
+    const r = await generatePage({ ...base, layoutId: 'L1' }, 'u1');
+    expect(r.problems.join(' ')).toMatch(/领句「三阶段路径」/);
+
+    // 反过来多报一次就占掉右侧那个报警（migration 094）：领句给的是另一个维度的信息时一个字
+    // 都不许说，代码贴的那行模块名（标题恰好等于模块名的章节页）同样不许说 —— 那行他删不掉。
+    reply(
+      '<section class="slide"><div class="slide-inner">' +
+        '<div class="kicker">STEP 02</div><h2 class="page-title">三阶段路径</h2></div></section>'
+    );
+    const ok = await generatePage({ ...base, layoutId: 'L1', section: '三阶段路径' }, 'u1');
+    expect(ok.problems.join(' ')).not.toMatch(/领句/);
+  });
+
+  it('一行图里有一张高度不一样时要点名（那一行是斜的，页面照样渲染）', async () => {
+    // prompt 第 8 条让它「单元数量变了就用 inline style 顺手调」，于是三栏里两栏写了 height、
+    // 第三栏漏掉。三格各自都排得很好、类名全对、图位数也对、`overflow:hidden` 没触发 ——
+    // 而那一行图矮一格、下面那三行小字错开一行，他要把三格摆在一起看才发现。
+    reply(
+      '<section class="slide"><div class="slide-inner"><h2>三家客户</h2>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr)">' +
+        ['240px', '240px', '200px']
+          .map((h) => `<div><img src="/ppt-cases/ph-16x9.svg" style="width:100%;height:${h}" data-img-prompt="现场"></div>`)
+          .join('') +
+        '</div></div></section>'
+    );
+    const r = await generatePage({ ...base, layoutId: 'L1', images: 3 }, 'u1');
+    expect(r.problems.join(' ')).toMatch(/高度不是同一个/);
+    expect(r.problems.join(' ')).toContain('200px');
   });
 });
 

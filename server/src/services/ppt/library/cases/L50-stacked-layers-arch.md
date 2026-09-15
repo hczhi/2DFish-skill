@@ -67,7 +67,7 @@
 .l50-layer{flex:1;min-height:0;display:grid;grid-template-columns:280px 1fr;background:var(--c-card);box-shadow:0 24px 54px rgba(0,0,0,.14)}
 .l50-tag{background:var(--c-ink-deep);padding:24px 30px;display:flex;flex-direction:column;justify-content:center}
 .l50-tag h3{font-size:24px;font-weight:800;line-height:1.3;color:#fff}
-.l50-tag b{font-family:var(--num);font-size:13px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.58);margin-top:8px}
+.l50-tag b{font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.58);margin-top:8px}
 .l50-cells{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:16px;padding:22px 30px;align-items:stretch}
 .l50-cell{display:flex;align-items:center;justify-content:center;text-align:center;padding:13px 18px;border:1px solid var(--c-hairline);background:var(--c-bg);font-size:19px;font-weight:700;line-height:1.4;color:var(--c-ink-deep)}
 ```
