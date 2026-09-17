@@ -93,7 +93,7 @@
 /* L19 · 全幅暗 bg + 左上标题 + 中央产品 + 底部 3 白卡 */
 .l19-wrap{position:absolute;inset:0;overflow:hidden;}
 .l19-bg img{width:100%;height:100%;object-fit:cover;}
-.l19-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.15) 0%,rgba(0,0,0,.35) 60%,rgba(0,0,0,.7) 100%);}
+.l19-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.52);}
 .l19-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.16em;font-weight:600;z-index:2;}
 .l19-logo small{display:block;font-size:14px;margin-top:4px;font-weight:400;letter-spacing:.12em;opacity:.8;}
 .l19-title{position:absolute;top:18%;left:5%;max-width:55%;z-index:2;color:#fff;}

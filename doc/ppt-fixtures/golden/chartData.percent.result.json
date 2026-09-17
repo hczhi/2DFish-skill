@@ -1,0 +1,6 @@
+{
+  "html": "<section class=\"slide\"><div class=\"slide-inner\"><div class=\"l47-rows\" style=\"--bar-max:100\">\n<div class=\"l47-row\" style=\"--bar-v:40\"><span class=\"l47-label\">A</span><span class=\"l47-val\">40%</span></div>\n<div class=\"l47-row\" style=\"--bar-v:25\"><span class=\"l47-label\">B</span><span class=\"l47-val\">25%</span></div>\n</div></div></section>",
+  "problems": [
+    "条形图的轨道上限由代码重算了（40 → 100）：这一组是百分比，上限只有 40 —— 最大的那一行（40%）会顶满整条轨道，看起来就是 100%，而它旁边印着的还是 40%。百分比的满格必须是 100。"
+  ]
+}

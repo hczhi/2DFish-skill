@@ -51,7 +51,7 @@
 .l59-wrap{position:absolute;inset:0;overflow:hidden}
 .l59-bg{position:absolute;inset:0;z-index:0}
 .l59-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l59-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,18,28,.58) 0%,rgba(8,18,28,.3) 34%,rgba(8,18,28,.72) 100%)}
+.l59-bg::after{content:"";position:absolute;inset:0;background:rgba(8,18,28,.62)}
 .l59-main{position:absolute;left:var(--pad-x);right:var(--pad-x);top:50%;transform:translateY(-50%);z-index:2;text-align:center}
 .l59-kicker{font-family:var(--num);font-size:17px;font-weight:800;letter-spacing:.34em;color:rgba(255,255,255,.72)}
 .l59-main .page-title{margin-top:26px;font-family:var(--serif);font-size:76px;font-weight:900;line-height:1.28;letter-spacing:.04em;color:#fff;text-shadow:0 8px 34px rgba(6,14,22,.46)}

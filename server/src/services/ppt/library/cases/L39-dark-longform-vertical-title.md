@@ -58,7 +58,7 @@
 .l39-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
 .l39-bg{position:absolute;inset:0;z-index:0}
 .l39-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.22}
-.l39-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,.6) 52%,rgba(0,0,0,.82) 100%)}
+.l39-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.80)}
 .l39-side{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;align-items:center;gap:20px}
 .l39-side .page-title{writing-mode:vertical-rl;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;letter-spacing:.16em;color:#fff;margin-top:0}
 .l39-side .l39-en{writing-mode:vertical-rl;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.3em;color:var(--c-brand)}

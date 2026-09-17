@@ -53,7 +53,7 @@
 .l27-item p{font-size:19px;line-height:1.8;color:var(--c-ink)}
 .l27-fig{position:relative;overflow:hidden;background:var(--c-bg-alt)}
 .l27-fig img{width:100%;height:100%;object-fit:cover;display:block}
-.l27-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));color:#fff;font-size:19px;font-weight:700;line-height:1.6}
+.l27-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:rgba(0,0,0,.60);color:#fff;font-size:19px;font-weight:700;line-height:1.6}
 ```
 
 ---

@@ -24,14 +24,15 @@ export interface DeckMeta {
 
 export interface AssembleOptions {
   /**
-   * 页脚（品牌 + 主题 + 进度条 + 页码 + 目录）。默认带上。
+   * 页脚（品牌 + 主题 + 进度条 + 页码）。默认带上。「目录 ▾」那个下拉已经从 template
+   * 里去掉了（见 template.html 的 footer）。
    *
    * **制作过程中的单页预览一律传 false**：它 absolute 压在画面底部那 54px 上，
    * 挡住的是这一页自己的内容，而看起来像「这一页排版就是这样」（截图上就是被那条
-   * 白带切掉的一行）。整份放映和导出要带 —— 那两处靠它翻页、看进度、跳目录。
+   * 白带切掉的一行）。整份放映和导出要带 —— 那两处靠它翻页、看进度。
    *
    * 用 `display:none` 而不是把 `<footer>` 删掉：末尾那段脚本会 `getElementById('page-ind')`
-   * / `#progress i` / 目录面板，元素没了的话 `go()` 在第一次翻页时就抛异常 ——
+   * / `#progress i`，元素没了的话 `go()` 在第一次翻页时就抛异常 ——
    * 现象是「键盘翻页没反应」，控制台之外一点提示都没有。
    */
   footer?: boolean;
@@ -51,7 +52,7 @@ export function assembleDeck(sections: string[], meta: DeckMeta, opts: AssembleO
   const template = library().template;
   if (!template.includes(SLOT)) {
     // 插入点被改掉的话下面那次 replace 什么都不会发生，出来的是一份**没有任何幻灯片**
-    // 的 deck —— 页脚、目录、缩放全都正常，只是全白。
+    // 的 deck —— 页脚、缩放全都正常，只是全白。
     throw new Error(`template.html 里找不到幻灯片插入点（${SLOT}）—— 拼出来会是一份空白 deck。`);
   }
   // 隐藏页脚那句 CSS 跟着幻灯片一起插进 body（不去找 `</head>`）：找不到那个标签时

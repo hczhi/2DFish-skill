@@ -79,7 +79,7 @@
 .tri-cols{flex:1;display:grid;grid-template-columns:1fr 1fr 1fr;position:relative;overflow:hidden}
 .tri-col{position:relative;overflow:hidden}
 .tri-col .photo{position:absolute;inset:0;background-size:cover;background-position:center;filter:saturate(.92) contrast(1.05)}
-.tri-col::after{content:"";position:absolute;inset:0;z-index:2;background:linear-gradient(to top,rgba(6,14,24,.85) 0%,rgba(6,14,24,.35) 50%,rgba(6,14,24,.1) 80%,transparent 100%),linear-gradient(to right,rgba(6,14,24,.25) 0%,transparent 35%)}
+.tri-col::after{content:"";position:absolute;inset:0;z-index:2;background:rgba(6,14,24,.55)}
 .tri-col+.tri-col::before{content:"";position:absolute;top:0;bottom:0;left:0;width:1px;background:rgba(255,255,255,.18);z-index:3}
 .tri-num{position:absolute;top:48px;right:48px;font-family:var(--serif);font-size:132px;font-weight:700;line-height:.85;color:rgba(255,255,255,.82);z-index:4;text-shadow:0 4px 24px rgba(0,0,0,.5);letter-spacing:-3px}
 .tri-num .step{display:block;font-family:var(--sans);font-size:14px;font-weight:700;letter-spacing:4px;color:var(--c-accent);margin-bottom:4px}

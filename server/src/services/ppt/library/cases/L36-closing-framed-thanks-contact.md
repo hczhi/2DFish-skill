@@ -46,7 +46,7 @@
 .l36-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
 .l36-bg{position:absolute;inset:0;z-index:0}
 .l36-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.32}
-.l36-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.72) 0%,rgba(0,0,0,.4) 44%,rgba(0,0,0,.88) 100%)}
+.l36-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.75)}
 .l36-frame{position:absolute;left:16%;right:16%;top:27%;z-index:2;padding:64px 72px;border:1px solid rgba(255,255,255,.26);background:rgba(255,255,255,.04);text-align:center}
 .l36-frame .page-title{font-family:var(--serif);font-size:104px;font-weight:900;line-height:1.1;letter-spacing:.06em;color:#fff;margin-top:0}
 .l36-en{margin-top:24px;font-family:var(--num);font-size:17px;font-weight:700;letter-spacing:.38em;color:var(--c-brand)}

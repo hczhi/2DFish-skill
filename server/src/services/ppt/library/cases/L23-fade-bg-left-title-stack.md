@@ -40,7 +40,7 @@
 /* L23 整页背景图横向渐隐 + 左侧标题/主体两段堆叠 — 详情见 cases/L23-fade-bg-left-title-stack.md */
 .l23-bg{position:absolute;inset:0;z-index:0;overflow:hidden}
 .l23-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l23-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(var(--mask-rgb),.97) 0%,rgba(var(--mask-rgb),.9) 28%,rgba(var(--mask-rgb),.5) 50%,rgba(var(--mask-rgb),.08) 72%,transparent 88%)}
+.l23-bg::after{content:"";position:absolute;inset:0;background:rgba(var(--mask-rgb),.82)}
 .l23-stack{flex:1;display:flex;flex-direction:column;justify-content:center;max-width:58%}
 .l23-mega{font-size:82px;font-weight:800;color:var(--c-ink-deep);line-height:1.14;letter-spacing:-.01em}
 .l23-sub{font-size:28px;font-weight:600;color:var(--c-accent-deep);line-height:1.5;margin-top:22px}

@@ -1,0 +1,6 @@
+{
+  "name": "ppt-fixtures-generator",
+  "private": true,
+  "type": "module",
+  "//": "仓库根目录的 package.json 没有 type:module，没有这个文件的话 tsx 会把 generate.ts 当 CJS 跑，import.meta 直接报错。"
+}

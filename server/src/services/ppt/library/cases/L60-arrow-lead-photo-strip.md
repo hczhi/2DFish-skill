@@ -61,7 +61,7 @@
 .l60-band span{flex:none;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.24em;color:var(--c-brand-deep)}
 .l60-strip{position:absolute;left:0;right:0;bottom:0;height:430px;z-index:2;overflow:hidden}
 .l60-strip img{width:100%;height:100%;object-fit:cover;display:block}
-.l60-strip::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(12,20,30,.14) 0%,rgba(12,20,30,.62) 100%)}
+.l60-strip::after{content:"";position:absolute;inset:0;background:rgba(12,20,30,.50)}
 .l60-pills{position:absolute;left:var(--pad-x);bottom:124px;z-index:3;display:flex;gap:16px}
 .l60-pills span{padding:11px 26px;border-radius:999px;border:1px solid rgba(255,255,255,.6);background:rgba(255,255,255,.16);font-size:18px;font-weight:700;color:#fff}
 .l60-em{position:absolute;left:var(--pad-x);bottom:58px;z-index:3;font-family:var(--num);font-size:15px;font-weight:800;letter-spacing:.22em;color:#fff}

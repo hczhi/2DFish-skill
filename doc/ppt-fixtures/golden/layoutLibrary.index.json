@@ -1,0 +1,1260 @@
+[
+  {
+    "id": "L1",
+    "num": 1,
+    "name": "hero-right-visual",
+    "title": "右侧全高视觉",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（hero）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L1",
+    "selectTextChars": 171,
+    "buildTextChars": 2776
+  },
+  {
+    "id": "L2",
+    "num": 2,
+    "name": "fullbleed-bg-mask",
+    "title": "背景图铺满+浅色遮罩",
+    "roles": [
+      "封面",
+      "章节",
+      "结尾"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（bg）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L2",
+    "selectTextChars": 150,
+    "buildTextChars": 2707
+  },
+  {
+    "id": "L3",
+    "num": 3,
+    "name": "case-hero",
+    "title": "案例 hero",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（hero，建议半写实 mockup 模式）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L3",
+    "selectTextChars": 144,
+    "buildTextChars": 2687
+  },
+  {
+    "id": "L4",
+    "num": 4,
+    "name": "two-col-cards",
+    "title": "双卡左橙右蓝",
+    "roles": [
+      "内容"
+    ],
+    "shape": "对比",
+    "imageSlots": "0–2（可选小图标）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L4",
+    "selectTextChars": 100,
+    "buildTextChars": 2495
+  },
+  {
+    "id": "L5",
+    "num": 5,
+    "name": "stat-grid",
+    "title": "数据网格",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0（用 CSS 数字，扁平信息图模式可选配图）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L5",
+    "selectTextChars": 114,
+    "buildTextChars": 2644
+  },
+  {
+    "id": "L6",
+    "num": 6,
+    "name": "timeline-h",
+    "title": "横向时间轴",
+    "roles": [
+      "内容"
+    ],
+    "shape": "时序",
+    "imageSlots": "0–1。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L6",
+    "selectTextChars": 87,
+    "buildTextChars": 3427
+  },
+  {
+    "id": "L7",
+    "num": 7,
+    "name": "quote-full",
+    "title": "金句整页",
+    "roles": [
+      "章节",
+      "结尾",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "0（或 1 张极淡背景）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L7",
+    "selectTextChars": 107,
+    "buildTextChars": 2971
+  },
+  {
+    "id": "L8",
+    "num": 8,
+    "name": "gallery-grid",
+    "title": "图廊网格 · 多图",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "2–4 个（g1..g4）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L8",
+    "selectTextChars": 148,
+    "buildTextChars": 3138
+  },
+  {
+    "id": "L9",
+    "num": 9,
+    "name": "before-after",
+    "title": "前后对比 · 多图",
+    "roles": [
+      "内容"
+    ],
+    "shape": "对比",
+    "imageSlots": "2 个（before / after）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L9",
+    "selectTextChars": 123,
+    "buildTextChars": 3923
+  },
+  {
+    "id": "L10",
+    "num": 10,
+    "name": "icon-row",
+    "title": "图标行 · 多图",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "N 个（小图标，≤200px）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L10",
+    "selectTextChars": 108,
+    "buildTextChars": 4218
+  },
+  {
+    "id": "L11",
+    "num": 11,
+    "name": "tri-narrative-photo",
+    "title": "三栏并列叙事 · 全幅图叠字",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "3 个（`pXX_col1/col2/col3`，建议 case/concept 模式，3:4 竖版 1024×1365，禁用 data）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L11-ref.jpg",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L11",
+    "selectTextChars": 396,
+    "buildTextChars": 7531
+  },
+  {
+    "id": "L12",
+    "num": 12,
+    "name": "circle-float-card",
+    "title": "圆形浮卡 · 出血色带",
+    "roles": [
+      "章节",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_portrait`，必填，正方形 1080×1080，case 模式——人像/产品/实物均可，圆形 crop 后无信息损失）。",
+    "fullbleed": false,
+    "hasCard": true,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L12-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L12",
+    "selectTextChars": 514,
+    "buildTextChars": 7651
+  },
+  {
+    "id": "L13",
+    "num": 13,
+    "name": "fullbleed-stack-center",
+    "title": "全幅图叠字 · 居中垂直堆叠",
+    "roles": [
+      "封面",
+      "章节",
+      "结尾"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_hero`，必填，必须是\"景深感\"全幅场景图——山区航拍/跨海大桥/星空/城市远景，不要人物 closeup 或抽象插画）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L13-ref.jpg",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L13",
+    "selectTextChars": 535,
+    "buildTextChars": 5186
+  },
+  {
+    "id": "L14",
+    "num": 14,
+    "name": "vertical-split-hero-info",
+    "title": "上下分屏 · 上 hero 全幅图 + 下双栏信息",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_hero`，必填，case 模式场景/产品实景图，1920×1080，`object-position: center 40%`，禁用人物 closeup/抽象插画/数据图表）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L14-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L14",
+    "selectTextChars": 636,
+    "buildTextChars": 6759
+  },
+  {
+    "id": "L15",
+    "num": 15,
+    "name": "fullbleed-photo-thin-text-tri-col",
+    "title": "上 hero 极小字+纯白三栏文字·克制美",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "1 个（`pXX_hero`，必填，case 模式氛围场景图——走廊/钢架/远眺/海面，构图简洁有\"景深感\"，1920×1080，`object-position: center 40%`，禁用人物 closeup/抽象插画）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L15-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L15",
+    "selectTextChars": 572,
+    "buildTextChars": 5516
+  },
+  {
+    "id": "L16",
+    "num": 16,
+    "name": "quad-city-matrix",
+    "title": "顶 header 极小 + 标题区 + 四栏等宽「图+中英标题+双语描述」单元",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "N 个（`pXX_c1..c4`，必填，case 模式场景/建筑/产品图，**所有图色调统一**，建议 3:4 或 4:5 竖版 800×1066，**严禁混搭构图风格**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L16-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L16",
+    "selectTextChars": 552,
+    "buildTextChars": 6332
+  },
+  {
+    "id": "L17",
+    "num": 17,
+    "name": "left-image-right-toc-circles",
+    "title": "左 50% 全幅图叠中英巨字 + 右 50% 米底圆圈数字目录",
+    "roles": [
+      "章节"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_hero`，必填，**场景图为主**——人在路上/城市航拍/山野远眺，禁用纯产品 closeup 与抽象插画，1920×1080）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L17-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L17",
+    "selectTextChars": 553,
+    "buildTextChars": 6902
+  },
+  {
+    "id": "L18",
+    "num": 18,
+    "name": "bg-overlay-bilingual-headline-wavy",
+    "title": "全幅暗 bg + 英文左 / 中文右双标题对称 + 红色波浪线 + 暗蒙版三栏",
+    "roles": [
+      "章节",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_hero`，必填，**深色氛围图**——森林光束/暗海面/星空/雾林，禁用浅色明亮图与产品 closeup，1920×1080）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L18-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L18",
+    "selectTextChars": 585,
+    "buildTextChars": 7080
+  },
+  {
+    "id": "L19",
+    "num": 19,
+    "name": "fullbleed-product-feature-trio-spec",
+    "title": "全幅暗 bg 产品图 + 左上标题 + 中央产品 + 底部 3 白卡参数",
+    "roles": [
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "2 个（`pXX_hero` 必填，**产品在场景中的全景** 1920×1080，禁用纯产品白底图与人物特写；`pXX_product` 必填，**产品 cut-out 图**，**PNG 透明底最佳**，1600×900 宽高比约 16:9，JPG 抠图需用 `mix-blend-mode: lighten` 配合）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L19-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L19",
+    "selectTextChars": 652,
+    "buildTextChars": 6233
+  },
+  {
+    "id": "L20",
+    "num": 20,
+    "name": "left-textband-wide-hero-icon-cluster",
+    "title": "左 30% 浮文带 + 右 70% 宽 hero + 底部三圆图标",
+    "roles": [
+      "封面",
+      "章节",
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_hero`，必填，case 模式场景/产品/环境图，**主体偏右**因左 30% 文带会遮住左部，1920×1080）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L20-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L20",
+    "selectTextChars": 540,
+    "buildTextChars": 4639
+  },
+  {
+    "id": "L21",
+    "num": 21,
+    "name": "fullbleed-perspective-info-split",
+    "title": "全幅中央透视 + 左文字 + 右三数据栏",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "1 个（`pXX_hero`，必填，case 模式**必须中央透视构图**——栈道/桥/船头/隧道/走廊延伸感，禁用人物 closeup/抽象插画）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L21-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L21",
+    "selectTextChars": 495,
+    "buildTextChars": 4467
+  },
+  {
+    "id": "L22",
+    "num": 22,
+    "name": "stacked-hero-info-block-each-split",
+    "title": "上下两段 + 每段各自左右分栏",
+    "roles": [
+      "章节",
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "2 个（`pXX_hero` 上半大图，必填，材质/产品/品牌主视觉，暖色调；`pXX_sub` 下半左副图，可选，与 hero 同色系）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": "/ppt-cases/L22-ref.png",
+    "demoUrl": "/api/ppt/demo-deck.html?only=L22",
+    "selectTextChars": 556,
+    "buildTextChars": 5116
+  },
+  {
+    "id": "L23",
+    "num": 23,
+    "name": "fade-bg-left-title-stack",
+    "title": "整页背景图横向渐隐 + 左侧标题/主体两段堆叠",
+    "roles": [
+      "封面",
+      "结尾"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（bg，concept 模式，浅色调、**视觉重心在右半边**、左 1/3 留浅 —— 暗底图会让左侧的深色主标题读不出来）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L23",
+    "selectTextChars": 509,
+    "buildTextChars": 3890
+  },
+  {
+    "id": "L24",
+    "num": 24,
+    "name": "quad-matrix-conclusion",
+    "title": "报告风标题条 + 2×2 象限卡 + 底部结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "对比",
+    "imageSlots": "4 个（`pXX_bg1..bg4`，可选但要么全有要么全无，case 模式 16:9 **每格的底图，画面要平、主体别压左上角、四张同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L24",
+    "selectTextChars": 551,
+    "buildTextChars": 5317
+  },
+  {
+    "id": "L25",
+    "num": 25,
+    "name": "axis-icon-nodes",
+    "title": "报告风标题条 + 横轴四节点「上标签 / 圆形图片 / 下描述」+ 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "时序",
+    "imageSlots": "4 个（`pXX_n1..n4`，可选但要么全有要么全无，case 模式 1:1 **铺满圆的近景图，主体正中、四角可丢、四张同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L25",
+    "selectTextChars": 540,
+    "buildTextChars": 5552
+  },
+  {
+    "id": "L26",
+    "num": 26,
+    "name": "contrast-duo-quote-icon-row",
+    "title": "对比双条（浅底 vs 反色",
+    "roles": [
+      "内容"
+    ],
+    "shape": "对比",
+    "imageSlots": "4 个（`pXX_bg1..bg4`，可选但要么全有要么全无，case 模式 16:9 **每格的底图，主体在上半张、四张同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L26",
+    "selectTextChars": 543,
+    "buildTextChars": 6125
+  },
+  {
+    "id": "L27",
+    "num": 27,
+    "name": "checklist-tall-figure",
+    "title": "报告风标题条 + 左侧编号清单 + 右侧整列竖图",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_fig`，可选，case 模式 3:4 **竖构图、主体居中偏上，下缘 26% 会被说明条压暗**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L27",
+    "selectTextChars": 488,
+    "buildTextChars": 4805
+  },
+  {
+    "id": "L28",
+    "num": 28,
+    "name": "dual-col-checklist-photo-band",
+    "title": "报告风标题条 + 双列勾选清单（6–8 项",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "1 个（`pXX_band`，可选，case 模式 16:9 **切成约 1640×400 的横条，主体必须在右半张**，左边被蒙版压住给文字）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L28",
+    "selectTextChars": 535,
+    "buildTextChars": 4333
+  },
+  {
+    "id": "L29",
+    "num": 29,
+    "name": "dark-statement-flow-loop",
+    "title": "全幅暗底金句 + 底部四步回环",
+    "roles": [
+      "内容",
+      "结尾"
+    ],
+    "shape": "时序",
+    "imageSlots": "1 个（`pXX_bg`，可选，concept 模式 16:9 **整页气氛底图，大面积低对比、不能带文字**，会被压到 40% 亮度）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L29",
+    "selectTextChars": 525,
+    "buildTextChars": 5118
+  },
+  {
+    "id": "L30",
+    "num": 30,
+    "name": "numbered-evidence-trio",
+    "title": "三栏编号证据卡：上图下文，三栏同色",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "3 个（`pXX_e1..e3`，可选但要么三张全有要么全无，case 模式 16:9 **主体居中、左下角留白给编号块，三张同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L30",
+    "selectTextChars": 491,
+    "buildTextChars": 4980
+  },
+  {
+    "id": "L31",
+    "num": 31,
+    "name": "photo-band-float-card",
+    "title": "全幅：上部浅底标题 + 下部横贯图带 + 压在图上的浮白卡",
+    "roles": [
+      "章节",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_band`，**必填**，case 模式 16:9 **主体在右半张、左边留大面积低对比区给白卡、右下角别有细节**）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L31",
+    "selectTextChars": 527,
+    "buildTextChars": 4403
+  },
+  {
+    "id": "L32",
+    "num": 32,
+    "name": "mosaic-hero-duo-overlay",
+    "title": "全幅三图拼贴：左一张主图通高 + 右两张辅图，文字压在各自图上",
+    "roles": [
+      "章节",
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "3 个（`pXX_a` 必填 case 1:1 **主体在上半张**；`pXX_b` / `pXX_c` 必填 case 16:9 **主体在上半张、两张同调性且别和主图撞构图**）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L32",
+    "selectTextChars": 569,
+    "buildTextChars": 4361
+  },
+  {
+    "id": "L33",
+    "num": 33,
+    "name": "toc-rows-side-photo",
+    "title": "目录页：左侧编号行表 + 右侧整列竖图",
+    "roles": [
+      "章节"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_fig`，可选，concept 模式 3:4 **竖构图气氛图，主体居中偏上**；目录页的图不承担信息）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L33",
+    "selectTextChars": 561,
+    "buildTextChars": 4866
+  },
+  {
+    "id": "L34",
+    "num": 34,
+    "name": "cover-slat-photos-title-band",
+    "title": "封面：三条不等宽竖图幕帘 + 横贯整幅的白色标题带",
+    "roles": [
+      "封面"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "3 个（`pXX_slat1..slat3`，可选但要么三张全有要么全无，concept 模式 3:4 **竖构图、主体在中上部、三张同一路调性**）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L34",
+    "selectTextChars": 540,
+    "buildTextChars": 5446
+  },
+  {
+    "id": "L35",
+    "num": 35,
+    "name": "cover-offset-block-portrait",
+    "title": "封面：左侧标题 + 右侧品牌色块与竖图错位叠压",
+    "roles": [
+      "封面"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_fig`，可选，concept 模式 3:4 **竖构图、主体居中偏上、调性要和品牌色搭得上**）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L35",
+    "selectTextChars": 520,
+    "buildTextChars": 5245
+  },
+  {
+    "id": "L36",
+    "num": 36,
+    "name": "closing-framed-thanks-contact",
+    "title": "结尾：全幅暗底气氛图 + 中央细框巨字 + 底部三栏联系信息",
+    "roles": [
+      "结尾"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_bg`，可选，concept 模式 16:9 **远景/夜景/抽象肌理，中段不要有主体**；**不配图也完整**，别为了凑图硬塞）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L36",
+    "selectTextChars": 539,
+    "buildTextChars": 4837
+  },
+  {
+    "id": "L37",
+    "num": 37,
+    "name": "dense-two-col-prose",
+    "title": "长文页：报刊双栏正文 + 首字下沉 + 右侧边注栏",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_aside`，可选，concept 模式 1:1 **构图极简、主体居中、调性要安静**——这一页主角是文字）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L37",
+    "selectTextChars": 551,
+    "buildTextChars": 5492
+  },
+  {
+    "id": "L38",
+    "num": 38,
+    "name": "thumb-row-list",
+    "title": "图文行表：方缩略图 + 小标题 + 说明 + 右端编号，4–6 行",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "4–6 个（`pXX_t1..t6`，可选但要么每行都有要么整页不放，concept 模式 1:1 **主体严格居中、构图极简、几行同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L38",
+    "selectTextChars": 551,
+    "buildTextChars": 5447
+  },
+  {
+    "id": "L39",
+    "num": 39,
+    "name": "dark-longform-vertical-title",
+    "title": "暗底长文：左侧竖排中文标题 + 中间正文 + 右侧数据边栏",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_bg`，可选，concept 模式 16:9 **远景/肌理/夜景，中段不要有主体**；**不配图也完整**）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L39",
+    "selectTextChars": 577,
+    "buildTextChars": 5690
+  },
+  {
+    "id": "L40",
+    "num": 40,
+    "name": "diagonal-split-photo-text",
+    "title": "斜切分屏：clip-path 对角线 + 左文右图 + 斜线渐变高光",
+    "roles": [
+      "内容",
+      "章节"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_side`，可选，case 模式 16:9 **主体在画面右三分之二、右下角要能压深**；**不配图也完整**（留暗色斜块，V4））。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L40",
+    "selectTextChars": 603,
+    "buildTextChars": 5759
+  },
+  {
+    "id": "L41",
+    "num": 41,
+    "name": "outline-mega-number-chapter",
+    "title": "描边空心巨数字章节页：420px 空心序号 + 压在上面的衬线标题 + 底部三条导览",
+    "roles": [
+      "章节"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "0 个（**这一条不放图** —— 衬任何一张照片那圈 2px 轮廓就断断续续看不出形状，而页面照样渲染，只表现成\"这个数字有点脏\"）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L41",
+    "selectTextChars": 568,
+    "buildTextChars": 4680
+  },
+  {
+    "id": "L42",
+    "num": 42,
+    "name": "arc-stage-metrics",
+    "title": "半圆舞台：底部大半圆 + 弧内三组数据 + 顶部居中标题",
+    "roles": [
+      "内容",
+      "章节",
+      "结尾"
+    ],
+    "shape": "数据",
+    "imageSlots": "1 个（`pXX_stage`，可选，concept 模式 16:9 **远景/夜景/肌理，主体别靠左右两端**（被圆角切掉）；**不配图也完整**（纯深色半圆，V4））。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L42",
+    "selectTextChars": 605,
+    "buildTextChars": 5434
+  },
+  {
+    "id": "L43",
+    "num": 43,
+    "name": "stacked-tilt-cards",
+    "title": "层叠微旋转卡片：3 张带投影的图文卡，各自歪一点",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "3 个（`pXX_c1..c3`，可选但**要么三张全有要么整页不放**（只有一两张有图时三张卡高度差一截，层叠就散了），case 模式 4:3 **主体居中、构图简单、三张同一路调性**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L43",
+    "selectTextChars": 614,
+    "buildTextChars": 5132
+  },
+  {
+    "id": "L44",
+    "num": 44,
+    "name": "vertical-timeline-five",
+    "title": "竖向时间轴：左侧说明栏 + 右侧 5 个节点",
+    "roles": [
+      "内容"
+    ],
+    "shape": "时序",
+    "imageSlots": "0 个（**这一条不放图** —— 五个节点占满右半，图只能塞进左栏那 460px 变成一张看不出内容的小图；要配图的时序页用 L25 / L28）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L44",
+    "selectTextChars": 612,
+    "buildTextChars": 5243
+  },
+  {
+    "id": "L45",
+    "num": 45,
+    "name": "data-table-sheet",
+    "title": "数据表页：报告风标题条 + 全宽数据表 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 表格已经占满内容区，塞图只能把列压窄到换行；要图文对照的清单换成带缩略图的行表那一档）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L45",
+    "selectTextChars": 622,
+    "buildTextChars": 7291
+  },
+  {
+    "id": "L46",
+    "num": 46,
+    "name": "prose-sections-numbered",
+    "title": "分节说明页：报告风标题条 + 2–3 个「编号 + 小标题 + 整段正文」白底区块",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "0 个（**这一条不放图** —— 三个区块横向占满内容区，图只能塞进区块里把正文挤成窄栏；要每节配图的清单换成带缩略图的行表那一档）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L46",
+    "selectTextChars": 649,
+    "buildTextChars": 5315
+  },
+  {
+    "id": "L47",
+    "num": 47,
+    "name": "bar-chart-rows",
+    "title": "图表页：报告风标题条 + 横向条形 4–7 行 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 条形已经占满内容区，塞图会把轨道压到两三百像素宽，条与条的长短差就看不出来了；**图表截图也禁用**，有数据就用这一条画）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L47",
+    "selectTextChars": 663,
+    "buildTextChars": 7787
+  },
+  {
+    "id": "L48",
+    "num": 48,
+    "name": "agenda-offset-card",
+    "title": "目录页：底部品牌色带 + 上方错位白卡 + 两列章节条目",
+    "roles": [
+      "章节"
+    ],
+    "shape": "并列",
+    "imageSlots": "0 个（**这一条不放图** —— 色带和白卡已经把画面分完，卡里塞图只能占掉一格条目，出来是「少了一章」的目录）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L48",
+    "selectTextChars": 602,
+    "buildTextChars": 6316
+  },
+  {
+    "id": "L49",
+    "num": 49,
+    "name": "closing-next-steps",
+    "title": "结尾页：浅底 + 右下角出血品牌色块 + 往左上错位的白卡「下一步」",
+    "roles": [
+      "结尾"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "0 个（**这一条不放图** —— 色块、白卡、巨字三层已经把画面分完，图必然是压在色块上的第四层，斜向错位就读不出来了）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L49",
+    "selectTextChars": 578,
+    "buildTextChars": 6675
+  },
+  {
+    "id": "L50",
+    "num": 50,
+    "name": "stacked-layers-arch",
+    "title": "分层架构页：右侧通高品牌色块 + 从左侧压过来的 3–4 条层带",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "0 个（**这一条不放图** —— 层带铺满整个内容区，图只能压在色块上、把唯一那块品牌色盖掉；**现成架构图截图也禁用**，有分层就用这一条画）。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L50",
+    "selectTextChars": 619,
+    "buildTextChars": 6352
+  },
+  {
+    "id": "L51",
+    "num": 51,
+    "name": "tier-plans-trio",
+    "title": "三档方案页：报告风标题条 + 三列方案卡，推荐那档挂一面小旗",
+    "roles": [
+      "内容"
+    ],
+    "shape": "对比",
+    "imageSlots": "0 个（**这一条不放图** —— 三列已经等分了整个内容区，卡里塞图会挤掉两条包含项，出来是「这一档少了两项」而三列都还渲染正常）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L51",
+    "selectTextChars": 612,
+    "buildTextChars": 6295
+  },
+  {
+    "id": "L52",
+    "num": 52,
+    "name": "column-chart",
+    "title": "图表页：报告风标题条 + 4–8 根竖柱 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 柱子要占满内容区高度才看得出高低差，塞图会把轨道压到两三百像素高，几根柱的差别就没了，而那一页看起来只是「图小了点」；**图表截图也禁用**，有数据就用这一条画）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L52",
+    "selectTextChars": 674,
+    "buildTextChars": 8068
+  },
+  {
+    "id": "L53",
+    "num": 53,
+    "name": "line-chart",
+    "title": "图表页：报告风标题条 + 5–8 个点的折线 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 折线要占满内容区高度斜率才读得出来，塞图会把绘图区压到两三百像素高，一条陡线看起来只是「有点起伏」；**图表截图也禁用**，有数据就用这一条画）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L53",
+    "selectTextChars": 681,
+    "buildTextChars": 8660
+  },
+  {
+    "id": "L54",
+    "num": 54,
+    "name": "donut-chart",
+    "title": "图表页：报告风标题条 + 左环右图例的 3–6 块占比 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 左边那 400px 已经是这一页的视觉主角，再塞一张图就是两个主角抢位置，环被压小之后几块的差别看不出来，而那一页看起来只是「排得有点挤」；**图表截图也禁用**，有数据就用这一条画）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L54",
+    "selectTextChars": 729,
+    "buildTextChars": 8809
+  },
+  {
+    "id": "L55",
+    "num": 55,
+    "name": "cover-mist-bilingual",
+    "title": "封面：全幅气氛照 + 左侧竖线双语小字 + 衬线巨标题 + 中英副标题 + 落款",
+    "roles": [
+      "封面"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_cover`，**必填** —— 没有图这一页就是一块深蓝底）：case、16:9，**远景气氛照、主体（塔/山/楼/水面）在右半**、左半是天/雾/水这种干净的淡区，整体偏淡偏冷。禁用人脸特写、带文字的图、主体居中的图。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L55",
+    "selectTextChars": 663,
+    "buildTextChars": 6261
+  },
+  {
+    "id": "L56",
+    "num": 56,
+    "name": "cover-corporate-caps",
+    "title": "封面：亮调实景 + 中文口号 + 两行英文巨字 + 一排能力标签 + 深色署名块",
+    "roles": [
+      "封面"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_cover`，**必填** —— 没有图这一页左边一列字浮在米底上）：case、16:9，**亮调实景（厂区/车间/办公楼/产线）、主体在右半**、天光充足。禁用暗调夜景（深色文字读不出来）、人脸特写、带文字的图。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": true,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L56",
+    "selectTextChars": 664,
+    "buildTextChars": 6227
+  },
+  {
+    "id": "L57",
+    "num": 57,
+    "name": "dual-table-sheet",
+    "title": "双表页：报告风标题条 + 上下两张各带小标题和口径的表 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "数据",
+    "imageSlots": "0 个（**这一条不放图** —— 两张表已经占满内容区，塞图只能把列压窄到换行；**图表截图也禁用**）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L57",
+    "selectTextChars": 736,
+    "buildTextChars": 7652
+  },
+  {
+    "id": "L58",
+    "num": 58,
+    "name": "quote-photo-stamp",
+    "title": "金句页：全幅实物特写 + 空心英文水印 + 巨幅居中宣言 + 巨型水印汉字",
+    "roles": [
+      "章节",
+      "结尾",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_hero`，**必填** —— 没有图这一页是一块深灰底加一句话，和 L7 撞脸还少了底纹）：concept、16:9，**实物/意象特写**、主体填满画面、背景干净、中间偏暗。禁用远景（远景换 L59）、带文字的图、人脸特写。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L58",
+    "selectTextChars": 636,
+    "buildTextChars": 5665
+  },
+  {
+    "id": "L59",
+    "num": 59,
+    "name": "quote-scene-nodes",
+    "title": "金句页：全幅远景 + 居中主张 + 一排 4–6 个圆形节点 + 底部英文小字",
+    "roles": [
+      "章节",
+      "结尾",
+      "内容"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_scene`，**必填** —— 没有图这一页是一块深灰底，那排圆没有任何依托）：concept、16:9，**远景/全景**（山、海、天际线、园区全景），**上下要有大片平坦干净区**、整体偏暗。禁用特写（特写换 L58）、带文字的图、人脸。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L59",
+    "selectTextChars": 631,
+    "buildTextChars": 5797
+  },
+  {
+    "id": "L60",
+    "num": 60,
+    "name": "arrow-lead-photo-strip",
+    "title": "内容页：左列注记 + 右侧巨标题带箭头 + 通栏结论色带 + 底部通宽照片条",
+    "roles": [
+      "内容",
+      "章节"
+    ],
+    "shape": "聚焦",
+    "imageSlots": "1 个（`pXX_strip`，**必填** —— 没有图这一页底下 430px 是一块深灰，那排药丸标签和圆按钮悬在空处）：case、16:9，**横向条状裁切**（画面实际 1920×430，上下被 `cover` 切掉大半）：主体在**中间偏左**、上方留白。禁用带文字的图。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L60",
+    "selectTextChars": 696,
+    "buildTextChars": 7307
+  },
+  {
+    "id": "L61",
+    "num": 61,
+    "name": "tint-panel-illus-wave",
+    "title": "内容页：顶部浅调插画面板 + 波形下沿 + 左侧领句/两行标题/一段正文 + 底部并列小要点",
+    "roles": [
+      "内容"
+    ],
+    "shape": "分屏",
+    "imageSlots": "1 个（`pXX_illus`，**必填** —— 没有图面板右半是一块空的浅蓝，整页只剩左边一段话贴在角上）：concept、16:9，**插画/示意图**（线稿、等距图、结构示意），主体居中、背景干净、**浅色调**。禁用实拍照片（换 L1/L3）、带文字的图。",
+    "fullbleed": true,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L61",
+    "selectTextChars": 705,
+    "buildTextChars": 6305
+  },
+  {
+    "id": "L62",
+    "num": 62,
+    "name": "team-portrait-rows",
+    "title": "内容页：标题条 + 两列人像卡「左 3:4 人像 + 右 姓名/头衔/一句话」",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "3–8 个（`pXX_p1..p8`，**一人一张、必填** —— 缺一张那一格是一块 `var(--c-bg-alt)` 空框，右边的名字和头衔照旧在，看起来像「这个人没照片」而不像出错）：case 模式、**3:4 竖版**，**同一批人像**（同背景、同光、同景别、齐胸半身、正面平视，脸在上三分之一）。禁止混搭构图、全身照、带文字/水印的图。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L62",
+    "selectTextChars": 729,
+    "buildTextChars": 7431
+  },
+  {
+    "id": "L63",
+    "num": 63,
+    "name": "org-chart-tree",
+    "title": "内容页：居中标题 + 顶层色块 + 2–4 条分支列「分支卡 + 下挂小项」+ 底部结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "并列",
+    "imageSlots": "0 个（这一页要看的是关系，塞图进来会把连接线挤断）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L63",
+    "selectTextChars": 609,
+    "buildTextChars": 7503
+  },
+  {
+    "id": "L64",
+    "num": 64,
+    "name": "dual-track-timeline",
+    "title": "内容页：报告风标题条 + 上轨卡片行 + 中间阶段轴 + 下轨卡片行 + 结论条",
+    "roles": [
+      "内容"
+    ],
+    "shape": "时序",
+    "imageSlots": "0 个（两排卡片 + 一根轴已经占满，塞图进来卡片只剩一行字）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L64",
+    "selectTextChars": 639,
+    "buildTextChars": 9091
+  },
+  {
+    "id": "L65",
+    "num": 65,
+    "name": "toc-number-grid",
+    "title": "目录页：「目录 / CONTENTS」标题条 + 两列大编号条目「幽灵编号 + 章节名 + 一行说明 + 底细线」",
+    "roles": [
+      "章节"
+    ],
+    "shape": "并列",
+    "imageSlots": "0 个（这一条就是「没有图也能做目录」的那一档）。",
+    "fullbleed": false,
+    "hasCard": false,
+    "noHeader": false,
+    "hasDetail": true,
+    "refImage": null,
+    "demoUrl": "/api/ppt/demo-deck.html?only=L65",
+    "selectTextChars": 620,
+    "buildTextChars": 5937
+  }
+]

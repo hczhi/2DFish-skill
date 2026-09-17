@@ -30,6 +30,33 @@ const designOpts = ref<{ palettes: DesignOpt[]; fonts: DesignOpt[]; densities: D
 const design = ref({ palette: '', font: '', density: '', header: '' })
 const hintOf = (list: DesignOpt[], id: string) => list.find(x => x.id === id)?.hint || ''
 
+/**
+ * 品牌名 + 那四项设计规范折进「高级设置」：它们**事后都能免费改**（配色/字体/疏密/页眉靠
+ * `assembleDeck` 注 `:root` 覆盖生效，改完已经生成的十几页刷新就跟着变），放在建稿前是纯负担。
+ * 留在外面的只有配图画风 —— 那一项事后换**不会**重做已经配好的图（每张都是真花过钱的）。
+ *
+ * 折起来那一行必须写出**现在生效的是哪几套**：不写的话「我还没设置过」和「默认那套已经在
+ * 用了」在屏幕上是同一个样子，他会以为这份稿子还没有配色，而它已经按想象橙排好十几页了。
+ */
+const advOpen = ref(false)
+const shortName = (list: DesignOpt[], id: string) =>
+  (list.find(x => x.id === id)?.name || '').replace(/（默认）$/, '')
+const advSummary = computed(() => {
+  const o = designOpts.value
+  const d = design.value
+  const parts = [
+    shortName(o.palettes, d.palette) && `配色 ${shortName(o.palettes, d.palette)}`,
+    shortName(o.fonts, d.font) && `字体 ${shortName(o.fonts, d.font)}`,
+    shortName(o.densities, d.density) && `疏密 ${shortName(o.densities, d.density)}`,
+    shortName(o.headers, d.header) && `页眉 ${shortName(o.headers, d.header)}`,
+  ].filter(Boolean) as string[]
+  const brand = form.value.brandCn.trim() || form.value.brandEn.trim()
+  if (brand) parts.push(`品牌 ${brand}`)
+  // 清单没拿到（`/design-options` 挂了）时这里是空的 —— 说「按默认那套」而不是留空：
+  // 留空的话它和「这几项没配」长得一样，而服务端确实会用默认那套排完整份。
+  return parts.length ? parts.join(' · ') : '按默认那套'
+})
+
 /** 名字留空就用提纲第一行（服务端同一口径）—— 界面上要把这件事说出来，
  *  不说的话列表里会出现一份他没起过名的稿子，读起来像别人建的。 */
 const titlePreview = computed(
@@ -165,62 +192,79 @@ async function create() {
               </span>
             </label>
 
-            <div class="row-fields">
-              <label class="field small">
-                <span class="label">品牌中文名（可空）</span>
-                <input v-model="form.brandCn" type="text" placeholder="示例企业" maxlength="24" />
-              </label>
-              <label class="field small">
-                <span class="label">英文名</span>
-                <input v-model="form.brandEn" type="text" placeholder="SAMPLE" maxlength="24" />
-              </label>
+            <!-- 画风留在外面：它是这一屏唯一**事后改会花钱**的选项（换了不会重做已配好的图）。 -->
+            <div class="row-fields row-one">
               <label class="field small">
                 <span class="label">配图画风</span>
                 <select v-model="form.styleId">
                   <option value="">（用默认那套）</option>
                   <option v-for="s in styleList" :key="s.id" :value="s.id">{{ s.id }} {{ s.name }}</option>
                 </select>
+                <span class="hint">
+                  整份 deck 只能一套，到生图那一步才用得上 —— <b>配了几页图再回头换的话，前面那几页
+                  不会自动重做</b>（那几张是真花过钱的），所以这一项在这里定。
+                </span>
               </label>
             </div>
-            <div v-if="designOpts.palettes.length" class="row-fields">
-              <label class="field small">
-                <span class="label">配色</span>
-                <select v-model="design.palette">
-                  <option v-for="o in designOpts.palettes" :key="o.id" :value="o.id">{{ o.name }}</option>
-                </select>
-                <span class="hint">{{ hintOf(designOpts.palettes, design.palette) }}</span>
-              </label>
-              <label class="field small">
-                <span class="label">字体</span>
-                <select v-model="design.font">
-                  <option v-for="o in designOpts.fonts" :key="o.id" :value="o.id">{{ o.name }}</option>
-                </select>
-                <span class="hint">{{ hintOf(designOpts.fonts, design.font) }}</span>
-              </label>
-              <label class="field small">
-                <span class="label">疏密</span>
-                <select v-model="design.density">
-                  <option v-for="o in designOpts.densities" :key="o.id" :value="o.id">{{ o.name }}</option>
-                </select>
-                <span class="hint">{{ hintOf(designOpts.densities, design.density) }}</span>
-              </label>
-              <label class="field small">
-                <span class="label">页眉</span>
-                <select v-model="design.header">
-                  <option v-for="o in designOpts.headers" :key="o.id" :value="o.id">{{ o.name }}</option>
-                </select>
-                <span class="hint">{{ hintOf(designOpts.headers, design.header) }}</span>
-              </label>
+
+            <div class="adv">
+              <button class="adv-toggle" type="button" @click="advOpen = !advOpen">
+                <span class="adv-title">{{ advOpen ? '收起高级设置' : '高级设置' }}</span>
+                <em v-if="!advOpen">{{ advSummary }}</em>
+                <i class="adv-caret" :class="{ open: advOpen }">›</i>
+              </button>
+
+              <div v-if="advOpen" class="adv-body">
+                <div class="row-fields">
+                  <label class="field small">
+                    <span class="label">品牌中文名（可空）</span>
+                    <input v-model="form.brandCn" type="text" placeholder="示例企业" maxlength="24" />
+                  </label>
+                  <label class="field small">
+                    <span class="label">英文名</span>
+                    <input v-model="form.brandEn" type="text" placeholder="SAMPLE" maxlength="24" />
+                  </label>
+                </div>
+                <span class="hint">
+                  品牌名只影响 deck 外壳（封面和页脚那几个占位符），逐页 HTML 里没有它。
+                </span>
+
+                <div v-if="designOpts.palettes.length" class="row-fields">
+                  <label class="field small">
+                    <span class="label">配色</span>
+                    <select v-model="design.palette">
+                      <option v-for="o in designOpts.palettes" :key="o.id" :value="o.id">{{ o.name }}</option>
+                    </select>
+                    <span class="hint">{{ hintOf(designOpts.palettes, design.palette) }}</span>
+                  </label>
+                  <label class="field small">
+                    <span class="label">字体</span>
+                    <select v-model="design.font">
+                      <option v-for="o in designOpts.fonts" :key="o.id" :value="o.id">{{ o.name }}</option>
+                    </select>
+                    <span class="hint">{{ hintOf(designOpts.fonts, design.font) }}</span>
+                  </label>
+                  <label class="field small">
+                    <span class="label">疏密</span>
+                    <select v-model="design.density">
+                      <option v-for="o in designOpts.densities" :key="o.id" :value="o.id">{{ o.name }}</option>
+                    </select>
+                    <span class="hint">{{ hintOf(designOpts.densities, design.density) }}</span>
+                  </label>
+                  <label class="field small">
+                    <span class="label">页眉</span>
+                    <select v-model="design.header">
+                      <option v-for="o in designOpts.headers" :key="o.id" :value="o.id">{{ o.name }}</option>
+                    </select>
+                    <span class="hint">{{ hintOf(designOpts.headers, design.header) }}</span>
+                  </label>
+                </div>
+                <span class="hint">
+                  这四项是整份的<b>设计规范</b>：所有页面统一。<b>之后在工作台的「提纲与设置」里改完，
+                  已经生成的页会跟着变</b>（不用重新生成、不花钱）—— 所以这里拿不定主意就先用默认那套。
+                </span>
+              </div>
             </div>
-            <span class="hint">
-              这四项是整份的<b>设计规范</b>：所有页面统一。之后在工作台的「提纲与设置」里还能改，
-              <b>改完已经生成的页会跟着变</b>（不用重新生成、不花钱）—— 案例库里的颜色和间距从此只算参考。
-            </span>
-            <span class="hint">
-              品牌名只影响 deck 外壳（封面和页脚那几个占位符），逐页 HTML 里没有它。
-              画风到生图那一步才用得上，整份 deck 只能一套 —— 配了几页图再回头换的话，
-              前面那几页不会自动重做。
-            </span>
 
             <div class="create-actions">
               <button class="btn-primary" :disabled="creating" @click="create">
@@ -333,6 +377,25 @@ async function create() {
 .field { display: block; margin-bottom: 32px; }
 .field.small { margin-bottom: 0; flex: 1; min-width: 180px; }
 .row-fields { display: flex; gap: 16px; flex-wrap: wrap; }
+/* 单个字段的那一排别铺满 1000px（一个孤零零的全宽下拉读起来像出了什么问题） */
+.row-one { max-width: 360px; }
+
+.adv { margin-top: 32px; padding-top: 24px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.adv-toggle {
+  display: flex; align-items: baseline; gap: 12px; width: 100%;
+  background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+  color: var(--text-primary); font-family: var(--font-sans);
+}
+.adv-title { font-size: 14px; font-weight: 700; flex: none; }
+.adv-toggle em {
+  font-style: normal; font-size: 13px; color: var(--color-soft);
+  flex: 1; min-width: 0; line-height: 1.6;
+}
+.adv-caret { font-style: normal; color: var(--color-soft); transition: transform .2s; flex: none; }
+.adv-caret.open { transform: rotate(90deg); }
+.adv-toggle:hover .adv-title { color: var(--brand-yellow); }
+.adv-body { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+.adv-body .hint { margin-top: 0; }
 .label { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 700; margin-bottom: 12px; }
 .label em { font-style: normal; color: var(--color-soft); font-family: var(--font-mono); font-weight: 400; }
 .label em.over { color: #FCA5A5; }

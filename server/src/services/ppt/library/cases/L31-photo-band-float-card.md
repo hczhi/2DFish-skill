@@ -52,7 +52,7 @@
 .l31-head p{margin-top:16px;font-size:20px;line-height:1.7;color:var(--c-ink);max-width:1000px}
 .l31-band{position:relative;flex:1;margin-top:36px;overflow:hidden}
 .l31-band img{width:100%;height:100%;object-fit:cover;display:block}
-.l31-band::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.5) 0%,rgba(0,0,0,.16) 46%,rgba(0,0,0,0) 74%)}
+.l31-band::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45)}
 .l31-card{position:absolute;left:var(--pad-x);bottom:56px;z-index:3;width:660px;padding:32px 36px;background:var(--c-card);border-top:5px solid var(--c-brand);box-shadow:0 26px 60px rgba(0,0,0,.24)}
 .l31-card h3{font-size:30px;font-weight:800;line-height:1.3;color:var(--c-ink-deep);margin-bottom:14px}
 .l31-card p{font-size:19px;line-height:1.8;color:var(--c-ink)}

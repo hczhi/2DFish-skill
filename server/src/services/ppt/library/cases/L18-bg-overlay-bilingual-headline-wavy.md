@@ -52,7 +52,7 @@
 
 ### 底部暗蒙版 + 3 栏卡片
 
-1. 暗色蒙版（`linear-gradient(180deg, transparent 0%, rgba(0,0,0,.65) 50%, rgba(0,0,0,.85) 100%)`）—— 三栏整体离底边 13%（`bottom:13%`），**别贴到底**：贴底那一版三栏和画面下缘挤在一起，而页面照样渲染
+1. 暗色蒙版（`rgba(0,0,0,.70)` 一层纯色，**遮罩一律不用渐变**）—— 三栏整体离底边 13%（`bottom:13%`），**别贴到底**：贴底那一版三栏和画面下缘挤在一起，而页面照样渲染
 2. 3 栏等宽（间距 24–40px）：
    - 顶部小引号（`""`，50–60px，brand 色）
    - 大数字（`01 / 02 / 03`，40–56px 衬线 italic，brand 色）
@@ -94,7 +94,7 @@
 /* L18 · 全幅暗 bg + 双语双标题 + 波浪线 + 暗蒙版三栏 */
 .l18-wrap{position:absolute;inset:0;overflow:hidden;}
 .l18-bg img{width:100%;height:100%;object-fit:cover;}
-.l18-bg::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,rgba(0,0,0,.4) 35%,rgba(0,0,0,.75) 70%,rgba(0,0,0,.9) 100%);}
+.l18-bg::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.70);}
 /* 左上角的模块名走全平台统一的 .slide-header，这一版没有自己的 logo / pill */
 .l18-headline{position:absolute;top:18%;left:5%;right:5%;display:grid;grid-template-columns:1fr 1fr;gap:60px;z-index:2}
 .l18-en{font-size:clamp(60px,7vw,96px);font-weight:800;color:#fff;line-height:1.0;letter-spacing:-.01em;}

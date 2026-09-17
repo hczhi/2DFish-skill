@@ -1,0 +1,17 @@
+[
+  {
+    "styleId": "S-A",
+    "mode": "concept",
+    "prompt": "High-quality concept isometric vector illustration for an enterprise keynote. Theme: 算力基础设施的三层结构. 等距视角的城市算力机房，蓝紫冷色，数据流从机柜流向城市天际线. Limited palette: vibrant #2A5DB0, #E8A33D, soft #F7F8FA / #EDF2F9 background, dark gray accents. Clean corporate tech style, isometric/flat mix, crisp lines, subtle shadows, light airy background, no dark areas, no text, no UI chrome, no watermark. High visual impact. 16:9 composition. No text, no letters, no numbers, no watermark, no UI chrome."
+  },
+  {
+    "styleId": "S-A",
+    "mode": "case",
+    "prompt": "High-quality case semi-realistic product mockup illustration for an enterprise keynote. Theme: 算力基础设施的三层结构. 等距视角的城市算力机房，蓝紫冷色，数据流从机柜流向城市天际线. Limited palette: #2A5DB0, #E8A33D, soft #F7F8FA / #EDF2F9, dark gray accents. Clean SaaS illustration style, crisp UI shapes, light shadows, no photographic realism, no text, no watermark. 16:9 composition. No text, no letters, no numbers, no watermark, no UI chrome."
+  },
+  {
+    "styleId": "S-A",
+    "mode": "data",
+    "prompt": "High-quality data flat infographic illustration for an enterprise keynote. Theme: 算力基础设施的三层结构. Rising curves, token flows, grid charts, geometric shapes arranged into a clear visual hierarchy. Limited palette: #2A5DB0, #E8A33D, #F7F8FA / #EDF2F9, dark gray accents. Flat corporate tech style, clean lines, minimal shadows, no 3D, no text, no watermark. 16:9 composition. No text, no letters, no numbers, no watermark, no UI chrome."
+  }
+]

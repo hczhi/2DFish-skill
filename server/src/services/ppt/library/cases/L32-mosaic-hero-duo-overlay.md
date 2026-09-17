@@ -47,7 +47,7 @@
 .l32-b{position:relative;overflow:hidden}
 .l32-c{position:relative;overflow:hidden}
 .l32-wrap img{width:100%;height:100%;object-fit:cover;display:block}
-.l32-a::after,.l32-b::after,.l32-c::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.1) 0%,rgba(0,0,0,.5) 58%,rgba(0,0,0,.86) 100%)}
+.l32-a::after,.l32-b::after,.l32-c::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.65)}
 .l32-txt{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:52px 58px;color:#fff}
 .l32-kick{font-size:16px;font-weight:700;letter-spacing:.22em;color:var(--c-brand);margin-bottom:14px}
 .l32-a .page-title{font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.2;color:#fff;margin-top:0}

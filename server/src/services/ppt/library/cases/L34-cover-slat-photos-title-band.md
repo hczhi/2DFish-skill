@@ -48,7 +48,7 @@
 .l34-slats{position:absolute;inset:0;display:grid;grid-template-columns:1.18fr .74fr 1.08fr;gap:8px}
 .l34-slat{position:relative;overflow:hidden}
 .l34-slat img{width:100%;height:100%;object-fit:cover;display:block}
-.l34-slat::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.44) 0%,rgba(0,0,0,.18) 40%,rgba(0,0,0,.58) 100%)}
+.l34-slat::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.48)}
 .l34-band{position:absolute;left:0;right:0;top:33%;z-index:3;padding:46px var(--pad-x) 50px;background:var(--c-card);border-top:6px solid var(--c-brand)}
 .l34-eyebrow{display:flex;align-items:center;gap:18px;font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.26em;color:var(--c-brand-deep);margin-bottom:18px}
 .l34-eyebrow::after{content:"";flex:1;height:1px;background:var(--c-hairline)}

@@ -78,7 +78,7 @@
 .l17-wrap{position:absolute;inset:0;display:grid;grid-template-columns:1fr 1fr;overflow:hidden}
 .l17-left{position:relative;overflow:hidden}
 .l17-left img{width:100%;height:100%;object-fit:cover}
-.l17-left::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.05) 0%,rgba(0,0,0,.35) 70%,rgba(0,0,0,.6) 100%)}
+.l17-left::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.45)}
 .l17-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:2}
 .l17-pill{position:absolute;top:32px;right:32px;background:var(--c-ink);color:#fff;padding:6px 14px;border-radius:99px;font-size:14px;letter-spacing:.2em;z-index:2}
 .l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95;mix-blend-mode:screen}

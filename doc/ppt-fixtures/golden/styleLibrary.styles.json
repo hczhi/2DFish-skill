@@ -1,0 +1,101 @@
+{
+  "defaultStyleId": "S-A",
+  "styles": [
+    {
+      "id": "S-A",
+      "name": "现代 SaaS 等距",
+      "isDefault": true,
+      "applicable": "B2B 科技、数字化、AI、互联网、SaaS",
+      "render": "干净的企业科技风、等距/扁平混合、清晰线条、轻微投影、现代 SaaS 插画质感",
+      "composition": "留白充分、主体居中偏一侧、几何化元素（齿轮/箭头/仪表盘/数据流）",
+      "taboo": "暗黑区域、文字水印（生成后裁掉）、UI 边框噪点、写实照片",
+      "templateChars": {
+        "concept": 391,
+        "case": 337,
+        "data": 365
+      }
+    },
+    {
+      "id": "S-B",
+      "name": "商务扁平插画",
+      "isDefault": false,
+      "applicable": "管理咨询、培训、人力资源、企业服务、流程改造",
+      "render": "简洁人物、几何图形、无透视、色块分明、亲和力",
+      "composition": "人物动作清晰、信息层级扁平、图标化元素",
+      "taboo": "复杂透视、暗黑、写实照片、过多细节",
+      "templateChars": {
+        "concept": 316,
+        "case": 303,
+        "data": 325
+      }
+    },
+    {
+      "id": "S-C",
+      "name": "国风水墨",
+      "isDefault": false,
+      "applicable": "文化、历史、中国品牌、文旅、非遗、东方哲学",
+      "render": "留白、水墨晕染、书法笔触、淡雅配色、纸质肌理",
+      "composition": "大面积留白、主体偏于一隅、山水/云纹/建筑轮廓",
+      "taboo": "西式几何、3D 写实、高饱和荧光、现代 UI 元素",
+      "templateChars": {
+        "concept": 392,
+        "case": 340,
+        "data": 360
+      }
+    },
+    {
+      "id": "S-D",
+      "name": "3D 黏土风",
+      "isDefault": false,
+      "applicable": "消费、教育、母婴、生活方式、年轻化品牌",
+      "render": "圆润立体、柔和光影、亲和可爱、微缩场景感",
+      "composition": "微缩角色与物件、饱满构图、暖光氛围",
+      "taboo": "尖锐边缘、暗黑写实、复杂金属质感、商务严肃感",
+      "templateChars": {
+        "concept": 299,
+        "case": 262,
+        "data": 299
+      }
+    },
+    {
+      "id": "S-E",
+      "name": "写实摄影风",
+      "isDefault": false,
+      "applicable": "高端地产、制造、汽车、医疗、实体产品、奢侈品",
+      "render": "真实摄影 + 轻量图形叠加、自然光影、质感强烈",
+      "composition": "真实场景为主体，图形元素仅作点缀/标注",
+      "taboo": "纯卡通、等距插画、荧光色、水印",
+      "templateChars": {
+        "concept": 346,
+        "case": 330,
+        "data": 342
+      }
+    },
+    {
+      "id": "S-F",
+      "name": "极简线条",
+      "isDefault": false,
+      "applicable": "金融、数据、学术、高端咨询、极简品牌",
+      "render": "单色线稿、无填充或轻填充、信息密度高、理性克制",
+      "composition": "网格、流程图、抽象符号、精确对齐",
+      "taboo": "复杂阴影、写实、卡通、高饱和多色",
+      "templateChars": {
+        "concept": 321,
+        "case": 313,
+        "data": 341
+      }
+    }
+  ],
+  "colorsDefault": {
+    "brand": "#F0861A",
+    "accent": "#2DB9ED",
+    "bg": "#FAF8F4",
+    "bgAlt": "#EFF7FB"
+  },
+  "colorsPB": {
+    "brand": "#2A5DB0",
+    "accent": "#E8A33D",
+    "bg": "#F7F8FA",
+    "bgAlt": "#EDF2F9"
+  }
+}

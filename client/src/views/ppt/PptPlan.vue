@@ -31,19 +31,33 @@
         </div>
       </div>
 
+      <!-- 只有一个主按钮 = 下一步（见 `nextAct`）。剩下那两件事被顶下去时照旧留着，
+           但是次要样式：全都一样重的话，每次进来他都要自己判断该点哪个。 -->
       <div class="tb-actions">
-        <button class="btn-ghost" @click="showSettings = true">提纲与设置</button>
-        <button class="btn-ghost" :disabled="batchRunning || !pages.length || !pendingCount" @click="runAll">
-          {{ batchRunning ? `生成中… 第 ${batchAt} / ${pages.length} 页` : `生成${builtCount ? '剩下的 ' : '全部 '}${pendingCount} 页` }}
-        </button>
+        <button class="btn-primary" :disabled="nextAct.busy" @click="nextAct.act()">{{ nextAct.label }}</button>
         <!-- 停止是必需的：一页一次真实调用，看到前两页不对时不给停就是把剩下十几次额度花完。 -->
         <button v-if="batchRunning" class="btn-ghost warn" @click="stopBatch">停止</button>
-        <button class="btn-ghost" :disabled="batchRunning || !builtCount || !imgTodo" @click="fillAllImages">
-          {{ imgTodo ? `配全部图（差 ${imgTodo} 张）` : '图都配齐了' }}
-        </button>
-        <button class="btn-ghost" :disabled="batchRunning || exporting || !pages.length || builtCount < pages.length" @click="exportDeck">
-          {{ exporting ? '导出中…' : '导出 .html' }}
-        </button>
+        <button class="btn-ghost" @click="showSettings = true">提纲与设置</button>
+        <button
+          v-if="nextAct.key !== 'images'"
+          class="btn-ghost"
+          :disabled="batchRunning || !builtCount || !imgTodo"
+          @click="fillAllImages"
+        >{{ imgTodo ? `配全部图（差 ${imgTodo} 张）` : '图都配齐了' }}</button>
+        <button
+          v-if="nextAct.key !== 'export'"
+          class="btn-ghost"
+          :disabled="batchRunning || exporting || exportingPptx || !pages.length || builtCount < pages.length"
+          @click="exportDeck"
+        >{{ exporting ? '导出中…' : '导出 .html' }}</button>
+        <!-- .pptx 是可编辑的那一份（每块字都是 PowerPoint 文本框）。**必须显示进度和禁用**：
+             服务端一页要开浏览器渲一遍，十几页要十几秒 —— 没有「导出中」的话他会连点，
+             而每次点都真开一个浏览器。 -->
+        <button
+          class="btn-ghost"
+          :disabled="batchRunning || exporting || exportingPptx || !pages.length || builtCount < pages.length"
+          @click="exportPptx"
+        >{{ exportingPptx ? `导出 pptx 中…（${pages.length} 页，约 ${pptxEta} 秒）` : '导出 .pptx（可编辑）' }}</button>
       </div>
     </header>
 
@@ -62,6 +76,12 @@
       <p v-if="styleMismatch" class="banner warn">{{ styleMismatch }}</p>
       <p v-if="deckErr" class="banner bad">{{ deckErr }}</p>
       <p v-if="exportErr" class="banner bad">{{ exportErr }}</p>
+      <!-- pptx 的回执**保留**（.html 那条被删掉了）：这条路是有损的 —— 装饰还原不了、
+           服务器取不到字体/图时版面会偏，而下载下来的文件自己打开是一份完整的稿子，
+           不说的话他会以为「pptx 就长这样」，回头照它把网页版也改素了。
+           「可编辑 M 块」是「这份真的能改字」唯一的凭据，所以和页数一起写在第一行。 -->
+      <p v-if="pptxNote" class="banner">{{ pptxNote }}</p>
+      <p v-for="(w, i) in pptxWarnings" :key="i" class="banner warn">{{ w }}</p>
       <!-- 「已导出 xxx.html（N 页）—— 双击就能放映」那条回执连着它下面那几条依赖说明
            （字体走 Google Fonts、图走 COS）**故意删了**（他要的）。代价：那几句话原来是唯一能
            解释「转给同事打开之后字变瘦了 / 图全是破的」的地方，而下载下来的文件自己打开一切正常。
@@ -352,7 +372,7 @@
               <span v-if="paletteErr" class="bad">{{ paletteErr }}</span>
             </template>
             <template v-else-if="canEditText">
-              <b>单击选中一句字改颜色/字号/粗细/对齐，双击直接改文字；点字之间的空处（或「⤢ 选大一点」）选中一整块</b>
+              <b>单击选中一句字改颜色/字号/粗细/对齐，双击直接改文字；点字之间的空处选中一整块</b>
               （都不调 AI、不花额度）—— 改完立刻存，Esc 取消。<span v-if="paletteErr" class="bad">{{ paletteErr }}</span>
             </template>
             <template v-else>
@@ -1437,6 +1457,12 @@ const styleMismatch = computed(() => {
 })
 
 const batchRunning = ref(false)
+/**
+ * 正在跑的是哪一种批量：`page` = 逐页生成，`image` = 逐页配图。两件事共用
+ * `batchRunning / batchAt` 这一套状态，不分开的话进度那句话会**写错**：配图跑到第 3 页时
+ * 顶栏写的是「生成中… 第 3 / 12 页」，他会以为这十几次调用花在生成上（而那几页早就生成好了）。
+ */
+const batchKind = ref<'' | 'page' | 'image'>('')
 const batchAt = ref(0)
 const batchNote = ref('')
 let stopRequested = false
@@ -1448,6 +1474,12 @@ const exporting = ref(false)
 const exportErr = ref('')
 const exportNote = ref('')
 const exportWarnings = ref<string[]>([])
+
+const exportingPptx = ref(false)
+const pptxNote = ref('')
+const pptxWarnings = ref<string[]>([])
+/** 一页在服务端大约半秒（渲染 + 走 DOM + 截图），报个数是为了让人愿意等而不是连点。 */
+const pptxEta = computed(() => Math.max(3, Math.round(pages.value.length * 0.6)))
 
 interface FilledImage {
   index: number; prompt: string; mode: string; ratio: string
@@ -1829,6 +1861,49 @@ const current = ref(0)
 const cur = computed(() => pages.value.find(p => p.page === current.value) || null)
 const showSettings = ref(false)
 
+/**
+ * 顶栏那**一个**主按钮：从状态里算出「下一步」是哪一件（写提纲 → 规划 → 生成 → 配图 → 导出）。
+ * 原来五个按钮一样重、其中四个是灰的，每次进来他都得自己判断该点哪个。
+ *
+ * 三条不能省的边界：
+ * ① 标签里的**数字要留着**（剩几页 / 差几张图）—— 那些每一下都是真实花费，写成「继续」的话
+ *    他点下去才知道这一按要花十几次调用。
+ * ② 跑批期间照旧显示进度和页码，并且**要分清是生成还是配图**（`batchKind`）—— 合成一句
+ *    「处理中」的话，卡在第 3 页时他不知道花掉的是生成还是生图的额度。
+ * ③ 被顶下去的「配全部图 / 导出」照旧留在旁边（次要样式）。藏起来的话「这一版没有导出这回事」
+ *    和「现在还不能导出」在屏幕上是同一个样子，而这个模块的终点就是那个文件。
+ * 重新规划不进这里（它会删掉已生成的那几页 = 已经花过的钱），照旧留在抽屉里那个按钮上。
+ */
+const nextAct = computed<{ key: string; label: string; busy: boolean; act: () => void }>(() => {
+  if (running.value) return { key: 'busy', label: '规划中…（10–40 秒）', busy: true, act: () => {} }
+  if (batchRunning.value) {
+    return batchKind.value === 'image'
+      ? { key: 'busy', label: `配图中… 第 ${batchAt.value} 页`, busy: true, act: () => {} }
+      : { key: 'busy', label: `生成中… 第 ${batchAt.value} / ${pages.value.length} 页`, busy: true, act: () => {} }
+  }
+  if (!outline.value.trim())
+    return { key: 'outline', label: '先写提纲', busy: false, act: () => { showSettings.value = true; outlineOpen.value = true } }
+  // 提纲超字数时不能让它显示「规划这份稿子」：点下去是服务端一句 400（那一刻看起来像网络问题），
+  // 而真正要做的事是自己删减（不会自动截断）。
+  if (outline.value.length > MAX_OUTLINE)
+    return {
+      key: 'outline',
+      label: `提纲超了 ${outline.value.length - MAX_OUTLINE} 字，先删减`,
+      busy: false,
+      act: () => { showSettings.value = true; outlineOpen.value = true },
+    }
+  if (!pages.value.length) return { key: 'plan', label: '规划这份稿子', busy: false, act: run }
+  if (pendingCount.value)
+    return {
+      key: 'pages',
+      label: `生成${builtCount.value ? '剩下的 ' : '全部 '}${pendingCount.value} 页`,
+      busy: false,
+      act: runAll,
+    }
+  if (imgTodo.value) return { key: 'images', label: `配全部图（差 ${imgTodo.value} 张）`, busy: false, act: fillAllImages }
+  return { key: 'export', label: exporting.value ? '导出中…' : '导出 .html', busy: exporting.value, act: exportDeck }
+})
+
 function selectPage(page: number) {
   view.value = 'page'
   current.value = page
@@ -2208,6 +2283,8 @@ type BuildOutcome = 'ok' | 'fail' | 'quota'
 function invalidateDeck() {
   if (deckHtml.value) { deckHtml.value = ''; deckErr.value = '' }
   if (exportNote.value) { exportNote.value = '这一页改过了，刚才导出的那个文件已经不是最新的 —— 要发出去请重新导出一次。'; exportWarnings.value = [] }
+  // pptx 那条同理（而且它那句话里写着「可编辑 N 块」，看起来更像一份已经交付好的东西）。
+  if (pptxNote.value) { pptxNote.value = '这一页改过了，刚才导出的那份 pptx 已经不是最新的 —— 要发出去请重新导一次。'; pptxWarnings.value = [] }
 }
 
 // ── 就地改文字（不调 AI、不花额度）────────────────────────────
@@ -2250,7 +2327,7 @@ const EDITOR_JS = `
      「这一块里有图」，先把这件事写在按钮上省他一次来回。 */
   #ppt-bar .del{color:#ff9c9c}
   #ppt-bar[data-imgs="1"] .del{opacity:.4}
-  /* 鼠标停在哪一块上就描出那一块的边：不描的话「选大一点」选到了哪一层完全看不出来，
+  /* 鼠标停在哪一块上就描出那一块的边：不描的话点空处「吸附」到的是哪一层完全看不出来，
      他只能靠点下去之后那句读数去猜。 */
   [data-hov]{outline:1px dotted rgba(74,144,217,.75);outline-offset:2px}
   [data-region]{outline:2px solid #f0a020!important;outline-offset:3px;background:rgba(240,160,32,.07)}
@@ -2281,9 +2358,6 @@ const EDITOR_JS = `
   var SEL = __SEL__
   var SELPATH = __SELPATH__
   var bar = null, selEl = null, hovEl = null
-  // 「选小一点」用的回退栈（选大一点每往外一层就压一个）。不留栈的话往外选多了只能重新点一次，
-  // 而他要的那一层往往就在中间。
-  var path = []
 
   /** 这一块是不是「一句字」（有 data-eid）。整块（容器）只能选、不能改样式。 */
   function isLeaf(el){ return !!(el && el.getAttribute && el.getAttribute('data-eid')) }
@@ -2356,8 +2430,6 @@ const EDITOR_JS = `
       // 取消 = **把那一条 inline 声明删掉**（回到这一页版式自己的对齐），不是写 align-items:unset
       // —— 那个是盖住版式那条、按成「拉满」，屏幕上不是「取消了」而是第三种样子。
       ['ralign','off','⦸','取消这一块的对齐（回到版式自己的样子）','reg off'],
-      ['grow','','⤢ 选大一点','往外选一层（选中整块）',''],
-      ['shrink','','⤡ 回来','退回上一层',''],
       // 删掉这一整块（一段字也算一块）。含图的删不了：图的序号按 html 出现顺序算，
       // 少一格之后下一次配图会把第 2 张贴进第 1 格 —— 图文不符而页面渲染完全正常。
       ['del','','🗑','删掉这一块（含图的删不了）','del'],
@@ -2427,29 +2499,12 @@ const EDITOR_JS = `
   function hide(){
     if(selEl){ selEl.removeAttribute('data-sel'); selEl.removeAttribute('data-region') }
     selEl = null
-    path = []
     if(bar) bar.style.display = 'none'
     post({type:'ppt-sel', eid:''})
   }
 
-  /** 往外选一层。**停在这一页那个 section 上**：再往外是骨架的 #slides / #stage —— 那是页码、
-   *  进度条、页脚，选中它之后让 AI 改会把整份外壳一起重写，而那一页看起来只是「变样了」。 */
-  function grow(){
-    if(!selEl) return
-    if(selEl.classList.contains('slide') || !selEl.parentElement){ post({type:'ppt-sel-top'}); return }
-    path.push(selEl)
-    select(selEl.parentElement)
-  }
-
-  function shrink(){
-    var prev = path.pop()
-    if(prev) select(prev)
-  }
-
   function apply(act, v){
     if(!selEl) return
-    if(act === 'grow'){ grow(); return }
-    if(act === 'shrink'){ shrink(); return }
     // 整块的对齐（align-items）。**在下面那条「容器不能改样式」之前**：走到那里就被挡掉了，
     // 现象是这三个键点了没反应。
     if(act === 'ralign'){
@@ -2611,7 +2666,7 @@ const EDITOR_JS = `
     // 点在两段字之间的空处 = 选中那一整块（「吸附」到结构块上）。不这么做的话点空处只会
     // 把选中取消掉，而他以为自己点的是那一块。
     if(!el) el = blockOf(t)
-    if(el){ e.stopPropagation(); path = []; select(el) }
+    if(el){ e.stopPropagation(); select(el) }
     else if(selEl) hide()
   }, true)
   // hover 描边：停在哪一块上就描出那一块。选中的那一块不再描（两圈线叠在一起看不出哪是哪）。
@@ -2781,7 +2836,7 @@ function onFrameMsg(e: MessageEvent) {
       : null
     selPath = !selEid && r && Array.isArray(d.path) ? (d.path as unknown[]).map(Number) : null
     if (selEid) {
-      editNote.value = `选中这一句（${d.size || '?'}px / 字重 ${d.weight || '?'}）—— 浮动条上改颜色、字号、粗细、对齐（⇤ ⇔ ⇥），点一下就存；「⤢ 选大一点」往外选一整块；🗑 把这一句整段删掉（不留空壳，撤销还没做）。`
+      editNote.value = `选中这一句（${d.size || '?'}px / 字重 ${d.weight || '?'}）—— 浮动条上改颜色、字号、粗细、对齐（⇤ ⇔ ⇥），点一下就存；🗑 把这一句整段删掉（不留空壳，撤销还没做）。`
     } else if (r) {
       // 选中一整块时**必须说清是哪一块、里面有什么**：只描一圈线的话「选到了外层容器」和
       // 「选到了我要的那一块」在屏幕上是同一个样子（下一步 AI 编辑改的就是这个范围）。
@@ -2789,7 +2844,7 @@ function onFrameMsg(e: MessageEvent) {
       // （本来就已经是 flex-start）看起来像按钮没生效。
       const align: Record<string, string> = { 'flex-start': '靠起始边', start: '靠起始边', center: '居中', 'flex-end': '靠结束边', end: '靠结束边', stretch: '拉满', normal: '拉满（默认）' }
       const axis = d.vert ? '上下' : '左右'
-      editNote.value = `选中${r.whole ? '整页' : `这一块（${r.cls}）`}：含 ${r.eids?.length || 0} 段字${r.imgs ? ` / ${r.imgs} 张图` : ''} —— 「⤢」再往外一层、「⤡」退回来，Esc 取消。要改颜色/字号得点到具体那一句上。` +
+      editNote.value = `选中${r.whole ? '整页' : `这一块（${r.cls}）`}：含 ${r.eids?.length || 0} 段字${r.imgs ? ` / ${r.imgs} 张图` : ''} —— Esc 取消。要改颜色/字号得点到具体那一句上。` +
         (r.imgs ? '这一块里有图，🗑 删不了（图的序号按出现顺序算，少一格之后下一次配图会错位）—— 要去掉它走「重新生成这一页」。' : '🗑 把这一整块删掉（撤销还没做）。') +
         (d.flex
           ? `这一块是 ${d.display} 布局，里面的内容现在${axis}${align[String(d.alignItems)] || String(d.alignItems)} —— 浮动条上那三个键改它（align-items）。`
@@ -2797,10 +2852,6 @@ function onFrameMsg(e: MessageEvent) {
     } else {
       editNote.value = ''
     }
-    return
-  }
-  if (d.type === 'ppt-sel-top') {
-    editNote.value = '已经是整页了 —— 再往外就是页码、进度条那些外壳，不是这一页的内容，所以选不到。'
     return
   }
   if (d.type === 'ppt-sel-region-style') {
@@ -2934,7 +2985,7 @@ async function saveStyle(eid: string, style: Record<string, unknown>, noRoom = f
     // 「宽度就是文字宽度」那种块上，左中右三个键存进去了但画面一点不动 —— 不说的话看起来像
     // 按钮坏了（接口 200、库里也真写着新值）。
     editNote.value = `已存：${parts.join('、') || '这一块的样式'}` +
-      (noRoom ? '。但这一块的宽度就是文字本身的宽度，所以画面上看不出变化 —— 要让它在外面那一块里挪位置，点「⤢ 选大一点」选到外层那一整块，再用浮动条上那三个整块对齐的键。' : '')
+      (noRoom ? '。但这一块的宽度就是文字本身的宽度，所以画面上看不出变化 —— 要让它在外面那一块里挪位置，点它周围的空处选中外层那一整块，再用浮动条上那三个整块对齐的键。' : '')
     invalidateDeck()
   } catch (e: any) {
     editErr.value[page] = `这一块的样式没改上：${e?.message || '请求失败'}（画面已经回到库里那一版）`
@@ -3265,6 +3316,7 @@ async function build(
  */
 async function runAll() {
   batchRunning.value = true
+  batchKind.value = 'page'
   stopRequested = false
   batchNote.value = ''
   let ok = 0
@@ -3287,6 +3339,7 @@ async function runAll() {
     !quota && stopRequested && rest > 0 ? `你点了停止，还剩 ${rest} 页没生成。` : '',
   ].filter(Boolean).join('；')
   batchRunning.value = false
+  batchKind.value = ''
 }
 
 function stopBatch() {
@@ -3331,6 +3384,58 @@ async function exportDeck() {
     exportErr.value = e.message || '导出失败'
   }
   exporting.value = false
+}
+
+/**
+ * 导出可编辑 .pptx。服务端要开浏览器逐页渲染，十几页要十几秒（`apiPost` 走 fetch，没有超时，
+ * 所以这里只要把「在导」这件事显示出来就行 —— 见按钮上的 disabled）。
+ *
+ * 回执里那几句（字体没取到 / 图没取到 / 哪几类样式画不出来）**必须显示出来**：这条路是有损的，
+ * 而下载下来的文件自己打开是一份完整的稿子，没有任何一处会说差在哪。
+ *
+ * 三个数（文本 / 色块 / 图片）分开报：这份里每一块都是独立对象，「图片」那个数是唯一能看出
+ * 「这页有几块还是贴图、改不了」的地方 —— 合成一个总数的话，全页贴成一张图和全页可编辑
+ * 在回执上一模一样。
+ */
+async function exportPptx() {
+  exportErr.value = ''
+  pptxNote.value = ''
+  pptxWarnings.value = []
+  exportingPptx.value = true
+  try {
+    const data = await apiPost<{
+      filename: string; base64: string; bytes: number; pages: number
+      textBlocks: number; shapes: number; images: number; warnings: string[]
+    }>(`/api/ppt/decks/${deckId.value}/export-pptx`, { baseUrl: location.origin })
+    downloadBytes(data.filename, data.base64, 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    pptxNote.value =
+      `已导出 ${data.filename}（${data.pages} 页 / 文本 ${data.textBlocks} 块 / 色块 ${data.shapes} 个 / ` +
+      `图片 ${data.images} 张，${Math.max(1, Math.round(data.bytes / 1024 / 102.4) / 10)} MB）` +
+      `—— 每一块都是独立对象，在 PowerPoint 里单独点得中、改得动。`
+    pptxWarnings.value = data.warnings || []
+  } catch (e: any) {
+    exportErr.value = e.message || '导出 pptx 失败'
+  }
+  exportingPptx.value = false
+}
+
+/** base64 → 文件。**不能走 `download()`**：那个按文本存，二进制会被当成 UTF-8 改写，
+ *  存出来的 .pptx 双击时 PowerPoint 说文件损坏（而下载那一步一切正常）。 */
+function downloadBytes(filename: string, b64: string, mime: string) {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }))
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 }
 
 function download(filename: string, text: string) {
@@ -3397,6 +3502,7 @@ async function fillImages(p: PlannedPage, force = false): Promise<BuildOutcome> 
 /** 逐页配图（串行、可停止、逐类报数，和 runAll 一个口径）。只做还差图的那几页。 */
 async function fillAllImages() {
   batchRunning.value = true
+  batchKind.value = 'image'
   stopRequested = false
   batchNote.value = ''
   let done = 0
@@ -3419,6 +3525,7 @@ async function fillAllImages() {
     !quota && stopRequested && rest > 0 ? `你点了停止，还剩 ${rest} 页没配图。` : '',
   ].filter(Boolean).join('；')
   batchRunning.value = false
+  batchKind.value = ''
 }
 
 onMounted(async () => {
@@ -3902,6 +4009,8 @@ async function run() {
     exportNote.value = ''
     exportWarnings.value = []
     exportErr.value = ''
+    pptxNote.value = ''
+    pptxWarnings.value = []
   } catch (e: any) {
     error.value = errText(e, '排版规划失败', '今天的 AI 额度用完了，这份提纲没拆页（下面还是上一次的结果）。')
     // 上一次的结果留在页面上：清掉的话失败之后是一片空白，读起来像「这份提纲拆不出页」。
@@ -3991,6 +4100,8 @@ async function run() {
 .tb-meta .sep { opacity: .4; }
 
 .tb-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 主按钮在这一排里不能换行（「生成剩下的 12 页」断成两行看起来像坏了） */
+.tb-actions .btn-primary { white-space: nowrap; }
 .btn-ghost {
   border: none;
   background: rgba(255, 255, 255, 0.08);

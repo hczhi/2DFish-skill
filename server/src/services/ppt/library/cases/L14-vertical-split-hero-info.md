@@ -42,7 +42,7 @@
 | 上半文字对齐 | 左对齐（贴左 80px 安全区），`top:62%`（hero 下部，让开左上角的模块名） |
 | 上半堆叠 | kicker(14px) → 英文大字(56px) → 中文大字(56px) |
 | 上半文字色 | `var(--c-card)`（白/浅），保证 hero 图上可读 |
-| 上半渐变 | `linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,.32) 55%, rgba(0,0,0,.10))`（**顶部最暗** —— 页眉那行白字压在图上要有底） |
+| 上半遮罩 | `rgba(0,0,0,.52)` 一层纯色（**遮罩一律不用渐变**）—— 页眉那行白字压在图上，这个数再往下调就读不出来了 |
 | 下半底色 | `var(--c-bg)` 或 `var(--c-bg-alt)`（浅色系，与上半形成色温对比） |
 | 下半分栏 | 双栏等宽 `1fr 1fr`，gap 64px，每栏 padding 48px 80px 64px |
 | 每栏堆叠 | 小标题(20px deep + hairline 底线) → 中文段(15px) → 英文段(13px italic) |
@@ -79,7 +79,7 @@
 .l14-wrap{position:absolute;inset:0;display:flex;flex-direction:column}
 .l14-hero{position:relative;flex:0 0 56%;overflow:hidden}
 .l14-hero img{width:100%;height:100%;object-fit:cover;object-position:center 40%;display:block}
-.l14-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.72) 0%,rgba(0,0,0,.32) 55%,rgba(0,0,0,.10) 100%)}
+.l14-hero::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.52)}
 .l14-hero-text{position:absolute;left:80px;top:62%;transform:translateY(-50%);z-index:2;color:var(--c-card);text-shadow:0 2px 18px rgba(0,0,0,.45)}
 .l14-kicker{font-size:14px;font-weight:700;letter-spacing:3px;opacity:.85;margin-bottom:16px;padding-left:12px;border-left:2px solid var(--c-accent)}
 .l14-mega-en{font-size:56px;font-weight:700;line-height:1.1;letter-spacing:-.5px}

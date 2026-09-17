@@ -29,6 +29,7 @@ import { addCanvasText, addCanvasImage, setCanvasBox, deleteCanvasEl } from '../
 import { aiEditRegion } from '../services/ppt/aiEditService.js';
 import { aiRemakeRegion } from '../services/ppt/aiRemakeService.js';
 import { exportDeck, ExportError } from '../services/ppt/exportService.js';
+import { exportDeckPptx, PptxExportError } from '../services/ppt/pptxDeck.js';
 import { styles, defaultStyleId, deckColors } from '../services/ppt/styleLibrary.js';
 import {
   designOptions, readDesignSpec, parseDesignSpec, DesignSpecError,
@@ -2002,6 +2003,34 @@ pptRouter.post('/decks/:id/export', (req: Request, res: Response) => {
   } catch (e: any) {
     const code = e instanceof ExportError || e instanceof PageError ? 400 : 500;
     res.status(code).json({ error: e?.message || '导出失败' });
+  }
+});
+
+/**
+ * 导出整份 deck 成一个**可编辑的 .pptx**（不调 AI；页同样从库里读）。
+ *
+ * 和 .html 那条路的两处不同：
+ * ① 慢（服务端要开 chromium 把每一页渲染一遍，一页几百毫秒），所以前端那个按钮要显示
+ *    「导出中」并且不能让人连点 —— 连点等于同时开好几个浏览器，小机器上是后端被 OOM 杀掉。
+ * ② 回的是 base64 字节而不是 attachment：还原不了的东西（伪元素装饰/渐变/字体没取到/
+ *    图没取到）必须能显示在界面上。直接回文件流的话那几句话没地方说，而用户拿到的是一份
+ *    「打开一片正常、就是比网页版素」的稿子，压根不知道差在哪。
+ */
+pptRouter.post('/decks/:id/export-pptx', async (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const baseUrl = String(req.body?.baseUrl || '').trim() || `${req.protocol}://${req.get('host')}`;
+  try {
+    const rows = listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
+    res.json(await exportDeckPptx(rows, deck.planned_total, shellMeta(deck), baseUrl));
+  } catch (e: any) {
+    const code = e instanceof PptxExportError || e instanceof ExportError || e instanceof PageError ? 400 : 500;
+    res.status(code).json({ error: e?.message || '导出 pptx 失败' });
   }
 });
 

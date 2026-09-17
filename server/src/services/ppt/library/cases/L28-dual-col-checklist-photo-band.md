@@ -51,7 +51,7 @@
 .l28-line b{font-weight:800;color:var(--c-ink-deep)}
 .l28-band{position:relative;flex:1;min-height:216px;overflow:hidden;display:flex;align-items:flex-end}
 .l28-band img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.l28-band::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.78) 0%,rgba(0,0,0,.42) 46%,rgba(0,0,0,.06) 82%)}
+.l28-band::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.65)}
 .l28-band p{position:relative;z-index:2;padding:0 34px 28px;max-width:900px;color:#fff;font-size:22px;font-weight:700;line-height:1.55}
 ```
 

@@ -62,7 +62,7 @@
 .l56-wrap{position:absolute;inset:0;overflow:hidden}
 .l56-bg{position:absolute;inset:0;z-index:0}
 .l56-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l56-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(92deg,rgba(250,248,244,.94) 0%,rgba(250,248,244,.84) 38%,rgba(250,248,244,.36) 64%,rgba(250,248,244,0) 84%)}
+.l56-bg::after{content:"";position:absolute;inset:0;background:rgba(250,248,244,.80)}
 .l56-mark{position:absolute;right:var(--pad-x);top:96px;z-index:2;font-family:var(--num);font-size:16px;font-weight:800;letter-spacing:.26em;color:var(--c-ink-deep)}
 .l56-main{position:absolute;left:var(--pad-x);top:50%;transform:translateY(-50%);z-index:2;max-width:1120px}
 .l56-main .page-title{font-family:var(--sans);font-size:32px;font-weight:800;line-height:1.4;letter-spacing:.08em;color:var(--c-ink-deep);margin-top:0}

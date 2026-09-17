@@ -1,0 +1,9 @@
+{
+  "html": "<section class=\"slide\"><div class=\"slide-inner\"><div class=\"l47-rows\" style=\"--bar-max:30\">\n<div class=\"l47-row\" style=\"--bar-v:3.7\"><span class=\"l47-label\">2024</span><span class=\"l47-val\">3.7 亿</span></div>\n<div class=\"l47-row\" style=\"--bar-v:30\"><span class=\"l47-label\">2025</span><span class=\"l47-val\">30 亿</span></div>\n<div class=\"l47-row\" style=\"--bar-v:21\"><span class=\"l47-label\">2026E</span><span class=\"l47-val\">21 亿</span></div>\n</div></div></section>",
+  "notes": [
+    "条形图的轨道上限由代码重算了（1 → 30）：上限 1 比最大的那个数 30 还小，那一行的 calc() 变负数被夹成 0，于是它顶满整条轨道，读起来像「这一项到顶了」。",
+    "条形图第 1 行的长短用的不是它印出来的那个数（style 里是 1、印出来的是 3.7），已按印出来的数字改回来 —— 不改的话它的长短是另一个数的长短。",
+    "条形图第 2 行的长短用的不是它印出来的那个数（style 里是 1、印出来的是 30），已按印出来的数字改回来 —— 不改的话它的长短是另一个数的长短。",
+    "条形图第 3 行的长短用的不是它印出来的那个数（style 里是 1、印出来的是 21），已按印出来的数字改回来 —— 不改的话它的长短是另一个数的长短。"
+  ]
+}

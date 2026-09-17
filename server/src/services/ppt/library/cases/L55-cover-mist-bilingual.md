@@ -52,7 +52,7 @@
 .l55-wrap{position:absolute;inset:0;overflow:hidden}
 .l55-bg{position:absolute;inset:0;z-index:0}
 .l55-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l55-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(94deg,rgba(16,30,46,.74) 0%,rgba(16,30,46,.44) 46%,rgba(16,30,46,.12) 78%)}
+.l55-bg::after{content:"";position:absolute;inset:0;background:rgba(16,30,46,.62)}
 .l55-eyebrow{position:absolute;left:var(--pad-x);top:104px;z-index:2;padding-left:24px;border-left:2px solid rgba(255,255,255,.55)}
 .l55-eyebrow b{display:block;font-family:var(--num);font-size:21px;font-weight:700;line-height:1.5;letter-spacing:.2em;color:#fff}
 .l55-eyebrow span{display:block;margin-top:12px;font-size:15px;font-weight:700;letter-spacing:.36em;color:rgba(255,255,255,.78)}

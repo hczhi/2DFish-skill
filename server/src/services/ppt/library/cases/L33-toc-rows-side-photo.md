@@ -59,7 +59,7 @@
 .l33-row.on .l33-no{color:var(--c-brand-deep)}
 .l33-fig{position:relative;overflow:hidden;background:var(--c-bg-alt)}
 .l33-fig img{width:100%;height:100%;object-fit:cover;display:block}
-.l33-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.78));color:#fff;font-size:19px;line-height:1.6}
+.l33-cap{position:absolute;left:0;right:0;bottom:0;padding:26px 28px;background:rgba(0,0,0,.60);color:#fff;font-size:19px;line-height:1.6}
 ```
 
 ---

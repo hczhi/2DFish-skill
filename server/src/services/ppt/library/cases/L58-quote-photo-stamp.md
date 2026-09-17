@@ -53,7 +53,7 @@
 .l58-wrap{position:absolute;inset:0;overflow:hidden}
 .l58-bg{position:absolute;inset:0;z-index:0}
 .l58-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l58-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,16,22,.62) 0%,rgba(10,16,22,.4) 44%,rgba(10,16,22,.68) 100%)}
+.l58-bg::after{content:"";position:absolute;inset:0;background:rgba(10,16,22,.62)}
 .l58-echo{position:absolute;left:var(--pad-x);top:128px;z-index:1;font-family:var(--num);font-size:172px;font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap;color:transparent;-webkit-text-stroke:2px rgba(255,255,255,.28)}
 .l58-char{position:absolute;right:-30px;bottom:-120px;z-index:1;font-family:var(--serif);font-size:460px;font-weight:900;line-height:1;color:rgba(255,255,255,.1)}
 .l58-main{position:absolute;left:var(--pad-x);right:var(--pad-x);top:50%;transform:translateY(-46%);z-index:2;text-align:center}

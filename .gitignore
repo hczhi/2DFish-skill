@@ -38,6 +38,8 @@ npm-debug.log*
 *.orig
 *.rej
 tmp_*.ts
+# 探针/实测脚本的产物（scripts/probe-pptx.mts 默认写 server/tmp/probe.pptx）
+server/tmp/
 
 # Claude Code session data
 .claude/

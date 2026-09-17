@@ -17,7 +17,7 @@
 ## 二、结构拆解
 
 1. **全幅背景图**（`.l21-bg`，中央透视构图——栈道/桥/船头/隧道/走廊延伸感）
-2. **双向蒙版**（`.l21-bg::after`，`linear-gradient(to right, rgba(0,0,0,.5) 0%, transparent 35%, transparent 65%, rgba(0,0,0,.45) 100%)`）—— 左右收暗、中央透亮
+2. **整幅蒙版**（`.l21-bg::after`，`rgba(0,0,0,.38)` 一层纯色，**遮罩一律不用渐变**）—— 原来是左右收暗、中央透亮
 3. **左 1/3 文字**（`.l21-left`，absolute **垂直居中** `top:50%+translateY(-50%)`，left 80px，max-width 42%）
    - 英文巨字 2 行（`.l21-en`，56–64px 白色，weight 800，行高 1.05）
    - 中文副标一行（`.l21-cn`，30–36px 白色）
@@ -37,7 +37,7 @@
 .l21-wrap{position:absolute;inset:0;overflow:hidden}
 .l21-bg{position:absolute;inset:0}
 .l21-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l21-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,.5) 0%,transparent 35%,transparent 65%,rgba(0,0,0,.45) 100%);z-index:1}
+.l21-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.38);z-index:1}
 .l21-left{position:absolute;top:50%;transform:translateY(-50%);left:80px;max-width:42%;z-index:2}
 .l21-en{font-size:60px;font-weight:800;color:#fff;line-height:1.05}
 .l21-cn{font-size:32px;color:#fff;margin-top:14px}

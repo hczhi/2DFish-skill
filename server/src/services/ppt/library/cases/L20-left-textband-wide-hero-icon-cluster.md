@@ -9,7 +9,7 @@
 
 - **比例**：16:9 横版，横向分割 **左 30% 文字带 + 右 70% 全幅图**
 - **是否全幅**：否（在 `.slide-inner` 内，用 grid 30/70）
-- **文带过渡**：`linear-gradient(to right, var(--c-card) 70%, transparent)` 自然过渡到图
+- **文带**：`var(--c-card)` 纯色到底，和图之间是一条硬边（**不做渐变过渡**）
 - **核心手法**：① 30/70 横向分割（与 L1 的 54/46 反向）；② 文带五层堆叠（英巨→中副→数字锚点→正文→三圆图标）；③ 大号衬线数字 + 行内标签；④ 三圆图标横排收尾
 - **原色（仅供还原参考）**：黄色品牌色 / 深灰文字 / 浅米文带底 / 集装箱船 hero 图
 
@@ -41,7 +41,7 @@
 ```css
 /* L20 左浮文带 + 宽 hero + 三圆图标 — 详情见 cases/L20-left-textband-wide-hero-icon-cluster.md */
 .l20-wrap{position:absolute;inset:0;display:grid;grid-template-columns:30% 70%;overflow:hidden}
-.l20-textband{position:relative;z-index:2;padding:170px 56px 80px 96px;background:linear-gradient(to right,var(--c-card) 75%,transparent);display:flex;flex-direction:column;color:var(--c-ink-deep)}
+.l20-textband{position:relative;z-index:2;padding:170px 56px 80px 96px;background:var(--c-card);display:flex;flex-direction:column;color:var(--c-ink-deep)}
 .l20-en{font-size:64px;font-weight:800;color:var(--c-ink-deep);line-height:1.05;letter-spacing:-.01em}
 .l20-cn{font-size:34px;font-weight:500;color:var(--c-ink-deep);margin-top:14px}
 .l20-stat{display:flex;align-items:baseline;gap:10px;margin-top:36px}

@@ -1,0 +1,275 @@
+[
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-B",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {
+      "--c-brand": "#2A5DB0",
+      "--c-brand-deep": "#1E4585",
+      "--c-accent": "#E8A33D",
+      "--c-accent-deep": "#CE8A26",
+      "--c-brand-on": "#FFFFFF",
+      "--c-accent-on": "#1F2733",
+      "--c-bg": "#F7F8FA",
+      "--c-bg-alt": "#EDF2F9",
+      "--c-ink": "#4A5260",
+      "--c-ink-deep": "#1F2733",
+      "--c-ink-soft": "#8B93A1",
+      "--c-card": "#FFFFFF",
+      "--c-hairline": "rgba(16,24,40,.10)",
+      "--bg-warm": "#EEF3FA",
+      "--bg-cool": "#FDF6EA",
+      "--bg-plain": "#F7F8FA",
+      "--card-o": "#E9F0FA",
+      "--card-b": "#FDF3E3",
+      "--hl-o": "rgba(42,93,176,.14)",
+      "--hl-b": "rgba(232,163,61,.14)",
+      "--mask-rgb": "247,248,250",
+      "--mask-rgb-alt": "253,246,234"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-B/F-A/D-B/H-A\">:root{--c-brand:#2A5DB0;--c-brand-deep:#1E4585;--c-accent:#E8A33D;--c-accent-deep:#CE8A26;--c-brand-on:#FFFFFF;--c-accent-on:#1F2733;--c-bg:#F7F8FA;--c-bg-alt:#EDF2F9;--c-ink:#4A5260;--c-ink-deep:#1F2733;--c-ink-soft:#8B93A1;--c-card:#FFFFFF;--c-hairline:rgba(16,24,40,.10);--bg-warm:#EEF3FA;--bg-cool:#FDF6EA;--bg-plain:#F7F8FA;--card-o:#E9F0FA;--card-b:#FDF3E3;--hl-o:rgba(42,93,176,.14);--hl-b:rgba(232,163,61,.14);--mask-rgb:247,248,250;--mask-rgb-alt:253,246,234}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：沉稳蓝（深蓝 + 琥珀，冷底。政企、方案汇报）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-C",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {
+      "--c-brand": "#2F6B52",
+      "--c-brand-deep": "#235340",
+      "--c-accent": "#C4703A",
+      "--c-accent-deep": "#A85A2A",
+      "--c-brand-on": "#FFFFFF",
+      "--c-accent-on": "#141A16",
+      "--c-bg": "#F8F7F2",
+      "--c-bg-alt": "#EDF3EF",
+      "--c-ink": "#4C534E",
+      "--c-ink-deep": "#232A26",
+      "--c-ink-soft": "#8D948F",
+      "--c-card": "#FFFFFF",
+      "--c-hairline": "rgba(20,30,25,.10)",
+      "--bg-warm": "#EDF3EF",
+      "--bg-cool": "#FBF2EB",
+      "--bg-plain": "#F8F7F2",
+      "--card-o": "#E9F1EC",
+      "--card-b": "#FAEFE7",
+      "--hl-o": "rgba(47,107,82,.14)",
+      "--hl-b": "rgba(196,112,58,.14)",
+      "--mask-rgb": "248,247,242",
+      "--mask-rgb-alt": "251,242,235"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-C/F-A/D-B/H-A\">:root{--c-brand:#2F6B52;--c-brand-deep:#235340;--c-accent:#C4703A;--c-accent-deep:#A85A2A;--c-brand-on:#FFFFFF;--c-accent-on:#141A16;--c-bg:#F8F7F2;--c-bg-alt:#EDF3EF;--c-ink:#4C534E;--c-ink-deep:#232A26;--c-ink-soft:#8D948F;--c-card:#FFFFFF;--c-hairline:rgba(20,30,25,.10);--bg-warm:#EDF3EF;--bg-cool:#FBF2EB;--bg-plain:#F8F7F2;--card-o:#E9F1EC;--card-b:#FAEFE7;--hl-o:rgba(47,107,82,.14);--hl-b:rgba(196,112,58,.14);--mask-rgb:248,247,242;--mask-rgb-alt:251,242,235}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：墨绿（墨绿 + 陶土，米白底。文旅、健康、国货）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-D",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {
+      "--c-brand": "#C1272D",
+      "--c-brand-deep": "#94191F",
+      "--c-accent": "#C8A15A",
+      "--c-accent-deep": "#8A6A1E",
+      "--c-brand-on": "#FFFFFF",
+      "--c-accent-on": "#2A2422",
+      "--c-bg": "#FAF7F4",
+      "--c-bg-alt": "#FBF4E8",
+      "--c-ink": "#544C4A",
+      "--c-ink-deep": "#2A2422",
+      "--c-ink-soft": "#928A87",
+      "--c-card": "#FFFFFF",
+      "--c-hairline": "rgba(42,20,20,.10)",
+      "--bg-warm": "#FBF1EF",
+      "--bg-cool": "#FBF4E8",
+      "--bg-plain": "#FAF7F4",
+      "--card-o": "#F8E9E7",
+      "--card-b": "#FAF0DC",
+      "--hl-o": "rgba(148,25,31,.14)",
+      "--hl-b": "rgba(200,161,90,.18)",
+      "--mask-rgb": "250,247,244",
+      "--mask-rgb-alt": "251,244,232"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-D/F-A/D-B/H-A\">:root{--c-brand:#C1272D;--c-brand-deep:#94191F;--c-accent:#C8A15A;--c-accent-deep:#8A6A1E;--c-brand-on:#FFFFFF;--c-accent-on:#2A2422;--c-bg:#FAF7F4;--c-bg-alt:#FBF4E8;--c-ink:#544C4A;--c-ink-deep:#2A2422;--c-ink-soft:#928A87;--c-card:#FFFFFF;--c-hairline:rgba(42,20,20,.10);--bg-warm:#FBF1EF;--bg-cool:#FBF4E8;--bg-plain:#FAF7F4;--card-o:#F8E9E7;--card-b:#FAF0DC;--hl-o:rgba(148,25,31,.14);--hl-b:rgba(200,161,90,.18);--mask-rgb:250,247,244;--mask-rgb-alt:251,244,232}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：党建红（正红 + 金，暖白底。党政机关、党建汇报、政府工作报告）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-B",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {
+      "--serif": "\"Noto Sans SC\",system-ui,sans-serif"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-B/D-B/H-A\">:root{--serif:\"Noto Sans SC\",system-ui,sans-serif}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：全黑体。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n- 标题也是黑体（`var(--serif)` 已经换成黑体了，别自己写 font-family）—— 黑体标题看起来比宋体重，标题字号取阶梯里偏小的那一档。"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-C",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {
+      "--sans": "\"Noto Serif SC\",serif"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-C/D-B/H-A\">:root{--sans:\"Noto Serif SC\",serif}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：全宋体。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n- 正文也是宋体（`var(--sans)` 已经换成宋体了，别自己写 font-family）—— 宋体小字发虚，正文字号取阶梯里偏大的那一档，行高也松一点。"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-A",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-A/D-A/H-A\">:root{--pad-x:176px;--pad-top:118px;--pad-bottom:126px}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：舒展（留白更多，一页少放点东西）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n- 这份稿子的页边距更大（左右各 176px），可用宽度比案例窄 —— 每页的内容块比案例少一点，宁可空着也不要挤。"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-C",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-A/D-C/H-A\">:root{--pad-x:108px;--pad-top:88px;--pad-bottom:104px}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：紧凑（内容多的稿子用它，别让文字挤出画面）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n- 这份稿子的页边距更小（左右各 108px），可用宽度比案例宽 —— 内容多的那几页可以比案例多排一块，字号按阶梯里偏小的那一档。"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-A"
+    },
+    "vars": {},
+    "styleBlock": "",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-B"
+    },
+    "vars": {},
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-A/D-B/H-B\">.slide-header .kicker{font-family:var(--serif);font-size:20px;font-weight:400;letter-spacing:.02em;color:var(--c-ink-soft)}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-C"
+    },
+    "vars": {},
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-A/D-B/H-C\">.slide-header .kicker{font-size:15px;font-weight:700;letter-spacing:.1em;color:var(--c-brand-on);background:var(--c-brand);padding:7px 16px;border-radius:8px;display:inline-block}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-A",
+      "font": "F-A",
+      "density": "D-B",
+      "header": "H-D"
+    },
+    "vars": {},
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-A/F-A/D-B/H-D\">.slide-header{display:none}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：想象橙（默认）（橙 + 天青，暖底。案例库里所有 demo 就是这一套）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：宋体标题 + 黑体正文（默认）。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：标准（默认）（上下 100 / 左右 140）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n"
+  },
+  {
+    "spec": {
+      "palette": "P-D",
+      "font": "F-B",
+      "density": "D-A",
+      "header": "H-C"
+    },
+    "vars": {
+      "--c-brand": "#C1272D",
+      "--c-brand-deep": "#94191F",
+      "--c-accent": "#C8A15A",
+      "--c-accent-deep": "#8A6A1E",
+      "--c-brand-on": "#FFFFFF",
+      "--c-accent-on": "#2A2422",
+      "--c-bg": "#FAF7F4",
+      "--c-bg-alt": "#FBF4E8",
+      "--c-ink": "#544C4A",
+      "--c-ink-deep": "#2A2422",
+      "--c-ink-soft": "#928A87",
+      "--c-card": "#FFFFFF",
+      "--c-hairline": "rgba(42,20,20,.10)",
+      "--bg-warm": "#FBF1EF",
+      "--bg-cool": "#FBF4E8",
+      "--bg-plain": "#FAF7F4",
+      "--card-o": "#F8E9E7",
+      "--card-b": "#FAF0DC",
+      "--hl-o": "rgba(148,25,31,.14)",
+      "--hl-b": "rgba(200,161,90,.18)",
+      "--mask-rgb": "250,247,244",
+      "--mask-rgb-alt": "251,244,232",
+      "--serif": "\"Noto Sans SC\",system-ui,sans-serif"
+    },
+    "styleBlock": "<style id=\"deck-design\" data-design=\"P-D/F-B/D-A/H-C\">:root{--c-brand:#C1272D;--c-brand-deep:#94191F;--c-accent:#C8A15A;--c-accent-deep:#8A6A1E;--c-brand-on:#FFFFFF;--c-accent-on:#2A2422;--c-bg:#FAF7F4;--c-bg-alt:#FBF4E8;--c-ink:#544C4A;--c-ink-deep:#2A2422;--c-ink-soft:#928A87;--c-card:#FFFFFF;--c-hairline:rgba(42,20,20,.10);--bg-warm:#FBF1EF;--bg-cool:#FBF4E8;--bg-plain:#FAF7F4;--card-o:#F8E9E7;--card-b:#FAF0DC;--hl-o:rgba(148,25,31,.14);--hl-b:rgba(200,161,90,.18);--mask-rgb:250,247,244;--mask-rgb-alt:251,244,232;--serif:\"Noto Sans SC\",system-ui,sans-serif}:root{--pad-x:176px;--pad-top:118px;--pad-bottom:126px}.slide-header .kicker{font-size:15px;font-weight:700;letter-spacing:.1em;color:var(--c-brand-on);background:var(--c-brand);padding:7px 16px;border-radius:8px;display:inline-block}</style>\n",
+    "promptBlock": "\n## 这份稿子的设计规范（**比上面的通用令牌优先**）\n- 配色：党建红（正红 + 金，暖白底。党政机关、党建汇报、政府工作报告）。这套色已经注进 `:root` 了 —— 你只要照旧写 `var(--c-brand)` / `var(--c-accent)` / `var(--bg-*)` 这些**角色变量**，颜色自然就是这一套。**一个具体色值都不要写**（写死的那一处换配色时不会跟着变，而它看起来完全正常）。\n- 字体：全黑体。标题用 `var(--serif)`、正文跟 `var(--sans)`，**不要自己写 font-family**。\n- 疏密：舒展（留白更多，一页少放点东西）。`.slide-inner` 的内边距由外壳决定，**不要自己写页面级 padding**。\n- 标题也是黑体（`var(--serif)` 已经换成黑体了，别自己写 font-family）—— 黑体标题看起来比宋体重，标题字号取阶梯里偏小的那一档。\n- 这份稿子的页边距更大（左右各 176px），可用宽度比案例窄 —— 每页的内容块比案例少一点，宁可空着也不要挤。"
+  }
+]

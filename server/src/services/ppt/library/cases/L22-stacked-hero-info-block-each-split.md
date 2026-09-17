@@ -50,7 +50,7 @@
 .l22-upper{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0}
 .l22-hero{position:relative;overflow:hidden}
 .l22-hero img{width:100%;height:100%;object-fit:cover;display:block}
-.l22-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent 50%,rgba(0,0,0,.25));z-index:1}
+.l22-hero::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.20);z-index:1}
 .l22-hero-txt{position:absolute;bottom:48px;left:48px;color:#fff;z-index:2}
 .l22-hero-txt .cn{font-size:36px;font-weight:300;letter-spacing:.04em}
 .l22-hero-txt .en{display:block;font-size:18px;margin-top:8px;letter-spacing:.32em;font-weight:300}

@@ -65,7 +65,7 @@
 .l26-cell.on{background:var(--card-o);border-color:var(--c-brand)}
 .l26-bg{position:absolute;inset:0;z-index:-1}
 .l26-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l26-bg::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(var(--mask-rgb),.40) 0%,rgba(var(--mask-rgb),.86) 56%,rgba(var(--mask-rgb),.96) 100%)}
+.l26-bg::after{content:"";position:absolute;inset:0;background:rgba(var(--mask-rgb),.82)}
 .l26-cell b{display:block;font-size:22px;font-weight:800;color:var(--c-ink-deep)}
 .l26-cell span{display:block;font-size:17px;line-height:1.6;color:var(--c-ink-soft);margin-top:8px}
 ```

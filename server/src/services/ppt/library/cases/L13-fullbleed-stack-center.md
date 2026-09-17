@@ -40,7 +40,7 @@
 |---------|----------|
 | 背景 | 全幅图（任何色系均可，由 ImageGen 决定） |
 | 文字主色 | `var(--c-card)`（通常白/浅，确保压暗渐变上可读） |
-| 渐变遮罩 | `radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,.6) 100%)` —— 椭圆形（非纯圆形）贴合 16:9 |
+| 遮罩 | `rgba(0,0,0,.45)` 一层纯色（**遮罩一律不用渐变**，见 template.html 里那条注释）|
 | 顶部胶囊 | `rgba(255,255,255,.13)` 半透白底 + 毛玻璃 + `var(--c-card)` 字 |
 | 主标引号字色 | `var(--c-accent)`（推荐但不强制，可保持白字） |
 
@@ -55,7 +55,7 @@
 .l13-wrap{position:absolute;inset:0;overflow:hidden}
 .l13-bg{position:absolute;inset:0}
 .l13-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l13-bg::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 80% 70% at center,rgba(0,0,0,0) 0%,rgba(0,0,0,.18) 45%,rgba(0,0,0,.68) 100%);z-index:1}
+.l13-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:1}
 .l13-pill{
   position:absolute;top:48px;right:48px;
   padding:10px 22px;
