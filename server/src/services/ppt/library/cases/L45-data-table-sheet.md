@@ -8,7 +8,7 @@
 ## 一、结构速览
 
 - **比例**：16:9，浅底，**整库唯一的真表格页**（表头 3–6 列 × 表体最多 8 行，每格 10 字以内 ≈ 300–500 字）
-- **核心手法**：① 顶部报告风标题条（`.rp-head`，建议带一行 `lead` 说清这张表在比什么）；② 右对齐的**单位/口径行**（`.dt-unit`）；③ **全宽 `<table class="dt-table">`**：深底反白表头 + 偶数行白底斑马纹 + 首列加粗 + 数字列 `class="num"` 右对齐等宽 + 最多一行 `<tr class="on">` 作合计/结论行；④ 表下 `.dt-src` 写数据来源；⑤ 底部结论条（`.rp-foot`）
+- **核心手法**：① 顶部报告风标题条（`.rp-head`，建议带一行 `lead` 说清这张表在比什么）；② 右对齐的**单位/口径行**（`.dt-unit`）；③ **全宽 `<table class="dt-table">`**：深底反白表头 + 首列加粗 + 数字列 `class="num"` 右对齐等宽 + 最多一行 `<tr class="on">` 作合计/结论行；④ 表下 `.dt-src` 写数据来源；⑤ 底部结论条（`.rp-foot`）
 - **是否全幅**：否 —— 全部内容包在 `.slide-inner` 里
 - **底色**：默认不加类
 - **什么时候用**：报价/预算表、参数对照表、分项指标表、排期表、评分表 —— 任何「几列口径 × 几行对象」、要横向纵向对着读的内容。只有 3–6 个孤立大数字请用 L5，要写整句说明的清单请用 L38
@@ -35,7 +35,7 @@
   真有十几行请拆两页，或按 V4 压行高（一行 52px → 10 行）。
 - **一张表只放一组口径的数。** 两组口径不同的数（报价 + 工期、去年 + 今年两套指标、A 方案 + B 方案）
   并进这一张表之后，列头只能取一个口径，读的人拿它去套另一组数（「工期那两列的单位也是元？」），
-  而那张表列数、斑马纹、合计行全都正常、一处都不报错。这种内容用**双表**那一档
+  而那张表列数、行线、合计行全都正常、一处都不报错。这种内容用**双表**那一档
   （一页上下两张表，各带自己的表头和单位/口径行）—— 不是在这张表上多加几列。
 - **列数 3–6。** 7 列起每列不到 220px，表头那几个词各自换成两行，行高被顶到 90px 以上，
   于是表体只放得下 5 行 —— 而那 5 行本身排得很正常。
@@ -71,7 +71,6 @@
 .dt-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:20px;color:var(--c-ink)}
 .dt-table th,.dt-table td{padding:16px 22px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--c-hairline);overflow-wrap:break-word}
 .dt-table thead th{background:var(--c-ink-deep);color:#fff;font-size:19px;font-weight:700;line-height:1.4;letter-spacing:.02em;border-bottom:0}
-.dt-table tbody tr:nth-child(even){background:var(--c-card)}
 .dt-table tbody td:first-child{font-weight:700;color:var(--c-ink-deep)}
 .dt-table .num{font-family:var(--num);font-variant-numeric:tabular-nums;text-align:right;font-weight:700;color:var(--c-ink-deep)}
 .dt-table thead th.num{color:#fff}
@@ -180,7 +179,7 @@
 - **`class="on"` 最多一行**，**不许 `colspan` / `rowspan`**（错一格照样渲染），**不许 `overflow:auto`**（没人滚投影）
 - **单位/口径必须写**（`.dt-unit` 或 `.dt-src`）：缺了它这一页仍然是一张干净完整的表
 - **一张表只放一组口径的数**：两组口径不同的数（报价 + 工期、去年 + 今年）并进来之后列头只能取一个口径，读的人拿它去套另一组数，而表格排得整整齐齐 —— 那种内容用**双表**那一档（一页两张各带表头和单位的表），不是在这张表上多加几列
-- **配色**：表头底 `var(--c-ink-deep)` + 字 `#fff`（暗底白字不走变量），斑马纹 `var(--c-card)`（白 —— `var(--bg-plain)` 和浅色页底色是同一个色值，写它等于没有斑马纹），合计行 `var(--hl-o)` + 上线 `var(--c-brand)`，脚注/单位 `var(--c-ink-soft)`
+- **配色**：表头底 `var(--c-ink-deep)` + 字 `#fff`（暗底白字不走变量），**没有斑马纹**（页面纯白之后 `--c-card` 和页底同色，任何一个「白」都等于没写；行的分隔靠 `border-bottom` 那条 `--c-hairline`），合计行 `var(--hl-o)` + 上线 `var(--c-brand)`，脚注/单位 `var(--c-ink-soft)`
 - **整份最多两页表格页**，且别相邻（连着两页表格翻起来像同一页没动）
 - **与 L5 的区别**：L5 是 3–6 个大数字（一眼看结论），L45 是要横向纵向对着读的表
 - **与 L38 的区别**：L38 每行是"小标题 + 2–3 行说明"的清单（能吃字），L45 每格只有一个词或一个数

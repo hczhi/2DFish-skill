@@ -49,7 +49,18 @@ export function composeBrief(typed: string, list: BriefAttachment[]): string {
  * 收前端传来的 attachments 并逐条校验。失败一律 StageError(400) 并**点名是哪个文件**：
  * 合成一句「资料超长」的话他不知道该去删哪一份，而这五份在界面上是五张一样的卡片。
  */
-export function parseAttachments(raw: unknown): BriefAttachment[] {
+export function parseAttachments(
+  raw: unknown,
+  /**
+   * 单份字数上限，`null` = 不限（只看合计）。
+   *
+   * **只有品牌咨询套这个数**：那边五份要一起装进 20000 字的客户资料，而后面十二步全靠它。
+   * 展示稿提纲那条路传 `null` —— 那边一份七千字的产品资料是常事，按 3500 拒掉之后他唯一的
+   * 出路是自己进卡片删掉一半，而删掉的正是排在后面的那几节（那份读起来照样完整）。
+   * 合计那道闸门两边都还在，也都还是只拒不截。
+   */
+  perFileLimit: number | null = TIDY_BUDGET_CHARS
+): BriefAttachment[] {
   if (raw == null) return [];
   if (!Array.isArray(raw)) throw new StageError('attachments 要是一个数组。', 400);
   if (raw.length > MAX_ATTACHMENTS) {
@@ -73,10 +84,10 @@ export function parseAttachments(raw: unknown): BriefAttachment[] {
         400
       );
     }
-    if (text.length > TIDY_BUDGET_CHARS) {
+    if (perFileLimit !== null && text.length > perFileLimit) {
       throw new StageError(
-        `「${filename}」有 ${text.length} 字，超过单个文件的上限 ${TIDY_BUDGET_CHARS} 字`
-          + `（超出 ${text.length - TIDY_BUDGET_CHARS} 字）。请在那张卡片里自己删减，或者重新整理一次。\n`
+        `「${filename}」有 ${text.length} 字，超过单个文件的上限 ${perFileLimit} 字`
+          + `（超出 ${text.length - perFileLimit} 字）。请在那张卡片里自己删减，或者重新整理一次。\n`
           + '不自动截断是有意的：截掉的正好是排在后面的那几节（用户与客群、当前问题与目标），'
           + '而剩下那份读起来照样完整，后面十二步就照着它推。',
         400

@@ -41,7 +41,7 @@
 | 背景 | 全幅图（任何色系均可，由 ImageGen 决定） |
 | 文字主色 | `var(--c-card)`（通常白/浅，确保压暗渐变上可读） |
 | 遮罩 | `rgba(0,0,0,.45)` 一层纯色（**遮罩一律不用渐变**，见 template.html 里那条注释）|
-| 顶部胶囊 | `rgba(255,255,255,.13)` 半透白底 + 毛玻璃 + `var(--c-card)` 字 |
+| 顶部胶囊 | `rgba(255,255,255,.22)` 半透白底 + 半透白描边 + `var(--c-card)` 字（**不写 `backdrop-filter`**，见下） |
 | 主标引号字色 | `var(--c-accent)`（推荐但不强制，可保持白字） |
 
 > 关键：截图的深绿色不是被学习的一部分——任何色系都成立。案例只抓"中心径向渐变"这个**结构手法**。
@@ -59,12 +59,10 @@
 .l13-pill{
   position:absolute;top:48px;right:48px;
   padding:10px 22px;
-  background:rgba(255,255,255,.13);
+  background:rgba(255,255,255,.22);
   color:var(--c-card);
   border-radius:999px;
   font-size:14px;letter-spacing:1px;
-  backdrop-filter:blur(10px);
-  -webkit-backdrop-filter:blur(10px);
   border:1px solid rgba(255,255,255,.2);
   z-index:3;
 }
@@ -152,6 +150,7 @@
 - **颜色不固定**：本版式可承载任何色系。**配色骨架**遵循 deck palette，背景图由 `gen-images` 按 deck palette 同色系生成。
 - **背景图选材**：必须是有"景深感"的全幅场景图。picsum 随机图质量不稳定，正式生成时建议 mode `case`（场景远景/航拍/地标）。
 - **径向渐变参数**：用 `ellipse 80% 70% at center`（不是纯圆形），椭圆贴合 16:9 比例让暗角更自然。
+- **顶部胶囊不要加 `backdrop-filter`**：导出 pptx 时没有毛玻璃这种画法，那一块只剩它自己的底色 —— 靠模糊撑起来的胶囊在 pptx 里几乎透明，看着像「这一页少了个角标」，而 HTML 版一切正常。半透白给到 `.22` + 描边，两边同形。
 - **引号区改色**：默认推荐 V4 变体（`var(--c-accent)` 强调主题词），如有 deck palette 不允许，可保持全白。
 - **双语脚注**：英文在中文下方 6px，italic，opacity .65，不要压住主标视觉。
 - **引号包裹主题词**：是结构信号，标题必须有"被引用感"才适合本版式（如"城市油田"环保计划）；普通陈述标题改用 V2 单语无脚注。

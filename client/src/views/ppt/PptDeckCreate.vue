@@ -71,6 +71,44 @@ const titlePreview = computed(
 interface StyleItem { id: string; name: string; applicable: string }
 const styleList = ref<StyleItem[]>([])
 
+/**
+ * 「生成提纲」那个对话页和这一屏之间的两把钥匙（sessionStorage）。
+ *
+ * ① `DRAFT_KEY`：跳过去之前把**整张表单**存下来，回来再填回去。不存的话他填好名字、
+ *    挑好画风和那四项规范，去生成一趟提纲回来全是空的 —— 而页面上一句话都不说。
+ * ② `PICKED_KEY`：对话页里他点「用这份提纲」带回来的那一份。读完**立刻删**：不删的话
+ *    下一次新建（同一个标签页里）会被上一次那份提纲填满，他会以为自己贴过。
+ */
+const DRAFT_KEY = 'ppt:new-draft'
+const PICKED_KEY = 'ppt:outline-picked'
+
+/** 被 AI 那份换掉之前框里那一份（撤销用）。整份替换不给撤的话他手里那份就没了。 */
+const outlineBefore = ref<string | null>(null)
+const outlineNote = ref('')
+
+function stashDraft() {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...form.value, design: design.value }))
+  } catch {
+    // 存不下就算了：这一屏的内容会丢，但下面那句提示已经写着「填的会带过去」——
+    // 所以这里要把那句话改掉，不能让他以为带过去了。
+    err.value = '浏览器拒绝了本地暂存，这一屏填的内容不会带到生成提纲那一页（回来要重新填）。可以先把已填的复制一份。'
+  }
+}
+
+/** 去生成提纲（先把这一屏存下来）。 */
+function goOutlineChat() {
+  stashDraft()
+  router.push('/ppt/decks/new/outline')
+}
+
+function undoOutline() {
+  if (outlineBefore.value === null) return
+  form.value.outline = outlineBefore.value
+  outlineBefore.value = null
+  outlineNote.value = '已经恢复成你原来那份提纲。'
+}
+
 onMounted(async () => {
   if (!getToken()) {
     openLoginModal(window.location.pathname, '新建演示稿需要登录')
@@ -93,7 +131,47 @@ onMounted(async () => {
   } catch {
     // 拿不到就整段不传（服务端用默认那套），不挡新建 —— 进工作台还能改。
   }
+  // **必须在上面那两个 await 之后**：`design.value = { ...d.default }` 会把恢复出来的
+  // 那几项盖回默认（他挑的配色/字体静默变回默认，而页面上那一行折叠摘要写着默认那套，
+  // 看不出他挑过别的）。
+  restoreDraft()
 })
+
+/** 从对话页回来：填回整张表单，再把他带回来的那份提纲放进框里（两件事都要出声）。 */
+function restoreDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    if (raw) {
+      sessionStorage.removeItem(DRAFT_KEY)
+      const d = JSON.parse(raw)
+      if (d && typeof d === 'object') {
+        // 一项项填（整个对象赋过去的话，`design` 会被带进 form 里跟着 POST 上去 ——
+        // 服务端那边不认这个键，而请求看起来是成功的）。
+        for (const k of ['title', 'outline', 'brandCn', 'brandEn', 'styleId'] as const) {
+          if (typeof d[k] === 'string') form.value[k] = d[k]
+        }
+        if (d.design && typeof d.design === 'object') design.value = { ...design.value, ...d.design }
+      }
+    }
+  } catch {
+    // 存的那份坏了就当没有（他会看到一张空表单，但那本来就是没存成的后果）
+  }
+  try {
+    const picked = sessionStorage.getItem(PICKED_KEY)
+    if (!picked) return
+    sessionStorage.removeItem(PICKED_KEY)
+    const had = form.value.outline.trim()
+    outlineBefore.value = had ? form.value.outline : null
+    form.value.outline = picked
+    outlineNote.value = had
+      // 整份换掉这件事**必须说**：他框里原来那份是自己一行行写的，不说的话他只会觉得
+      // 「提纲变长了」，而自己写的那几行已经不在了。
+      ? `提纲框里原来那份（${had.length} 字）已经被 AI 生成的这份（${picked.length} 字）整份替换。`
+      : `已经把 AI 生成的那份提纲（${picked.length} 字）填进来了 —— 可以直接在下面改。`
+  } catch {
+    // 读不到就当他没带回来（对话页那边存不进去时已经报过一次）
+  }
+}
 
 async function create() {
   if (!titlePreview.value) { err.value = '请填名字，或者先贴一份提纲（第一行会当名字）'; return }
@@ -168,6 +246,23 @@ async function create() {
                   {{ form.outline.length }} / {{ MAX_OUTLINE }}
                 </em>
               </span>
+
+              <!-- 没提纲可写的时候这一屏是走不下去的，所以这个入口摆在框上面、显眼。
+                   它会**离开这一屏**（这一屏填的内容存在 sessionStorage 里带过去）。 -->
+              <div class="outline-ai">
+                <button type="button" class="btn-outline-ai" @click="goOutlineChat">
+                  ✨ 生成提纲
+                </button>
+                <span class="outline-ai-hint">
+                  不知道怎么写？和 AI 聊几句（可以上传资料），它出一份提纲，确认后自动填进下面这个框。
+                  对话每发一句是一次真实 AI 额度。
+                </span>
+              </div>
+              <p v-if="outlineNote" class="outline-note">
+                {{ outlineNote }}
+                <button v-if="outlineBefore !== null" type="button" class="link-btn" @click="undoOutline">撤销，换回我原来那份</button>
+              </p>
+
               <textarea
                 v-model="form.outline"
                 rows="16"
@@ -414,6 +509,25 @@ async function create() {
   background: rgba(0, 0, 0, 0.4);
 }
 .hint { display: block; margin-top: 12px; font-size: 13px; line-height: 1.7; color: var(--color-soft); }
+
+/* 「生成提纲」那个入口：摆在提纲框上面、按钮用实心黄（这一屏最要紧的一件事是提纲，
+   而多数时候他手里压根没有提纲 —— 藏成一行小字的话这个功能等于不存在）。 */
+.outline-ai { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.btn-outline-ai {
+  padding: 11px 20px; border: none; border-radius: 12px; background: var(--brand-yellow);
+  color: #12182B; font-size: 14px; font-weight: 700; font-family: var(--font-sans);
+  cursor: pointer; white-space: nowrap; transition: all .2s; flex: none;
+}
+.btn-outline-ai:hover { background: var(--brand-yellow-hover); transform: translateY(-1px); }
+.outline-ai-hint { font-size: 12.5px; line-height: 1.7; color: var(--color-soft); flex: 1; min-width: 240px; }
+.outline-note {
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.8;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.3); color: #FFD979;
+}
+.link-btn {
+  margin-left: 8px; padding: 0; background: none; border: none; cursor: pointer;
+  color: var(--brand-yellow); font-size: 13px; font-family: var(--font-sans); text-decoration: underline;
+}
 
 .create-actions {
   display: flex; gap: 24px; align-items: center; flex-wrap: wrap;

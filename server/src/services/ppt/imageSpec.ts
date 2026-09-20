@@ -6,7 +6,7 @@
 // 等于把生图的依赖链拉进规划的路径里。两边各写一份数字/枚举的话，改了一边另一边照旧，
 // 而症状是「规划里说 3:4、生成出来的图是 16:9」，两边都不报错。
 
-import { IMAGE_MODES, type ImageMode } from './styleLibrary.js';
+import { PER_STYLE_MODES, type ImageMode } from './styleLibrary.js';
 
 /** 一次请求最多给一页配几张。超了只拒不截 —— 悄悄只做前几张的话剩下几格还是占位图。 */
 export const MAX_SLOTS_PER_PAGE = 6;
@@ -16,6 +16,13 @@ export const MAX_SLOTS_PER_PAGE = 6;
  * 而他写在后面的那几个条件（「不要出现文字」「俯视角」）一处都没生效，图看起来只是「不太对」。
  */
 export const MAX_SUBJECT_CHARS = 300;
+
+/**
+ * 他**自己改写的那一整条**提示词的上限（`PlannedImage.fullPrompt`）。比 subject 大得多是因为
+ * 自动拼出来的那条本身就有八九百字（画风模板 + 配色 + 留白 + 尾巴），按 300 卡的话他一打开
+ * 那个框、什么都没改就点确定，直接被 400 顶回来。同样**只拒不截**。
+ */
+export const MAX_FULL_PROMPT_CHARS = 4000;
 
 /**
  * 允许的比例。就这三种，因为生成阶段的占位图只有 `ph-16x9` / `ph-1x1` / `ph-3x4`
@@ -49,6 +56,59 @@ export function nearestRatio(width: number, height: number): ImageRatio {
   return best;
 }
 
+/**
+ * 这一档比例**真正发给上游的那个 `size`**。
+ *
+ * 不发 size 的话每家按自己的默认出（多半是 1024×1024 方图）：方图贴进 16:9 的图槽会被
+ * `object-fit:cover` 裁掉上下两条，画面上是「主体被切了一半」，而接口一路 200、面板上写着
+ * 「已生成」—— 他唯一的出路是一张张重生，而重生出来还是方的。
+ *
+ * 三档都用 1024 那一边，因为这是各家生图模型共同支持的一档；换成 2048 的话部分接入点直接
+ * 400（那时是整页配图失败，而不是「图小了一点」）。
+ */
+export function sizeForRatio(ratio: string): string {
+  const r = ratio.trim();
+  if (r.startsWith('1:1') || /square/i.test(r)) return '1024x1024';
+  if (r.startsWith('3:4') || /portrait/i.test(r)) return '1024x1536';
+  return '1536x1024';
+}
+
+/** `1536x1024` → 1.5（认不出回 null）。 */
+function aspectOf(size: string): number | null {
+  const m = /^(\d+)\s*[x*×]\s*(\d+)$/.exec(size.trim());
+  if (!m) return null;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? w / h : null;
+}
+
+/**
+ * 要的尺寸和**真回来的像素**对不上时那一句话（对得上、或者读不出像素时回 null）。
+ *
+ * 这一条必须出声：`size` 是个建议，认的照办、不认的悄悄按自己的默认出、键名拼错的直接忽略
+ * —— 三种都回 200 带一张漂亮的图。裁掉的那一块在页面上看起来像「模型构图没构好」，
+ * 他会一张张重生（每张都是一次真实花费），而重生出来的还是同一个尺寸。
+ * 话里必须同时带**要的**和**回来的**两个尺寸：只说「尺寸不对」的话他改不了任何东西
+ * （真正的动作是去后台给这条接入点补 size 参数、或者换一条）。
+ */
+export function sizeMismatchNote(
+  requested: string,
+  got: { width: number; height: number } | null,
+  label: string
+): string | null {
+  const want = aspectOf(requested);
+  if (!got || !want) return null;
+  const real = got.width / got.height;
+  // 按对数距离比（比例是乘法量）。8% 以内算同一档 —— 有些接入点会把 1536×1024 对齐成
+  // 1520×1024 之类的数，那不是「忽略了 size」，报出来只会把真正那一句冲掉。
+  if (Math.abs(Math.log(real / want)) <= 0.08) return null;
+  return (
+    `${label}要的是 ${requested}，上游回来的是 ${got.width}×${got.height}（${nearestRatio(got.width, got.height)}）——` +
+    '这条接入点没按 size 出图，贴进图槽会被裁掉两边（画面上看起来像模型构图没构好，重生一次还是同一个尺寸）。' +
+    '要真按尺寸出，得在后台给这条生图接入点换一条支持 size 的模型/网关。'
+  );
+}
+
 /** 规划里的一张图：画什么 + 哪一路画法 + 什么比例。 */
 export interface PlannedImage {
   /** 画什么（一句话）。它就是最后写进 `data-img-prompt` 的那句话。 */
@@ -56,6 +116,16 @@ export interface PlannedImage {
   /** concept / case / data —— 填错的话数据页会拿到一张漂亮的概念插画（不报错）。 */
   mode: ImageMode;
   ratio: ImageRatio;
+  /**
+   * 他在「编辑这一格的提示词」里**自己改写的那一整条**（有值就**原样发出去**，画风模板、配色、
+   * 留白方向、尾巴一概不再拼）。
+   *
+   * 两件事必须跟着：① 有它的时候「换画风 / 改成背景图 / 改配色 / 改上面那句 subject」**对这一格
+   * 全都不起作用** —— 所以每次生成都要出声，界面上那一格也要标出来，否则他改了画风看到图没变，
+   * 只会一张张重生（每张真花钱）；② 它必须两条路共用（备图 `specJob` 和「换一批图」
+   * `fillPageImages`），只接一条的话同一格两条路发出去的是两条不同的提示词，而两边都 200。
+   */
+  fullPrompt?: string;
 }
 
 /**
@@ -148,10 +218,14 @@ export function normalizeImageSpecs(
       break;
     }
     const rawMode = String((item as any)?.mode ?? '').trim().toLowerCase();
-    const mode: ImageMode = (IMAGE_MODES as string[]).includes(rawMode) ? (rawMode as ImageMode) : 'concept';
+    // **只认版式里那一格的三路**（`PER_STYLE_MODES`），不认整页那两路（backdrop / poster）：
+    // 后者是用户在「这一页详情」里点出来的整页模式，放进一格里生成的是一张铺满整幅、
+    // 刻意不带主体（backdrop）或者把文字印在图里（poster）的图 —— 贴进那一格照样是一页
+    // 正常的幻灯片，只是那一格看起来「空/有重复的字」，一处都不报错。
+    const mode: ImageMode = (PER_STYLE_MODES as string[]).includes(rawMode) ? (rawMode as ImageMode) : 'concept';
     if (rawMode && mode !== rawMode) {
       problems.push(
-        `${label}：「${subject}」的画法 ${rawMode} 不认识（只有 ${IMAGE_MODES.join(' / ')}），按 concept 画 ——` +
+        `${label}：「${subject}」的画法 ${rawMode} 不认识（一格图只有 ${PER_STYLE_MODES.join(' / ')}），按 concept 画 ——` +
           '本来要信息图的那一格会拿到一张概念插画。'
       );
     }

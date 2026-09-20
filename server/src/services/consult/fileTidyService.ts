@@ -1,5 +1,5 @@
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
-import { EXTRACT_CHANNEL } from '../../core/llm/apps.js';
+import { EXTRACT_CHANNEL, type ExtractApp } from '../../core/llm/apps.js';
 import { StageError } from './draftService.js';
 import { MAX_BRIEF_CHARS } from './projectStore.js';
 
@@ -299,7 +299,8 @@ async function tidyOneChunk(
   chunk: string,
   index: number,
   total: number,
-  chunkBudget: number
+  chunkBudget: number,
+  app: ExtractApp
 ): Promise<ChunkOutcome> {
   const where = total > 1 ? `（第 ${index + 1}/${total} 段）` : '';
   try {
@@ -325,10 +326,10 @@ async function tidyOneChunk(
       },
       {
         userId,
-        source: 'consult',
-        // 同图片提取：接入点单独走「内容提取」通道，额度和日志还记在 consult 上。
+        source: app,
+        // 同图片提取：接入点单独走「内容提取」通道，额度和日志还记在 `app` 上。
         channel: EXTRACT_CHANNEL,
-        operation: 'consult:tidy-file',
+        operation: `${app}:tidy-file`,
         requestSummary: `整理上传资料：${filename}${where}（${chunk.length} 字）`,
         // 有人在屏幕前等着，而且这条路上关它治的是截断（硬规则 2）：思维链算进
         // max_tokens 却不进 content，上万字的输入很容易把 16000 全想掉，
@@ -390,7 +391,8 @@ async function squeezeOnce(
   userId: string,
   filename: string,
   text: string,
-  budget: number
+  budget: number,
+  app: ExtractApp
 ): Promise<{ out: string; reasoningTokens: number }> {
   try {
     const { response } = await aiGateway(
@@ -406,9 +408,9 @@ async function squeezeOnce(
       },
       {
         userId,
-        source: 'consult',
+        source: app,
         channel: EXTRACT_CHANNEL, // 同整理那一步：接入点走「内容提取」通道
-        operation: 'consult:squeeze-file',
+        operation: `${app}:squeeze-file`,
         requestSummary: `压到字数以内：${filename}（${text.length} → ${budget} 字）`,
         noThinking: true,
         timeoutMs: AI_TIMEOUT_MS,
@@ -447,7 +449,13 @@ export function cutToBudget(text: string, budget: number): string {
 export async function tidyExtractedText(
   userId: string,
   filename: string,
-  raw: string
+  raw: string,
+  /**
+   * 这次整理（可能是好几次调用）记在哪个应用的额度/日志上。这条路被两个模块用
+   * （品牌咨询的客户资料、展示稿的「生成提纲」资料）—— 传错的话那几次调用去撞另一个应用的
+   * 应用额度，而后台自己那条用量看起来一切正常（见 `api/extractRoutes.ts` 文件头）。
+   */
+  app: ExtractApp = 'consult'
 ): Promise<TidyResult> {
   const text = raw.trim();
   if (!text) throw new StageError('没有内容可以整理。', 400);
@@ -483,7 +491,7 @@ export async function tidyExtractedText(
       fallbackChunks++;
       continue;
     }
-    const r = await tidyOneChunk(userId, filename, chunks[i], i, chunks.length, chunkBudget);
+    const r = await tidyOneChunk(userId, filename, chunks[i], i, chunks.length, chunkBudget, app);
     calls++;
     reasoningTokens += r.reasoningTokens;
 
@@ -539,7 +547,7 @@ export async function tidyExtractedText(
   if (fallbackChunks === 0) {
     for (let pass = 0; pass < MAX_SQUEEZE_PASSES && out.length > TIDY_BUDGET_CHARS; pass++) {
       const before = out.length;
-      const sq = await squeezeOnce(userId, filename, out, TIDY_BUDGET_CHARS);
+      const sq = await squeezeOnce(userId, filename, out, TIDY_BUDGET_CHARS, app);
       calls++;
       reasoningTokens += sq.reasoningTokens;
       // 压出来是空的 / 反而变长 = 这一次没用（可能已经开始自己写了），留着上一版。

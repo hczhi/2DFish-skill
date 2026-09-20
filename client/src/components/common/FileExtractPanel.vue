@@ -1,6 +1,12 @@
 <script setup lang="ts">
-// 上传客户资料文件（最多 5 个）→ 服务端提取文字 → **自动**交给 AI 提炼 →
-// 每份是一张卡片，创建项目时**自动带进**客户资料，不用他逐份点「插入」。
+// 上传资料文件（最多 5 个）→ 服务端提取文字 → **自动**交给 AI 提炼 →
+// 每份是一张卡片，提交时**自动带进**去，不用他逐份点「插入」。
+//
+// 两个模块共用这一份（品牌咨询的客户资料 / 展示稿「生成提纲」的参考资料），
+// 后端也是同一份（`server/src/api/extractRoutes.ts`）。**`apiBase` 没有缺省值**：
+// 给了缺省的话新接的页面会静默去打另一个模块那两条路 —— 传上去、提取出来、整理好，
+// 界面上一切正常，只是那几次调用记在了别的应用的额度和日志上（管理员限了那个应用之后，
+// 这个页面会回一句说另一个模块的额度用完了）。
 //
 // 两种文件的额度账**不一样**，界面上必须分得出来：文档（txt/md/docx/doc/pptx/pdf）提取
 // 不花钱、整理花 1 次起；**图片提取本身就是一次 AI 调用**（图里的字只有模型读得出来），
@@ -23,10 +29,22 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { api } from '../../lib/api'
 
-const props = defineProps<{
-  /** 他手打的那段资料现在有多少字 —— 用来提前算「加上文件会不会超上限」。 */
-  currentChars: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 他手打的那段资料现在有多少字 —— 用来提前算「加上文件会不会超上限」。 */
+    currentChars: number
+    /**
+     * 这两条路挂在哪个模块下（`/api/consult` 或 `/api/ppt`）。**必填，故意没有缺省值**，
+     * 见文件头那段：填错/漏填的话额度和日志记到另一个应用上，而界面上完全看不出来。
+     */
+    apiBase: string
+    /** 按钮上那几个字（「上传客户资料文件」/「上传参考资料」）。 */
+    noun?: string
+    /** 「提交时会怎么用这几份」那句话 —— 各模块不一样，写死一句的话另一边是假话。 */
+    carryHint?: string
+  }>(),
+  { noun: '客户资料文件', carryHint: '创建项目时自动带进资料' }
+)
 
 /** 带给创建接口的那几份（服务端再合成一次并复查上限，见 briefCompose.ts）。 */
 interface Attachment {
@@ -53,6 +71,8 @@ interface Extracted {
   notes: string[]
   briefLimit: number
   budgetChars: number
+  /** 单份字数上限，**0 = 不限**（展示稿提纲那条路只看合计）。见 `limits.fileLimit`。 */
+  fileLimit: number
   maxFiles: number
   maxImageBytes: number
   /** 'image' = 这一份是大模型读出来的（没有原文可比对，见 kind 在卡片上的用处）。 */
@@ -131,6 +151,13 @@ const cards = ref<FileCard[]>([])
 const limits = ref({
   briefLimit: 20000,
   budgetChars: 3500,
+  /**
+   * 单份字数上限，**0 = 不限**（服务端按模块给，见 extractRoutes.fileLimitOf）。
+   * 和 `budgetChars`（AI 提炼的**目标**字数）是两件事：混用的话不限单份的那条路
+   * （展示稿提纲）上，一份 7442 字的资料会显示成「7442 / 3500」并标红，而它压根不会被拒 ——
+   * 他会照着这个假上限进卡片删掉一半，删掉的正是排在后面那几节。
+   */
+  fileLimit: 3500,
   maxFiles: 5,
   tidyMax: 80000,
   maxImageBytes: 5 * 1024 * 1024,
@@ -273,13 +300,14 @@ async function addOne(file: File) {
     // Node：所以没有我们那句带上限数字的 JSON，body 是一坨 HTML，落到缺省分支就是一句
     // 「HTTP 413」。那句话读起来像接口挂了 —— 用户会反复传同一个文件、或者去改
     // `MAX_FILE_BYTES`（那一层根本没被走到），而后端日志里一个字都没有。
-    const data: Extracted = await post('/api/consult/extract-file', fd,
+    const data: Extracted = await post(`${props.apiBase}/extract-file`, fd,
       `这个文件 ${(file.size / 1024 / 1024).toFixed(1)}MB，被反向代理挡下了（HTTP 413，请求没到后端）。` +
       `请把它改小，或者让运维加大 Nginx 的 client_max_body_size（docs/RELEASE.md 第六节）。`
     )
     limits.value = {
       briefLimit: data.briefLimit,
       budgetChars: data.budgetChars,
+      fileLimit: data.fileLimit ?? data.budgetChars,
       maxFiles: data.maxFiles,
       tidyMax: data.tidyPlan?.maxChars ?? 80000,
       maxImageBytes: data.maxImageBytes ?? limits.value.maxImageBytes,
@@ -337,7 +365,7 @@ async function runTidy(card: FileCard) {
   card.err = ''
   try {
     // 传的是**原文栏里现在的内容**（他可能已经删掉了目录页），不是服务端原样返回的那份。
-    const data: Tidied = await post('/api/consult/tidy-text', {
+    const data: Tidied = await post(`${props.apiBase}/tidy-text`, {
       filename: card.filename,
       text: card.raw,
     })
@@ -386,7 +414,7 @@ function remove(id: number) {
           <polyline points="17 8 12 3 7 8"></polyline>
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
-        {{ busy ? '正在处理…' : full ? `已经 ${cards.length} 个（上限）` : '上传客户资料文件' }}
+        {{ busy ? '正在处理…' : full ? `已经 ${cards.length} 个（上限）` : `上传${noun}` }}
       </button>
       <!-- 格式和上限只留一行。不支持的格式（老 .ppt / .heic / 扫描件 PDF）由服务端在
            那张卡片上回一句带出路的话 —— 提前把注意事项铺在这里，他也是传了才会看。 -->
@@ -398,7 +426,7 @@ function remove(id: number) {
     </div>
 
     <p class="fx-lead">
-      上传后<strong>自动 AI 提炼</strong>（每份 ≤ {{ limits.budgetChars }} 字），创建项目时自动带进资料。
+      上传后<strong>自动 AI 提炼</strong>（每份 ≤ {{ limits.budgetChars }} 字），{{ carryHint }}。
       文档 1 次额度起（长文件分几次），图片 1 次/张 —— 每份实际花了几次写在卡片上。
     </p>
 
@@ -429,7 +457,8 @@ function remove(id: number) {
           </template>
           <template v-else-if="c.status === 'failed'">提取失败</template>
           <template v-else>
-            {{ textOf(c).length }} / {{ limits.budgetChars }} 字
+            <!-- 不限单份的那条路只报字数：报一个不拦人的「上限」他会照着它自己删正文。 -->
+            {{ textOf(c).length }}<template v-if="limits.fileLimit > 0"> / {{ limits.fileLimit }}</template> 字
             <!-- 「这一份是谁写的」不能省：AI 读图那份没有原文可比对，可信度和抠出来的字不一样。 -->
             <template v-if="c.kind === 'image'">· AI 读图</template>
             <template v-else-if="c.use === 'tidy'">· AI 整理</template>
@@ -501,12 +530,14 @@ function remove(id: number) {
     </div>
 
     <div v-if="cards.length" class="fx-total">
+      <!-- 「手打 N 字」只在真有那一段时显示：没有输入框的页面（展示稿提纲）上写着
+           「手打 0 字 +」会让他去找那个不存在的框。 -->
       <span :class="{ over: overBy > 0 }">
-        手打 {{ currentChars }} 字 + {{ ready.length }} 个文件 {{ attachChars }} 字 =
+        <template v-if="currentChars > 0">手打 {{ currentChars }} 字 + </template>{{ ready.length }} 个文件 {{ attachChars }} 字 =
         合计 {{ total }} / {{ limits.briefLimit }} 字<template v-if="overBy > 0">，超出 {{ overBy }} 字（提交会被拒）</template>
       </span>
       <span class="fx-tip">这次上传花了 {{ spentCalls }} 次 AI 额度。</span>
-      <span v-if="anyBusy" class="fx-tip">还有文件在处理，跑完再创建 —— 没跑完的那几份不会带进去。</span>
+      <span v-if="anyBusy" class="fx-tip">还有文件在处理，跑完再提交 —— 没跑完的那几份不会带进去。</span>
     </div>
   </div>
 </template>

@@ -20,13 +20,22 @@
      现象只是「这一页字有点看不清」（designSpec.test.ts 按对比度 ≥4.5 对账，并且盯着
      「品牌色底 + 写死白字」这种写法不再出现）。 */
   --c-brand-on:#2E2C2C; --c-accent-on:#1E1C1C;
-  --c-bg:#FAF8F4; --c-bg-alt:#EFF7FB;
+  /* **页底一律纯白**（2026-09-18 起）。四个页底级变量（`--c-bg` / `--bg-plain` / `--bg-warm` /
+     `--bg-cool`）和两个幕帘色（`--mask-rgb*`）现在是同一个白 —— 它们**留着名字不合并**：
+     整套骨架和 66 份案例 md 里有几百处写着 `var(--bg-plain)` / `rgba(var(--mask-rgb),.8)`，
+     合并成一个名字要同步改 md 那一份拷贝（`caseLibrary.test.ts` 逐条对账），而漏掉的那一处
+     是「浏览器把整条声明丢掉」= 那一块掉回继承色，页面照旧渲染。
+     **代价必须记住：纯白页上「白卡」不再是一个分隔手段。** `--c-card` 仍是 #FFFFFF，所以
+     `background:var(--c-card)` 铺在页面上等于什么都没铺（以前它比米底白一档）—— 靠它分隔的
+     那几处（数据表斑马纹已经改掉，见 `.dt-table`）会静默消失，画面上只是「这几行糊在一起」。
+     卡片要看得见就得有 `border:1px solid var(--c-hairline)` 或者 box-shadow，光有底色不行。 */
+  --c-bg:#FFFFFF; --c-bg-alt:#EFF7FB;
   --c-ink:#595656; --c-ink-deep:#2E2C2C; --c-ink-soft:#969696;
   --c-card:#FFFFFF; --c-hairline:rgba(0,0,0,.10);
-  --bg-warm:#FFF7EF; --bg-cool:#EFF7FB; --bg-plain:#FAF8F4;
+  --bg-warm:#FFFFFF; --bg-cool:#FFFFFF; --bg-plain:#FFFFFF;
   --card-o:#FFF4E8; --card-b:#EBF6FC;
   --hl-o:rgba(240,134,26,.14); --hl-b:rgba(45,185,237,.14);
-  --mask-rgb:250,248,244; --mask-rgb-alt:239,247,251;
+  --mask-rgb:255,255,255; --mask-rgb-alt:255,255,255;
   --serif:"Noto Serif SC",serif; --sans:"Noto Sans SC",system-ui,sans-serif;
   --num:"Sora","Noto Sans SC",system-ui,sans-serif;
   --ease:cubic-bezier(.2,.7,.3,1);
@@ -51,9 +60,14 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 
 /* === 1920×1080 固定舞台（与输出规范一致） === */
 #stage{width:1920px;height:1080px;position:relative;flex:none;background:var(--c-bg);overflow:hidden;transform-origin:center center;box-shadow:0 48px 140px rgba(28,27,26,.25)}
-/* 全局肌理：极细噪点（3%） */
-#stage::after{content:"";position:absolute;inset:0;z-index:40;pointer-events:none;opacity:.035;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* 原来这里有一层 3.5% 的噪点肌理（`#stage::after`）和一层 48px 网格底纹（`.slide::after`），
+   2026-09-18 一起删掉：页面一律纯白、不带任何底纹。**别再加回来**，两条理由：
+   ① 那层噪点压在所有东西之上（z-index:40），而导出 pptx 是逐块截图 —— 每一张贴进去的图上
+      都糊着一层每个像素都不一样的噪声，jpeg 压不动、体积翻倍，而文件打开完全正常；
+      `pptxDeck.ts` 里那句 `#stage::after{display:none!important}` 是当时的补丁，现在是空跑的护栏。
+   ② 网格那层是 `.slide::after` + `z-index:-1`，它和背景图（`.case-bg` / `.p5-visual` 那些
+      z-index:0/auto 的兄弟）挨着排，忘了 z-index 就整幅照片上蒙一层格子，而那一页看起来
+      只是「这张图发灰」。 */
 
 /* === 顶部渐变色带（5px） === */
 #top-band{position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,var(--c-brand) 0%,var(--c-accent) 100%);z-index:60;pointer-events:none}
@@ -61,7 +75,10 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 /* === 页面切换 === */
 .slide{position:absolute;inset:0;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .5s var(--ease),visibility .5s;background:var(--c-bg)}
 .slide.active{opacity:1;visibility:visible;pointer-events:auto;z-index:5}
-/* 章节底色三态（品牌规范 v2.0） */
+/* 章节底色三态（品牌规范 v2.0）。**三态现在是同一个白**（`--bg-cool` / `--bg-warm` 都是 #FFFFFF，
+   见 :root 那条），所以这两个类在画面上什么都不做。规则留着而不是删掉：删了之后 66 份案例 md 里
+   那些「V5 底色改 tinted」的变体会在 `caseLibrary.test.ts` 的类名对账里报成「用了一个 template
+   里没有的类」，而真正该做的是把那些变体从案例库里摘掉（还没做）。 */
 .slide.cool{background:var(--bg-cool)}
 .slide.tinted{background:var(--bg-warm)}
 /* 出血卡（目前只有 L12）：案例库明写 section 要加 `has-card` 保证色带能溢出卡片边缘，
@@ -69,16 +86,10 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    overflow:hidden（或者复制这份骨架的人加了），L12 的色带就被裁掉，那一页看起来只是
    「这版没有色带」。 */
 .slide.has-card{overflow:visible}
-/* 浅色页：faint 网格底纹（与输出规范一致）。**用 ::after + z-index:-1，不是 ::before**：
-   ::before 让给蒙版了（见下一条），而 ::after 在绘制顺序里等于「最后一个孩子」——
-   不写 z-index:-1 的话它压在背景图（`.case-bg` / `.p5-visual` 那些 z-index:0/auto 的兄弟）
-   上面，于是整幅照片上蒙着一层网格、tinted 页还多两团橙蓝光斑，而那一页看起来只是
-   「这张图发灰」。-1 是「在 .slide 自己的底色之上、所有孩子之下」，和原来 ::before 的位置一致。 */
-.slide::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
-  background-image:linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
-  background-size:48px 48px;background-position:center}
-.slide.tinted::after{background-image:radial-gradient(880px 600px at 88% 8%,rgba(240,134,26,.07),transparent 62%),radial-gradient(820px 600px at 6% 94%,rgba(45,185,237,.06),transparent 60%),linear-gradient(rgba(46,44,44,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(46,44,44,.026) 1px,transparent 1px);
-  background-size:auto,auto,48px 48px,48px 48px;background-position:center}
+/* `.slide::after` 空着 —— 原来那层 48px 网格底纹和 tinted 页那两团橙蓝光斑都删了（见 #stage
+   上面那条）。**这个伪元素位不要拿去派别的用**：`::before` 是统一蒙版（见下一条），`::after`
+   在绘制顺序里等于「最后一个孩子」，给它铺任何东西都得记着写 `z-index:-1`，忘了就整幅背景照片
+   上蒙一层，而那一页看起来只是「这张图发灰」。 */
 /* 统一蒙版：**每一页都有，由代码贴（`deckShell.applyVeil` 往 `<section>` 上写 `--veil`），
    不让模型写**。默认 0（等于不存在），每页在「这一页详情」里单独调。
    **是伪元素而不是一个 `<div class="slide-veil">`**：贴成 section 的第一个孩子的话，
@@ -147,9 +158,29 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 /* 图：全幅背景+遮罩 (L2) */
 .case-bg{position:absolute;inset:0;z-index:0;overflow:hidden}
 .case-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.case-bg::after{content:"";position:absolute;inset:0;background:rgba(var(--mask-rgb),.80)}
-.slide.has-bg .slide-inner{position:relative;z-index:2}
-.slide.cool.has-bg .case-bg::after{background:rgba(var(--mask-rgb-alt),.78)}
+/* 幕帘的浓度走 `--bg-mask`（**缺省还是原来那个 .80/.78**）：「把这一格的图变成整页背景图」
+   那条路（`imageModes.ts`）会往 `<section>` 上写一个低一点的值 —— 照旧写死 .80 的话那张图
+   在页面上只剩一层几乎看不见的底纹，而接口 200、图也真的生成并贴上了，他只会一张张重生。
+   写成新的类名而不是复用这个变量的话，L2/L23/L24/L26 那几页的幕帘要各改一遍，漏掉的那几页
+   是「这一版颜色不对」。 */
+.case-bg::after{content:"";position:absolute;inset:0;background:rgba(var(--mask-rgb),var(--bg-mask,.80))}
+/* `position:relative` 这一条**只给库里自带背景图的那几条版式**（L2/L23/L24/L26/L29 —— 它们的
+   内容本来就是顺流排的，靠这条浮到图上面）。**「把这一格的图变成整页背景图」变形出来的那种页
+   （section 上有 `data-backdrop-sec`，见 imageModes.toBackdrop）必须排除掉**：那些页的
+   `.slide-inner` 是 `position:absolute;inset:0`（满页高）+ 自己写的 `justify-content:center` /
+   `margin-top:auto` 来分配竖向位置，改成 relative 之后高度塌成内容高（实测 L3 那一页 1080 → 639），
+   整块文字从竖向居中跳到顶上 —— 而那一页仍然是一页排得好好的幻灯片，problems 里一个字都没有，
+   他只会以为「背景图模式会把版式改掉」。变形那条路不需要这一条：背景图那一层写的是
+   `z-index:-1`（在 section 底色之上、所有内容之下），内容压根不用再抬。 */
+.slide.has-bg:not([data-backdrop-sec]) .slide-inner{position:relative;z-index:2}
+.slide.cool.has-bg .case-bg::after{background:rgba(var(--mask-rgb-alt),var(--bg-mask,.78))}
+/* 单图模式（`imageModes.toPoster`）：整页就一张图，**字印在图里**。
+   **不能复用 `.case-bg`**：它的 `::after` 缺省刷一层 .80 的幕帘（给「图当底、字压在上面」用的）
+   —— 拿来装单图的话画面上是一张被洗白八成的图，而每一层都渲染正常、一处不报错。
+   z-index:0 和 `.case-bg` 同一档（在统一蒙版 `.slide::before` 的 z-index:1 之下）：写成 2 的话
+   这一页的蒙版（097 那个滑块）压根压不住它，而别的页照旧变暗 —— 现象是「这一页的蒙版失灵」。 */
+.poster-art{position:absolute;inset:0;z-index:0;overflow:hidden}
+.poster-art img{width:100%;height:100%;object-fit:cover;display:block}
 /* 右侧全高视觉 (L1) */
 .p5-visual{position:absolute;top:0;right:0;bottom:0;width:46%;background-repeat:no-repeat;background-position:center center;background-size:cover;z-index:0}
 .p5-visual::after{content:"";position:absolute;inset:0;background:rgba(var(--mask-rgb),.20);pointer-events:none}
@@ -220,7 +251,10 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l13-bg{position:absolute;inset:0}
 .l13-bg img{width:100%;height:100%;object-fit:cover;display:block}
 .l13-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:1}
-.l13-pill{position:absolute;top:48px;right:48px;padding:10px 22px;background:rgba(255,255,255,.13);color:var(--c-card);border-radius:999px;font-size:14px;letter-spacing:1px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.2);z-index:3}
+/* 这颗胶囊**不用 `backdrop-filter`**（整库都不用）：导出 pptx 时那一层模糊压根没有对应画法，
+   剩下的只有它自己那点 `.13` 底色 —— 在图上几乎透明，pptx 里看着是「这一页少了个角标」，
+   而 HTML 版好好的。所以底色直接给到 `.22`，靠半透白 + 描边成立，不靠背景模糊。 */
+.l13-pill{position:absolute;top:48px;right:48px;padding:10px 22px;background:rgba(255,255,255,.22);color:var(--c-card);border-radius:999px;font-size:14px;letter-spacing:1px;border:1px solid rgba(255,255,255,.2);z-index:3}
 .l13-stack{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:22px;padding:0 12%;z-index:2}
 .l13-year{font-size:96px;font-weight:200;color:var(--c-card);opacity:.82;line-height:1;letter-spacing:-1px}
 .l13-mega{font-size:78px;font-weight:800;color:var(--c-card);line-height:1.15;max-width:88%;letter-spacing:-1px}
@@ -289,7 +323,10 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l17-left::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.45)}
 .l17-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:2}
 .l17-pill{position:absolute;top:32px;right:32px;background:var(--c-ink);color:#fff;padding:6px 14px;border-radius:99px;font-size:14px;letter-spacing:.2em;z-index:2}
-.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95;mix-blend-mode:screen}
+/* 毛笔字**不写 `mix-blend-mode`**：pptx 里没有混合模式，那个字按原色平铺画出来 —— screen 混出来
+   的是「亮一档、透出底图纹理」，平铺出来是一块实心品牌色，两份差一整个层次，而两边都渲染正常。
+   所以底图那层 `.l17-left::after`（45% 黑）就是它的对比度来源，实心品牌色直接压在暗图上。 */
+.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95}
 .l17-en{position:absolute;bottom:14%;left:8%;color:#fff;font-size:clamp(40px,5vw,64px);font-weight:300;letter-spacing:.32em;text-transform:uppercase;z-index:2;opacity:.85}
 .l17-right{background:var(--c-card);padding:80px 72px;display:flex;flex-direction:column}
 .l17-head{font-size:clamp(40px,4.4vw,60px);font-weight:800;color:var(--c-ink-deep);letter-spacing:.02em;line-height:1;margin-bottom:48px}
@@ -332,7 +369,9 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l19-title h1{font-size:clamp(40px,5vw,64px);font-weight:600;letter-spacing:-.005em;line-height:1.1;margin-bottom:12px}
 .l19-title .sub{font-size:15px;color:rgba(255,255,255,.75);letter-spacing:.04em}
 .l19-product{position:absolute;top:30%;left:18%;width:64%;z-index:1;pointer-events:none}
-.l19-product img{width:100%;height:auto;filter:drop-shadow(0 8px 28px rgba(0,0,0,.45))}
+/* 产品图**不写 `drop-shadow`**：导出是按元素盒截图的，投影画在盒**外面**，正好落在裁掉的那一圈里
+   —— pptx 里产品是「贴」在暗底上的，HTML 里是浮起来的。要立体感就靠 bg 图本身的明暗，不靠投影。 */
+.l19-product img{width:100%;height:auto}
 .l19-desc{position:absolute;bottom:18%;left:5%;max-width:48%;font-size:16px;color:rgba(255,255,255,.85);line-height:1.6;z-index:2}
 .l19-specs{position:absolute;bottom:5%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;z-index:3}
 .l19-spec{background:var(--c-card);padding:18px 22px;border-radius:4px;min-height:84px}
@@ -695,15 +734,21 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 /* L39 暗底长文 + 竖排中文标题 + 右侧数据边栏（文字多）— 详情见 cases/L39-dark-longform-vertical-title.md */
 /* 正文的左右边界是 `calc(var(--pad-x) + …)` 算出来的，**必须给两侧让位**：写成
    `left:var(--pad-x)` 的话正文压在竖排标题上，两层都是白字，读起来只是「有点糊」。
-   竖排标题（`writing-mode:vertical-rl`）**只能 6–10 个汉字**：写长了从下缘裁掉，
-   而页面上看着就是「标题少了两个字」—— 目录面板里那一条却是全的（它取的是 h1 文本）。 */
+   竖排标题**只能 6–10 个汉字**：写长了从下缘裁掉，
+   而页面上看着就是「标题少了两个字」—— 目录面板里那一条却是全的（它取的是 h1 文本）。
+   竖排是**「一个字一行」堆出来的**（窄到 1 个字的宽 + `word-break:break-all`），
+   **不用 `writing-mode:vertical-rl`**：pptx 里没有竖排，那个标题会横过来塞进这条 60px 宽的
+   窄带 —— 一个字一行地糊成一柱，或者整片压到正文上，而 HTML 版是好好的竖排。
+   堆叠这一版两边同形（pptx 的文本框照 60px 宽折行，一样一个字一行）。
+   字间距因此由 `line-height` 给（1.24 × 56 ≈ 69px 一格），**不要写 `letter-spacing`**：
+   横排里它是「字后面的空档」，会把每个字从这条窄带里往左顶出去半个字距。 */
 .l39-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
 .l39-bg{position:absolute;inset:0;z-index:0}
 .l39-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.22}
 .l39-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.80)}
 .l39-side{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;align-items:center;gap:20px}
-.l39-side .page-title{writing-mode:vertical-rl;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;letter-spacing:.16em;color:#fff;margin-top:0}
-.l39-side .l39-en{writing-mode:vertical-rl;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.3em;color:var(--c-brand)}
+.l39-side .page-title{width:60px;word-break:break-all;text-align:center;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;color:#fff;margin-top:0}
+.l39-side .l39-en{width:7px;word-break:break-all;text-align:center;font-family:var(--num);font-size:14px;font-weight:700;line-height:1.7;color:var(--c-brand)}
 .l39-body{position:absolute;left:calc(var(--pad-x) + 220px);right:calc(var(--pad-x) + 440px);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;flex-direction:column;justify-content:center}
 .l39-body p{font-size:21px;line-height:2;color:rgba(255,255,255,.82);margin-bottom:24px}
 .l39-body p:last-child{margin-bottom:0}
@@ -718,11 +763,18 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    角度/位置，画面上是两条错开几十像素的斜线（一条颜色边、一条高光），看起来像"设计就是双线"，
    一处都不报错。
    图注（`.l40-cap`）只能贴右下角：挪到左边会落到斜线的浅底那一侧，白字在米底上直接看不见，
-   而它照样渲染、`checkPage` 一个字都不说。 */
+   而它照样渲染、`checkPage` 一个字都不说。
+   **斜切、压暗都长在 `<img>` 自己身上，外面那个 `.l40-img` 是个没有底色、没有遮罩的空壳。**
+   导出 pptx 时只有 `<img>` 这种块是截成像素贴的（截完 `omitBackground`，裁掉的那部分就是透明），
+   于是斜边如实留在像素里。反过来把 `clip-path` 写在 `.l40-img` 上（它有子节点，走不到截图那条路）
+   的话：pptx 里是**一整块满幅暗底 + 一张满幅照片**压掉左边的浅色文字区，深墨色标题落在照片上 ——
+   每一块都在、位置也对，看起来像「这一版设计成了暗底」。压暗同理不能再写成
+   `.l40-img::after` 那层 `rgba(0,0,0,.45)`：它是 `.l40-img` 的孩子，不在 `<img>` 的截图范围里，
+   到了 pptx 就成了一层盖满整页的 45% 黑。`brightness(.55)` 和那层黑是逐像素等价的
+   （都是乘 0.55），差别只在它跟着裁剪一起烙进了像素。 */
 .l40-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
-.l40-img{position:absolute;inset:0;z-index:0;overflow:hidden;background:var(--c-ink-deep);clip-path:polygon(100% 0,52% 0,66% 100%,100% 100%)}
-.l40-img img{width:100%;height:100%;object-fit:cover;display:block}
-.l40-img::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.45)}
+.l40-img{position:absolute;inset:0;z-index:0;overflow:hidden}
+.l40-img img{width:100%;height:100%;object-fit:cover;display:block;clip-path:polygon(100% 0,52% 0,66% 100%,100% 100%);filter:brightness(.55)}
 .l40-edge{position:absolute;top:-8%;bottom:-8%;left:59%;width:3px;z-index:1;transform:rotate(-14deg);background:linear-gradient(180deg,var(--c-brand),var(--c-accent))}
 .l40-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);width:40%;z-index:2;display:flex;flex-direction:column;justify-content:center}
 .l40-txt .page-title{font-family:var(--serif);font-size:62px;font-weight:900;line-height:1.18;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
@@ -830,10 +882,11 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .dt-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:20px;color:var(--c-ink)}
 .dt-table th,.dt-table td{padding:16px 22px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--c-hairline);overflow-wrap:break-word}
 .dt-table thead th{background:var(--c-ink-deep);color:#fff;font-size:19px;font-weight:700;line-height:1.4;letter-spacing:.02em;border-bottom:0}
-/* 斑马纹用 `var(--c-card)`（白）而不是 `var(--bg-plain)`：后者和浅色页的底色
-   `--c-bg` 是**同一个色值**（都是 #FAF8F4），写它等于没写 —— 表格照样渲染、
-   一处都不报错，只是行与行之间压根没有明暗差，八行数字看起来是糊在一起的一片 */
-.dt-table tbody tr:nth-child(even){background:var(--c-card)}
+/* **没有斑马纹**：页面纯白之后 `--c-card` / `--bg-plain` 和页底 `--c-bg` 是同一个白，
+   `background:var(--c-card)` 铺上去等于什么都没铺（表格照样渲染、一处都不报错，只是行与行
+   之间压根没有明暗差）。行的分隔全靠上面那条 `border-bottom:1px solid var(--c-hairline)` ——
+   **那条边框不许删**，删了之后八行数字糊成一片，而表格结构完整、problems 里一个字都没有。
+   要加回明暗差的话只能用一层中性半透（`rgba(0,0,0,.03)` 那种），不能再写任何一个「白」。 */
 .dt-table tbody td:first-child{font-weight:700;color:var(--c-ink-deep)}
 /* 数字列：`<td class="num">`（表头同名）。整列一起标，只标一半的话那一列半右对齐半左对齐 */
 .dt-table .num{font-family:var(--num);font-variant-numeric:tabular-nums;text-align:right;font-weight:700;color:var(--c-ink-deep)}
@@ -886,9 +939,9 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
    第 4 个区块从下沿漏出去压在 `.rp-foot` 上，出来是字叠字的一页（同 `.dt-wrap` 那条，
    故意不加 `overflow:hidden` —— 裁掉的话最后那一节凭空消失，而前三节排得整整齐齐、一处都不报错）。
    编号那一列写死 92px：跟着内容缩的话「10」比「1」宽，三节的正文起点各差几个像素。
-   区块底色是 `var(--c-card)`（白）+ 一圈 `--c-hairline`，**不是 `var(--bg-plain)`**：
-   后者和浅色页的底色 `--c-bg` 是同一个色值（都是 #FAF8F4），写它的话三个区块在画面上
-   压根不存在，只剩左边三条橙线孤零零立着 —— 而页面照样渲染、一处都不报错。 */
+   区块靠的是那一圈 `--c-hairline` + 左边 3px 品牌线，**底色（`var(--c-card)`）现在和页底同白、
+   一点作用都没有** —— 所以那圈边框不许删：删了之后三个区块在画面上压根不存在，只剩左边三条
+   橙线孤零零立着，而页面照样渲染、一处都不报错。 */
 .l46-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:24px;margin-top:32px}
 .l46-item{display:grid;grid-template-columns:92px 1fr;gap:28px;align-items:start;background:var(--c-card);border:1px solid var(--c-hairline);border-left:3px solid var(--c-brand);padding:26px 32px}
 .l46-no{font-family:var(--num);font-size:44px;font-weight:800;line-height:1;color:var(--c-brand)}
@@ -1278,6 +1331,232 @@ html,body{height:100%;background:#E3E1DD;font-family:var(--sans);color:var(--c-i
 .l65-item.on{border-bottom-width:2px;border-bottom-color:var(--c-brand)}
 .l65-item.on .l65-num{color:var(--c-brand)}
 .l65-item.on .l65-txt b{color:var(--c-brand-deep)}
+
+/* L66 内容页（全幅）：右侧大图**内缘羽化**（mask-image 渐隐进页底色，没有硬边）+ 标题跨进羽化区 +
+   左侧文案 + 底部数据行 —— 详情见 cases/L66-feather-edge-photo-split.md */
+/* 为什么用 mask，而不是「图上盖一层从浅到透的渐变」（L20 那条文带的做法）：那层渐变在 pptx 里退成
+   渐变的**第一个色** —— 一整块不透明的浅底盖住图的左半，而这一页每一块都在、位置也对，看起来像
+   「这一版的图被裁小了」。写在 `<img>` **自己身上**的 mask 是烙进像素的 alpha（元素截图那条路），
+   pptx 里和网页上同形（实测导出来是一张带 alpha 的 PNG）。所以两条边界：
+   ① mask 只能写在 `<img>` 上 —— 挪到 `.l66-img` 上（它有子节点，走不到截图那条路）之后浏览器里
+   一模一样，导出来是一整块硬边矩形图压在浅底上，硬边正好切过标题的最后两个字；
+   ② `.l66-img` 自己**不许有底色** —— 铺了 `var(--c-bg)` 之后浏览器里看不出任何差别（同色），
+   而 pptx 里那是一整块不透明的浅色形状盖在图上，这一页只剩左边一段字。
+   羽化的三段值（14% 透 / 42% 半 / 66% 实）和 `left:32%` 是配套的：文字块 44% 宽，右端落在图的
+   28% 处（≈18% 不透明度），大标题压过去只是「纸上印着一张淡照片」。**正文一律 `max-width:640px`
+   留在羽化区外**：21px 的字压在 18% 的照片上会糊，而它仍然是一段读得通的话，没有一处会说。
+   `--veil` 这一页要留 0：那层黑在 `.slide::before`（z-index 1），图在它下面、字在它上面，拉高之后
+   **浅底那半也一起变灰**，羽化就成了一道脏边（而它看起来只是「这一页调子闷」）。 */
+.l66-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l66-img{position:absolute;left:32%;right:0;top:0;bottom:0;z-index:0;overflow:hidden}
+.l66-img img{width:100%;height:100%;object-fit:cover;display:block;-webkit-mask-image:linear-gradient(90deg,transparent 0,transparent 14%,rgba(0,0,0,.5) 42%,rgba(0,0,0,1) 66%);mask-image:linear-gradient(90deg,transparent 0,transparent 14%,rgba(0,0,0,.5) 42%,rgba(0,0,0,1) 66%)}
+.l66-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);width:44%;z-index:2;display:flex;flex-direction:column}
+.l66-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.22em;color:var(--c-brand-deep)}
+.l66-rule{width:64px;height:4px;background:var(--c-brand);margin:22px 0 26px}
+.l66-txt .page-title{font-family:var(--serif);font-size:66px;font-weight:900;line-height:1.16;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:0}
+.l66-txt .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l66-lead{margin-top:26px;max-width:640px;font-size:21px;line-height:1.85;color:var(--c-ink)}
+.l66-stats{margin-top:auto;max-width:700px;padding-top:26px;border-top:1px solid var(--c-hairline);display:flex;gap:56px}
+.l66-stats b{display:block;font-family:var(--num);font-size:46px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--c-brand)}
+.l66-stats span{display:block;margin-top:10px;font-size:17px;line-height:1.6;color:var(--c-ink-soft)}
+.l66-cap{position:absolute;right:var(--pad-x);bottom:var(--pad-bottom);max-width:420px;z-index:2;text-align:right;background:rgba(0,0,0,.34);border-radius:8px;padding:14px 20px}
+.l66-cap b{display:block;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.24em;color:#fff}
+.l66-cap span{display:block;margin-top:8px;font-size:17px;line-height:1.6;color:rgba(255,255,255,.86)}
+
+/* L67 深底低垂卡片行：整页深墨底 + 左侧文案与两个大数字 + 右侧 3–4 张白卡**垂到页脚线上方** +
+   卡顶**外挂圆图标** —— 详情见 cases/L67-dark-drop-card-row.md */
+/* 这一条是「零张图也有层级感」那一档：库里的深度感全靠 hairline 和同一平面上的色块，
+   而纯白页之后白卡和页底同色（见 designSpec 那条），并列页就更平了。这里的层级来自三样，
+   每一样改错了都只表现成「这一页看着有点散」：
+   ① **卡片行 `bottom:72px` 垂到远低于 `--pad-bottom` 的位置，但必须停在 `#footer` 之上，
+      而且高度是内容撑的（不写 `height`）**。这两条都是实测踩出来的：
+      · 原本写的是 `bottom:-64px`（伸出页面下沿、靠 `#stage{overflow:hidden}` 裁掉），
+        那样做**页脚会印在白卡上**：`#footer` 是舞台级的、`z-index:50`，比任何 `.slide` 里的
+        东西都高，它那条 hairline 横穿三张卡、主题文字落在第一张卡的白底上、进度条和页码落在
+        最后一张卡上 —— 而页面照旧渲染正常，`checkPage` 和类名校验一处都不会说。所以
+        **这一条不出血**（54px 页脚 + 18px 余量 = 72px），也**不要加 `has-card`**（那个类是给
+        L12 让色带溢出 `.card` 用的，加了只会把卡片放到舞台外的灰台面上）。
+      · 高度**不许写死**：写死了短文案剩一大截空白、长文案则把说明的最后一行截在卡外面，
+        而两种画面都完全正常。`align-items:stretch` 让三张卡跟最高那张齐平，行自己贴底生长。
+   ② **圆图标 `top:-28px` 骑在卡片上边缘**（一半在卡外），所以 `.l67-card` 不能加
+      `overflow:hidden` —— 加了图标被削成半圆，而那看起来像是设计本来就这样。
+   ③ 页底是 `var(--c-ink-deep)` 而**不是** `var(--c-brand)`：品牌色能不能压白字由配色决定
+      （默认那套的橙对白字 2.6:1、`--c-brand-deep` 也只有 2.9:1），铺成整页底之后这一页的
+      标题正文全部发飘，而每一页都是一页完整正常的幻灯片。品牌色只出现在圆图标实底
+      （字色走 `--c-brand-on`，见 designSpec 那段）、领句和卡内大数字上。
+   `box-shadow` 是深底上卡片唯一的「浮起来」证据（深底上 hairline 看不见），别删。 */
+.l67-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
+.l67-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);width:32%;z-index:2;display:flex;flex-direction:column}
+.l67-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
+.l67-txt .page-title{font-family:var(--serif);font-size:64px;font-weight:900;line-height:1.2;letter-spacing:-.02em;color:#fff;margin-top:20px}
+.l67-txt .page-title em{font-style:normal;color:var(--c-brand)}
+.l67-lead{margin-top:22px;font-size:19px;line-height:1.85;color:rgba(255,255,255,.72)}
+.l67-figs{margin-top:auto;display:flex;gap:44px}
+.l67-figs b{display:block;font-family:var(--num);font-size:44px;font-weight:800;line-height:1;letter-spacing:-.02em;color:#fff}
+.l67-figs span{display:block;margin-top:10px;font-size:16px;line-height:1.6;color:rgba(255,255,255,.6)}
+.l67-cards{position:absolute;left:41%;right:var(--pad-x);bottom:72px;min-height:420px;z-index:2;display:flex;align-items:stretch;gap:26px}
+.l67-card{position:relative;flex:1;background:var(--c-card);border-radius:16px;padding:56px 30px 40px;box-shadow:0 24px 60px rgba(0,0,0,.28)}
+.l67-ico{position:absolute;top:-28px;left:30px;width:56px;height:56px;border-radius:50%;background:var(--c-brand);color:var(--c-brand-on);font-family:var(--num);font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.l67-card em{display:block;font-family:var(--num);font-size:14px;font-weight:700;font-style:normal;letter-spacing:.18em;color:var(--c-ink-soft)}
+.l67-card b{display:block;margin-top:12px;font-family:var(--num);font-size:34px;font-weight:800;line-height:1.15;letter-spacing:-.02em;color:var(--c-brand)}
+.l67-card p{margin-top:16px;font-size:17px;line-height:1.75;color:var(--c-ink)}
+
+/* L68 巨字压底：一个 300px 的浅色巨词横在页面中段、右端跑出页面被 #stage 裁掉，标题和要点行
+   压在它上面 —— 详情见 cases/L68-ghost-word-overlap.md */
+/* 两条承重的：
+   ① **巨字的浅色必须是实色 `var(--c-bg-alt)`，不许用 rgba 或 opacity 调淡。** pptx 里透明度
+      写出来是 `<a:alphaModFix>`，**苹果那套渲染器（Keynote / 预览）直接忽略它**（见本文件
+      pptxDeck 那条同样的坑）—— 于是 PowerPoint 里正常、Keynote 里这个 300px 的词变成一整块
+      近黑压在正文上，导出这一步一句话都不会说。
+   ② **`white-space:nowrap` 不能删。** 删了之后巨字折行，第二行横穿右下那几条要点行 ——
+      而每一块字都在、位置也「对」，看起来只是「这一页有点乱」。
+   巨字里放**一个词**（2–6 个汉字或一个英文单词），不放数字：空心巨数字那一档是 L41（章节页），
+   内容页上一个巨大的数字会被读成序号。 */
+.l68-wrap{position:absolute;inset:0}
+.l68-ghost{position:absolute;left:var(--pad-x);top:300px;font-family:var(--serif);font-size:300px;font-weight:900;line-height:.86;letter-spacing:-.03em;white-space:nowrap;color:var(--c-bg-alt);z-index:0}
+.l68-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);width:44%;z-index:2}
+.l68-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
+.l68-txt .page-title{font-family:var(--serif);font-size:68px;font-weight:900;line-height:1.18;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:18px}
+.l68-txt .page-title em{font-style:normal;color:var(--c-brand)}
+.l68-lead{margin-top:20px;font-size:20px;line-height:1.8;color:var(--c-ink)}
+.l68-rows{position:absolute;right:var(--pad-x);bottom:var(--pad-bottom);width:40%;z-index:2;display:flex;flex-direction:column;gap:22px}
+.l68-row{display:flex;gap:22px;padding-top:20px;border-top:2px solid var(--c-ink-deep)}
+.l68-row i{flex:none;font-family:var(--num);font-size:15px;font-weight:800;font-style:normal;letter-spacing:.16em;color:var(--c-brand);padding-top:6px}
+.l68-row b{display:block;font-size:24px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l68-row span{display:block;margin-top:8px;font-size:17px;line-height:1.7;color:var(--c-ink)}
+
+/* L69 实色块马赛克：左侧深底说明块（通高）+ 右侧 2×2 四个大数字色块 —— 详情见
+   cases/L69-block-mosaic-metrics.md */
+/* 这一条是 L5「白卡 + hairline 的数据网格」的重色版本，层级来自**实色块本身**，所以：
+   ① **饱和色最多两格**（一格 `.brand` 一格 `.accent`），其余留 `var(--c-bg-alt)` —— 四格全铺
+      饱和色之后几个大数字之间没有主次，而每一格都「有颜色、读得清」，看不出是排错了；
+   ② 色块上的字一律走对应的 `--c-brand-on` / `--c-accent-on`，**不许写死 `#fff`**（浅品牌色那
+      几套上白字直接读不出来，而字确实在那儿）；深底块里的字才写 `#fff`；
+   ③ 格子里**不放图**：两行是 `1fr 1fr`，塞进去的图把大数字和说明挤出格子下沿、压在下一格上
+      （`.l69-cell` 没有 `overflow:hidden`，所以是叠字，不是消失）。说明最多 2 行。 */
+.l69-grid{flex:1;min-height:0;display:grid;grid-template-columns:1.35fr 1fr 1fr;grid-template-rows:1fr 1fr;gap:16px}
+.l69-say{grid-row:span 2;background:var(--c-ink-deep);border-radius:14px;padding:44px 40px;display:flex;flex-direction:column}
+.l69-kicker{font-family:var(--num);font-size:15px;font-weight:700;letter-spacing:.2em;color:var(--c-brand)}
+.l69-say .page-title{font-family:var(--serif);font-size:46px;font-weight:900;line-height:1.22;letter-spacing:-.02em;color:#fff;margin-top:16px}
+.l69-say p{margin-top:18px;font-size:18px;line-height:1.8;color:rgba(255,255,255,.72)}
+.l69-note{margin-top:auto;padding-top:18px;border-top:1px solid rgba(255,255,255,.16);font-size:16px;line-height:1.6;color:rgba(255,255,255,.55)}
+.l69-cell{background:var(--c-bg-alt);border-radius:14px;padding:34px 32px;display:flex;flex-direction:column;justify-content:center}
+.l69-cell em{font-family:var(--num);font-size:14px;font-weight:700;font-style:normal;letter-spacing:.18em;color:var(--c-ink-soft)}
+.l69-cell b{margin-top:12px;font-family:var(--num);font-size:62px;font-weight:800;line-height:1;letter-spacing:-.03em;color:var(--c-ink-deep)}
+.l69-cell p{margin-top:14px;font-size:17px;line-height:1.7;color:var(--c-ink)}
+.l69-cell.brand{background:var(--c-brand)}
+.l69-cell.brand em,.l69-cell.brand b,.l69-cell.brand p{color:var(--c-brand-on)}
+.l69-cell.accent{background:var(--c-accent)}
+.l69-cell.accent em,.l69-cell.accent b,.l69-cell.accent p{color:var(--c-accent-on)}
+
+/* L70 内容页：左侧竖图 + 品牌色说明卡压在图的左下角并**错出图的左沿** + 右侧巨标题与 2–3 块浅灰注解
+   —— 详情见 cases/L70-portrait-caption-overlap.md */
+/* 三处只要动一下就静默退回「左图右文」那一档（库里已经有五条）：
+   ① `.l70-fig` **不许 overflow:hidden** —— 色卡靠 `left:-56px` 错出图沿，裁掉之后它变成一张
+      贴着图左边缘的方卡，看起来就是设计本来如此；
+   ② 色卡上的字一律 `var(--c-brand-on)`，**年份那一行不许改成 `var(--c-accent)`** —— 品牌色底上
+      压点缀色是默认那套的橙底压天青（1.2:1），字还在、位置也对，只是读不出来；
+   ③ `.l70-grid` 的 `min-height:0` 不能删 —— grid 子项默认 min-height:auto，竖图会把这一行撑到
+      比内容区还高，于是图的下半和色卡一起沉到页脚那 54px 里（页码印在色卡上，画面照旧正常）。
+   色卡 `left:-56px` 错出的是 `.slide-inner` 那 140px padding 里的 56px，离页面左缘还有 84px；
+   再往外推到 -140px 以上就贴边了（贴边读起来像出血版式，而这一条是非全幅的）。 */
+.l70-grid{flex:1;min-height:0;display:grid;grid-template-columns:.86fr 1fr;gap:72px}
+.l70-fig{position:relative;min-height:0}
+.l70-fig img{width:100%;height:100%;object-fit:cover;display:block}
+.l70-cap{position:absolute;left:-56px;right:44px;bottom:48px;z-index:3;background:var(--c-brand);padding:28px 32px 30px}
+.l70-cap em{display:block;font-family:var(--serif);font-size:40px;font-weight:900;font-style:normal;line-height:1.08;letter-spacing:-.02em;color:var(--c-brand-on)}
+.l70-cap b{display:block;font-family:var(--num);font-size:40px;font-weight:800;line-height:1.05;letter-spacing:-.02em;color:var(--c-brand-on)}
+.l70-cap p{margin-top:14px;font-size:16px;line-height:1.7;color:var(--c-brand-on)}
+.l70-say{min-height:0;display:flex;flex-direction:column}
+.l70-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--c-brand-deep)}
+.l70-say .page-title{font-family:var(--serif);font-size:60px;font-weight:900;line-height:1.2;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:20px}
+.l70-say .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l70-lead{margin-top:22px;font-size:20px;line-height:1.8;color:var(--c-ink)}
+.l70-notes{margin-top:auto;display:flex;flex-direction:column;gap:18px}
+.l70-note{background:var(--c-bg-alt);border-radius:14px;padding:26px 30px}
+.l70-note b{display:block;font-size:22px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l70-note p{margin-top:10px;font-size:17px;line-height:1.75;color:var(--c-ink)}
+
+/* L71 内容页·全幅：左上标题块 + 左下两张浅灰注解卡 + 右下角大图**出血到页面右缘和下沿**
+   —— 详情见 cases/L71-corner-bleed-photo-notes.md */
+/* 三个承重的数，动一个就静默退回「左文右图」：
+   ① 图必须 `right:0;bottom:0`（两边都出血）—— 给它留出 `var(--pad-x)` 之后这一页是「右下角贴了
+      一张小图」，而这一条存在的理由就是那个出血的角；
+   ② 文字块宽度 **40% 封顶**：`140px + 40%×1920 = 908px`，图的左沿在 `50%` = 960px。放到 44% 之后
+      标题最后几个字压在图上（图是 `z-index:0`、字是 2，所以字在上面 —— 不是被盖住，是**压在花纹上**，
+      看起来只是「这一页有点挤」）；
+   ③ 页脚那 54px 压在图的下沿上（这套外壳的常态，L11 / L21 同样如此），所以 `data-img-prompt` 里要写
+      「画面底部留一条安静的区域」—— 页脚的字是 `var(--c-ink-soft)` 这档灰，落在花纹上就读不出来，
+      而那一页每一层都渲染正常。 */
+.l71-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l71-img{position:absolute;right:0;bottom:0;width:50%;height:68%;z-index:0;overflow:hidden}
+.l71-img img{width:100%;height:100%;object-fit:cover;display:block}
+.l71-txt{position:absolute;left:var(--pad-x);top:var(--pad-top);width:40%;z-index:2}
+.l71-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--c-brand-deep)}
+.l71-txt .page-title{font-family:var(--serif);font-size:64px;font-weight:900;line-height:1.18;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:20px}
+.l71-txt .page-title em{font-style:normal;color:var(--c-brand-deep)}
+.l71-lead{margin-top:24px;font-size:20px;line-height:1.85;color:var(--c-ink)}
+.l71-notes{position:absolute;left:var(--pad-x);bottom:var(--pad-bottom);width:40%;z-index:2;display:flex;align-items:stretch;gap:24px}
+.l71-note{flex:1;background:var(--c-bg-alt);border-radius:14px;padding:26px 28px}
+.l71-note em{display:block;font-family:var(--num);font-size:14px;font-weight:700;font-style:normal;letter-spacing:.18em;color:var(--c-ink-soft)}
+.l71-note b{display:block;margin-top:10px;font-size:22px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l71-note p{margin-top:10px;font-size:17px;line-height:1.75;color:var(--c-ink)}
+
+/* L72 内容页·全幅：品牌色大色场（从 118px 铺到三边出血）+ 场内标题与一行副题 + 底部照片带
+   + 压在带上的 3 张白卡 —— 详情见 cases/L72-brand-field-card-row.md */
+/* **色场从 `top:118px` 开始，不是 0** —— 这是 L61 / L48 / L50 同一件事的第四种解法：代码贴的那行
+   模块名走 `.slide-header .kicker`，颜色**写死在 `var(--c-accent-deep)` 上**、位置写死在 44–100px
+   那条带里。色场铺到 `top:0` 之后那行字是天青压橙（默认那套 1.8:1）/ 深蓝压深蓝（蓝那套），
+   两处都在、就是读不出来，而这一页每一层都渲染正常、`checkPage` 和类名校验一处都不会说。
+   118 = 100 + 18 的余量；往上挪到 100 以内就开始压那行字。
+   场内的字（标题 + 副题）一律 `var(--c-brand-on)`，**不许写死 `#fff`**：品牌色能不能压白字由配色
+   决定（默认那套的橙对白字 2.6:1，AA 要 4.5）。这一条是库里唯一「整页铺品牌色」的版式，所以
+   `--c-brand-on` 在这儿是承重的，不是装饰。
+   白卡在这一页**是有效的分隔手段**（`--c-card` 是纯白、压在品牌色场上）—— 页底纯白那些页上它等于
+   什么都没铺（见 :root 那条），别把这一页的经验搬过去。
+   卡片 `bottom:72px`：页面下沿那 54px 是 `#footer`（`z-index:50`，比 `.slide` 里的一切都高），
+   伸进去之后页脚那条 hairline 横穿三张卡、页码印在最后一张卡上，而画面照旧正常。 */
+.l72-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-bg)}
+.l72-field{position:absolute;left:0;right:0;top:118px;bottom:0;z-index:0;overflow:hidden;background:var(--c-brand)}
+.l72-band{position:absolute;left:0;right:0;bottom:0;height:46%;z-index:1;overflow:hidden}
+.l72-band img{width:100%;height:100%;object-fit:cover;display:block}
+.l72-txt{position:absolute;left:var(--pad-x);right:var(--pad-x);top:176px;z-index:2}
+.l72-txt .page-title{font-family:var(--serif);font-size:72px;font-weight:900;line-height:1.16;letter-spacing:-.02em;color:var(--c-brand-on);margin-top:0}
+.l72-sub{margin-top:22px;max-width:1180px;font-size:21px;line-height:1.8;color:var(--c-brand-on)}
+.l72-cards{position:absolute;left:var(--pad-x);right:var(--pad-x);bottom:72px;min-height:320px;z-index:3;display:flex;align-items:stretch;gap:26px}
+.l72-card{flex:1;background:var(--c-card);border-radius:16px;padding:36px 32px;box-shadow:0 26px 60px rgba(0,0,0,.24)}
+.l72-card em{display:block;font-family:var(--num);font-size:14px;font-weight:700;font-style:normal;letter-spacing:.18em;color:var(--c-ink-soft)}
+.l72-card b{display:block;margin-top:12px;font-size:26px;font-weight:800;line-height:1.3;color:var(--c-ink-deep)}
+.l72-card p{margin-top:14px;font-size:17px;line-height:1.75;color:var(--c-ink)}
+
+/* L73 内容页：左栏「标题 + 一段话里嵌大号品牌色数字」+ 下半一组横条（**复用 L47 的 `.l47-*`**）
+   + 右栏三张竖着叠的注解卡、最下一张品牌色 —— 详情见 cases/L73-trend-bars-note-stack.md */
+/* **条子一律复用 `.l47-rows` / `.l47-row` / `.l47-val` 这三个类名，不许另起一套。** 条长是代码算的
+   （`chartData.ts` 按**印出来的那个数**算 `--bar-v` / `--bar-max`，一组百分比钉 100），而它是**按类名
+   扫**的：换成 `.l73-row` 之后这一页的条子彻底绕过那一段代码 —— 条长变成模型自己写的数，
+   出来是一张干净完整的图表、颜色单位结论全在，而照条长读出来的结论和旁边印着的数字不是一回事
+   （这就是 `chartData.ts` 头注里那两条真实事故）。这里只改**列宽**（左栏比 L47 整页窄一半）。
+   `.l73-lead b` 是段落里嵌的大号数字：`line-height:1` 是为了不把那一行的行距顶开，**最多两处** ——
+   三处起段落被撑得一行高一行矮，而每个字都在、看起来只是「这段排得有点乱」。
+   最下那张卡的字走 `var(--c-brand-on)`（同 L69 的 `.brand` 格），**不许写死 `#fff`**：浅色品牌色
+   那几套上白字直接读不出来，而字确实在那儿。 */
+.l73-grid{flex:1;min-height:0;display:grid;grid-template-columns:1fr .52fr;gap:56px}
+.l73-say{min-height:0;display:flex;flex-direction:column}
+.l73-kicker{font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.2em;color:var(--c-brand-deep)}
+.l73-say .page-title{font-family:var(--serif);font-size:46px;font-weight:900;line-height:1.22;letter-spacing:-.02em;color:var(--c-ink-deep);margin-top:16px}
+.l73-lead{margin-top:18px;font-size:19px;line-height:1.85;color:var(--c-ink)}
+.l73-lead b{font-family:var(--num);font-size:38px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--c-brand)}
+.l73-chart{flex:1;min-height:0;margin-top:26px;padding-top:20px;border-top:2px solid var(--c-ink-deep);display:flex;flex-direction:column}
+.l73-ctitle{font-size:19px;font-weight:800;line-height:1.3;color:var(--c-ink-deep)}
+.l73-ctitle span{font-weight:700;color:var(--c-ink-soft);margin-left:12px}
+.l73-chart .l47-row{grid-template-columns:110px 1fr 140px}
+.l73-notes{min-height:0;display:flex;flex-direction:column;gap:18px}
+.l73-note{flex:1;background:var(--c-bg-alt);border-radius:14px;padding:28px 30px;display:flex;flex-direction:column;justify-content:center}
+.l73-note em{display:block;font-family:var(--num);font-size:14px;font-weight:700;font-style:normal;letter-spacing:.18em;color:var(--c-ink-soft)}
+.l73-note b{display:block;margin-top:10px;font-size:23px;font-weight:800;line-height:1.35;color:var(--c-ink-deep)}
+.l73-note p{margin-top:10px;font-size:17px;line-height:1.7;color:var(--c-ink)}
+.l73-note.brand{background:var(--c-brand)}
+.l73-note.brand em,.l73-note.brand b,.l73-note.brand p{color:var(--c-brand-on)}
 
 /* L48 目录页：底部品牌色带 + 上方错位白卡 + 两列章节条目 —— 详情见 cases/L48-agenda-offset-card.md */
 /* L35 的错位是**竖着**的（色块贴右、竖图往左错），这一条是**横着**的：色带贴底通宽，白卡从上方

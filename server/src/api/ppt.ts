@@ -6,13 +6,15 @@ import { demoDeck, demoIds, DemoNotFoundError } from '../services/ppt/demoDeck.j
 import { disabledLayoutIds, setLayoutEnabled, LayoutStateError } from '../services/ppt/layoutState.js';
 import { planDeck, replanPageImages, PlanError, type PlannedPage } from '../services/ppt/planService.js';
 import { cleanOutline, OutlineCleanError } from '../services/ppt/outlineCleanService.js';
+import { chatOutline, composeMaterials, OutlineChatError } from '../services/ppt/outlineChatService.js';
 import { generatePage, buildDeck, PageError } from '../services/ppt/pageService.js';
 import { assemblePreview, previewShell, previewSection, PREVIEW_SLOT } from '../services/ppt/deckShell.js';
 import {
-  fillPageImages, generateSpecImage, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared,
+  fillPageImages, generateSpecImage, previewSpecPrompt, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared,
   findImageSlots, specsFromSlots, realignImageRecords,
-  PptImageError, type FilledImage,
+  PptImageError, type FilledImage, type SpecImageContext,
 } from '../services/ppt/imageService.js';
+import { polishSpecPrompt, rewriteSpecPrompt, PromptCraftError } from '../services/ppt/promptCraftService.js';
 import {
   applyTextEdit,
   applyStyleEdit,
@@ -23,6 +25,9 @@ import {
   COLOR_PALETTE,
   PageEditError,
 } from '../services/ppt/pageEdit.js';
+import {
+  toBackdrop, toSplit, setBackdropMask, backdropMask, pageImageMode, toPoster, posterText, ImageModeError,
+} from '../services/ppt/imageModes.js';
 import { isBlankPage } from '../services/ppt/blankPage.js';
 import { rechartEdited } from '../services/ppt/chartData.js';
 import { addCanvasText, addCanvasImage, setCanvasBox, deleteCanvasEl } from '../services/ppt/canvasEdit.js';
@@ -47,7 +52,10 @@ import {
   savePageSetup,
   savePageVeil,
   savePageEditedHtml,
+  savePagePoster,
+  restorePagePoster,
   updatePlanImageSubject,
+  updatePlanImageFullPrompt,
   updatePlanPageImages,
   updatePlanPageOutline,
   deleteDeck,
@@ -71,12 +79,15 @@ import {
   ASSETS_PAGE_SIZE, ASSETS_NO_DECK,
 } from '../services/ppt/assetStore.js';
 import {
-  MAX_SUBJECT_CHARS, nearestRatio, orphanedPreparedNotes, type PreparedImage,
+  MAX_SUBJECT_CHARS, MAX_FULL_PROMPT_CHARS, nearestRatio, orphanedPreparedNotes,
+  type PreparedImage, type PlannedImage,
 } from '../services/ppt/imageSpec.js';
 import { storeUploadedImage } from '../core/image/imageGateway.js';
 import { imageSize } from '../core/image/imageSize.js';
 import { requireAdmin } from '../auth/guards.js';
 import { registerPptSdkRoutes, registerPptSdkAdminRoutes } from './pptSdk.js';
+import { mountExtractRoutes } from './extractRoutes.js';
+import { StageError } from '../services/consult/draftService.js';
 import { pptSdkLimits, chargeExtraPptSdkAiCalls } from '../services/ppt/sdkLimits.js';
 
 export const pptRouter = Router();
@@ -567,6 +578,52 @@ pptRouter.get('/styles', (_req: Request, res: Response) => {
 });
 
 /**
+ * 「生成提纲」那个对话页的一轮（**一次真实 AI 调用**）。
+ *
+ * **不带 deck id、不写任何库**：这一步发生在新建演示稿之前，结果回到那个对话页上，
+ * 由他点「用这份提纲」带回输入框。整段对话由前端带全（服务端不存）—— 漏带历史的话
+ * 模型每轮都从头问一遍听众和场合，而界面上只是「它怎么老在问同样的问题」。
+ */
+pptRouter.post('/outline-chat', async (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const turns = Array.isArray(req.body?.turns) ? req.body.turns : [];
+  try {
+    // 资料那一段由**服务端**按 `attachments` 合成（不收前端拼好的整段，同
+    // `briefCompose` 那条）：收整段的话「第 3 份没进去」在界面上看不出来 —— 卡片还在，
+    // 而提纲是照着少一份资料写的，读起来完全正常。
+    const r = await chatOutline(turns, owner.userId, {
+      materials: composeMaterials(req.body?.attachments),
+      currentOutline: typeof req.body?.currentOutline === 'string' ? req.body.currentOutline : undefined,
+    });
+    res.json(r);
+  } catch (e: any) {
+    sendPptError(res, e, e instanceof OutlineChatError, '这一轮没聊成');
+  }
+});
+
+// 「生成提纲」页上传资料用的两条路（`/extract-file` 提取、`/tidy-text` AI 整理），
+// 和品牌咨询共用 `api/extractRoutes.ts` 那一份实现。`app: 'ppt'` 决定这几次调用记在
+// **展示稿**的额度/日志上 —— 沿用 'consult' 的话，管理员限了咨询之后这个页面会回一句
+// 说咨询额度用完了（他压根没在用咨询），见那份文件头。
+mountExtractRoutes(pptRouter, {
+  app: 'ppt',
+  fail: (err, _req, res) => {
+    // StageError 自带状态码（这张图是 .heic 是 400、这条接入点的模型不认图是 502）——
+    // 丢给 sendPptError 的话两种都成 500「服务器出错」，而「把 iPhone 的照片导出成 JPG」
+    // 这句话配着 500 读起来像我们这边坏了，他只会反复传同一张图（每次都真扣一次）。
+    if (err instanceof StageError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    sendPptError(res, err, false, '这份资料没处理成');
+  },
+  chargeExtra: (req, extra) => {
+    if (req.sdkPk) chargeExtraPptSdkAiCalls(req.sdkPk, extra);
+  },
+});
+
+/**
  * 提纲整理：挑出提纲里的无效信息（备注 / 待办 / 口头语 / 元信息），回一份干净提纲。
  *
  * **不落库**，也不动这份稿子的任何一列：库里照旧是他原来那份提纲，换不换由前端那个
@@ -1035,6 +1092,14 @@ pptRouter.get('/decks/:id/pages', (req: Request, res: Response) => {
     pendingImages: safeJson<unknown[]>(p.pending_images_json, []),
     /** 这一页的蒙版透明度（097）。滑块照它画 —— 不回的话每次刷新都归零，而库里是他调过的值。 */
     veilOpacity: p.veil_opacity || 0,
+    // 这一页的图是分屏还是整页背景（103）+ 幕帘浓度。**按 html 现算**（记号就在 html 里），
+    // 不另存一列：两处各存一份的话刷新之后按钮写着「改成背景图」而这一页已经是背景图了，
+    // 点下去回一句「已经是背景图模式了」，看起来像这个功能坏了。
+    imageMode: p.html ? pageImageMode(p.html) : 'split',
+    backdropMask: p.html ? backdropMask(p.html) : null,
+    // 单图模式（104）：**真的印在图里**的那几行字。刷新之后不回的话，界面上那条「这几句在图里、
+    // 改不了」的提示消失 —— 他会去双击改字（改不动），或者以为漏掉的那两条要点还在。
+    posterText: p.html ? posterText(p.html) : [],
     // 生成前改的那两样（092）。`setupLayoutId` 是**他挑的**那条，`layoutId` 是这份 html
     // 实际用的那条 —— 两个不一样就是「换了版式还没重新生成」，前端必须显眼说出来：
     // 不说的话他看着旧版式排的那一页，以为新版式就长这样。
@@ -1278,6 +1343,32 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
       }
     }
 
+    // 他**自己改写的那一整条**（框里那一大段）。`''` = 恢复成代码自动拼的那条。
+    // 同样先落库再生图：反了的话生图一失败他那一整段就没了（得照着回忆再写一遍）。
+    const rawFull = typeof req.body?.fullPrompt === 'string' ? req.body.fullPrompt.trim() : null;
+    if (rawFull !== null && from !== 'clear') {
+      if (rawFull.length > MAX_FULL_PROMPT_CHARS) {
+        throw new PageError(
+          `第 ${index} 格改写的提示词 ${rawFull.length} 字，超过 ${MAX_FULL_PROMPT_CHARS} 字上限（现在还没存）。` +
+            '截短一点再来 —— 截掉后半段照样能生出一张图，而你写在后面那几个条件一处都不会生效。'
+        );
+      }
+      if (rawFull !== (specs[index - 1].fullPrompt || '')) {
+        if (!updatePlanImageFullPrompt(deck.id, owner, page, index, rawFull).ok) {
+          throw new PageError(`第 ${index} 格改写的提示词没存上（这一格还是原来那条）。刷新一下再试。`);
+        }
+        const next = { ...specs[index - 1] };
+        if (rawFull) next.fullPrompt = rawFull;
+        else delete next.fullPrompt;
+        specs[index - 1] = next;
+        problems.push(
+          rawFull
+            ? `第 ${index} 格从现在起用你改写的这一整条 —— 换画风、改成背景图/单图、改配色、改「画什么」那句都不会再影响它（备图和「换一批图」两条路都按它发）。`
+            : `第 ${index} 格恢复成自动拼的那条了（重新跟着画风、模式、配色和「画什么」那句走）。`
+        );
+      }
+    }
+
     // 只存提示词、不生图、不动这一格已经备好的那张。
     if (from === 'subject') {
       const now = safeJson<any[]>(row?.pending_images_json || '', []).filter((x) => x?.url);
@@ -1333,6 +1424,14 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
         // 图的配色跟着这份稿子的规范走（096）—— 不传的话蓝色系的稿子备出一堆橙图，
         // 每张单看都不错、一处都不报错。
         design: meta.design,
+        // 留白方向按**这一页将要用的**那条版式算（他在「生成前」挑过就是那条）。传规划里那条
+        // 的话，换过版式的页备出来的图让开的是另一条版式的文字位置 —— 图单看正常，只是主体
+        // 正好压在标题底下。
+        layoutId: row?.setup_layout_id || planRow.layoutId,
+        // 这一页已经生成的那份 html：模式（分屏 / 背景图 / 单图）和比例从它现算。不传的话
+        // 「改成背景图 / 改成单图」在这条路上完全不生效 —— 按规划里那条 concept 生一张主体居中、
+        // 四边留白、一个字都没有的插画，而这次是真花钱的（见 `specJob`）。
+        pageHtml: row?.html || undefined,
       });
       picked = r.image;
       problems.push(...r.problems);
@@ -1364,6 +1463,157 @@ pptRouter.post('/decks/:id/prepare-images', async (req: Request, res: Response) 
     res.json({ page, images, problems, imageSpecs: specs, pasted });
   } catch (e: any) {
     sendPptError(res, e, e instanceof PageError || e instanceof PptImageError, '备图失败');
+  }
+});
+
+/**
+ * 这一格**真正会发出去的那条提示词**（预览用，**不生图、不扣额度、不写库**）。
+ *
+ * 三条是承重的：
+ * ① **提示词由服务端拼**（`previewSpecPrompt` → 和生图那条路同一个 `buildImagePrompt`）。
+ *    前端自己拼一份近似的话，他照着那份把「留白」「配色」调好，而真发出去的是另一条 ——
+ *    图回来还是不对，两边都不报错（他只会一张张重生，每张都是一次真实花费）。
+ * ② **用 body 里那句现写的 `subject` 预览，不用库里那句**：他改完还没点「确定生成」，
+ *    拿库里旧那句渲染的话预览和即将发出去的那条不是一回事，而预览这个功能的全部意义
+ *    就是对账。这里**不写库**（写库那一步在 `prepare-images` 里，带 `planRev`）。
+ * ③ **`problems`（没换掉的占位符那几条）要照原样回去**：那几个字会原样发给模型，
+ *    而提示词读起来照样通顺。
+ */
+pptRouter.post('/decks/:id/image-prompt', (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const page = Number(req.body?.page) || 0;
+  const index = Number(req.body?.index) || 0;
+  try {
+    const { spec, ctx } = specAndCtx(deck, owner, page, index, req.body?.subject);
+    const r = previewSpecPrompt(spec, ctx);
+    res.json({ page, index, ...r });
+  } catch (e: any) {
+    sendPptError(res, e, e instanceof PageError || e instanceof PptImageError, '提示词预览失败');
+  }
+});
+
+/**
+ * 「这一格那条规格 + 拼提示词要的上下文」。
+ *
+ * **预览和「AI 润色」两条路共用这一份**：各写一遍的话两边的 `layoutId` / `pageHtml` 早晚
+ * 不一样 —— 润色时按规划那条版式算留白、预览时按他挑的那条算，于是润色回来那句让开的是
+ * 另一块地方，而两段中文读起来都很正常（他是照着这个框调的）。
+ */
+function specAndCtx(
+  deck: NonNullable<ReturnType<typeof getDeck>>,
+  owner: DeckOwner,
+  page: number,
+  index: number,
+  rawSubject: unknown
+): { spec: PlannedImage; ctx: SpecImageContext } {
+  const planRow = planOf(deck).pages.find((p) => p.page === page);
+  if (!planRow) {
+    throw new PageError(`第 ${page} 页不在这份稿子的规划里。刷新一下看看规划是不是换过了。`);
+  }
+  const specs = planRow.imageSpecs || [];
+  if (index < 1 || index > specs.length) {
+    throw new PageError(`第 ${page} 页只规划了 ${specs.length} 格图，没有第 ${index} 格。`);
+  }
+  const raw = typeof rawSubject === 'string' ? rawSubject.trim() : '';
+  const spec = raw ? { ...specs[index - 1], subject: raw } : specs[index - 1];
+  if (!spec.subject.trim()) {
+    throw new PageError(`第 ${index} 格还没写画什么 —— 发出去的提示词里只剩画风模板那几句，生出来的图和这一页无关。`);
+  }
+  if (spec.subject.length > MAX_SUBJECT_CHARS) {
+    throw new PageError(
+      `第 ${index} 格的提示词 ${spec.subject.length} 字，超过 ${MAX_SUBJECT_CHARS} 字上限（现在还没存，改短一点再看）。`
+    );
+  }
+  const row = pageRow(deck.id, owner, page);
+  const meta = shellMeta(deck);
+  return {
+    spec,
+    ctx: {
+      owner,
+      index,
+      title: planRow.title,
+      section: planRow.section || undefined,
+      topic: meta.topic,
+      styleId: deck.style_id || undefined,
+      deckId: deck.id,
+      page,
+      design: meta.design,
+      // 留白方向按**这一页将要用的**那条版式算，和备图那条路一个来源（传规划里那条的话
+      // 预览里那句让开的是另一条版式的文字位置，而他是照着预览调的）。
+      layoutId: row?.setup_layout_id || planRow.layoutId,
+      // 和备图那条路同一个来源：模式/比例从这一页的 html 现算。不传的话他把这一页切成背景图
+      // 之后，预览里还是那条概念插画的提示词（读起来完全正常）—— 而这个预览存在的意义就是对账。
+      pageHtml: row?.html || undefined,
+    },
+  };
+}
+
+/**
+ * 「AI 润色」这一格的提示词：**只让模型改「画什么」那一句**，整条由代码重新拼
+ * （`promptCraftService`，规范在 `library/image-prompt-craft.md`）。
+ *
+ * 两件事在这一层：
+ * ① **不写库**（同 `/image-prompt`）—— 落地是他点「确定生成」那一下，所以这里回的 `subject`
+ *    前端必须收着一起提交；只把框里那一整条提交的话，这一格从此变成「他改写过的自定义那条」，
+ *    换画风/切背景图全都不再影响它（而界面上一处都不说）。
+ * ② **要扣一次 AI 额度**（走 `aiGateway`，`source: 'ppt'`）：润色是一次真实调用，
+ *    所以失败必须说出真实成因 —— 合成一句「润色失败」的话他只会一直点，每次都真扣一次。
+ */
+pptRouter.post('/decks/:id/craft-image-prompt', async (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const page = Number(req.body?.page) || 0;
+  const index = Number(req.body?.index) || 0;
+  try {
+    const { spec, ctx } = specAndCtx(deck, owner, page, index, req.body?.subject);
+    const r = await polishSpecPrompt(spec, ctx, owner.userId);
+    res.json({ page, index, ...r });
+  } catch (e: any) {
+    sendPptError(res, e, e instanceof PageError || e instanceof PromptCraftError, '润色提示词失败');
+  }
+});
+
+/**
+ * 「AI 重写整条」这一格的提示词：把**会原样发出去的那一整条**交给模型重写
+ * （`promptCraftService.rewriteSpecPrompt`，规范在 `image-prompt-craft.md` 的「## 重写整条」那一节）。
+ *
+ * 和 `/craft-image-prompt` 是两件事，前端那两个按钮的话术必须分开：润色改的是「画什么」那一句、
+ * 整条照旧由代码拼（换画风还跟着走）；这里回来那条**要被存成这一格的 `fullPrompt`**，
+ * 从此换画风/切背景图/改配色/改那句「画什么」都不再影响它。写成「重写完还跟着画风走」的话，
+ * 他换完画风回来发现这一格纹丝不动，而一处都不报错。
+ *
+ * `draft` 是他**此刻框里那一整条**（可能已经手改过几句）：不带的话服务端拿库里/现拼的那条重写，
+ * 他刚调好的那几句全丢了，而回来那条读起来更专业 —— 丢在哪一步看不出来。
+ * 同样**不写库**（落地是他点「确定生成」那一下），但**扣一次 AI 额度**。
+ */
+pptRouter.post('/decks/:id/rewrite-image-prompt', async (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const page = Number(req.body?.page) || 0;
+  const index = Number(req.body?.index) || 0;
+  try {
+    const { spec, ctx } = specAndCtx(deck, owner, page, index, req.body?.subject);
+    const draft = typeof req.body?.draft === 'string' ? req.body.draft : undefined;
+    const r = await rewriteSpecPrompt(spec, ctx, owner.userId, draft);
+    res.json({ page, index, ...r });
+  } catch (e: any) {
+    sendPptError(res, e, e instanceof PageError || e instanceof PromptCraftError, '重写提示词失败');
   }
 });
 
@@ -1459,6 +1709,113 @@ pptRouter.patch('/decks/:id/pages/:page/veil', (req: Request, res: Response) => 
     // 这一页还没生成时回空串：拿 '' 去拼会抛「找不到 <section>」，而他要的只是先把值存下来。
     previewHtml: isBuilt(row) ? previewOf(deck, { veil_opacity: opacity }, row.html) : '',
   });
+});
+
+/**
+ * 这一页的图怎么用（**纯代码搬 DOM，不调 AI、不花一分钱**）：`mode='backdrop'` 把那一格的图
+ * 铺成整页背景，`mode='poster'` 把整页换成一张把文字印在里面的图，`mode='split'` 改回去。
+ * 已经是背景图时带 `mask` 来的话只调幕帘浓度。
+ *
+ * 单图那一路多两件事（104）：**变形前那一页的 html + 配图记录要一起存进 `poster_from_*`**
+ * （`savePagePoster` 一句 SQL 写完），`split` 在单图页上等于「改回原版」（照那两列写回去，
+ * 不是走 `toSplit`）—— 走 `toSplit` 的话回的是一句「这一页不是背景图模式」，而他看到的按钮
+ * 写着「改回原版」，这一页的文字已经不在 html 里了。
+ *
+ * 三件事是承重的：
+ * ① **`notes` 必须回给前端并显示出来**：变形本身成功，但「这张图还是按一格构图生的（要真正
+ *    当背景用的请再点一次生成配图）」这句话在画面上看不出来 —— 不说的话他会觉得这个功能
+ *    「就是把图拉大了、效果很差」，而那只是还没用背景图的提示词生过。
+ * ② **拒掉的那几页要带原文 400**（`ImageModeError` 里说的是哪个类名上的哪个值）：合成一句
+ *    「这一页不支持背景图」的话他会一页页去试，而真正的成因是那一页的底是品牌色。
+ * ③ 存不上要 500 并说清「画面上是变过的样子，库里还是原来那一版」（同其余就地编辑）：
+ *    静默丢的话他接着点「生成配图」，那张图会生到库里那份分屏的 html 上（一次真实花费）。
+ */
+pptRouter.post('/decks/:id/image-mode', (req: Request, res: Response) => {
+  const t = editTarget(req, res, '，还没有可以改成背景图的图。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
+  const mode = String(req.body?.mode || '');
+  const rawMask = req.body?.mask;
+  const mask = rawMask === undefined || rawMask === null || rawMask === '' ? undefined : Number(rawMask);
+  const cur = pageImageMode(row.html);
+  try {
+    // 「改回原版」（单图页上的 split）走库里那两列，不经过 html 变形 —— 单独一条早返回，
+    // 因为它要写的列和下面那条（只动 html）不是一套。
+    if (mode === 'split' && cur === 'poster') {
+      if (!restorePagePoster(deck.id, owner, page)) {
+        res.status(500).json({
+          error:
+            `第 ${page} 页改不回原版 —— 库里没有变成单图之前那一版（这一页在那之后重新生成过？）。` +
+            '这一页现在只有那张图，要拿回文字版式只能重新生成这一页（那是一次真实调用，版式和文案会重排）。',
+        });
+        return;
+      }
+      const back = pageRow(deck.id, owner, page);
+      if (!isBuilt(back)) {
+        res.status(500).json({ error: `第 ${page} 页改回原版之后读不出内容了，刷新一下看看。` });
+        return;
+      }
+      res.json({
+        page,
+        mode: pageImageMode(back.html),
+        mask: backdropMask(back.html),
+        notes: [
+          '已经改回单图之前那一版（文字、版式、原来那几张图都回来了）。刚才那张单图还在素材库里（/ppt/assets）。',
+        ],
+        text: [],
+        html: back.html,
+        previewHtml: previewOf(deck, back, back.html),
+      });
+      return;
+    }
+
+    let r;
+    if (mode === 'backdrop') {
+      // 已经是背景图 + 带了浓度 = 他在拖那个滑块。这里要是照旧走 `toBackdrop`，回的是一句
+      // 「这一页已经是背景图模式了」，而滑块看起来就是「拖不动」。
+      r = cur === 'backdrop' && mask !== undefined ? setBackdropMask(row.html, mask) : toBackdrop(row.html, { mask });
+    } else if (mode === 'poster') {
+      r = toPoster(row.html);
+    } else if (mode === 'split') {
+      r = toSplit(row.html);
+    } else {
+      // 静默当成 backdrop 的话，前端拼错一个字之后这一页被改成了背景图，而按钮显示的是另一件事。
+      res.status(400).json({
+        error: `认不出的图片模式「${mode || '(空)'}」—— 只有 backdrop / poster / split。这一页没动。`,
+      });
+      return;
+    }
+    const saved =
+      r.mode === 'poster'
+        ? // 单图：新 html + 变形前那一页原样，**同一句 SQL**（分两次写的话中间失败之后
+          // 这一页的文字没了而「改回原版」找不到那一版，见 104 的头注）。
+          savePagePoster(deck.id, owner, {
+            page,
+            html: r.html,
+            fromHtml: row.html,
+            fromImages: row.images_json || '[]',
+          })
+        : savePageEditedHtml(deck.id, owner, { page, html: r.html });
+    if (!saved) {
+      res.status(500).json({
+        error: `第 ${page} 页没存上 —— 画面上是变过的样子，而库里还是原来那一版（配图、拼整份和导出用的都是它）。刷新一下再试一次。`,
+      });
+      return;
+    }
+    res.json({
+      page,
+      mode: r.mode,
+      mask: backdropMask(r.html),
+      notes: r.notes,
+      // 真的会印进图里的那几行字（界面要显示出来：漏掉的那几句在画面上看不出来）。
+      text: r.text || [],
+      html: r.html,
+      previewHtml: previewOf(deck, row, r.html),
+    });
+  } catch (e: any) {
+    const code = e instanceof ImageModeError ? 400 : 500;
+    res.status(code).json({ error: e?.message || '这一页的图片模式没改成' });
+  }
 });
 
 /**
@@ -1909,6 +2266,14 @@ pptRouter.post('/decks/:id/images', async (req: Request, res: Response) => {
       page,
       // 配完图那一眼的预览要带这一页的蒙版（097），否则「配了图之后蒙版没了」。
       veil: row.veil_opacity || 0,
+      // 他在「编辑这一格的提示词」里改写过整条的那几格，这条路也要按他那条发（和备图同一份
+      // 来源：`plan_json` 的 `imageSpecs`）。不传的话这里重新按画风模板拼一条 —— 他逐字调好、
+      // 备图时确认过的那条在「换一批图」上完全不生效，而缩略图换了、接口 200。
+      promptOverrides: new Map(
+        (planRow?.imageSpecs || [])
+          .map((s, i) => [i + 1, String((s as any).fullPrompt || '').trim()] as const)
+          .filter(([, v]) => !!v)
+      ),
     });
     // 对外接入（100）：这一次真的生了几张图就按几张扣。中间件只知道「来了一个请求」，扣的是 1
     // —— 不补差额的话生图这条路对第三方相当于打了 N 折（一次最多 4 张），而后台显示的用量是

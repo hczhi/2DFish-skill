@@ -687,6 +687,8 @@ async function testImageProvider(provider: { id: string; model: string }, res: R
       duration_ms: Date.now() - started,
       model: provider.model,
       image_url: first.url,
+      // 认不认参考图（图生图）在配置阶段完全看不出来，见 probeRefImage。
+      ref_image: await probeRefImage(provider.id, first.url),
       protocol: first.protocol,
       // 猜出来的协议必须说出来：extra_json 是自由文本框，`protocol` 拼错完全静默，
       // 而猜对的那次和填对的那次结果一模一样 —— 只有这一行能让人发现自己拼错了。
@@ -706,6 +708,53 @@ async function testImageProvider(provider: { id: string; model: string }, res: R
       // 这个网关不支持 images 端点，四种解法完全不同。
       error: String(e?.message || e).slice(0, 500),
     });
+  }
+}
+
+/**
+ * 参考图（图生图）探测：拿刚生成的那张图当参考图，再发一次最小请求。
+ *
+ * 为什么必须在配置阶段探：**「这条接入点认不认参考图」在界面上没有任何别的线索**。
+ * 网关不转发 `/images/edits` 时业务里那一格会报一句 HTTP 404，管理员会先怀疑 key 和模型名；
+ * 而更糟的一种是网关收下请求、把参考图那一份丢掉，照旧文生图出一张 —— 接口 200、
+ * 缩略图好看，只是跟参考图无关，而每次重生都真扣一次额度。所以 verdict 只说「接住了」，
+ * **不说「照着画了」**：这两件事我们这边区分不了，把话说满的话他会去怀疑自己挑的参考图。
+ *
+ * 两条边界（同 probeNoThinking）：① 走的是**业务那条同一个 generateImage**（在这里另写一份
+ * multipart 的话后台会显示一个和业务实际发的对不上的结论）；② **探测自己失败不改连通结论**，
+ * 只说「没测出来」—— 让它翻红的话「key 错了」和「不支持参考图」会混成同一句。
+ * 代价是点一次「测试」会真生成 2 张图（第 2 张是这次探测），界面上写着。
+ */
+async function probeRefImage(
+  providerId: string,
+  refUrl: string
+): Promise<{ verdict: 'ok' | 'unsupported' | 'unknown'; note: string }> {
+  try {
+    const out = await generateImage('保留这张参考图的配色，把画面主体换成一个红色方块，纯白背景，无文字', {
+      size: '1024x1024',
+      n: 1,
+      providerId,
+      timeoutMs: 180_000,
+      refImages: [refUrl],
+    });
+    return {
+      verdict: 'ok',
+      note:
+        `这条接入点接住了带参考图的请求（回了 ${out.length} 张）。注意「接住了」不等于「照着画了」：` +
+        '中转站把参考图那一份丢掉时照样回 200 带一张漂亮的图 —— 只能在业务里挑一张对比强烈的参考图实测一次。',
+    };
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    if (/HTTP 4\d\d/.test(msg)) {
+      return {
+        verdict: 'unsupported',
+        note:
+          `这条接入点不认带参考图的请求：${msg.slice(0, 220)}\n` +
+          '运行时会把这句原文报出来（不会悄悄退回文生图）。404 多半是网关没转发 /images/edits ——' +
+          '可以在 extra_json 里试 {"ref_mode":"body"}（把参考图塞进 generations 的 image 字段），或者换一条接入点。',
+      };
+    }
+    return { verdict: 'unknown', note: `没测出来认不认参考图（${msg.slice(0, 160)}）—— 上面那条连通结论不受影响。` };
   }
 }
 

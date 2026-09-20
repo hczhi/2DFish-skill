@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { AI_APPS, isValidAppScope, appName } from '../core/llm/apps.js';
+import { AI_APPS, EXTRACT_APPS, isValidAppScope, appName } from '../core/llm/apps.js';
 
 // 「按应用配 token / 配额」靠 GatewayOptions.source 和配置里的 scope_app
 // **字符串相等**来匹配。所以 AI_APPS 白名单一旦漏了某个 source，
@@ -78,6 +78,16 @@ describe('AI 应用白名单与 gateway 的 source 保持一致', () => {
     expect(stale, `AI_APPS 里这些 id 在代码里找不到对应的 gateway 调用：${stale.join(', ')}`).toEqual([]);
   });
 
+  it('EXTRACT_APPS 里每个都在 AI_APPS 里', () => {
+    // 「上传提取」那条路（`api/extractRoutes.ts`）被两个模块共用，它的 source 是**参数**
+    // 而不是字面量 —— 下面那条「必须是字面量」的测试为它开了一个口子，这一条就是那个口子的
+    // 替代品：`EXTRACT_APPS` 里混进一个不在 AI_APPS 里的值的话，按应用配 token/额度对它
+    // 静默失效，而上传/提取/整理跑起来一切正常。
+    const known = new Set(AI_APPS.map((a) => a.id));
+    const missing = EXTRACT_APPS.filter((a) => !known.has(a));
+    expect(missing, `EXTRACT_APPS 里这些不在 AI_APPS 里：${missing.join(', ')}`).toEqual([]);
+  });
+
   it('AI_APPS 的 id 不重复', () => {
     const ids = AI_APPS.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -97,6 +107,11 @@ describe('gateway 的 source 必须是字面量', () => {
         if (/^(string|\('|'|"|`)/.test(raw)) continue;
         if (/^[A-Za-z_$][\w$]*\.(dir_)?source\b/.test(raw)) continue;
         if (raw.startsWith('src ?')) continue;
+        // 唯一的例外：`source: app` —— 上传提取那条路被两个模块共用，`app` 一路从
+        // `api/extractRoutes.ts` 传到服务里。放行的条件是那个文件用了 `ExtractApp`
+        // 这个类型（它的取值就是 `EXTRACT_APPS`，上面有一条测试逐个对着 AI_APPS 查）。
+        // 只按文件名放行的话，同一个文件里以后写 `source: someString` 也会跟着蒙过去。
+        if (raw === 'app' && /ExtractApp\b/.test(text)) continue;
         if (/^'[^']*'(\s*\|\s*'[^']*')*;?$/.test(raw)) continue;
         offenders.push(`${file.replace(SRC, 'src')}: source: ${raw.slice(0, 60)}`);
       }

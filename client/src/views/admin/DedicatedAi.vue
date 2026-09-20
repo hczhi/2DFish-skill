@@ -671,12 +671,16 @@ async function testDed(p: Provider) {
       duration_ms: number; model: string;
       reasoning_hint?: string;
       no_thinking?: { verdict: string; note?: string };
+      ref_image?: { verdict: string; note?: string };
     }>(`/api/admin/providers/${p.id}/test`, {})
     let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
     // 专属接入点更要显示这两条：它没有平台回落，这一条不能关思维链就是
     // 「这个用户的提取/抽取全废」，而连通测试原来只说一句 ✓。
     if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
     if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
+    // 专属的生图接入点同样要说认不认参考图：专属渠道没有平台回落，这一条不认就是
+    // 「这个用户传了参考图也没用」，而界面上那一格照样回 200 挂着新缩略图。
+    if (r.ref_image?.note) msg += `\n${r.ref_image.verdict === 'unsupported' ? '✗' : r.ref_image.verdict === 'ok' ? '✓' : '⚠'} 参考图：${r.ref_image.note}`
     testResults.value[p.id] = { ok: true, msg }
   } catch (e: any) {
     testResults.value[p.id] = { ok: false, msg: e.message || '测试失败' }

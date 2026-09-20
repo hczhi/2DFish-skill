@@ -199,6 +199,13 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // 「生成提纲」那个对话页。也必须写在 /ppt/decks/:id 之前（同 new 那条的理由）。
+      path: '/ppt/decks/new/outline',
+      name: 'ppt-outline-chat',
+      component: () => import('../views/ppt/PptOutlineChat.vue'),
+      meta: { requiresAuth: true, requiresAI: true },
+    },
+    {
       path: '/ppt/decks/:id',
       name: 'ppt-deck',
       component: () => import('../views/ppt/PptPlan.vue'),

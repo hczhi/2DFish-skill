@@ -4,7 +4,7 @@
 // 有底色/边框的块 → 形状，`<img>` 和内嵌 `<svg>` → 图片，每一段字 → 文本框。整页**不垫底图**：
 // 客户在 PowerPoint 里点得中每一块，能挪、能删、能改色。
 //
-// pptx 里没有伪元素这个东西，而这套模板 65 个版式里 65 个都用 `::before/::after` 画装饰 ——
+// pptx 里没有伪元素这个东西，而这套模板几乎每个版式都用 `::before/::after` 画装饰 ——
 // 所以走之前先把它们**实体化成真节点**（见 walkPage 里那一段），照片上的遮罩/幕帘也在里面。
 //
 // 剩下的代价一条都不能不说（硬规则 1，全在 `pptxNotes` 里）：pptx 里**没有渐变填充、没有毛玻璃 /
@@ -121,6 +121,7 @@ const DEGRADE_NOTE: Record<string, string> = {
   overflow: '这一块在网页上被裁掉了一截（overflow:hidden），而 pptx 的文本框不裁 —— 那几行会露出来',
   transform: '缩放/倾斜/3D 变换没还原（纯旋转是还原了的）',
   textGradient: '渐变填充的大数字退成了渐变的第一个色',
+  mask: '有一处羽化/异形遮罩（mask-image）没写在 `<img>` 自己身上 —— pptx 里那一块是完整不透明的矩形',
 };
 
 /** 同时最多几份在导。超了直接拒（见文件头 ⑥）。 */
@@ -344,7 +345,7 @@ async function walkPage(page: Page, index: number): Promise<PageWalk> {
     const roots = [slide, document.getElementById('top-band')].filter(Boolean) as HTMLElement[];
 
     // ── 伪元素实体化：**必须在量任何东西之前** ──────────────────────────────
-    // pptx 里没有「伪元素」这个东西，而这套模板 65 个版式里 65 个都用 `::before/::after` 画装饰
+    // pptx 里没有「伪元素」这个东西，而这套模板几乎每个版式都用 `::before/::after` 画装饰
     // （照片上那层遮罩、幕帘、小三角、引号、竖线、色条）。所以先把它们换成**真的节点**：把伪
     // 元素的 computed style 一条条抄到一个 `<i>` 上，插进同一个元素里（`::before` 插最前、
     // `::after` 插最后），同时给那个元素打个标记让上面那条 `content:none` 把原来的伪元素杀掉。
@@ -485,15 +486,35 @@ async function walkPage(page: Page, index: number): Promise<PageWalk> {
       const sp = mine ? [mine, ...spins] : spins; // 自己那一层最先作用，然后才是外面几层
       const clipText = (cs as any).webkitBackgroundClip === 'text' || (cs as any).backgroundClip === 'text';
 
+      // 「这一块是不是截成像素贴的」要在数损耗**之前**算出来（下面那段图分支用的是同一组变量）。
+      // 截图那条路把 `clip-path` 和 `filter` 一起烙进像素里（`shootNode` 按元素截 + `omitBackground`，
+      // 裁掉的那部分就是透明），也就是说这两样**在图上是如实导出的**，不是损耗。一律 bump 的话
+      // 「有 N 处裁剪/滤镜导不出去」这句话每一份都在，用户会回去换版式、换图、重导一遍，而那几页
+      // 导出前后一模一样 —— 更贵的是真丢的那几处（毛玻璃、混合模式）被这堆假警报埋掉了。
+      const bgi = cs.backgroundImage;
+      const kids = [...el.children].filter((c) => !c.hasAttribute('data-pptx-pseudo'));
+      const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && (n.textContent || '').trim());
+      const cssBgOnly = bgi.includes('url(') && !kids.length && !ownText;
+      const isSvg = el.tagName.toLowerCase() === 'svg';
+      const shot = el.tagName === 'IMG' || isSvg || cssBgOnly;
+
       // pptx 里压根没有对应画法的那些，逐条数出来（`pptxNotes` 会把它们变成话）。
       // 伪元素不在这里数 —— 上面已经实体化成真节点了，只有实体化不了的那几种才 bump。
-      if (cs.clipPath !== 'none') bump('clipPath');
+      if (cs.clipPath !== 'none' && !shot) bump('clipPath');
       if (cs.backdropFilter && cs.backdropFilter !== 'none') bump('glass');
       if (cs.mixBlendMode !== 'normal') bump('blend');
-      if (cs.filter !== 'none') bump('filter');
+      if (cs.filter !== 'none' && !shot) bump('filter');
+      // mask-image 只在截图那条路上是如实的（羽化留在 PNG 的 alpha 里，L66 靠的就是这个）。
+      // 写在别的块上时 pptx 里是一整块硬边矩形，而每个元素都在、位置也对 —— 看起来只像
+      // 「这一版的图裁小了」，所以必须数出来。`mask` 简写没有计算值，要读 maskImage。
+      const maskImg = (cs as CSSStyleDeclaration & { webkitMaskImage?: string }).maskImage
+        || (cs as CSSStyleDeclaration & { webkitMaskImage?: string }).webkitMaskImage || 'none';
+      if (maskImg !== 'none' && !shot) bump('mask');
       if (cs.writingMode !== 'horizontal-tb') bump('vertical');
-      // 纯旋转已经按角度还原了（上面 spun），这里只报缩放/倾斜那种真还不了的。
-      if (cs.transform !== 'none' && !mine) bump('transform');
+      // 纯旋转已经按角度还原了（上面 spun），**纯位移也一样**（`box` 量的是 rect，本来就是变形之后
+      // 的位置）—— 这里只报缩放/倾斜那种真还不了的。把 `translate(-50%,-50%)` 那十几处居中一起报
+      // 出来的话，「有 20 处变形导不出去」是每一份的常态，看起来像整套版式都不能导。
+      if (cs.transform !== 'none' && !mine && !/^matrix\(1, 0, 0, 1,/.test(cs.transform)) bump('transform');
       if (clipText) bump('textGradient');
 
       // ── 形状：有底色 / 有边框 / 有渐变底的块 ──────────────────────────
@@ -505,7 +526,6 @@ async function walkPage(page: Page, index: number): Promise<PageWalk> {
         color: (cs as any)['border' + side + 'Color'] as string,
       }));
       const bw = Math.max(...borders.map((s) => s.w));
-      const bgi = cs.backgroundImage;
       const gradient = bgi !== 'none' && !bgi.includes('url(');
       const firstColor = bgi.match(/rgba?\([^)]+\)|#[0-9a-f]{3,8}/i)?.[0] || null;
       if (gradient && !clipText) bump('gradient');
@@ -528,11 +548,9 @@ async function walkPage(page: Page, index: number): Promise<PageWalk> {
       // 「实体化出来的那个装饰节点」不算内容：不放行的话 `.p5-visual`/`.hero-case`/`.photo`
       // 那几块（自己带一层 `::after` 遮罩）会因为「有子节点」走不到这条路上，整张背景图消失，
       // 而那一页看起来只是「留白多」。它们的遮罩因此是**烙进这张图**的（在提示里说了）。
-      const kids = [...el.children].filter((c) => !c.hasAttribute('data-pptx-pseudo'));
-      const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && (n.textContent || '').trim());
-      const cssBgOnly = bgi.includes('url(') && !kids.length && !ownText;
-      const isSvg = el.tagName.toLowerCase() === 'svg';
-      if (el.tagName === 'IMG' || isSvg || cssBgOnly) {
+      // 判断本体（`kids`/`ownText`/`cssBgOnly`/`shot`）在上面数损耗那一段就算过了 —— 两处各算一遍的话
+      // 「算成图了但照旧报了一条裁剪损耗」这种自相矛盾会长回来。
+      if (shot) {
         // 服务器取不到那张图时 `naturalWidth` 是 0：截出来是个空白块，而整页看起来只是
         // 「这一页留白多」。数出来，让上层喊（`pptxNotes`）。
         if (el.tagName === 'IMG' && !(el as HTMLImageElement).naturalWidth) { broken++; return }
@@ -784,7 +802,16 @@ async function shootNode(page: Page, n: ImageNode): Promise<{ mime: string; b64:
     // 「只放出这一块」那条必须**也带 `#stage`**：两条都写了 `!important` 之后比的是特异度，
     // `#stage *` 里有个 id（1,0,0）压得住光秃秃的属性选择器（0,1,0）—— 那样目标自己也一直是
     // hidden，playwright 会在「element is not visible」上死等到 30 秒超时。
-    st.textContent = `#stage *{visibility:hidden!important}#stage [data-pptx-img="${id}"],#stage [data-pptx-img="${id}"] *{visibility:visible!important}`;
+    // `html,body`（`#E3E1DD`）、`#viewport`（也是 `#E3E1DD`）和 `#stage`（`var(--c-bg)`）那三层底色
+    // 也得去掉，**三层缺一层就等于没去**（漏了 `#viewport` 时导出来的图和一层都没去时逐像素一样）。
+    // `visibility:hidden` 藏的只是 `#stage` 的**子孙**，这三层自己照旧在画 —— 而 `omitBackground`
+    // 只管「浏览器默认那张白底」，管不了 CSS 里写死的背景色。留着的话「元素自己没盖满的那部分」
+    // （`clip-path` 裁掉的一块、透明 PNG 的四周）会被烙上一层页底色，`shrink` 于是判定「不透明」
+    // 转成 JPEG。L40 那条斜切正是这样：导出来一张满幅不透明的图，斜边左侧是一块和页底**恰好同色**
+    // 的米色 —— 这一版看着完全正确，而换成暗底页（或者用户在 PowerPoint 里换了页底色）之后，
+    // 那块米色就露在暗底上，像「这一页有一半没渲染出来」。
+    st.textContent = `html,body,#viewport,#stage{background:transparent!important}`
+      + `#stage *{visibility:hidden!important}#stage [data-pptx-img="${id}"],#stage [data-pptx-img="${id}"] *{visibility:visible!important}`;
     document.head.appendChild(st);
   }, n.id);
   const buf = await page.locator(`[data-pptx-img="${n.id}"]`).screenshot({ omitBackground: true, scale: 'css' });

@@ -122,8 +122,8 @@ describe('给一页配图', () => {
     const html = twoSlots.replace('data-img-prompt="等距的算力机房"', 'data-img-prompt="等距的算力机房" data-img-mode="data"');
     const r = await fillPageImages(html, { ...ctx, styleId: 'S-C' });
     const first = (generateImage as any).mock.calls[0][0] as string;
-    expect(first.toLowerCase()).toContain('ink'); // 水墨那套
-    expect(first.toLowerCase()).toContain('infographic'); // data 那一路
+    expect(first).toContain('水墨'); // 水墨那套
+    expect(first).toContain('信息图'); // data 那一路
     expect(first).not.toMatch(/\{\{|<[^>]{2,40}>/); // 占位符全换掉了
     expect(r.style).toEqual({ id: 'S-C', name: '国风水墨' });
     expect(r.images[0].mode).toBe('data');

@@ -8,7 +8,7 @@
 ## 一、结构速览
 
 - **比例**：16:9，暗底（`var(--c-ink-deep)` + 压到 `.22` 的气氛图），**文字容量大**（正文 3–4 段共 14–18 行，约 700–900 字）
-- **核心手法**：三竖带 —— ① 左侧一条 **`writing-mode:vertical-rl` 竖排衬线标题**（56px 白字 + 一行竖排英文小字，整库只有这一条这么排）；② 中间是正文（21px / `line-height:2`，`justify-content:center` 垂直居中）；③ 右侧 340px **数据边栏**（`.l39-stats`，左边一条半透白竖线，2–3 组「60px 品牌色数字 + 一行说明」）
+- **核心手法**：三竖带 —— ① 左侧一条 **竖排衬线标题**（56px 白字，一个字一行堆出来的，**不是 `writing-mode`**，见二·2；旁边一行竖排英文小字，整库只有这一条这么排）；② 中间是正文（21px / `line-height:2`，`justify-content:center` 垂直居中）；③ 右侧 340px **数据边栏**（`.l39-stats`，左边一条半透白竖线，2–3 组「60px 品牌色数字 + 一行说明」）
 - **是否全幅**：**是** —— 不包 `.slide-inner`（背景图要铺满，三竖带各自绝对定位）
 - **底色**：默认不加类（暗调由 `.l39-wrap` 自己给）
 - **什么时候用**：需要**读**的暗底页：立场陈述 / 行业判断 / 一段有分量的综述 + 几个支撑数字
@@ -25,10 +25,16 @@
 
 ### 2. 竖排标题 · `.l39-side`
 
-- 标题**必须写成 `<h1 class="page-title">`**（页脚目录面板靠它取标题；`writing-mode` 只影响画面，目录里那一条仍然是正常的一行字）。
-- **只能 6–10 个汉字。** 竖排的高度就是 `--pad-top` 到 `--pad-bottom` 那 862px，56px 的字写到第 11 个就从下缘裁掉了 ——
-  页面上看着只是"标题少了两个字"，而目录面板里那一条是全的，对不上也没人报错。
-- 旁边那行 `.l39-en` 也是竖排（`var(--num)` 加宽字距品牌色）：写英文或年份，**最多 20 个字符**。
+- 标题**必须写成 `<h1 class="page-title">`**（页脚目录面板靠它取标题；竖排只影响画面，目录里那一条仍然是正常的一行字）。
+- **只能 6–10 个汉字。** 竖排的高度就是 `--pad-top` 到 `--pad-bottom` 那 862px，一个字一格 ≈ 69px（56 × `line-height:1.24`），
+  第 13 个字起就从下缘裁掉 —— 页面上看着只是"标题少了两个字"，而目录面板里那一条是全的，对不上也没人报错。
+- **竖排是"窄到一个字宽 + `word-break:break-all`"堆出来的，不用 `writing-mode:vertical-rl`。**
+  pptx 里没有竖排：那个标题会横过来塞进这条 60px 宽的窄带，糊成一柱或整片压到正文上，而 HTML 版是好好的竖排；
+  堆叠这一版两边同形（pptx 的文本框照 60px 宽折行，一样一个字一行）。
+  也因此**不要给它写 `letter-spacing`**：横排里那是"字后面的空档"，会把每个字从窄带里往左顶出去半个字距，
+  字距该由 `line-height` 给。
+- 旁边那行 `.l39-en` 同样是堆出来的（`var(--num)` 品牌色）：写英文或年份，**最多 20 个字符**。
+  那一列**只有 7px 宽**（比一个字母还窄）是故意的：14px 的字母最窄的两个（`I`、`·`）并起来是 7.6px，宽一点点就会出现「有的行一个字母、有的行两个」的参差，而每个字母都在、一处不报错。单个字母永远不折行，所以宽字母（`O`/`N` 12.3px）是左右对称溢出的，看着仍然是居中一列。
 - 这一带靠 `.l39-side{align-items:center}` **垂直居中**。去掉之后标题从 `--pad-top` 起排，
   六个字的标题下面空掉 400–500px，而右边的正文和数据栏都是居中的 —— 画面上只表现成"左上角一列字"，
   看着像是有意为之的设计，一处都不报错。
@@ -60,8 +66,8 @@
 .l39-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.22}
 .l39-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.80)}
 .l39-side{position:absolute;left:var(--pad-x);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;align-items:center;gap:20px}
-.l39-side .page-title{writing-mode:vertical-rl;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;letter-spacing:.16em;color:#fff;margin-top:0}
-.l39-side .l39-en{writing-mode:vertical-rl;font-family:var(--num);font-size:14px;font-weight:700;letter-spacing:.3em;color:var(--c-brand)}
+.l39-side .page-title{width:60px;word-break:break-all;text-align:center;font-family:var(--serif);font-size:56px;font-weight:900;line-height:1.24;color:#fff;margin-top:0}
+.l39-side .l39-en{width:7px;word-break:break-all;text-align:center;font-family:var(--num);font-size:14px;font-weight:700;line-height:1.7;color:var(--c-brand)}
 .l39-body{position:absolute;left:calc(var(--pad-x) + 220px);right:calc(var(--pad-x) + 440px);top:var(--pad-top);bottom:var(--pad-bottom);z-index:2;display:flex;flex-direction:column;justify-content:center}
 .l39-body p{font-size:21px;line-height:2;color:rgba(255,255,255,.82);margin-bottom:24px}
 .l39-body p:last-child{margin-bottom:0}
@@ -120,7 +126,7 @@
 | V3 | 数据栏数字改 `var(--c-accent)` | 整份走冷色调 |
 | V4 | 去掉气氛图（`.l39-bg` 删掉，纯深底） | 找不到能压暗的远景图 |
 | V5 | 浅底版（`.l39-wrap` 改 `var(--c-bg)`，字色转 `var(--c-ink)` 系、竖线用 `var(--c-hairline)`） | 整份禁用暗底页 |
-| V6 | 竖排标题降到 44px（可写 12–14 字） | 标题实在压不到 10 字 |
+| V6 | 竖排标题降到 44px（一格 ≈ 55px，可写 12–15 字；`width:60px` 那条窄带不用动，44px 的字照旧一个字一行） | 标题实在压不到 10 字 |
 
 ---
 
@@ -129,6 +135,7 @@
 - **整份最多一页**：暗底长文很重，两页连着出现时第二页只会被翻过去
 - **前后别接暗底页**（L29 / L32 / L36 都是暗的，连着两页会分不出换了页）
 - **竖排标题 6–10 个汉字**：这是硬约束，超了从下缘静默裁掉，而目录里那一条是全的
+- **竖排别改回 `writing-mode:vertical-rl`**：pptx 里没有竖排，标题会横过来塞进 60px 的窄带（糊成一柱或压到正文上），而 HTML 版看着完全正常 —— 现在这一版是"一个字一行"堆的，两边同形
 - **正文别从 `--pad-x` 起**：会压在竖排标题上，两层都是白字，只表现成"有点糊"
 - **配色**：暗底上的字直接写 `#fff` / `rgba(255,255,255,…)`（**不要用 `var(--c-ink)` 系**，在暗底上看不见）；数字和竖排英文走 `var(--c-brand)`；分隔线用 `rgba(255,255,255,.22)`，不要用 `var(--c-hairline)`
 - **与 L37 的区别**：L37 是浅底报刊双栏（字最多、要一句句读），L39 是暗底单栏（字少一档，但有气氛和数据）

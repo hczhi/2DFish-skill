@@ -6,7 +6,7 @@ import { getToken } from '../../lib/auth'
 import { openLoginModal } from '../../lib/loginModal'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
-import FileExtractPanel from '../../components/consult/FileExtractPanel.vue'
+import FileExtractPanel from '../../components/common/FileExtractPanel.vue'
 
 const router = useRouter()
 const creating = ref(false)
@@ -106,6 +106,7 @@ async function create() {
             <!-- 放在 label 外面：label 里点任何东西都会连带激活它的表单控件（上面那个 textarea），
                  上传按钮和预览框套在里面会被 label 的点击行为带着跑。 -->
             <FileExtractPanel
+              api-base="/api/consult"
               :current-chars="form.brief.length"
               @change="attachments = $event"
               @busy="filesBusy = $event"

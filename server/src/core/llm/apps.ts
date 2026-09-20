@@ -55,6 +55,17 @@ export const AI_CHANNELS: AIAppDef[] = [
 /** 提取通道的 id。调用点引这个常量而不是手写字面量：拼错的表现是「配了但永远不生效」。 */
 export const EXTRACT_CHANNEL = 'extract';
 
+/**
+ * 「上传资料 → 提取 → AI 整理」那条路被哪几个应用共用（`api/extractRoutes.ts`）。
+ *
+ * 这条路的 `source` 是**参数**而不是字面量 —— 全库唯一一处，`aiAppRegistry.test.ts` 那条
+ * 「source 必须是字面量」的规则为它开了一个口子，而开口的**前提就是这个数组里每一项都在
+ * `AI_APPS` 里**（同一个文件里有测试断言这件事）。往这里加模块时那条断言会跟着检查它 ——
+ * 加一个不在 AI_APPS 里的值的话，按应用配 token/额度对它会静默失效。
+ */
+export const EXTRACT_APPS = ['consult', 'ppt'] as const;
+export type ExtractApp = (typeof EXTRACT_APPS)[number];
+
 /** 后台 provider 的「应用」下拉 = 真应用 + 解析通道。 */
 export const PROVIDER_SCOPES: AIAppDef[] = [...AI_APPS, ...AI_CHANNELS];
 

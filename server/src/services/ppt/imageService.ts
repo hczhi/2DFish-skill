@@ -26,13 +26,16 @@ import { rememberAsset } from './assetStore.js';
 import { type PptOwner } from './tenant.js';
 import { type DesignSpec } from './designSpec.js';
 import {
-  MAX_SLOTS_PER_PAGE, IMAGE_RATIOS, type ImageRatio, type PlannedImage, type PreparedImage,
+  MAX_SLOTS_PER_PAGE, IMAGE_RATIOS, sizeForRatio, sizeMismatchNote,
+  type ImageRatio, type PlannedImage, type PreparedImage,
 } from './imageSpec.js';
 import { PLACEHOLDERS } from './pageService.js';
+import { POSTER_TEXT_ATTR, decodePosterText } from './posterText.js';
 import {
-  styles, styleById, defaultStyleId, renderStylePrompt, leftoverPlaceholders,
-  IMAGE_MODES, type ImageMode, type PptStyle,
+  styles, styleById, defaultStyleId, renderStylePrompt, leftoverPlaceholders, personConflictNote,
+  requiredPromptParts, IMAGE_MODES, isPageMode, type ImageMode, type PptStyle, type RequiredPromptPart,
 } from './styleLibrary.js';
+import { computeSpaceHints, spaceHintForLayout } from './imageSpace.js';
 
 // 一页最多几张图定义在 `imageSpec.ts`：规划那一步也要按同一个数出规格，
 // 各写一份的话规划会备出 8 张而这里只肯配 6 张，多出来那两张的钱已经花了。
@@ -53,6 +56,13 @@ export interface ImageSlot {
   /** 图贴在哪：`src` 属性还是 style 里的 `background-image: url(...)` */
   via: 'src' | 'bg' | 'none';
   ratio: string;
+  /**
+   * 单图模式（poster）要**印在画面里**的那几行字（`data-poster-text`，代码从这一页扒的原文，
+   * 见 `imageModes.posterLines`）。别的路一律空数组 —— 这一句必须一路传到提示词里：
+   * 不传的话模板里 `TEXT: {{SLIDE_TEXT}}` 那个占位符原样发出去，模型会自己编几句印在图上，
+   * 读起来和这一页的文案一样自然（硬规则 3）。
+   */
+  text: string[];
   /** 整个开标签的原文（替换时按它找回来） */
   tag: string;
   at: number;
@@ -98,6 +108,14 @@ export interface FillImagesContext {
   page?: number;
   /** 这一页的蒙版透明度（097）。配完图那一眼的预览要带上它，否则「配了图之后蒙版没了」。 */
   veil?: number;
+  /**
+   * 他自己改写过整条提示词的那几格（key = 图槽序号，值 = `PlannedImage.fullPrompt`）。
+   *
+   * **必须传**（调用方从 `plan_json` 的 `imageSpecs` 里取）：不传的话「换一批图」这条路重新
+   * 按画风模板拼一条发出去 —— 他在框里逐字改好、备图时也确认过的那条在这条路上完全不生效，
+   * 而两条路都回 200、缩略图都换了（只是图又变回原来那个样子）。
+   */
+  promptOverrides?: Map<number, string>;
 }
 
 /**
@@ -114,14 +132,20 @@ export function findImageSlots(html: string): ImageSlot[] {
     // 图贴在哪：先看带 `data-img-prompt` 的这个标签自己（`<img src>` / `background-image:url()`），
     // 它自己没有的话**往里找第一张占位图**（见 `innerTarget`）。
     const target = tagTarget(tag, at) || innerTarget(html, tag, at);
+    // 认不出的 mode 按 concept 算（模板缺一路的话这一格会静默换成另一路的画法）。
+    const mode: ImageMode = (IMAGE_MODES as string[]).includes(rawMode || '') ? (rawMode as ImageMode) : 'concept';
     out.push({
       index: out.length + 1,
       prompt: m[1].trim(),
-      // 认不出的 mode 按 concept 算（模板缺一路的话这一格会静默换成另一路的画法）。
-      mode: (IMAGE_MODES as string[]).includes(rawMode || '') ? (rawMode as ImageMode) : 'concept',
+      mode,
+      text: decodePosterText(tag.match(new RegExp(`\\s${POSTER_TEXT_ATTR}="([^"]*)"`))?.[1] || ''),
       src: target?.src ?? '',
       via: target?.via ?? 'none',
-      ratio: ratioOf(target?.src ?? ''),
+      // 整页那两路（背景图 / 单图）**一律 16:9**，不看原来那张占位图是什么比例：背景图变形时
+      // 槽位的 `src` 原样留着（可能是 `ph-3x4.svg`），跟着它算的话发出去的 size 是 1024x1536，
+      // 回来一张竖图铺满 16:9 的页面 —— 左右两边被裁掉一大半（提示词里还写着「铺满整幅」），
+      // 而接口 200、面板上写着「已生成」。
+      ratio: isPageMode(mode) ? '16:9 landscape' : ratioOf(target?.src ?? ''),
       // **替换的目标可能不是带 `data-img-prompt` 那个标签**，所以 tag/at 记的是目标那一个
       // （`replaceSlotUrls` 按它切）—— 记外层的话换出来的 html 会把里面那张 img 整个吃掉。
       tag: target?.tag ?? tag,
@@ -189,6 +213,17 @@ function ratioOf(url: string): string {
   if (url.includes('ph-1x1')) return '1:1 square';
   if (url.includes('ph-3x4')) return '3:4 portrait';
   return '16:9 landscape';
+}
+
+/**
+ * 五路画法的中文名。**报错/提示里一律用它**，直接写 `backdrop` 的话那句话里夹着一个英文单词，
+ * 而界面上这一页写的是「整页背景图」—— 他对不上是不是在说同一件事。
+ */
+export function modeCn(mode: ImageMode): string {
+  return mode === 'backdrop' ? '整页背景图'
+    : mode === 'poster' ? '单图（字印在图里）'
+      : mode === 'case' ? '实景/产品'
+        : mode === 'data' ? '数据图' : '概念插画';
 }
 
 /** `16:9 landscape` → `16:9`（`ratioText` 的反向）。备好的图那一列存的是规划那套字面。 */
@@ -338,7 +373,15 @@ function resolveProvider(userId: string) {
  * 三样漏掉都不报错，那条路看起来完全正常。
  */
 async function runOneImage(
-  job: { subject: string; mode: ImageMode; ratio: string; label: string },
+  job: {
+    subject: string; mode: ImageMode; ratio: string; label: string;
+    /** 这一格的留白方向，**代码从版式几何算出来的那一句**（`imageSpace`）。算不出来就不传。 */
+    spaceHint?: string;
+    /** 单图模式要印进画面的那几行字（代码从这一页扒的原文，见 `ImageSlot.text`）。 */
+    slideText?: string[];
+    /** 他自己改写的那一整条（有值就原样发，见 `PlannedImage.fullPrompt`）。 */
+    fullPrompt?: string;
+  },
   ctx: {
     owner: PptOwner; title: string; section?: string; topic?: string; deckId?: string; page?: number;
     /** 这份稿子的设计规范（096）。**不传的话图的配色是默认那套** —— 蓝色系的稿子配出一堆橙图，
@@ -357,34 +400,40 @@ async function runOneImage(
   if (providerOwner !== 'dedicated') checkAndDeductQuota(ctx.owner.userId);
 
   const t0 = Date.now();
-  const theme = [ctx.topic, ctx.section, ctx.title].filter(Boolean).join(' · ');
-  const prompt = renderStylePrompt(style, job.mode, {
-    theme,
-    scene: `${job.subject}. Single focal subject, safe margins.`,
-    ratio: job.ratio,
-    design: ctx.design,
-  });
-  // 模板里的 `<…>` / `{{…}}` 是给人看的填空说明，漏换的那几个会原样发给模型
-  // （它会照着「本页主题，1句」画），而回来的图看着就是「这张不太对」。
-  const left = leftoverPlaceholders(prompt);
-  if (left.length) {
-    problems.push(`${job.label}的提示词里还剩没换掉的占位符 ${left.join(' / ')} —— 这几个字会原样发给模型（画风模板改过？）。`);
-  }
+  const { prompt, size, problems: promptProblems } = buildImagePrompt(job, ctx, style);
+  problems.push(...promptProblems);
   const [img] = await generateImage(prompt, {
     userId: ctx.owner.userId,
     providerId: provider.id,
     n: 1,
     timeoutMs: IMAGE_TIMEOUT_MS,
+    // **比例要真发出去**（`size`）：只在提示词里写「16:9 构图」的话，模型爱听就听，
+    // 多半还是按自己的默认出一张方图 —— 贴进 16:9 的图槽被 `object-fit:cover` 裁掉上下两条，
+    // 画面上是「主体被切了一半」，而接口 200、面板上写着「已生成」。
+    size,
     // PPT 的图转存到后台配的「PPT 专用桶」（没配齐就照旧写默认桶）。**这是 PPT 唯一一处生图入口**
     // ——「照槽位配图」和「按规划先备图」都走 runOneImage，漏在别处传的话那一批图会静默回到老桶。
     bucketProfile: 'ppt',
   });
   if (!img?.url) throw new Error('生图接口没有返回图片地址');
 
+  // 尺寸对账：两种「跑成了但不是要的那个尺寸」都必须出声（都只表现成「图被裁掉一块」）。
+  if (img.sizeRefused) {
+    problems.push(
+      `${job.label}：这条接入点不接受 size=${size}（上游原文：${img.sizeRefused}），已经摘掉尺寸重发了一次 ——` +
+        '回来那张是它的默认尺寸，贴进图槽可能被裁掉两边。'
+    );
+  }
+  const sizeNote = sizeMismatchNote(size, img.width && img.height ? { width: img.width, height: img.height } : null, job.label);
+  if (sizeNote) problems.push(sizeNote);
+
   // 生图原来完全不进 ai_logs —— 那意味着这笔钱在后台一处都看不见。
   logAIUsage(
     'ppt', 'gen-image', img.model, 0, 0, Date.now() - t0,
-    `${job.label} ${job.ratio} ${style.id}/${job.mode}`, ctx.owner.userId, prompt, img.url, img.provider, providerOwner
+    // 要的尺寸和**真回来的**像素都记进日志：只记要的那个的话，「这条接入点不吃 size」
+    // 这件事在后台一处都看不见（每条记录都写着 16:9，而图全是方的）。
+    `${job.label} ${job.ratio} ${style.id}/${job.mode} size=${size}${img.width && img.height ? ` got=${img.width}x${img.height}` : ''}`,
+    ctx.owner.userId, prompt, img.url, img.provider, providerOwner
   );
 
   // 进素材库（migration 090）。**逐张写**：写在 api 层的话撞额度中断时前面那几张成功的图
@@ -412,6 +461,181 @@ async function runOneImage(
 }
 
 /**
+ * 一条**真正会发出去的**提示词 + 要发的 `size`（不调任何接口、不扣额度）。
+ *
+ * 为什么单独一份：界面上那个「完整提示词」预览走的就是它（`previewSpecPrompt`）。预览另写
+ * 一份拼法的话，两边早晚不一致 —— 他照着预览把「留白在左侧」那句改好，而真发出去的还是
+ * 旧那句，图回来还是压在标题底下，两处都不报错。所以这里只有一份，生图那条路也从这里拿。
+ */
+function buildImagePrompt(
+  job: {
+    subject: string; mode: ImageMode; ratio: string; label: string; spaceHint?: string; slideText?: string[];
+    /** 他自己改写的那一整条（有值就原样发，见 `PlannedImage.fullPrompt`）。 */
+    fullPrompt?: string;
+  },
+  // `page` / `deckId` 是**设计手法**那一条的挑选键（`pickDevice`）：不传的话整页那两路
+  // 每一页都会拿到同一个手法，而每张图单看都不错、一处都不报错（那就是「每页长得差不多」）。
+  ctx: { title: string; section?: string; topic?: string; design?: DesignSpec; page?: number; deckId?: string },
+  style: PptStyle
+): { prompt: string; size: string; problems: string[] } {
+  const problems: string[] = [];
+  // 他自己改写过整条：**原样发出去**，一个字都不再拼。改一个字就重新渲染一遍模板的话，
+  // 他在框里逐字调好的那条和真发出去的那条不是一回事（而那个框存在的全部意义就是对账）。
+  const custom = job.fullPrompt?.trim();
+  if (custom) {
+    // **每次都出声**：这一格从此不跟画风/模式/配色/subject 走了。不说的话他换了画风、
+    // 把这一页切成背景图，回来发现图一点没变，只会一张张重生（每张都是一次真实花费）。
+    problems.push(
+      `${job.label}用的是你改写过的整条提示词（现在这一页这一格是${modeCn(job.mode)}）——` +
+        '换画风、改成背景图/单图、改配色、改上面那句「画什么」都不会再影响它；' +
+        '要回到自动拼的那条，在提示词框里点「恢复成自动拼的那条」。'
+    );
+    const left = leftoverPlaceholders(custom);
+    if (left.length) {
+      problems.push(`${job.label}你改写的那条里还有 ${left.join(' / ')} —— 这几个字会原样发给模型（那是模板占位符，代码不会再替换）。`);
+    }
+    // `size` 照旧由代码按比例算（硬规则 3）：他在文字里写「16:9」不等于真发出去的那个值。
+    return { prompt: custom, size: sizeForRatio(job.ratio), problems };
+  }
+  const theme = [ctx.topic, ctx.section, ctx.title].filter(Boolean).join(' · ');
+  const prompt = renderStylePrompt(style, job.mode, {
+    theme,
+    // 只给「画什么」这一句。以前在这里补的 "Single focal subject, safe margins." 现在
+    // 分别落在画风模板的 `Subject:` 段（单一主体 + 大小层级）和 `HARD_TAIL`（离边缘留白）里 ——
+    // 在这里再补一遍的话它会插在模板句子的中间（`Subject: X. Single focal…, built from …`），
+    // 模型读到的是一句断掉的话，而回来的图看着照样正常。
+    scene: job.subject,
+    ratio: job.ratio,
+    design: ctx.design,
+    // 「哪一块会被文字压住」一律由代码从版式几何算（`imageSpace` 文件头 ②）：模型自己在
+    // `data-img-prompt` 里写的「左侧留白」说的是它想象的版式，主体正好长在标题底下时
+    // 页面照旧渲染正常，他只会一张张重生（每张都是一次真实花费）。算不出来就不带这一句。
+    spaceHint: job.spaceHint,
+    // 单图模式印进画面的那几行字，同样一律是代码扒出来的原文（硬规则 3）。一个字都没传时
+    // 模板里 `TEXT: {{SLIDE_TEXT}}` 留着原样发出去，下面那句占位符检查会喊 —— 静默让模型
+    // 自己编的话，印在图上那几句读起来和这一页的文案一样自然，而它不是这一页写的东西。
+    slideText: job.slideText,
+    // 这一页用哪一条设计手法（md §6.1，代码按页码轮着挑）。**两条路都要传**：
+    // 漏一条的话那条路上全份用的是同一个手法（或者预览和真发出去的不是同一条）。
+    pageKey: ctx.page,
+    deckKey: ctx.deckId,
+  });
+  // 模板里的 `<…>` / `{{…}}` 是给人看的填空说明，漏换的那几个会原样发给模型
+  // （它会照着「本页主题，1句」画），而回来的图看着就是「这张不太对」。
+  const left = leftoverPlaceholders(prompt);
+  if (left.length) {
+    problems.push(`${job.label}的提示词里还剩没换掉的占位符 ${left.join(' / ')} —— 这几个字会原样发给模型（画风模板改过？）。`);
+  }
+  // 单图那条尾巴写死了「不要出现人物」，而这句「画什么」里点了人时两句话打架（见
+  // `personConflictNote`）—— 不说的话回来一张没有人的图，看起来只是「模型没听懂」。
+  const person = personConflictNote(job.mode, job.subject);
+  if (person) problems.push(`${job.label}：${person}`);
+  return { prompt, size: sizeForRatio(job.ratio), problems };
+}
+
+/**
+ * 「先备图」那条路上这一格的 job（画什么 / 哪一路 / 比例 / 留白方向 / 要印的字）。
+ *
+ * **生图和「看完整提示词」共用这一份**：各拼一次的话预览里那句留白提示可能来自另一条版式，
+ * 而他是照着预览调提示词的 —— 图回来还是压在标题底下，两处都不报错。
+ *
+ * **这一页已经有 html 时，「哪一路」「什么比例」「印哪几行字」一律以 html 为准**，规划里那两个
+ * 字段只在 html 还没生成时才算数。「改成背景图 / 改成单图」改的只是 html 上的 `data-img-mode`
+ * （规划里那条照旧写着 concept —— 模式一律从 html 现算，不存成一列，见 `pageImageMode`）：
+ * 跟着规划走的话，他切完模式再点「AI 生成」或者去看那条完整提示词，拿到的还是概念插画那套
+ * 模板（主体居中、四边留白、还写着「不许有字」），而界面上这一页明明写着「整页背景图」——
+ * 备图那次是一次真实花费，回来那张贴上去就是「怎么看都不像背景」/「单图模式里一个字都没印」，
+ * 一处都不报错。只有「换一批图」那条路读的是 html，于是同一格两条路生出来的东西不是一回事。
+ */
+function specJob(spec: PlannedImage, ctx: SpecImageContext) {
+  const html = ctx.pageHtml?.trim() ? ctx.pageHtml : '';
+  const slot = html ? findImageSlots(html)[ctx.index - 1] : undefined;
+  return {
+    subject: spec.subject,
+    mode: slot?.mode ?? spec.mode,
+    ratio: slot ? slot.ratio : ratioText(spec.ratio),
+    label: `第 ${ctx.page || '?'} 页第 ${ctx.index} 格`,
+    // 有 html 就按 html 的几何算（和「换一批图」那条路同一个来源）；没有才拿这条版式的 demo
+    // 片段量一遍。背景图那一路尤其明显：变形之后文字压的是整页，而 demo 片段说的是分屏那一半。
+    spaceHint: (html ? computeSpaceHints(html).get(ctx.index) : spaceHintForLayout(ctx.layoutId, ctx.index))?.prompt,
+    // 单图模式要印进画面的那几行字（代码从这一页的 `data-poster-text` 扒的原文，硬规则 3）。
+    // 不传的话模板里 `{{SLIDE_TEXT}}` 原样发出去，模型自己编几句印在图上（读起来像这一页的文案）。
+    slideText: slot?.text,
+    // 他自己改写过的那一整条（有值就原样发，上面那几样一概不再拼）。
+    fullPrompt: spec.fullPrompt,
+  };
+}
+
+export interface SpecImageContext {
+  owner: PptOwner;
+  index: number;
+  title: string;
+  section?: string;
+  topic?: string;
+  styleId?: string;
+  deckId?: string;
+  page?: number;
+  /** 这份稿子的设计规范（096）：图的配色跟着它走，不传就是默认那套。 */
+  design?: DesignSpec;
+  /**
+   * 这一页**将要**用的版式（他在「生成前」挑的那条，没挑就是规划里那条）。留白提示靠它从
+   * demo 片段量出来 —— 不传的话先备的这张没有留白指示、而配图那条路有，同一格两条路生出来
+   * 的构图不是一回事（见 `spaceHintForLayout`）。
+   */
+  layoutId?: string;
+  /**
+   * 这一页**已经生成的那份 html**（还没生成就不传）。模式 / 比例 / 要印的字都从它现算 ——
+   * 见 `specJob` 上那段：不传的话「改成背景图 / 改成单图」在备图和提示词预览这两条路上**完全
+   * 不生效**，而两处显示的都是一条读起来很正常的概念插画提示词。
+   */
+  pageHtml?: string;
+}
+
+/**
+ * 这一格**真正会发出去的那条提示词**（不生图、不扣额度、不写 `ai_logs`）。
+ *
+ * 界面上「完整提示词」那一段显示的就是它。为什么必须由服务端算：他在对话框里能改的只有
+ * 「画什么」那一句，而发出去的是画风模板 + 配色 + 留白方向 + 尺寸拼起来的一整条 ——
+ * 前端自己拼一份近似的话，他照着那份调完，真发出去的还是另一条（图回来「还是不对」，
+ * 而两边都不报错）。`problems` 里那几条（没换掉的占位符）也要照原样显示出来。
+ */
+export function previewSpecPrompt(
+  spec: PlannedImage,
+  ctx: SpecImageContext
+): {
+  prompt: string; styleId: string; styleName: string; mode: ImageMode; ratio: string; size: string;
+  /** 这一条是他改写过的那一整条（`true`）还是代码现拼的（`false`）。 */
+  custom: boolean;
+  problems: string[];
+} {
+  const style = resolveStyle(ctx.styleId);
+  const job = specJob(spec, ctx);
+  const r = buildImagePrompt(job, ctx, style);
+  // `mode` 要回出去给界面显示：这一条是「切模式生效了没」唯一看得见的地方 —— 只回提示词的话
+  // 他得自己逐句读那一大段中文去分辨是背景图模板还是概念插画模板（两段都读起来很正常）。
+  // `custom` 同理：框里那一大段两种情况下长得一样，不回的话「这条是我改过的、已经不跟画风了」
+  // 在界面上没有任何痕迹（而那个「恢复成自动拼的那条」按钮该不该亮也要靠它）。
+  return {
+    prompt: r.prompt, styleId: style.id, styleName: style.name,
+    mode: job.mode, ratio: job.ratio, size: r.size,
+    custom: !!spec.fullPrompt?.trim(),
+    problems: r.problems,
+  };
+}
+
+/**
+ * 「AI 重写整条」那一步要**核对、少了就接回去**的那几段（尾巴 / 比例 / 要印的字 / 留白方向）。
+ *
+ * 和生图、和预览同一份 `specJob`：另算一份的话核对用的是另一条版式的留白句（或者规划里那个
+ * 还写着 concept 的模式），于是「它被改掉了」永远成立 —— 每次重写都在末尾接一句**别的版式**
+ * 的留白提示，而那一整条读起来完全通顺，图回来只是「主体又压在标题底下了」。
+ */
+export function specPromptParts(spec: PlannedImage, ctx: SpecImageContext): RequiredPromptPart[] {
+  const job = specJob(spec, ctx);
+  return requiredPromptParts(job.mode, { ratio: job.ratio, slideText: job.slideText, spaceHint: job.spaceHint });
+}
+
+/**
  * 按规划里那一条规格现生一张图，**存在那一页上但不进 html**（先备图，HTML 还没生成）。
  *
  * 和「照槽位配图」共用 `runOneImage`（额度 / ai_logs / 素材库都在那里），差别只有一处：
@@ -419,18 +643,7 @@ async function runOneImage(
  */
 export async function generateSpecImage(
   spec: PlannedImage,
-  ctx: {
-    owner: PptOwner;
-    index: number;
-    title: string;
-    section?: string;
-    topic?: string;
-    styleId?: string;
-    deckId?: string;
-    page?: number;
-    /** 这份稿子的设计规范（096）：图的配色跟着它走，不传就是默认那套。 */
-    design?: DesignSpec;
-  }
+  ctx: SpecImageContext
 ): Promise<{ image: PreparedImage; problems: string[] }> {
   if (!spec.subject.trim()) {
     // 生了也不知道画的是什么（提示词里只剩画风模板），那是一次白花的钱。
@@ -438,14 +651,8 @@ export async function generateSpecImage(
   }
   const style = resolveStyle(ctx.styleId);
   const { provider, owner } = resolveProvider(ctx.owner.userId);
-  const ratio = ratioText(spec.ratio);
-  const r = await runOneImage(
-    { subject: spec.subject, mode: spec.mode, ratio, label: `第 ${ctx.page || '?'} 页第 ${ctx.index} 格` },
-    ctx,
-    style,
-    provider,
-    owner
-  );
+  const job = specJob(spec, ctx);
+  const r = await runOneImage(job, ctx, style, provider, owner);
   const problems = [...r.problems];
   if (r.storage === 'local') {
     problems.push(
@@ -458,8 +665,12 @@ export async function generateSpecImage(
       index: ctx.index,
       url: r.url,
       prompt: spec.subject,
-      mode: spec.mode,
-      ratio: spec.ratio,
+      // 记**真正生成时用的**那一路和那个比例（`job`，可能是从 html 读回来的背景图/单图），
+      // 不是规划里那两个字段：记规划那份的话备图面板上这一格写着「概念插画 · 3:4」而图是
+      // 一张 16:9 的整页背景，素材库里那一行也跟着错 —— 以后按 mode/比例挑图时挑出来的
+      // 是另一种图，而每一处都显示得很正常。
+      mode: job.mode,
+      ratio: ratioKey(job.ratio) as ImageRatio,
       styleId: style.id,
       model: r.model,
       storage: r.storage,
@@ -493,6 +704,9 @@ export async function fillPageImages(html: string, ctx: FillImagesContext): Prom
   // 画风和接入点都整页取一次、按 id 绑死（见文件头 ①）。
   const style = resolveStyle(ctx.styleId);
   const { provider, owner } = resolveProvider(ctx.owner.userId);
+  // 留白方向整页算一次（key 和槽位序号一致）。算得出来的格子才有这一句 —— 算不出来的那几格
+  // 不许兜一句「主体居中」（`imageSpace` 文件头 ②：编一句自信的错方向比没有这一句更糟）。
+  const hints = computeSpaceHints(html);
 
   const problems: string[] = [];
   const images: FilledImage[] = [];
@@ -520,7 +734,16 @@ export async function fillPageImages(html: string, ctx: FillImagesContext): Prom
 
     try {
       const r = await runOneImage(
-        { subject: slot.prompt, mode: slot.mode, ratio: slot.ratio, label: `第 ${slot.index} 张` },
+        {
+          subject: slot.prompt,
+          mode: slot.mode,
+          ratio: slot.ratio,
+          label: `第 ${slot.index} 张`,
+          spaceHint: hints.get(slot.index)?.prompt,
+          slideText: slot.text,
+          // 他改写过整条的那几格原样发（和备图那条路同一份来源，见 `promptOverrides`）。
+          fullPrompt: ctx.promptOverrides?.get(slot.index),
+        },
         // 设计规范搭 `meta` 走（外壳也要它）—— 不往下传的话这条路生出来的图是默认配色，
         // 而「先备图」那条路是对的：同一份稿子里两批图不是一套色，谁都不报错。
         { ...ctx, design: ctx.meta.design },
@@ -728,7 +951,7 @@ export function realignImageRecords(
 }
 
 /** 从后往前替换（改前面会让后面记下来的位置全部错位）。 */
-function replaceSlotUrls(html: string, slots: ImageSlot[], urls: Map<number, string>): string {
+export function replaceSlotUrls(html: string, slots: ImageSlot[], urls: Map<number, string>): string {
   let out = html;
   for (const slot of [...slots].reverse()) {
     const url = urls.get(slot.index);

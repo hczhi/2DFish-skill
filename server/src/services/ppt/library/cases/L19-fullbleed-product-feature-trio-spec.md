@@ -68,7 +68,7 @@
 | **左上标题 + 左下描述** | "参数列表+详细说明" 上下分置 | 改成 V3 中央标题（更杂志感） |
 | **底部 3 白卡** | 3 个核心参数一目了然 | 改成 V4 5 卡片 / V5 无卡片（参数融进描述） |
 | **产品与背景融合** | 视觉连贯 | 改成 V6 产品独立（不与背景融合） |
-| **白卡浮在暗 bg 上** | 强对比，数据易读 | 改成 V7 半透磨砂卡（更克制） |
+| **白卡浮在暗 bg 上** | 强对比，数据易读 | 改成 V8 2 卡（只有两个核心参数时） |
 
 ---
 
@@ -100,7 +100,7 @@
 .l19-title h1{font-size:clamp(40px,5vw,64px);font-weight:600;letter-spacing:-.005em;line-height:1.1;margin-bottom:12px;}
 .l19-title .sub{font-size:15px;color:rgba(255,255,255,.75);letter-spacing:.04em;}
 .l19-product{position:absolute;top:30%;left:18%;width:64%;z-index:1;pointer-events:none;}
-.l19-product img{width:100%;height:auto;filter:drop-shadow(0 8px 28px rgba(0,0,0,.45));}
+.l19-product img{width:100%;height:auto;}
 .l19-desc{position:absolute;bottom:18%;left:5%;max-width:48%;font-size:16px;color:rgba(255,255,255,.85);line-height:1.6;z-index:2;}
 .l19-specs{position:absolute;bottom:5%;left:5%;right:5%;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;z-index:3;}
 .l19-spec{background:var(--c-card);padding:18px 22px;border-radius:4px;min-height:84px;}
@@ -151,14 +151,16 @@
 </section>
 ```
 
-> **design 提示**：产品图用 PNG 透明底效果最好（不会与背景"打架"），如果只能用 JPG 抠图，建议加 `filter: drop-shadow` 增加产品立体感。
+> **design 提示**：产品图用 PNG 透明底效果最好（不会与背景"打架"）。**不要给它加 `filter: drop-shadow`**：
+> 导出 pptx 是按元素盒截图的，投影画在盒**外面**，正好落在裁掉的那一圈里 —— pptx 里产品是「贴」在暗底上的，
+> HTML 里是浮起来的，两份的立体感不一样，而两边都不报错。立体感靠 bg 图本身的明暗，别靠投影。
 
 ---
 
 ## 七、图槽位
 
 - `pXX_hero`（必填 · 1 个） · 全幅场景图，1920×1080，**产品在场景中的全景**（飞行器飞过山谷 / 汽车行驶在公路 / 相机放在桌面上被相机拍着）。禁用纯产品白底图与人物特写
-- `pXX_product`（必填 · 1 个） · 产品 cut-out 图，**PNG 透明底**最佳，**1600×900 宽高比约 16:9**，可用 JPG 但需用 `mix-blend-mode: lighten` 配合
+- `pXX_product`（必填 · 1 个） · 产品 cut-out 图，**必须 PNG 透明底**，**1600×900 宽高比约 16:9**（JPG 抠图**不要**用 `mix-blend-mode` 去救：pptx 里没有混合模式，那张图按原样贴出来，白底方块整块露出来，而 HTML 版看着是融进去的）
 
 ---
 
@@ -170,7 +172,6 @@
 - **V4 5 卡片**：底部 3 卡改 5 卡（适合参数较多）
 - **V5 无卡片**：把 3 个参数融进左上描述或左下正文（更克制）
 - **V6 产品独立**：产品图不与背景融合，独立浮在暗 bg 中央
-- **V7 半透磨砂卡**：白卡改 `rgba(255,255,255,.15)` 配 `backdrop-filter: blur(10px)`（更克制）
 - **V8 2 卡片**：3 卡改 2 卡（适合 2 个核心参数）
 
 ---
@@ -183,7 +184,7 @@
 - **关键约束**：
   - 3 个白卡必须等宽，间距一致
   - 卡片参数主标字号 ≥ 24px（太小在大屏上会糊）
-  - 产品图必须 PNG 透明底（如果只能 JPG 抠图，必须用 mix-blend-mode 适配）
+  - 产品图必须 PNG 透明底（JPG 抠图直接换图，**不要**用 `mix-blend-mode` 遮白底 —— 导出 pptx 时混合模式没有，白方块会整块露出来）
   - 左上标题与产品图不能视觉打架（产品图位置避开头标题区域）
   - 底部白卡与暗 bg 的对比是版式灵魂，禁止改成半透卡
 

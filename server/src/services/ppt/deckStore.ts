@@ -246,6 +246,39 @@ export function updatePlanImageSubject(
   index: number,
   subject: string
 ): { ok: boolean; specs: Array<{ subject: string; mode: string; ratio: string }> } {
+  return patchPlanImageSpec(id, owner, page, index, (spec) => {
+    spec.subject = subject;
+  });
+}
+
+/**
+ * 改这一格**他自己改写的那一整条**提示词（`imageSpecs[index-1].fullPrompt`）。
+ *
+ * 空串 = 恢复成代码自动拼的那条，所以这里**把那个键删掉**而不是存一个空串：留着空串的话
+ * 后面所有「有没有改写过」的判断都得记得多写一个 `.trim()`，漏一处那一格就永远显示着
+ * 「整条已自定义」，而发出去的其实是自动拼的那条（界面和实际对不上，一处都不报错）。
+ */
+export function updatePlanImageFullPrompt(
+  id: string,
+  owner: DeckOwner,
+  page: number,
+  index: number,
+  fullPrompt: string
+): { ok: boolean; specs: Array<{ subject: string; mode: string; ratio: string }> } {
+  return patchPlanImageSpec(id, owner, page, index, (spec) => {
+    if (fullPrompt.trim()) spec.fullPrompt = fullPrompt;
+    else delete spec.fullPrompt;
+  });
+}
+
+/** 上面两条共用：只动 `plan_json` 里那一格，别的一个字不碰（见 `updatePlanImageSubject`）。 */
+function patchPlanImageSpec(
+  id: string,
+  owner: DeckOwner,
+  page: number,
+  index: number,
+  patch: (spec: any) => void
+): { ok: boolean; specs: Array<{ subject: string; mode: string; ratio: string }> } {
   const deck = getDeck(id, owner);
   if (!deck) return { ok: false, specs: [] };
   let plan: any;
@@ -257,7 +290,7 @@ export function updatePlanImageSubject(
   const row = Array.isArray(plan?.pages) ? plan.pages.find((p: any) => Number(p?.page) === page) : null;
   const specs = Array.isArray(row?.imageSpecs) ? row.imageSpecs : null;
   if (!specs || !specs[index - 1]) return { ok: false, specs: [] };
-  specs[index - 1].subject = subject;
+  patch(specs[index - 1]);
   getDatabase()
     .prepare(`UPDATE ppt_decks SET plan_json = ?, updated_at = ? WHERE id = ? AND ${tenantSql()}`)
     .run(JSON.stringify(plan), new Date().toISOString(), id, ...tenantArgs(owner));
@@ -385,6 +418,14 @@ export interface PptDeckPage {
    * 而界面上那个滑块还停在他调的位置）。拼装时由 `deckShell.applyVeil` 现贴。
    */
   veil_opacity: number;
+  /**
+   * 改成单图模式（poster）**之前**这一页的原样（104）。空串 = 这一页不是单图模式。
+   * 「改回原版」照它写回去 —— 没有它的话唯一的退路是重新生成这一页（一次真实调用，
+   * 而且版式和文案会重排成另一副样子）。
+   */
+  poster_from_html: string;
+  /** 同上，变形之前那一页的配图记录（`images_json` 原文）。 */
+  poster_from_images: string;
   updated_at: string;
 }
 
@@ -394,7 +435,8 @@ export function listPages(deckId: string, owner: DeckOwner): PptDeckPage[] {
   return db
     .prepare(
       `SELECT page, layout_id, html, images_json, image_style_id, problems_json,
-              pending_images_json, setup_layout_id, setup_notes, veil_opacity, updated_at
+              pending_images_json, setup_layout_id, setup_notes, veil_opacity,
+              poster_from_html, poster_from_images, updated_at
          FROM ppt_deck_pages WHERE deck_id = ? ORDER BY page`
     )
     .all(deckId) as PptDeckPage[];
@@ -440,6 +482,9 @@ export function savePageHtml(
   // `pending_images_json` **不在下面这份 SET 里**（091）：备好的图是花过真钱的，而它
   // 存在于 HTML 之前 —— 跟着配图记录一起清掉的话，「重新生成这一页」会静默扔掉那几张，
   // 界面上只是「这一页又要重新配图了」。
+  // `poster_from_*` 反过来**必须清掉**（104）：重新生成出来的是一页普通内容页，而那两列
+  // 存着的是更早以前变成单图之前的样子 —— 留着的话「改回原版」会把这一页退回上上一版
+  // （版式、文案全是旧的），而按钮上写的是「改回原版」，退回去之后也是一页正常的幻灯片。
   const imagesJson = data.images?.length ? JSON.stringify(data.images) : '';
   const styleId = data.images?.length ? data.imageStyleId || '' : '';
   db.prepare(
@@ -452,6 +497,8 @@ export function savePageHtml(
        images_json = excluded.images_json,
        image_style_id = excluded.image_style_id,
        problems_json = excluded.problems_json,
+       poster_from_html = '',
+       poster_from_images = '',
        updated_at = excluded.updated_at`
   ).run(
     uuidv4(),
@@ -537,6 +584,59 @@ export function savePageEditedHtml(
       deckId,
       data.page
     );
+  if (!r.changes) return false;
+  touchDeck(deckId);
+  return true;
+}
+
+/**
+ * 改成单图模式（104）：新的 html + **同一句 SQL 里**把变形前那一页存进 `poster_from_*`。
+ *
+ * 两件事必须在同一次写里：分两次写的话中间那一下失败之后，库里是「一页单图 + 没有原样」
+ * —— 界面上照旧显示「改回原版」那个按钮，点下去回的是一句「找不到原来那一版」，而这一页
+ * 的文字已经没了（唯一的退路是重新生成，那是一次真实调用、版式和文案都会变）。
+ *
+ * `images_json` 清空：单图那一页现在是占位图，留着旧记录的话面板上挂着上一版的缩略图。
+ * `problems_json` 不动（那是生成这一页时 `checkPage` 报的，和「把这一页改成单图」无关）。
+ */
+export function savePagePoster(
+  deckId: string,
+  owner: DeckOwner,
+  data: { page: number; html: string; fromHtml: string; fromImages: string }
+): boolean {
+  const db = getDatabase();
+  if (!getDeck(deckId, owner)) return false;
+  const r = db
+    .prepare(
+      `UPDATE ppt_deck_pages
+          SET html = ?, images_json = '',
+              poster_from_html = ?, poster_from_images = ?, updated_at = ?
+        WHERE deck_id = ? AND page = ? AND html <> ''`
+    )
+    .run(data.html, data.fromHtml, data.fromImages, new Date().toISOString(), deckId, data.page);
+  if (!r.changes) return false;
+  touchDeck(deckId);
+  return true;
+}
+
+/**
+ * 改回原版（104）：把 `poster_from_*` 那两列原样写回 html / `images_json`，并清空它们。
+ *
+ * **必须连 `images_json` 一起写回**：只写 html 的话页面里那几张图回来了而面板写着
+ * 「还没配过图」—— 他会再点一次「换一批图」（那是真花一遍钱），而画面上本来就是对的。
+ * 清空那两列是「这一页不再是单图模式」的唯一记号（html 里那个 `data-poster` 跟着一起走）。
+ */
+export function restorePagePoster(deckId: string, owner: DeckOwner, page: number): boolean {
+  const db = getDatabase();
+  if (!getDeck(deckId, owner)) return false;
+  const r = db
+    .prepare(
+      `UPDATE ppt_deck_pages
+          SET html = poster_from_html, images_json = poster_from_images,
+              poster_from_html = '', poster_from_images = '', updated_at = ?
+        WHERE deck_id = ? AND page = ? AND poster_from_html <> ''`
+    )
+    .run(new Date().toISOString(), deckId, page);
   if (!r.changes) return false;
   touchDeck(deckId);
   return true;

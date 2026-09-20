@@ -88,4 +88,36 @@ describe('生图网关', () => {
     await expect(generateImage('一个图标', { providerId: 'img-test-1' }))
       .rejects.toThrow(/video\/mp4[\s\S]*seedream/);
   });
+
+  // 参考图（图生图）这条路上的失败全是一句「生成成功」：参考图被丢在半路之后回来的是一张
+  // 漂亮的、跟参考图毫无关系的图 —— 接口 200、那一格挂着新缩略图，他只会一直重生（每次真扣额度）。
+  it('带参考图时发的是 /images/edits 的 multipart（照旧发 generations = 参考图被无声丢掉）', async () => {
+    const calls: { url: string; isForm: boolean }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: any, init: any) => {
+      calls.push({ url: String(url), isForm: init?.body instanceof FormData });
+      return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }));
+    // 参考图用本机磁盘那种地址（COS 没配时素材库里就是这种），图必须由我们读成字节传上去 ——
+    // 把地址转给上游的话它拉不到，而拉不到时多数网关不报错，直接当文生图出一张。
+    fs.mkdirSync(path.join(tmpRoot, 'ppt-uploads'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'ppt-uploads/ref.png'), PNG);
+
+    const [img] = await generateImage('照着这张图画', {
+      providerId: 'img-test-1',
+      refImages: ['/uploads/ppt-uploads/ref.png'],
+    });
+
+    expect(calls.map((c) => c.url)).toEqual(['https://img.example.test/v1/images/edits']);
+    expect(calls[0].isForm, '不是 multipart = 参考图没真发出去').toBe(true);
+    expect(img.refCount).toBe(1);
+  });
+
+  it('参考图读不到时抛错，不许少一张照样生成（少的那张不报错 = 图跟参考图无关）', async () => {
+    stubJson({ data: [{ b64_json: PNG.toString('base64') }] });
+    await expect(
+      generateImage('照着这张图画', { providerId: 'img-test-1', refImages: ['/uploads/ppt-uploads/gone.png'] })
+    ).rejects.toThrow(/找不到/);
+  });
 });

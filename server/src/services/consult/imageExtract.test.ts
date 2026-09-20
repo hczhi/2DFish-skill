@@ -77,6 +77,17 @@ describe('consult 图片识别', () => {
     expect(sent[0].options.tier).toBeUndefined();
   });
 
+  it('展示稿那边传上来的图，额度和日志记在 ppt 上（不是 consult）', async () => {
+    // 这条路被两个模块共用（`api/extractRoutes.ts`）。`app` 传错的话提取照样成功、
+    // 卡片上一切正常，只是这一次扣的是品牌咨询的应用额度 —— 管理员把咨询限成 5 次/天
+    // 之后，生成提纲页会回一句说咨询额度用完了（他压根没在用咨询），而后台那条
+    // 「展示稿」的用量看起来完全正常。
+    replies.push({ text: '## 品牌与公司\n- 玉林制药' });
+    await extractImageText('u1', '旧稿第2页.png', png, 'ppt');
+    expect(sent[0].options.source).toBe('ppt');
+    expect(sent[0].options.operation).toBe('ppt:extract-image');
+  });
+
   it('iPhone 的 .heic 在花额度之前就拦下来，并说清怎么转成 JPG', async () => {
     // 模型不吃 HEIC。落到「文件头不是图片」那句上的话，那句话对一张明明能看的照片
     // 讲不通，他只会反复传同一张（而每次都可能真花一次额度）。

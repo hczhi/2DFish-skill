@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { resolveImageProvider, getProvider, type AIProvider } from '../../services/aiProviderService.js';
 import { resolveCosTarget, uploadsRoot, cosUnavailableReason, cosPublicUrl, type CosTarget } from '../../api/upload.js';
+import { imageSize } from './imageSize.js';
 
 export interface GenerateImageOptions {
   size?: string;          // 如 '1024x1024'，各家默认值不同
@@ -34,6 +35,20 @@ export interface GenerateImageOptions {
    * 不传的模块（后台上传、ui-review）一律默认桶。
    */
   bucketProfile?: 'ppt';
+  /**
+   * 参考图（图生图）。给的是**已经转存过的那几张图的地址**：COS 绝对地址，或者 COS 没配时
+   * 那种本机 `/uploads/...` 相对地址。
+   *
+   * 三件事是承重的：
+   * ① **图在这边读成字节再上传**（`/images/edits` 的 multipart），不是把地址转给上游 ——
+   *    转地址的话本机磁盘那几张上游压根拉不到，而**网关拉不到参考图时基本不报错，直接当
+   *    文生图出一张**：接口 200、图也好看，只是跟参考图毫无关系（他会一直重生这一格）。
+   * ② **认不了参考图的协议必须抛错**（dashscope 原生文生图端点就是），不许悄悄丢掉这几张 ——
+   *    丢掉之后和上面那种「回落成文生图」一模一样，而唯一的线索是图不像。
+   * ③ 上游拒了要把原文带出去：`/images/edits` 不存在（网关没转发这个端点）和「这个模型不吃
+   *    参考图」解法不同（换网关 / 换模型），合成一句「生图失败」的话两种都只能靠猜。
+   */
+  refImages?: string[];
 }
 
 export interface GeneratedImage {
@@ -47,6 +62,22 @@ export interface GeneratedImage {
   /** 实际用的协议，以及它是不是从 base_url 猜出来的（extra_json 没写 protocol 时）。 */
   protocol: string;
   protocolInferred: boolean;
+  /**
+   * **真回来的像素**（图片头里读的，认不出格式时 undefined）。调用方要拿它和 `requestedSize`
+   * 核一遍：`size` 只是个建议，不认的接入点悄悄按自己的默认出（多半是方图），而那张图贴进
+   * 16:9 的图槽会被裁掉上下两条 —— 接口 200、面板写着「已生成」，看起来像模型构图没构好。
+   */
+  width?: number;
+  height?: number;
+  /** 这次真发出去的 size（没传就是 undefined）。 */
+  requestedSize?: string;
+  /** 上游拒了这个 size、已经摘掉它重发过一次时，这里是上游那句原文（调用方必须喊出来）。 */
+  sizeRefused?: string;
+  /**
+   * 这次**真带上去**的参考图张数（没带就是 undefined）。调用方要拿它和自己传的那几张核一遍：
+   * 只看「生成成功」的话，参考图被丢在半路和真照着画了在界面上完全一样。
+   */
+  refCount?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000;
@@ -93,24 +124,54 @@ export async function generateImage(prompt: string, opts: GenerateImageOptions =
   const target = resolveCosTarget(opts.bucketProfile);
 
   const { protocol, inferred } = readProtocol(provider);
+
+  // 参考图**在调上游之前读进来**：这一步（下载 / 读磁盘 / 核魔术字节）失败是免费的，
+  // 而放到后面失败时上游已经出过一张图、钱已经花了。
+  const refs = opts.refImages?.length ? await loadRefImages(opts.refImages) : [];
+  const refMode = refs.length ? readRefMode(provider) : 'edits';
+
   // 分段计时打进日志：生图有两段（上游生成、把图搬回来），只有一个总耗时的话
   // 「上游慢」和「下载拉不动」看起来一模一样 —— 而后者时上游已经扣了费。
   const t0 = Date.now();
+  const call = (o: GenerateImageOptions): Promise<RawImage[]> => {
+    switch (protocol) {
+      case 'dashscope':
+        // 悄悄按文生图发出去的话回来的是一张漂亮的、跟参考图毫无关系的图（接口 200）。
+        if (refs.length) {
+          throw new Error(
+            `接入点「${provider.label || provider.id}」走的是通义万相原生异步接口（protocol=dashscope），` +
+              '它的文生图端点不接参考图（参考图得走 qwen-image-edit 那个多模态端点，目前没接）。' +
+              '请换一条 OpenAI 兼容的生图接入点，或者把参考图清掉再生成。'
+          );
+        }
+        return callDashscope(provider, prompt, o);
+      case 'openai':
+        if (refs.length) return callOpenAIWithRefs(provider, prompt, o, refs, refMode);
+        return callOpenAI(provider, prompt, o);
+      default:
+        throw new Error(`未知的生图协议 protocol="${protocol}"，请在 provider 的 extra_json 里指定 protocol（openai/dashscope）。`);
+    }
+  };
   let raw: RawImage[];
-  switch (protocol) {
-    case 'dashscope':
-      raw = await callDashscope(provider, prompt, opts);
-      break;
-    case 'openai':
-      raw = await callOpenAI(provider, prompt, opts);
-      break;
-    default:
-      throw new Error(`未知的生图协议 protocol="${protocol}"，请在 provider 的 extra_json 里指定 protocol（openai/dashscope）。`);
+  let sizeRefused: string | undefined;
+  try {
+    raw = await call(opts);
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    // **「这个 size 我不认」要摘掉 size 重发一次，不能让整条配图链挂在它上面。**
+    // 不重发的话症状是「这一页一张图都没生成出来」，而那条接入点本身是好的（只是不吃 size
+    // 这个参数或者不吃这个具体值）；反过来悄悄重发不说一句也不行 —— 回来的是一张默认尺寸
+    // （多半是方图）的图，贴进 16:9 的图槽被裁掉两条，看起来像模型构图没构好。
+    if (!opts.size || !refusedSize(msg)) throw e;
+    console.warn(`[imageGateway] 上游拒了 size=${opts.size}，摘掉重发一次：${msg}`);
+    sizeRefused = msg;
+    raw = await call({ ...opts, size: undefined });
   }
   const t1 = Date.now();
   console.log(
     `[imageGateway] ${provider.model} 上游生成完成 ${t1 - t0}ms，${raw.length} 张，` +
-      `形式=${raw.map((r) => ('b64' in r ? 'base64' : 'url')).join('/')}`
+      `形式=${raw.map((r) => ('b64' in r ? 'base64' : 'url')).join('/')}` +
+      (refs.length ? `，参考图 ${refs.length} 张（${refMode}）` : '')
   );
 
   const stored = await Promise.all(raw.map((r) => persistImage(r, target)));
@@ -126,7 +187,24 @@ export async function generateImage(prompt: string, opts: GenerateImageOptions =
     storageReason: s.reason,
     protocol,
     protocolInferred: inferred,
+    width: s.width,
+    height: s.height,
+    requestedSize: opts.size,
+    sizeRefused,
+    refCount: refs.length || undefined,
   }));
+}
+
+/**
+ * 上游那句 400 是不是在说「这个 size 不行」。
+ *
+ * 认得太宽（比如只看 400）的话「余额不足」「模型名不对」也会被摘掉 size 重发一次 ——
+ * 第二次一样失败，只是把时间和一次真实调用花了两遍；认得太窄的话那一页一张图都没有，
+ * 而成因只是一个参数。碰到新的网关文案往这里加，不要改成「一律摘掉重发」。
+ */
+function refusedSize(msg: string): boolean {
+  if (!/HTTP 4\d\d/.test(msg)) return false;
+  return /\bsize\b|尺寸|分辨率|resolution|width.*height|invalid_size/i.test(msg);
 }
 
 function pinnedProvider(id: string): AIProvider {
@@ -172,7 +250,11 @@ async function callOpenAI(provider: AIProvider, prompt: string, opts: GenerateIm
     ...(opts.extra || {}),
   };
 
-  const text = await postJson(endpoint, provider.api_key, body, opts.timeoutMs);
+  return readImages(await postJson(endpoint, provider.api_key, body, opts.timeoutMs));
+}
+
+/** OpenAI 兼容响应（generations / edits 同一个形状）里的图。 */
+function readImages(text: string): RawImage[] {
   const json = parseJsonOrThrow(text);
   const items: any[] = Array.isArray(json?.data) ? json.data : [];
   const out: RawImage[] = [];
@@ -187,6 +269,73 @@ async function callOpenAI(provider: AIProvider, prompt: string, opts: GenerateIm
     throw new Error(`生图接口回了 200 但没有图片（data 里既没有 url 也没有 b64_json）：${snippet(text)}`);
   }
   return out;
+}
+
+/** 参考图怎么发。`edits` = multipart 传文件；`body` = 塞进 generations 的 body（data URI）。 */
+type RefMode = 'edits' | 'body';
+
+/**
+ * 参考图走哪条路。缺省 `edits`（OpenAI 官方那条：gpt-image 系列的图生图是
+ * `POST /images/edits` multipart），少数网关只认「generations 的 body 里塞一个 image 字段」
+ * （火山 seedream、部分 new-api 的 gemini 通道），那种在 extra_json 里写 `{"ref_mode":"body"}`。
+ *
+ * **拼错的值直接抛错**，不按缺省算：extra_json 是个自由文本框（见 readProtocol），
+ * `{"ref_mode":"bodys"}` 静默回落成 edits 的话，他会以为「参考图这功能在这条接入点上就是没用」，
+ * 而真正的动作只是改一个字。
+ */
+function readRefMode(provider: AIProvider): RefMode {
+  let declared = '';
+  try {
+    declared = String(JSON.parse(provider.extra_json || '{}').ref_mode || '').toLowerCase().trim();
+  } catch {
+    declared = '';
+  }
+  if (!declared) return 'edits';
+  if (declared === 'edits' || declared === 'body') return declared;
+  throw new Error(`接入点「${provider.label || provider.id}」的 extra_json 里 ref_mode="${declared}" 认不出来，只能是 "edits" 或 "body"。`);
+}
+
+/** OpenAI 兼容的图生图：两种形状（见 readRefMode），回来的东西和文生图一样。 */
+async function callOpenAIWithRefs(
+  provider: AIProvider,
+  prompt: string,
+  opts: GenerateImageOptions,
+  refs: RefImageBytes[],
+  mode: RefMode
+): Promise<RawImage[]> {
+  const base = trimTrailingSlash(provider.base_url || 'https://api.openai.com/v1');
+  if (mode === 'body') {
+    const dataUris = refs.map((r) => `data:${r.mime};base64,${r.buffer.toString('base64')}`);
+    return readImages(
+      await postJson(
+        `${base}/images/generations`,
+        provider.api_key,
+        {
+          model: provider.model,
+          prompt,
+          n: opts.n ?? 1,
+          ...(opts.size ? { size: opts.size } : {}),
+          image: dataUris.length === 1 ? dataUris[0] : dataUris,
+          ...(opts.extra || {}),
+        },
+        opts.timeoutMs
+      )
+    );
+  }
+
+  const form = new FormData();
+  form.append('model', provider.model);
+  form.append('prompt', prompt);
+  form.append('n', String(opts.n ?? 1));
+  if (opts.size) form.append('size', opts.size);
+  for (const [k, v] of Object.entries(opts.extra || {})) form.append(k, String(v));
+  // **一张用 `image`、多张用 `image[]`**：单张写成 `image[]` 的话 dall-e-2 那一档的网关
+  // 直接 400，而多张写成 `image` 时多数网关只取最后一张 —— 少看的那几张不会报错。
+  const field = refs.length === 1 ? 'image' : 'image[]';
+  refs.forEach((r, i) => {
+    form.append(field, new Blob([new Uint8Array(r.buffer)], { type: r.mime }), `ref${i + 1}${extFromContentType(r.mime)}`);
+  });
+  return readImages(await postForm(`${base}/images/edits`, provider.api_key, form, opts.timeoutMs));
 }
 
 /**
@@ -251,6 +400,26 @@ async function postJson(
   return text;
 }
 
+/**
+ * multipart 版（`/images/edits`）。**不许自己写 Content-Type**：写了就没有 boundary，
+ * 上游只会回一句 400「无法解析请求体」，而那句话读起来像 key 或者模型名的问题。
+ */
+async function postForm(url: string, apiKey: string, form: FormData, timeoutMs?: number): Promise<string> {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+    signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_MS),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    // 404 在这条路上是常见的一种：网关压根没转发 /images/edits（解法是换网关或换 ref_mode），
+    // 和「这个模型不吃参考图」不是一回事 —— 所以原文照带。
+    throw new Error(`带参考图的生图接口报错 HTTP ${resp.status}（${url}）：${snippet(text)}`);
+  }
+  return text;
+}
+
 async function getText(url: string, apiKey: string, timeoutMs: number): Promise<string> {
   const resp = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -295,7 +464,7 @@ async function persistImage(
   raw: RawImage,
   target: CosTarget | null,
   keyPrefix = 'ai-images'
-): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string }> {
+): Promise<{ url: string; storage: 'cos' | 'local'; reason?: string; width?: number; height?: number }> {
   let buffer: Buffer;
   let contentType: string;
 
@@ -332,6 +501,11 @@ async function persistImage(
     contentType = sniffed;
   }
 
+  // 真实像素在这里读一次（buffer 就在手上）。**认不出格式时不回这两个数**，调用方按
+  // 「没核对」处理 —— 兜一个 0 或者上游宣称的尺寸的话，「这条接入点不吃 size」这件事就
+  // 永远不会被说出来（而它的症状只是「图怎么被裁掉一块」）。
+  const px = imageSize(buffer);
+
   const ext = extFromContentType(contentType);
   const now = new Date();
   const datePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
@@ -346,7 +520,7 @@ async function persistImage(
       );
     });
     // 域名跟着桶走：这里套默认域名的话图进了新桶而 URL 指着老桶，接口全程 200、页面上是裂图。
-    return { url: cosPublicUrl(key, target.publicBase), storage: 'cos' };
+    return { url: cosPublicUrl(key, target.publicBase), storage: 'cos', ...px };
   }
 
   // 退回本机磁盘时必须说出**为什么**没走 COS：「没配」和「配了但凭据解不开」
@@ -356,7 +530,56 @@ async function persistImage(
   const abs = path.join(uploadsRoot(), key);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, buffer);
-  return { url: `/uploads/${key}`, storage: 'local', reason };
+  return { url: `/uploads/${key}`, storage: 'local', reason, ...px };
+}
+
+/** 一张读进内存的参考图。 */
+type RefImageBytes = { buffer: Buffer; mime: string };
+
+/**
+ * 把参考图的地址读成字节。**每一种读不到都抛错**，不跳过那一张：跳过之后剩下的照样生成，
+ * 回来一张跟参考图无关的图（接口 200、界面上那一格挂着新缩略图），他只会一直重生。
+ *
+ * 两种地址：COS 那种绝对地址（下载回来）、COS 没配时那种 `/uploads/...`（从本机磁盘读）。
+ * 后者在多实例/换过机器之后读不到，而那正是「这张参考图在这台机器上不存在」这句话要说的事。
+ */
+async function loadRefImages(list: string[]): Promise<RefImageBytes[]> {
+  const out: RefImageBytes[] = [];
+  for (const raw of list) {
+    const u = (raw || '').trim();
+    if (!u) continue;
+    let buffer: Buffer;
+    if (/^https?:\/\//i.test(u)) {
+      try {
+        const resp = await fetch(u, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        buffer = Buffer.from(await resp.arrayBuffer());
+      } catch (e: any) {
+        // 这一步在花钱之前，必须和 downloadImage 那句「上游已经生成成功（费用已产生）」分开说 ——
+        // 说成后者的话他以为钱已经扣了，不敢重试。
+        throw new Error(`参考图下载不回来：${u} —— ${String(e?.message || e)}（还没调生图，这次没有产生费用）。`);
+      }
+    } else if (u.startsWith('/uploads/')) {
+      const root = path.resolve(uploadsRoot());
+      const abs = path.resolve(path.join(root, u.slice('/uploads/'.length)));
+      // 地址是从库里来的，但拼路径这件事一旦被别处复用就变成「读任意文件」。
+      if (abs !== root && !abs.startsWith(root + path.sep)) throw new Error(`参考图地址不合法：${u.slice(0, 120)}`);
+      if (!fs.existsSync(abs)) {
+        throw new Error(
+          `参考图在这台服务器上找不到：${u} —— 这张图当时落在本机磁盘（COS 没配），` +
+            '换机器或多实例部署之后就读不到了。请重新上传一张参考图，或者给服务器配上 COS。'
+        );
+      }
+      buffer = fs.readFileSync(abs);
+    } else {
+      throw new Error(`参考图的地址认不出来（${u.slice(0, 120)}）：只认 http(s) 绝对地址和本机 /uploads/... 地址。`);
+    }
+    // 魔术字节核一遍：不是图的话上游多半回一句语焉不详的 400，而成因在我们这边。
+    const mime = sniffImageType(buffer);
+    if (!mime) throw new Error(`参考图不是 PNG / JPG / GIF / WebP 图片（${u.slice(0, 120)}，${buffer.length} 字节）。`);
+    out.push({ buffer, mime });
+  }
+  return out;
 }
 
 const DOWNLOAD_TIMEOUT_MS = 25_000;

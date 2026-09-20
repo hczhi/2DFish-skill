@@ -68,6 +68,10 @@ export const KNOWN_SLOTS: Array<{ slot: string; label: string }> = [
   // 只**追加**到自动生成的解析 prompt 上，不替换。动作清单、JSON 格式、
   // open_id 约束都是载荷性的，改坏了会静默失效（见 feishuAssistant/intent.ts）。
   { slot: 'feishu-intent', label: '飞书助理 · 指令理解补充规则（追加，不覆盖）' },
+  // 同样只**追加**在 `library/outline-craft.md` 后面。替换掉的话「不许编数字」
+  // 「提纲是纯文本行、不要 markdown 表格」这两条要看他写的 skill 里有没有 ——
+  // 没有的时候提纲里会出现编的数字和表格，而它们会被逐字排进页面（见 outlineChatService）。
+  { slot: 'ppt-outline', label: 'HTML 展示稿 · 生成提纲（追加，不覆盖）' },
 ];
 
 // 主文件里引用引用文件的占位符：{{ref:filename}}（filename 可带或不带 .md）

@@ -11,7 +11,9 @@
       · <b>kind=llm</b>：文本模型，按 <b>tier</b> 分 default/strong/fast，代码里的任务已归好档（如小红书搭结构/校验走 strong，成文走 fast）。<br />
       · <b>kind=image</b>：生图模型。协议默认按 Base URL 猜（OpenAI 兼容 <code>/images/generations</code>，
       阿里百炼原生走异步任务制），要指定就在 extra_json 里填 <code>{"protocol":"openai"}</code> 或
-      <code>{"protocol":"dashscope"}</code>。<b>配好后点「测试」会真生成一张图并显示出来</b> ——
+      <code>{"protocol":"dashscope"}</code>。<b>配好后点「测试」会真生成 2 张图</b>（第 1 张显示出来，
+      第 2 张用来探这条接入点认不认<b>参考图</b>——图生图走 <code>/images/edits</code>，
+      少数网关只认 body 里的 image 字段，那种在 extra_json 里加 <code>{"ref_mode":"body"}</code>）——
       注意必须是<b>生图</b>模型（如 doubao-seedream / qwen-image），视频模型（doubao-seedance）接口也返回
       200，但拿回来的是视频。<br />
       同一 tier 有多条时取最近更新的启用项；某档没配则回落到 default 档；一条都没配则回落到下方旧配置。<br />
@@ -326,6 +328,7 @@ async function testProvider(p: Provider) {
       storage?: string; storage_hint?: string; url_warning?: string;
       reasoning_hint?: string;
       no_thinking?: { verdict: string; note?: string };
+      ref_image?: { verdict: string; note?: string };
     }>(`/api/admin/providers/${p.id}/test`, {})
     let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
     if (r.protocol) msg += ` · 协议 ${r.protocol}${r.protocol_inferred ? '（按 Base URL 猜的，extra_json 里没写 protocol）' : ''}`
@@ -337,6 +340,9 @@ async function testProvider(p: Provider) {
     // 不显示的话管理员唯一的线索是用户来报错，而每次失败都真扣一次额度。
     if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
     if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
+    // 生图接入点认不认参考图（图生图）同理：不显示的话唯一的线索是 PPT 里那一格
+    // 「传了参考图但图跟它没关系」，而那时每次重生都真扣一次额度。
+    if (r.ref_image?.note) msg += `\n${r.ref_image.verdict === 'unsupported' ? '✗' : r.ref_image.verdict === 'ok' ? '✓' : '⚠'} 参考图：${r.ref_image.note}`
     // 生图必须把那张图显示出来：只显示「连通 ✓」的话，回了个 mp4、回了张
     // 纯黑图、回错了模型这几种在文字上都长得一样。
     testResults.value[p.id] = { ok: true, msg, img: r.image_url }

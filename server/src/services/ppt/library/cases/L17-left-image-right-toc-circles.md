@@ -81,7 +81,7 @@
 .l17-left::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,.45)}
 .l17-logo{position:absolute;top:32px;left:32px;color:#fff;font-size:18px;letter-spacing:.18em;font-weight:600;z-index:2}
 .l17-pill{position:absolute;top:32px;right:32px;background:var(--c-ink);color:#fff;padding:6px 14px;border-radius:99px;font-size:14px;letter-spacing:.2em;z-index:2}
-.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95;mix-blend-mode:screen}
+.l17-cn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:clamp(180px,18vw,260px);font-weight:900;color:var(--c-brand);font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif;letter-spacing:.04em;z-index:2;line-height:.95}
 .l17-en{position:absolute;bottom:14%;left:8%;color:#fff;font-size:clamp(40px,5vw,64px);font-weight:300;letter-spacing:.32em;text-transform:uppercase;z-index:2;opacity:.85}
 .l17-right{background:var(--c-card);padding:80px 72px;display:flex;flex-direction:column}
 .l17-head{font-size:clamp(40px,4.4vw,60px);font-weight:800;color:var(--c-ink-deep);letter-spacing:.02em;line-height:1;margin-bottom:48px}
@@ -145,7 +145,9 @@
 > 3. 图片只写 `/ppt-cases/ph-16x9.svg` 占位 + `data-img-prompt`，配图是后面独立一步由代码换的。
 
 > **design 提示**：左半毛笔字用 `font-family:'STKaiti','KaiTi','KaiTi_GB2312',serif`（macOS / Windows
-> 自带楷体）还原截图的笔触感。`mix-blend-mode: screen` 让毛笔字自动适配底图明暗。
+> 自带楷体）还原截图的笔触感。**不要给它加 `mix-blend-mode`**：导出 pptx 时没有混合模式，那个字
+> 按原色平铺画出来 —— screen 混出来是「亮一档、透出底图纹理」，平铺出来是一块实心品牌色，两份差
+> 一整个层次，而两边都渲染正常、一处不报错。它的对比度来源是底图那层 `.l17-left::after`（45% 黑）。
 
 ---
 

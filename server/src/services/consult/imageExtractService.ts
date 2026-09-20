@@ -17,7 +17,7 @@
 // NO_IMAGE」，代码认这个标记并报出真实成因（去换一个支持视觉的模型）。
 
 import { aiGateway, SAMPLING } from '../../core/llm/gateway.js';
-import { EXTRACT_CHANNEL } from '../../core/llm/apps.js';
+import { EXTRACT_CHANNEL, type ExtractApp } from '../../core/llm/apps.js';
 import { StageError } from './draftService.js';
 import { budgetRule, CATEGORY_LIST, cutToBudget, TIDY_BUDGET_CHARS } from './fileTidyService.js';
 
@@ -150,7 +150,14 @@ ${CATEGORY_LIST}
 export async function extractImageText(
   userId: string,
   filename: string,
-  buf: Buffer
+  buf: Buffer,
+  /**
+   * 这次提取记在哪个应用的额度/日志上（`ai_logs.source`）。这条路被两个模块用
+   * （品牌咨询的客户资料、展示稿的「生成提纲」资料），**传错的话那次调用去撞另一个应用的
+   * 应用额度**：管理员把咨询限成 5 次/天之后，生成提纲页传图片会回一句说咨询额度用完了
+   * （他压根没在用咨询），而后台那条「展示稿」的用量看起来一切正常。
+   */
+  app: ExtractApp = 'consult'
 ): Promise<ImageExtractResult> {
   const bad = sniffUnusable(buf);
   if (bad) {
@@ -197,13 +204,13 @@ export async function extractImageText(
     },
     {
       userId,
-      source: 'consult',
-      // 提取走「内容提取」通道：后台可以单独给它指一条便宜快的接入点，而 consult 其余
-      // 步骤（对话 / 出草稿 / 出方向）照旧走 consult 那条。额度和日志仍记在 consult 上。
+      source: app,
+      // 提取走「内容提取」通道：后台可以单独给它指一条便宜快的接入点，而调用方模块其余
+      // 步骤（对话 / 出草稿 / 出方向）照旧走自己那条。额度和日志仍记在 `app` 上。
       // 注意这条路要**认图**：指到一个纯文本模型上时，模型会回 NO_IMAGE，
       // 下面那段专门把它翻成「去后台换一个能读图的模型」——不是编一份客户资料出来。
       channel: EXTRACT_CHANNEL,
-      operation: 'consult:extract-image',
+      operation: `${app}:extract-image`,
       requestSummary: `识别上传图片：${filename}（${(buf.length / 1024).toFixed(0)}KB）`,
       // 有人在屏幕前等着，而且这条路上关它治的是截断：思维链算进 max_tokens 却不进
       // content（硬规则 2），症状只是「图里的字抄到一半就断了」。

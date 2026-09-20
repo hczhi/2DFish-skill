@@ -10,7 +10,7 @@
 - **比例**：16:9，浅底，报告风，**一页两张表**（上下各一张，各 2–5 列 × 3–4 行，约 300–460 字）
 - **核心手法**：把**两组口径不同的数各自成表** —— 每张表上方一行「小标题（这张表在说什么）+ 右端自己的单位/口径」，两格 `flex:1` 均分内容区高度；两张表的**表头、列数、单位互不相干**
 - **是否全幅**：否（全部内容包在 `.slide-inner` 里）
-- **什么时候用**：他给的一段资料里其实有**两组不同口径的数**：报价 + 工期、去年 + 今年、A 方案 + B 方案、投入 + 产出、线上 + 线下。这种内容并进一张表之后，列头只能取一个口径，另一组数被读的人拿错口径去套 —— 而那张表列数、斑马纹、合计行全都正常，一处都不报错。**只有一组数的时候不要用这一条**（下面那格空着，看起来像「这一页没排完」），单表用 L45
+- **什么时候用**：他给的一段资料里其实有**两组不同口径的数**：报价 + 工期、去年 + 今年、A 方案 + B 方案、投入 + 产出、线上 + 线下。这种内容并进一张表之后，列头只能取一个口径，另一组数被读的人拿错口径去套 —— 而那张表列数、行线、合计行全都正常，一处都不报错。**只有一组数的时候不要用这一条**（下面那格空着，看起来像「这一页没排完」），单表用 L45
 
 ---
 
@@ -36,7 +36,7 @@
 
 ### 4. 两张表 · `<table class="dt-table">`
 
-- 表格样式是**共用组件**（同 `.rp-head`），单表那一档用的是同一份 CSS：深底反白表头 + 偶数行白底斑马纹 + 首列加粗 + 数字列 `class="num"` + 最多一行 `<tr class="on">`。L57 只把字号压小一档（18px / `padding:12px 20px`），HTML 写法完全一样。
+- 表格样式是**共用组件**（同 `.rp-head`），单表那一档用的是同一份 CSS：深底反白表头 + 首列加粗 + 数字列 `class="num"` + 最多一行 `<tr class="on">`。L57 只把字号压小一档（18px / `padding:12px 20px`），HTML 写法完全一样。
 - **列数 2–5**（每张表各自算）。**两张表的列数不必相同** —— 这正是选这一条的理由；硬凑成一样的列数等于又把两个口径并回去了。
 - **每格 8 字以内**（比单表那一档还紧一点：字号小了但列也短了）。长句写进格子里那一行自己撑高两倍，把下面那张表顶下去。
 - `table-layout:fixed`，**列宽只写在 `<th>` 上**（写在 `<td>` 上不生效，而表格照样渲染，只是列宽是浏览器按第一行内容猜的）。
@@ -62,7 +62,6 @@
 .dt-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:20px;color:var(--c-ink)}
 .dt-table th,.dt-table td{padding:16px 22px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--c-hairline);overflow-wrap:break-word}
 .dt-table thead th{background:var(--c-ink-deep);color:#fff;font-size:19px;font-weight:700;line-height:1.4;letter-spacing:.02em;border-bottom:0}
-.dt-table tbody tr:nth-child(even){background:var(--c-card)}
 .dt-table tbody td:first-child{font-weight:700;color:var(--c-ink-deep)}
 .dt-table .num{font-family:var(--num);font-variant-numeric:tabular-nums;text-align:right;font-weight:700;color:var(--c-ink-deep)}
 .dt-table thead th.num{color:#fff}
@@ -167,5 +166,5 @@
 - **只有一组数时不要用这一条**（下面那格空着，看起来像「这一页没排完」）；十几行一组的数也不用这一条（拆两页排）
 - **两张表的表头配色要一样**：换一张的颜色读起来像「这张更重要」，而它们是平级的两组数
 - **结论条必须写两张表之间的关系**：只把两张表摆在一页上，读的人不知道该横着对还是各看各的
-- **配色**：表头 `var(--c-ink-deep)` + `#fff`，斑马纹 `var(--c-card)`，合计行 `var(--hl-o)` + `var(--c-brand)` 上边线，小标题 `var(--c-ink-deep)`，单位/口径和脚注 `var(--c-ink-soft)`
+- **配色**：表头 `var(--c-ink-deep)` + `#fff`，**没有斑马纹**（页纯白，行靠 `border-bottom` 那条 `--c-hairline` 分隔），合计行 `var(--hl-o)` + `var(--c-brand)` 上边线，小标题 `var(--c-ink-deep)`，单位/口径和脚注 `var(--c-ink-soft)`
 - 整份最多一页双表页，且别和别的表格页/图表页相邻（连着两页表翻起来像同一页没动）

@@ -31,6 +31,12 @@
  * 而浏览器、`checkPage`、导出全都正常（P-B/P-C 原来就填成了 `--c-bg-alt` 那一档的冷色，
  * cool 页上的暖底和蓝白幕帘对不上 —— 有测试盯着这条了）。
  *
+ * **2026-09-18 起四个页底级变量（`--c-bg` / `--bg-plain` / `--bg-warm` / `--bg-cool`）和两个
+ * `--mask-rgb*` 在每一套里都是纯白** —— 配色只换品牌色/墨色/浅色块，不再换页底。给某一套填回
+ * 一个米底/冷底**不报错**：那一套下所有页面回到有色底，而别的套还是白的，界面上只是「这套看着旧」；
+ * 而真正会静默出错的是跟着改 `--c-card`（它也是白）—— 卡片和页底同色是现在的**前提**，
+ * 那几块靠 `--c-hairline` 边框和 box-shadow 立起来（见 template 里 `.dt-table` / `.l46-item` 上的注）。
+ *
  * 两个 `--c-*-on` 是**压在那个色块实底上的字色**（`.l60-go` 圆按钮、`.l30-no` 角标、`.bio-badge`、
  * H-C 那档页眉色块）。**它不是「白色」的别名**：白字只在深底上成立，而品牌色深浅由配色决定 ——
  * 默认那套的橙对白字是 2.6:1、天青 2.3:1（AA 要 4.5），所以那两档压的是墨色；蓝/绿/红三套的
@@ -96,46 +102,46 @@ export const PALETTES: DesignOption[] = [
   {
     id: 'P-A',
     name: '想象橙（默认）',
-    hint: '橙 + 天青，暖底。案例库里所有 demo 就是这一套',
+    hint: '橙 + 天青（页底纯白）。案例库里所有 demo 就是这一套',
   },
   {
     id: 'P-B',
     name: '沉稳蓝',
-    hint: '深蓝 + 琥珀，冷底。政企、方案汇报',
+    hint: '深蓝 + 琥珀（页底纯白）。政企、方案汇报',
     vars: {
       '--c-brand': '#2A5DB0', '--c-brand-deep': '#1E4585',
       '--c-accent': '#E8A33D', '--c-accent-deep': '#CE8A26',
       '--c-brand-on': '#FFFFFF', '--c-accent-on': '#1F2733',
-      '--c-bg': '#F7F8FA', '--c-bg-alt': '#EDF2F9',
+      '--c-bg': '#FFFFFF', '--c-bg-alt': '#EDF2F9',
       '--c-ink': '#4A5260', '--c-ink-deep': '#1F2733', '--c-ink-soft': '#8B93A1',
       '--c-card': '#FFFFFF', '--c-hairline': 'rgba(16,24,40,.10)',
-      '--bg-warm': '#EEF3FA', '--bg-cool': '#FDF6EA', '--bg-plain': '#F7F8FA',
+      '--bg-warm': '#FFFFFF', '--bg-cool': '#FFFFFF', '--bg-plain': '#FFFFFF',
       '--card-o': '#E9F0FA', '--card-b': '#FDF3E3',
       '--hl-o': 'rgba(42,93,176,.14)', '--hl-b': 'rgba(232,163,61,.14)',
-      '--mask-rgb': '247,248,250', '--mask-rgb-alt': '253,246,234',
+      '--mask-rgb': '255,255,255', '--mask-rgb-alt': '255,255,255',
     },
   },
   {
     id: 'P-C',
     name: '墨绿',
-    hint: '墨绿 + 陶土，米白底。文旅、健康、国货',
+    hint: '墨绿 + 陶土（页底纯白）。文旅、健康、国货',
     vars: {
       '--c-brand': '#2F6B52', '--c-brand-deep': '#235340',
       '--c-accent': '#C4703A', '--c-accent-deep': '#A85A2A',
       '--c-brand-on': '#FFFFFF', '--c-accent-on': '#141A16',
-      '--c-bg': '#F8F7F2', '--c-bg-alt': '#EDF3EF',
+      '--c-bg': '#FFFFFF', '--c-bg-alt': '#EDF3EF',
       '--c-ink': '#4C534E', '--c-ink-deep': '#232A26', '--c-ink-soft': '#8D948F',
       '--c-card': '#FFFFFF', '--c-hairline': 'rgba(20,30,25,.10)',
-      '--bg-warm': '#EDF3EF', '--bg-cool': '#FBF2EB', '--bg-plain': '#F8F7F2',
+      '--bg-warm': '#FFFFFF', '--bg-cool': '#FFFFFF', '--bg-plain': '#FFFFFF',
       '--card-o': '#E9F1EC', '--card-b': '#FAEFE7',
       '--hl-o': 'rgba(47,107,82,.14)', '--hl-b': 'rgba(196,112,58,.14)',
-      '--mask-rgb': '248,247,242', '--mask-rgb-alt': '251,242,235',
+      '--mask-rgb': '255,255,255', '--mask-rgb-alt': '255,255,255',
     },
   },
   {
     id: 'P-D',
     name: '党建红',
-    hint: '正红 + 金，暖白底。党政机关、党建汇报、政府工作报告',
+    hint: '正红 + 金（页底纯白）。党政机关、党建汇报、政府工作报告',
     // 三处取色是有理由的，改的时候别按「更红更亮更喜庆」来动：
     // ① 品牌色取深正红 `#C1272D`，不取国旗红 `#E60012`。这一套里红是**大面积**用的
     //    （章节页整块色块、L60 那条 82px 通栏色带、H-C 那档页眉色块、圆按钮），上面压的是白字：
@@ -153,13 +159,13 @@ export const PALETTES: DesignOption[] = [
       '--c-brand': '#C1272D', '--c-brand-deep': '#94191F',
       '--c-accent': '#C8A15A', '--c-accent-deep': '#8A6A1E',
       '--c-brand-on': '#FFFFFF', '--c-accent-on': '#2A2422',
-      '--c-bg': '#FAF7F4', '--c-bg-alt': '#FBF4E8',
+      '--c-bg': '#FFFFFF', '--c-bg-alt': '#FBF4E8',
       '--c-ink': '#544C4A', '--c-ink-deep': '#2A2422', '--c-ink-soft': '#928A87',
       '--c-card': '#FFFFFF', '--c-hairline': 'rgba(42,20,20,.10)',
-      '--bg-warm': '#FBF1EF', '--bg-cool': '#FBF4E8', '--bg-plain': '#FAF7F4',
+      '--bg-warm': '#FFFFFF', '--bg-cool': '#FFFFFF', '--bg-plain': '#FFFFFF',
       '--card-o': '#F8E9E7', '--card-b': '#FAF0DC',
       '--hl-o': 'rgba(148,25,31,.14)', '--hl-b': 'rgba(200,161,90,.18)',
-      '--mask-rgb': '250,247,244', '--mask-rgb-alt': '251,244,232',
+      '--mask-rgb': '255,255,255', '--mask-rgb-alt': '255,255,255',
     },
   },
 ];

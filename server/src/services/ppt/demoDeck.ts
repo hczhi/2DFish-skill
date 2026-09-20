@@ -1,4 +1,4 @@
-// 65 个版式的效果 demo。**一份 deck，不是 22 个独立 html 文件**：CSS 全部来自
+// 69 个版式的效果 demo。**一份 deck，不是 22 个独立 html 文件**：CSS 全部来自
 // `library/template.html`（`demo-slides.html` 里只有 `<section>` 片段），请求时把两边拼起来。
 //
 // 为什么不各存一份完整 html：那 22 份每份都要复制一遍 deck 外壳和版式 CSS，而改了
@@ -16,7 +16,7 @@ import { assembleDeck } from './deckShell.js';
 /** 页脚那三个占位符的 demo 取值（真 deck 由生成流程填客户品牌）。 */
 const BRAND_CN = '云启数科';
 const BRAND_EN = 'YUNQI DATA';
-const TOPIC = '版式 demo · 65 个 L 版式的骨架效果';
+const TOPIC = '版式 demo · 69 个 L 版式的骨架效果';
 
 export class DemoNotFoundError extends Error {}
 

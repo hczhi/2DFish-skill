@@ -391,8 +391,14 @@ function normSection(s: string): string {
   return (cut || flat).replace(/\s+/g, '').toLowerCase();
 }
 
-/** 摘掉所有 `.slide-header` 块（数 `<div>` 配对，见 `applyHeader` 的第 ③ 条）。 */
-function stripHeaders(html: string): string {
+/**
+ * 摘掉所有 `.slide-header` 块（数 `<div>` 配对，见 `applyHeader` 的第 ③ 条）。
+ *
+ * 导出给 `imageModes.toPoster` 用（单图模式要扒出这一页的文字印进图里，而左上角那行模块名
+ * 是**代码贴的**，印进图里就是「同一句话在这一页出现两次」）。各写一份正则的话，那一份认不出
+ * 模型偶尔写成 `class="slide-header xx"` 的那种，症状只是图上多一行小字。
+ */
+export function stripHeaders(html: string): string {
   const re = /<div[^>]*class="[^"]*(?<![\w-])slide-header(?![\w-])[^"]*"[^>]*>/;
   let out = html;
   for (let guard = 0; guard < 8; guard++) {
@@ -692,7 +698,7 @@ function notesBlock(input: PageInput): string {
 ## 额外要求（他自己写的，**优先于上面所有建议**）
 ${lines.join('\n')}
 
-上面「输出格式（硬规则）」那 7 条不受这一段影响：还是只输出一个 \`<section>\`、不写页码、
+上面「输出格式（硬规则）」那几条不受这一段影响：还是只输出一个 \`<section>\`、不写页码、
 不写 \`<style>\` / \`<script>\`、颜色只用 \`var(--…)\`。要改字号/间距/字重就写 inline \`style="…"\`。
 `;
 }
@@ -731,6 +737,15 @@ function buildPrompt(input: PageInput, layout: PptLayout): string {
       : ''}
 8. **下面那个版式是排版参考，不是模子。** 它的结构、类名、间距节奏照它来，但**重复单元的数量按这一页的真实内容定**：案例里画 3 栏而这一页有 4 块内容，就照同一个单元的结构、同一批类名排 4 栏（**不要**自己发明类名、不要把第 4 块塞进第 3 栏、更不要把它丢掉）；只有 2 块就排 2 栏，不要为了填满案例的格子编内容。单元数量变了就用 inline \`style\` 顺手调宽度/间距（例如 4 栏时把每栏的 flex/width 收窄一点），别让它挤出画面。
    图位那一段（第 6 条）**不受这一条影响**：图位的条数和顺序仍然照给定的规格来（备好的图是按序号贴的）—— 内容块比图位多的时候，多出来那几块就不配图。
+9. **版式里的文字一个字都不锁，语言也不锁。** 案例和版式详情里写的「英巨字」「双语脚注」「中英小标」，
+   以及 \`.xx-en\` / \`lab-en\` / \`kicker\` 里那些英文示例，都只是让你看见那一行的**字号和位置**；
+   哪怕详情里写着「必填」，说的也是那一行的位置留着，不是那一行必须是英文。这一页写什么语言由**内容**
+   决定：提纲是中文、听的人是中文听众，那行就写中文（或者写内容里本来就有的那个英文口径名/机构英文名）。
+   **绝对不许为了填满版式，把中文标题现翻一句英文上去** —— 翻出来的那句话他没说过、专有名词还经常翻错
+   （「广发证券」翻成 Guangfa Securities、「亿美元」翻成 billion），而页面渲染、配色、间距全都正常，
+   他得逐字读才发现这一页在替他说英文。**想不出这一行该写什么第二维度的信息就整行不写**，宁可空着。
+   换语言时顺手把那一行按英文排的样式收掉（inline \`style\`）：拉开的 \`letter-spacing\`、\`font-style:italic\`、
+   全大写的 \`text-transform\` —— 中文套上这几样是一行散开的、歪的字，看起来像「这个版式本来就这样」。
 
 ## 这一页的内容
 所属模块：${input.section || '（无）'}

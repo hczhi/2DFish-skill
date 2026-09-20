@@ -459,6 +459,74 @@
               <p v-if="veilErr" class="banner bad">{{ veilErr }}</p>
             </div>
 
+            <!-- 这一页的图怎么用（103）。**只在已经生成过的页上出现**：还没生成时库里没有 html，
+                 变形要改的就是它。服务端回的 `notes` 一定要显示出来 —— 变形成功之后那张图还是
+                 按「版式里那一格」的构图生的，铺满整页看起来就是「这个功能效果很差」，而真正
+                 的成因只是还没用背景图的提示词生过一次。 -->
+            <div v-if="built[cur.page]" class="veil-row">
+              <div class="ins-h">
+                这一页的图
+                <span class="veil-val">{{
+                  imgMode[cur.page] === 'poster' ? '单图（整页就是一张图）'
+                  : imgMode[cur.page] === 'backdrop' ? '整页背景图' : '分屏'
+                }}</span>
+              </div>
+              <div class="spec-acts">
+                <button
+                  v-if="imgMode[cur.page] === 'split'"
+                  class="btn-ghost sm" :disabled="modeBusy"
+                  @click="setImageMode(cur.page, 'backdrop')"
+                >{{ modeBusy ? '处理中…' : '改成背景图' }}</button>
+                <button
+                  v-if="imgMode[cur.page] === 'split'"
+                  class="btn-ghost sm" :disabled="modeBusy"
+                  @click="setImageMode(cur.page, 'poster')"
+                >{{ modeBusy ? '处理中…' : '改成单图' }}</button>
+                <button
+                  v-if="imgMode[cur.page] !== 'split'"
+                  class="btn-ghost sm" :disabled="modeBusy"
+                  @click="setImageMode(cur.page, 'split')"
+                >{{ modeBusy ? '处理中…' : imgMode[cur.page] === 'poster' ? '改回原版' : '改回分屏' }}</button>
+              </div>
+              <template v-if="imgMode[cur.page] === 'backdrop'">
+                <div class="ins-h mt">
+                  背景图上那层幕帘
+                  <span class="veil-val">{{ Math.round((bdMask[cur.page] ?? 0.62) * 100) }}%</span>
+                </div>
+                <input
+                  class="veil-range" type="range" min="0" max="100" step="2"
+                  :value="Math.round((bdMask[cur.page] ?? 0.62) * 100)"
+                  :disabled="modeBusy"
+                  @change="setImageMode(cur.page, 'backdrop', Number(($event.target as HTMLInputElement).value) / 100)"
+                />
+                <p class="muted-note">
+                  往左拖图更清楚、字更难读；往右拖反过来。<b>不花调用</b>，也不用重新生成这张图。
+                </p>
+              </template>
+              <!-- 单图模式那段话是**常驻的**（不是只在刚变形完那一下说）：这一页的字从此画在
+                   图里，「改一个错别字」「换个配色」在界面上都变成了死路 —— 他多半是几天后回来
+                   改字的，那时候变形时那句提示早就没了，而画面看起来完全正常。 -->
+              <template v-else-if="imgMode[cur.page] === 'poster'">
+                <p v-if="posterText[cur.page]?.length" class="muted-note">
+                  会让模型印在画面里的字（第一行当标题）：
+                  <b>{{ posterText[cur.page].join(' / ') }}</b>
+                </p>
+                <p class="muted-note">
+                  这一页整页就是一张图，<b>字是画在图里的</b>：改字、换配色、改标题都得先
+                  「改回原版」；导出的 pptx 里这一页是<b>一整张图</b>（里面的字选不中、改不了）；
+                  模型还可能把字写错或写漏 —— 生成完<b>逐字核一遍</b>。原来那一版内容和已经生成
+                  的图都留着，「改回原版」能完整退回去。
+                </p>
+              </template>
+              <p v-else class="muted-note">
+                「改成背景图」把这一页那一格图铺成整页背景、文字压在上面；「改成单图」把整页
+                交给模型画成一张带字的主视觉（适合文字少、要冲击力的页）。两样都是
+                <b>纯代码搬，不花调用</b>，随时能改回来。背景图只对<b>只有一张图</b>的浅底页有效。
+              </p>
+              <p v-if="modeNote" class="banner warn pre">{{ modeNote }}</p>
+              <p v-if="modeErr" class="banner bad">{{ modeErr }}</p>
+            </div>
+
             <div class="ins-cols">
               <div class="ins-col">
                 <div class="ins-h">为什么挑这个版式</div>
@@ -531,7 +599,12 @@
                         </div>
 
                         <div class="spec-txt">
-                          <div>#{{ i + 1 }} {{ s.ratio }} · {{ s.mode }} · {{ s.subject }}</div>
+                          <div>
+                            #{{ i + 1 }} {{ s.ratio }} · {{ s.mode }} · {{ s.subject }}
+                            <!-- 改写过整条的那一格：这里不标的话，上面那句 subject、画风、
+                                 背景图/单图的切换对它全都不起作用，而界面上一处都不说。 -->
+                            <em v-if="s.fullPrompt"> · 整条提示词已自定义（不跟画风/模式/这句走）</em>
+                          </div>
                           <div v-if="curPrepared[i + 1]" class="spec-meta">
                             {{ curPrepared[i + 1].from === 'ai' ? '刚生成的' : '素材库挑的' }}
                             · {{ curPrepared[i + 1].ratio }}
@@ -951,6 +1024,11 @@
                     </template>
                   </em>
                 </div>
+                <!-- 这一格整条被改写过的话，下面那个「画什么」输入框**对它不起作用** ——
+                     不标的话他在这里改完、点重画，生出来还是原来那张（接口全程 200）。 -->
+                <em v-if="s.fullPrompt" class="spec-custom">
+                  整条提示词已自定义 · 下面这句不再生效（要改去「AI 生成」那个框里改）
+                </em>
                 <textarea
                   v-model="draftSubject[`${setupFor.page}:${i + 1}`]"
                   rows="2"
@@ -1082,19 +1160,60 @@
           <b>编辑第 {{ aiPromptFor.page }} 页第 {{ aiPromptFor.index }} 格的提示词</b>
           <button class="btn-ghost sm" @click="aiPromptFor = null">关掉</button>
         </div>
-        <p class="muted">
-          您可以调整以下提示词，点击确定后将以此开始生成。
-        </p>
+        <!-- **只有这一个框，里面就是会原样发出去的那一整条**（服务端 `/image-prompt` 拼的，
+             和生图那条路同一个函数）。前端自己拼一份近似的话，他照着那份把留白/配色调好，
+             而真发出去的是另一条 —— 图回来还是不对，两边都不报错。
+             动过之后这一格**不再跟画风/模式/配色/「画什么」那句走**，所以下面那句话要挂着。 -->
+       
+        <p v-if="previewErr" class="banner bad">{{ previewErr }}</p>
+        <template v-if="promptPreview">
+          <!-- 「哪一路」要显示出来：切成背景图/单图之后换的是整套模板，而两段中文读起来
+               都很正常 —— 不写出来的话「我切过了，怎么提示词看着还是那样」只能靠逐句读。 -->
+          <p class="muted-note">
+            画风 {{ promptPreview.styleId }}{{ promptPreview.styleName ? ' ' + promptPreview.styleName : '' }}
+            ・{{ modeText(promptPreview.mode) }}・比例 {{ promptPreview.ratio }}・发给上游的尺寸
+            {{ promptPreview.size }}
+          </p>
+          <p v-if="promptPreview.custom" class="banner warn">
+            这一条是你改写过的（已经不跟画风/模式/配色走了）。
+            <button class="btn-ghost sm" :disabled="previewBusy || prepBusy[`${aiPromptFor.page}:${aiPromptFor.index}`]"
+              @click="resetPrompt()">恢复成自动拼的那条</button>
+          </p>
+        </template>
         <div class="field">
           <textarea
-            v-model="aiPromptFor.subject"
-            rows="5"
-            placeholder="请在此输入画面提示词..."
+            v-model="promptDraft"
+            rows="14"
+            class="prompt-edit"
+            :maxlength="MAX_FULL_PROMPT"
+            :placeholder="previewBusy ? '正在取这一格的整条提示词…' : '整条提示词（留空 = 按代码自动拼的那条发）'"
           ></textarea>
         </div>
-        <div class="dr-actions" style="justify-content: flex-end; margin-top: 8px;">
+        <p v-for="(p, i) in promptPreview?.problems || []" :key="i" class="banner warn">{{ p }}</p>
+
+        <!-- 两个 AI 按钮**不是同一件事**，这句必须写出来：润色只改「画什么」那一句、整条照旧
+             由代码拼（换画风还跟着走）；重写整条回来那条会被存成这一格的「自定义整条」——
+             从此换画风、切背景图/单图、改配色、改那句「画什么」都不再影响它。不说的话他以为
+             重写完还跟着画风走，换完画风回来发现这一格纹丝不动，而界面上一处都不报错。
+             「各扣一次额度」同理：不写的话他会当成本地改写，一晚上点几十次（每次都真扣）。 -->
+        <p class="muted-note">
+          「AI 润色」只改「画什么」那一句，整条还是代码拼的（换画风跟着走）；「AI 重写整条」重写的是上面这一整条，
+          点确定之后这一格就不再跟画风/模式/配色走了。两个各扣 1 次额度。
+        </p>
+        <div class="dr-actions" style="margin-top: 8px;">
+          <!-- 润色**只改「画什么」那一句**，整条由服务端重新拼（留白方向 / 尺寸 / 要印的字
+               都是代码算的，交给模型改一遍的话它会顺手换掉，而提示词读起来更专业了）。 -->
+          <button class="btn-ghost" :disabled="craftBusy || rewriteBusy || previewBusy" @click="craftPrompt">
+            {{ craftBusy ? 'AI 润色中…' : '✨ AI 润色' }}
+          </button>
+          <!-- 重写整条：发给服务端的是**框里此刻这一条**（他可能已经手改过几句）——
+               不发的话服务端拿库里/现拼的那条重写，他刚调好的几句全丢了，而回来那条读起来更专业。 -->
+          <button class="btn-ghost" :disabled="craftBusy || rewriteBusy || previewBusy" @click="rewritePrompt">
+            {{ rewriteBusy ? 'AI 重写中…' : '♻️ AI 重写整条' }}
+          </button>
+          <span style="flex: 1"></span>
           <button class="btn-ghost" @click="aiPromptFor = null">取消</button>
-          <button class="btn-primary" @click="confirmAiPrompt">确定生成</button>
+          <button class="btn-primary" :disabled="previewBusy || craftBusy || rewriteBusy" @click="confirmAiPrompt">确定生成</button>
         </div>
       </div>
     </div>
@@ -1187,7 +1306,12 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, apiGet, apiPost, apiPatch, apiDelete } from '../../lib/api'
 
-interface PlannedImage { subject: string; mode: string; ratio: string }
+interface PlannedImage {
+  subject: string; mode: string; ratio: string
+  /** 他在提示词框里**自己改写的那一整条**。有它的时候这一格不再跟画风/模式/配色/subject 走
+   *  —— 所以图位清单上必须标出来，不然他改了画风看图没变，只会一张张重画（每张真花钱）。 */
+  fullPrompt?: string
+}
 interface PlannedPage {
   page: number; section: string; title: string; points: string[]
   layoutId: string; why: string; images: number
@@ -1255,6 +1379,25 @@ const pageErr = ref<Record<number, string>>({})
 const veil = ref<Record<number, number>>({})
 const veilBusy = ref(false)
 const veilErr = ref('')
+/**
+ * 每页的图是分屏还是整页背景图（103）+ 背景图上那层幕帘的浓度。**两样都从服务端读**
+ * （服务端按 html 里的记号现算）—— 只在本地记的话刷新之后按钮写着「改成背景图」而这一页
+ * 已经是背景图了，点下去回一句「已经是背景图模式了」，看起来像这个功能坏了。
+ */
+type PageImageMode = 'split' | 'backdrop' | 'poster'
+const imgMode = ref<Record<number, PageImageMode>>({})
+const bdMask = ref<Record<number, number>>({})
+/**
+ * 单图模式那一页**要印在画面里的那几行字**（104，服务端从 html 的 `data-poster-text` 读回来）。
+ *
+ * 必须显示：那几行是**代码从这一页扒出来的**（超长的、超过 6 行的都被丢掉了），不显示的话
+ * 「怎么少了一句」只能等图生出来才发现，而那是一次真实花费；显示出来他还能先「改回原版」
+ * 把那一行改短再变形。
+ */
+const posterText = ref<Record<number, string[]>>({})
+const modeBusy = ref(false)
+const modeErr = ref('')
+const modeNote = ref('')
 const showSrc = ref<Record<number, boolean>>({})
 
 const brandCn = ref('')
@@ -1519,14 +1662,206 @@ interface AssetItem {
   ratio: string; model: string; storage: string; created_at: string
 }
 const aiPromptFor = ref<{ page: number; index: number; subject: string } | null>(null)
+
+interface PromptPreview {
+  prompt: string
+  styleId: string
+  styleName: string
+  /** 服务端**按这一页 html 现算**的那一路（切成背景图/单图之后就是它）—— 要显示出来 */
+  mode: string
+  ratio: string
+  size: string
+  /** 这一条是不是他自己改写过的那一整条（服务端按 `imageSpecs[i].fullPrompt` 判）。
+   *  框里两种情况长得一样 —— 不显示的话他不知道这一格已经不跟画风/模式走了。 */
+  custom: boolean
+  problems: string[]
+}
+/** 服务端拼出来的整条提示词（`/image-prompt`）。前端不自己拼 —— 见模板里那段注释。 */
+const promptPreview = ref<PromptPreview | null>(null)
+const previewBusy = ref(false)
+const previewErr = ref('')
+/** 那**唯一一个输入框**里的内容 = 会原样发出去的整条提示词。 */
+const promptDraft = ref('')
+/** 上面那条**刚取回来时**的原文，用来判断「他到底动没动」。没这一份的话每次点确定都会把
+ *  自动拼出来的那条存成「自定义」，这一格从此不再跟画风/模式/配色走 —— 而他什么都没改。 */
+const promptLoaded = ref('')
+const craftBusy = ref(false)
+const rewriteBusy = ref(false)
+/** 润色前这一格是「他改写过的那一整条」，所以点确定时要**明确把那条清掉**（`fullPrompt: ''`）。
+ *  不清的话服务端那条自定义还在，生图发的是它 —— 而框里显示的是润色后的新那条，两边都不报错。 */
+const craftedClear = ref(false)
+
+/**
+ * 取一次完整提示词。**取不到要出声但不拦生成**：拦的话画风模板刚改坏时他连图都生不了；
+ * 静默的话上面那条旧的提示词会留在框里（改过 subject 之后还显示上一次的那条），
+ * 他会照着一条压根不会发出去的提示词调，而生出来的图和它不对应 —— 两边都不报错。
+ */
+async function loadPromptPreview(force = false) {
+  const at = aiPromptFor.value
+  if (!at) return
+  // 他已经在框里改过字了：**不许覆盖**（取这一次要几百毫秒，慢一点回来的话他刚粘进去的
+  // 那一整条会被自动拼的那条顶掉，而界面上只是「框里的字变了一下」，他多半不会注意，
+  // 点确定发出去的是另一条）。`force` 只有「恢复成自动拼的那条」那一下会传。
+  const untouched = force || promptDraft.value.trim() === promptLoaded.value.trim()
+  previewBusy.value = true
+  previewErr.value = ''
+  try {
+    const data = await apiPost<PromptPreview & { page: number; index: number }>(
+      `/api/ppt/decks/${deckId.value}/image-prompt`,
+      { page: at.page, index: at.index, subject: at.subject },
+    )
+    // 期间他可能已经关掉、或者换到另一格了 —— 那就丢掉这次结果（贴上去的是别的格子那条）
+    const now = aiPromptFor.value
+    if (!now || now.page !== at.page || now.index !== at.index) return
+    promptPreview.value = {
+      prompt: data.prompt,
+      styleId: data.styleId,
+      styleName: data.styleName,
+      mode: data.mode,
+      ratio: data.ratio,
+      size: data.size,
+      custom: !!data.custom,
+      problems: data.problems || [],
+    }
+    if (untouched) {
+      promptDraft.value = data.prompt
+      promptLoaded.value = data.prompt
+    }
+  } catch (e: any) {
+    promptPreview.value = null
+    previewErr.value = `没取到整条提示词：${e?.message || e}（框里是空的 —— 直接点「确定生成」发的是代码自动拼的那条，不是空提示词）`
+  } finally {
+    previewBusy.value = false
+  }
+}
+
 function openAiPrompt(page: number, index: number, subject: string) {
   aiPromptFor.value = { page, index, subject }
+  promptPreview.value = null
+  previewErr.value = ''
+  promptDraft.value = ''
+  promptLoaded.value = ''
+  craftedClear.value = false
+  loadPromptPreview()
 }
+
+/**
+ * 「AI 润色」：让模型只改**「画什么」那一句**，整条由服务端重新拼一遍贴回框里
+ * （`/craft-image-prompt`，规范在 `library/image-prompt-craft.md`）。**这一下会扣一次 AI 额度**。
+ *
+ * 三处不能省：
+ * ① 润色回来的 `subject` 要写回 `aiPromptFor.subject` —— 点确定时提交的是它，不写回的话库里
+ *    那句还是旧的，下次打开这个框又是没润色过的那条（而界面上一处都不说，他只会再润一次）；
+ * ② `promptLoaded` 跟着更新 = 他没再动手改的话**不存成「自定义那一整条」**，这一格照旧跟着
+ *    画风/模式/配色走（润色的成果落在「画什么」那句上）；
+ * ③ 润色前那一格本来是自定义的话，要记下来在确定时把那条清掉（`craftedClear`）。
+ */
+async function craftPrompt() {
+  const at = aiPromptFor.value
+  if (!at || craftBusy.value) return
+  craftBusy.value = true
+  previewErr.value = ''
+  try {
+    const data = await apiPost<PromptPreview & { page: number; index: number; subject: string; before: string }>(
+      `/api/ppt/decks/${deckId.value}/craft-image-prompt`,
+      { page: at.page, index: at.index, subject: at.subject },
+    )
+    const now = aiPromptFor.value
+    // 期间他换到另一格了：这次结果是上一格的，贴上去的话他会照着别人那条调（两边都不报错）。
+    if (!now || now.page !== at.page || now.index !== at.index) return
+    if (promptPreview.value?.custom) craftedClear.value = true
+    now.subject = data.subject
+    promptDraft.value = data.prompt
+    promptLoaded.value = data.prompt
+    promptPreview.value = {
+      prompt: data.prompt,
+      styleId: data.styleId,
+      styleName: data.styleName,
+      mode: data.mode,
+      ratio: data.ratio,
+      size: data.size,
+      custom: false,
+      problems: data.problems || [],
+    }
+  } catch (e: any) {
+    // 真实成因要透出去（空返回 / 截断 / 太长各有各的解法）：合成一句「润色失败」的话他只会
+    // 一直点，而每次都真扣一次额度。
+    previewErr.value = `润色没成功：${e?.message || e}（框里还是原来那条，可以直接点确定生成）`
+  } finally {
+    craftBusy.value = false
+  }
+}
+/**
+ * 「AI 重写整条」：让模型重写**框里这一整条**（`/rewrite-image-prompt`，规范在
+ * `image-prompt-craft.md` 的「## 重写整条」那一节）。**这一下会扣一次 AI 额度。**
+ *
+ * 和润色不是同一件事：润色的成果落在「画什么」那句上（整条照旧跟画风走），这里回来那条
+ * **点确定就会被存成这一格的「自定义整条」** —— 所以这里要做两件事：
+ * ① `promptLoaded` 清空 = 「框里这条已经不是取回来那条了」，于是确定那一下一定会存下来
+ *    （`confirmAiPrompt` 靠它判断「他到底动没动」）。不清的话万一重写回来那条和原来一字不差，
+ *    这一下就什么都不存，而界面上按钮转过、额度扣过了；
+ * ② `custom: true` 要标上，上面那条橙色提示才会出来（框里两种情况长得一样）。
+ * 发出去要带**框里此刻这一条**（`draft`）：不带的话服务端拿库里那条重写，他刚手改的几句全丢了。
+ */
+async function rewritePrompt() {
+  const at = aiPromptFor.value
+  if (!at || rewriteBusy.value) return
+  rewriteBusy.value = true
+  previewErr.value = ''
+  try {
+    const data = await apiPost<PromptPreview & { page: number; index: number; before: string }>(
+      `/api/ppt/decks/${deckId.value}/rewrite-image-prompt`,
+      { page: at.page, index: at.index, subject: at.subject, draft: promptDraft.value },
+    )
+    const now = aiPromptFor.value
+    // 期间他换到另一格了：这次结果是上一格的，贴上去的话他会照着别人那条调（两边都不报错）。
+    if (!now || now.page !== at.page || now.index !== at.index) return
+    promptDraft.value = data.prompt
+    promptLoaded.value = ''
+    promptPreview.value = {
+      prompt: data.prompt,
+      styleId: data.styleId,
+      styleName: data.styleName,
+      mode: data.mode,
+      ratio: data.ratio,
+      size: data.size,
+      custom: true,
+      problems: data.problems || [],
+    }
+  } catch (e: any) {
+    // 真实成因要透出去（空返回 / 截断 / 太长 / 少了代码算的那几段各有各的解法）：合成一句
+    // 「重写失败」的话他只会一直点，而每次都真扣一次额度。
+    previewErr.value = `重写没成功：${e?.message || e}（框里还是原来那条，可以直接点确定生成）`
+  } finally {
+    rewriteBusy.value = false
+  }
+}
+
+/**
+ * 确定：**按框里这一整条生图，并把它存下来**（改过才存）。
+ *
+ * 没改过就不能存 —— 存了的话这一格从此不跟画风/模式/配色/「画什么」那句走，而他只是打开
+ * 看了一眼；换画风之后这一格图纹丝不动，界面上一处都不报错。
+ */
 function confirmAiPrompt() {
-  if (!aiPromptFor.value) return
-  const { page, index, subject } = aiPromptFor.value
+  const at = aiPromptFor.value
+  if (!at) return
+  const text = promptDraft.value.trim()
+  const changed = text !== promptLoaded.value.trim()
+  // 润色过、而这一格原来挂着一条「他改写的整条」：这里要**明确清掉那条**（`''`），不然生图
+  // 发的是那条旧的自定义，而框里显示的是润色后的新那条 —— 两边都不报错（见 `craftedClear`）。
+  const full = changed ? text : craftedClear.value ? '' : undefined
   aiPromptFor.value = null
-  prepare(page, index, 'ai', undefined, subject)
+  promptPreview.value = null
+  prepare(at.page, at.index, 'ai', undefined, at.subject, full)
+}
+/** 恢复成代码自动拼的那条（`fullPrompt: ''` = 删掉那一格的自定义），然后重新取一次贴回框里。 */
+async function resetPrompt() {
+  const at = aiPromptFor.value
+  if (!at) return
+  await prepare(at.page, at.index, 'subject', undefined, undefined, '')
+  const now = aiPromptFor.value
+  if (now && now.page === at.page && now.index === at.index) loadPromptPreview(true)
 }
 
 interface AssetGroup { deckId: string; title: string; deckGone: boolean; count: number; lastAt: string }
@@ -1688,7 +2023,10 @@ async function prepare(
   index: number,
   from: 'ai' | 'library' | 'clear' | 'subject',
   assetId?: string,
-  subject?: string
+  subject?: string,
+  /** 他改写的那一整条（`''` = 恢复自动拼的那条）。**不传 = 别动库里那份** ——
+   *  一律传的话每次「清掉」「从素材库挑」都会把这一格的自定义悄悄删掉。 */
+  fullPrompt?: string
 ) {
   const key = `${page}:${index}`
   prepBusy.value[key] = true
@@ -1699,7 +2037,7 @@ async function prepare(
       pasted?: { html: string; previewHtml: string; images: FilledImage[]; styleId: string }
     }>(
       `/api/ppt/decks/${deckId.value}/prepare-images`,
-      { page, index, from, assetId, subject, planRev: planRev.value }
+      { page, index, from, assetId, subject, fullPrompt, planRev: planRev.value }
     )
     // 服务端回的规格覆盖内存里那份：改过的提示词只留在输入框里的话，关掉再开是模型
     // 原来那句，而库里已经是新的 —— 两处不一样，界面上一处都不说。
@@ -2032,6 +2370,9 @@ const outlineIssue = computed(() => {
  */
 const draftSubject = ref<Record<string, string>>({})
 const MAX_SUBJECT = 300
+/** 他改写的那**一整条**的上限（服务端 `MAX_FULL_PROMPT_CHARS`，只拒不截）。两边对不上时
+ *  症状是「点确定被 400 顶回来」而框里看不出哪儿超了 —— 所以这里也卡一道。 */
+const MAX_FULL_PROMPT = 4000
 
 function subjectKey(page: number, index: number) { return `${page}:${index}` }
 
@@ -2050,9 +2391,14 @@ function ratioClash(slot?: string, got?: string): boolean {
   return !!k(slot) && !!k(got) && k(slot) !== k(got)
 }
 
-/** concept/case/data 三路画法各自对应画风里的一套模板，填错了数据页会拿到概念插画。 */
+/**
+ * concept/case/data 三路画法各自对应画风里的一套模板，填错了数据页会拿到概念插画。
+ * backdrop/poster 是整页那两路（用户自己切的），模板是另一套 —— 这两个也要有名字，
+ * 不然「完整提示词」那一行显示的是 `backdrop` 这种原文，看起来像没切成功。
+ */
 function modeText(mode: string): string {
-  return mode === 'concept' ? '概念插画' : mode === 'case' ? '实景/产品' : mode === 'data' ? '数据图' : mode
+  return mode === 'concept' ? '概念插画' : mode === 'case' ? '实景/产品' : mode === 'data' ? '数据图'
+    : mode === 'backdrop' ? '整页背景图' : mode === 'poster' ? '单图（字印在图里）' : mode
 }
 
 /** 版式那段图位说明是**库里的原文**（不在前端拆开），太长时只显示开头，全文放 title。 */
@@ -3640,6 +3986,11 @@ interface StoredPage {
   notes: string
   /** 这一页黑蒙版的透明度（097）。 */
   veilOpacity: number
+  /** 这一页的图是分屏 / 整页背景图（103）/ 单图（104）+ 幕帘浓度（不是背景图就是 null）。 */
+  imageMode: PageImageMode
+  backdropMask: number | null
+  /** 单图模式要印进画面的那几行字（104，不是单图模式就是空数组）。 */
+  posterText: string[]
 }
 
 /**
@@ -3682,6 +4033,9 @@ async function loadPages() {
       if (r.setupLayoutId) setupLayout.value[r.page] = r.setupLayoutId
       if (r.notes) setupNotes.value[r.page] = r.notes
       if (r.veilOpacity) veil.value[r.page] = r.veilOpacity
+      if (r.imageMode) imgMode.value[r.page] = r.imageMode
+      if (r.backdropMask != null) bdMask.value[r.page] = r.backdropMask
+      if (r.posterText?.length) posterText.value[r.page] = r.posterText
       if (!r.html) continue
       builtLayout.value[r.page] = r.layoutId
       const previewHtml = previewOf(shell, previewSlot, r.section)
@@ -3738,6 +4092,55 @@ async function saveVeil(page: number, next: number) {
   veilBusy.value = false
 }
 
+/**
+ * 分屏 ⇄ 整页背景图（103）⇄ 单图（104），以及背景图上那层幕帘的浓度（**不调 AI、不花额度**）。
+ *
+ * 四条是承重的：
+ * ① **画面用服务端回的 previewHtml 换掉、html 也接回来**：不接 html 的话本地那份还是分屏那一版，
+ *    而这一页接下来的配图/就地编辑都以它为底 —— 变形会被下一次编辑悄悄撤掉。
+ * ② **`notes` 必须显示**（`modeNote`）：铺好的那张图还是按版式里那一格的构图生的，
+ *    满屏看就是「效果很差」，而他要的只是再点一次配图（用背景图那套提示词重画一张）。
+ * ③ **失败时状态要退回服务端那份**：本地先改成 'backdrop' 的话按钮显示「改回分屏」而库里
+ *    还是分屏，点下去回一句「这一页不是背景图模式」，看起来像功能坏了。
+ * ④ **`text` 一律照返回值覆盖**（包括改回原版时那个空数组）：只在有值时写的话改回原版之后
+ *    那句「会印在画面里的字」还挂在一页普通分屏页上，而那几行字压根不会再进任何提示词。
+ */
+async function setImageMode(page: number, mode: PageImageMode, mask?: number) {
+  if (modeBusy.value) return
+  const before = imgMode.value[page] || 'split'
+  modeBusy.value = true
+  modeErr.value = ''
+  modeNote.value = ''
+  try {
+    const r = await apiPost<{
+      mode: PageImageMode; mask: number | null; notes: string[]; text: string[]; html: string; previewHtml: string
+    }>(`/api/ppt/decks/${deckId.value}/image-mode`, { page, mode, mask, planRev: planRev.value })
+    imgMode.value[page] = r.mode
+    if (r.mask != null) bdMask.value[page] = r.mask
+    posterText.value[page] = r.text || []
+    const b = built.value[page]
+    if (b) built.value[page] = { ...b, html: r.html, previewHtml: r.previewHtml }
+    if (imgInfo.value[page]) imgInfo.value[page] = { ...imgInfo.value[page], html: r.html, previewHtml: r.previewHtml }
+    modeNote.value = (r.notes || []).join('　')
+    // 单图那一进一出**必须重读这一页的配图**：变成单图时服务端把 `images_json` 清了（画面上
+    // 只剩一张占位图），本地不删的话「配图 3/3 张」还挂着，点开是三张已经不在这一页上的图；
+    // 改回原版时那三张又回到了库里，不重读的话这一栏写着「还没配过图」而画面上图都在
+    // —— 他会照着按钮再花一次钱重配。
+    if (r.mode === 'poster' || before === 'poster') {
+      delete imgInfo.value[page]
+      await loadPages()
+    }
+    // 整份预览和「已导出」都过期了 —— 不作废的话「看整份」里这一页还是分屏那一版。
+    invalidateDeck()
+  } catch (e: any) {
+    const what = mode === 'poster' ? '没改成单图'
+      : mode === 'backdrop' ? '没改成背景图'
+      : before === 'poster' ? '没改回原版' : '没改回分屏'
+    modeErr.value = `${what}（这一页还是原来那样）：${e?.message || '请求失败'}`
+  }
+  modeBusy.value = false
+}
+
 // ── 删一页（结构改动，098）────────────────────────────
 const structBusy = ref(false)
 const structNote = ref('')
@@ -3759,6 +4162,9 @@ function resetPageState() {
   busy.value = {}
   pageErr.value = {}
   veil.value = {}
+  imgMode.value = {}
+  bdMask.value = {}
+  posterText.value = {}
   showSrc.value = {}
   imgBusy.value = {}
   imgErr.value = {}
@@ -4575,6 +4981,16 @@ async function run() {
   border: 1px solid rgba(255, 255, 255, 0.1);
   font-family: var(--font-mono); font-size: 11px; line-height: 1.7; color: #A5B4FC;
   white-space: pre-wrap; word-break: break-all;
+}
+
+/* 可改的那一整条：等宽 + 够高（十几行的模板挤在 5 行的框里，他翻不到尾巴那几句约束）。 */
+.prompt-edit {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.8; color: #A5B4FC;
+  min-height: 220px; resize: vertical;
+}
+.spec-custom {
+  display: block; margin: 4px 0 2px; font-style: normal;
+  font-size: 11px; color: var(--brand-yellow);
 }
 
 /* ── 提纲与设置抽屉 ───────────────────────────── */

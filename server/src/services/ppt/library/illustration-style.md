@@ -15,6 +15,37 @@
 
 每套风格都包含：名称、适用内容、渲染技法、构图、禁忌、三个 mode（concept / case / data）的专用提示词模板。
 
+### 2.0 每套模板的固定六段（改模板时照这个骨架改）
+
+```
+用途句 → 主题：<本页主题> → 主体：<场景> → 机位：机位 → 光线与质感：光源+材质 → 配色：色（≤3） → 收尾：禁忌 → <size>
+```
+
+五条是承重的，全都属于「出来的图单看不错、一处不报错」那一类：
+
+- **整条提示词一律中文**：18 套模板、§6 那两套、三条尾巴（`styleLibrary.ts` 的
+  `HARD_TAIL` / `BACKDROP_TAIL` / `POSTER_TAIL`）、代码算的留白那一句（`imageSpace.ts` 的
+  `phrase`）、`<size>` 换成的那句，**同一种语言**。混着写有两处代价：用户在「编辑这一格的
+  提示词」那个框里逐字核的时候，读到的是半句英文（而最容易写错的「留白方向」正好在那半句里），
+  他改不动也发现不了；模型对夹在中文长句里的那半句英文明显更不当真 —— 症状是「留白那一句
+  好像没生效」，而每张图单看都正常、一处都不报错。
+- **`机位：` 和 `光线与质感：` 两段不能省。** 冲击力来自机位（仰拍 / 单点透视 / 45° 微缩 /
+  正交俯拍），高级感来自光源方向 + 材质厚描；省掉这两段模型就按自己的均值画 —— 出来的是一张
+  正面平光、四面都亮、没有材质的图，也就是「页面太平」的真正来源。写「大气」「高级感」「电影感」
+  「4K」这类感觉词等于没写（模型的均值不变），所以这两段一律落到具体机位和具体材质上。
+  有测试断言这两个段标在 18 套模板里都在（段标改了字面要同步改那条断言，不然测试会把
+  「模板缺了机位」和「段标换了叫法」混成同一句）。
+- **每套模板必须**恰好**有一处带「主题」字样的 `<…>`，其余 `<…>` 都会被填成这一格要画的东西。**
+  渲染时 `styleLibrary.renderStylePrompt` 按有没有「主题」两个字分流：`data` 三套原来只写了
+  `<本页主题>`、没有 `主体：` 那一行，于是**规划里写的「画什么」一个字都没进提示词** ——
+  出来的是一张按页标题瞎画的通用信息图，每张都挺好看，唯独答错了题（有测试）。
+- **`机位：` 里不许出现镜头以外的东西**（材质、颜色、禁忌各有自己那一段）。同一件事写在两段里，
+  改的时候只会改到一处，另一处照旧发给模型。
+- **模板里不要出现数字/文字类的画面元素**（「百分比标签」「黏土数字」「篆书」）。
+  最终提示词的尾巴是写死的「画面里不许出现任何文字、字母、数字…」（`styleLibrary.ts` 的
+  `HARD_TAIL`），两句话直接冲突时模型自己挑一边 —— 挑了写字那边就是一张带乱码假数字的图
+  （中文尤其烂），而这张图会被当成正常结果贴进页面。要表达比例就写环形 / 条形 / 长短对比。
+
 ---
 
 ### S-A 现代 SaaS 等距（默认）
@@ -26,32 +57,38 @@
 
 #### concept 模板
 ```
-High-quality concept isometric vector illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-<本页专属场景描述>.
-Limited palette: vibrant {{BRAND}}, {{ACCENT}}, soft {{BG}} / {{BG_ALT}} background, dark gray accents.
-Clean corporate tech style, isometric/flat mix, crisp lines, subtle shadows, light airy background, no dark areas, no text, no UI chrome, no watermark.
-High visual impact. <size>.
+企业级主题演讲用的高品质等距概念矢量插画。
+主题：<本页主题，1句>。
+主体：<本页专属场景描述>。只有一个主角物件，其余次要元素都要小到它的三分之一以下。
+机位：抬高的四分之三等距视角，主角物件建得极其宏大，结构线全部收向同一个消失点。
+光线与质感：左上方一盏柔和主光，地面上拖出长而淡的投影，磨砂玻璃与拉丝铝表面，细细的发光管线，元素之间留出干净的空气。
+配色：鲜亮的 {{BRAND}}、{{ACCENT}}，柔和的 {{BG}} / {{BG_ALT}} 背景，深灰点缀；最多三色。
+收尾：干净的企业科技风，等距与扁平混合，矢量边缘利落，画面不拥挤，不要大片暗区。
+<size>。
 ```
 
 #### case 模板
 ```
-High-quality case semi-realistic product mockup illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-<产品界面/业务场景描述，截图感但保持插画统一笔触>.
-Limited palette: {{BRAND}}, {{ACCENT}}, soft {{BG}} / {{BG_ALT}}, dark gray accents.
-Clean SaaS illustration style, crisp UI shapes, light shadows, no photographic realism, no text, no watermark.
-<size>.
+企业级主题演讲用的高品质半写实产品样机插画。
+主题：<本页主题，1句>。
+主体：<产品界面/业务场景描述，截图感但保持插画统一笔触>。
+机位：略微仰视的正面英雄视角，主面板在前景大而清晰，辅助面板依次缩小退到它后面。
+光线与质感：左上方柔和影棚光，面板边缘一道细轮廓光，哑光塑料机身配磨砂玻璃覆层，接触处淡淡的投影。
+配色：{{BRAND}}、{{ACCENT}}，柔和的 {{BG}} / {{BG_ALT}}，深灰点缀；最多三色。
+收尾：干净的 SaaS 插画风，界面形状利落，不要照片级写实，画面不拥挤。
+<size>。
 ```
 
 #### data 模板
 ```
-High-quality data flat infographic illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-Rising curves, token flows, grid charts, geometric shapes arranged into a clear visual hierarchy.
-Limited palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, dark gray accents.
-Flat corporate tech style, clean lines, minimal shadows, no 3D, no text, no watermark.
-<size>.
+企业级主题演讲用的高品质扁平数据信息图插画。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，由上升曲线、流向线、网格图表和几何形状搭出来，层级只有一条主线；最重要的那个形状比其余大一倍。
+机位：正交正视平视，所有元素对齐同一张看不见的网格，没有透视变形。
+光线与质感：均匀无影的影棚光，哑光平涂，发丝级细线，间距宽松而均等。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，深灰点缀；最多三色。
+收尾：扁平企业科技风，线条干净，几乎不要阴影，不要 3D，画面不拥挤。
+<size>。
 ```
 
 ---
@@ -65,32 +102,38 @@ Flat corporate tech style, clean lines, minimal shadows, no 3D, no text, no wate
 
 #### concept 模板
 ```
-Friendly business flat illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-<场景描述，突出人物协作与流程>.
-Limited palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, dark gray accents.
-Flat design, simple human figures, geometric shapes, clean color blocks, no perspective, no text, no watermark, light background.
-<size>.
+企业级主题演讲用的亲和商务扁平插画。
+主题：<本页主题，1句>。
+主体：<场景描述，突出人物协作与流程>。一个主要人物明显比其他配角人物大。
+机位：正面平视、无透视，人物从左到右按一条阅读顺序摆开，重点只靠大小差别拉出来。
+光线与质感：不要渐变、不要写实明暗 —— 只用双色色块，配一层朝右下偏移的纯色投影，背景是平涂纸面。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，深灰点缀；最多三色。
+收尾：扁平设计，人物造型简洁，几何形状，干净色块，浅色背景，画面不拥挤。
+<size>。
 ```
 
 #### case 模板
 ```
-Friendly business flat illustration showing a product/service scenario.
-Theme: <本页主题，1句>.
-<具体业务场景，人物使用产品/服务>.
-Limited palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, dark gray accents.
-Flat illustration style, simple characters, clean UI-like shapes, no photorealism, no text, no watermark.
-<size>.
+展示产品/服务使用场景的亲和商务扁平插画。
+主题：<本页主题，1句>。
+主体：<具体业务场景，人物使用产品/服务>。
+机位：正面平视、无透视，人物和他手里那件东西在前景足尺呈现，环境简化成后面几个大剪影。
+光线与质感：双色平涂明暗，投影只有一个方向（朝右下），哑光色块，不要渐变。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，深灰点缀；最多三色。
+收尾：扁平插画风，人物简洁，界面形状利落，不要照片级写实，画面不拥挤。
+<size>。
 ```
 
 #### data 模板
 ```
-Flat business infographic illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-Clean charts, human icons, process arrows, percentage circles arranged in a flat composition.
-Limited palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, dark gray accents.
-Flat design, no 3D, minimal shadows, no text, no watermark.
-<size>.
+企业级主题演讲用的扁平商务信息图插画。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，由干净的条形图、环形图、人物图标和流程箭头搭出来；关键那个形状比其余大一倍。
+机位：正面平视对齐一张看不见的网格，无透视，各组之间间距相等。
+光线与质感：只用平涂填充，发丝级细线，不要阴影，留出大片空白。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，深灰点缀；最多三色。
+收尾：扁平设计，不要 3D，几乎不要阴影，画面不拥挤。
+<size>。
 ```
 
 ---
@@ -104,32 +147,38 @@ Flat design, no 3D, minimal shadows, no text, no watermark.
 
 #### concept 模板
 ```
-Elegant Chinese ink-wash style illustration for a keynote.
-Theme: <本页主题，1句>.
-<场景描述，突出东方意境：山水、云雾、建筑、人物剪影>.
-Color palette: muted {{BRAND}} as accent, {{ACCENT}} for subtle highlights, soft {{BG}} / {{BG_ALT}} rice-paper background, charcoal gray ink.
-Traditional Chinese painting aesthetic, ink wash gradients, calligraphic brush strokes, generous negative space, no text, no watermark.
-<size>.
+主题演讲用的雅致国风水墨插画。
+主题：<本页主题，1句>。
+主体：<场景描述，突出东方意境：山水、云雾、建筑、人物剪影>。只画一个主体，占画面三分之一以下。
+机位：传统「深远」法的高远视角，主体收进一角，其余全部留作白纸。
+光线与质感：天光自上方淡淡压下，中景笼一层薄雾，湿墨在半干宣纸上洇开，山石与树干边缘是干笔皴擦，纸纹清晰可见。
+配色：低饱和的 {{BRAND}} 作唯一点色，{{ACCENT}} 作极淡的提亮，柔和的 {{BG}} / {{BG_ALT}} 宣纸底，炭灰墨色；最多三色。
+收尾：传统中国画气韵，水墨浓淡过渡，书法笔触，大面积留白。
+<size>。
 ```
 
 #### case 模板
 ```
-Chinese ink-wash style illustration showing a cultural/business scene.
-Theme: <本页主题，1句>.
-<具体场景，如品牌故事、非遗工艺、文旅场景>.
-Color palette: muted {{BRAND}} accents, {{ACCENT}} highlights, {{BG}} / {{BG_ALT}} paper texture, charcoal ink lines.
-Elegant traditional style, soft ink diffusion, minimal color, no photorealism, no text, no watermark.
-<size>.
+展示文化/商业场景的国风水墨插画。
+主题：<本页主题，1句>。
+主体：<具体场景，如品牌故事、非遗工艺、文旅场景>。
+机位：中景侧视，做活的那双手或那件器物在近景，四周环境化进空白纸面。
+光线与质感：柔和日光自一侧来，墨在半干纸上洇开，干笔收边，隐约可见纸纤维肌理。
+配色：低饱和的 {{BRAND}} 点色，{{ACCENT}} 提亮，{{BG}} / {{BG_ALT}} 纸纹，炭灰墨线；最多三色。
+收尾：雅致传统风，墨色柔和晕染，颜色极少，不要照片级写实，大面积留白。
+<size>。
 ```
 
 #### data 模板
 ```
-Chinese ink-wash infographic illustration for a keynote.
-Theme: <本页主题，1句>.
-Ink-brush charts, seal stamps, scroll-like layouts, delicate mountain/river motifs as decorative frames.
-Color palette: {{BRAND}} accents, {{ACCENT}} details, {{BG}} / {{BG_ALT}} paper background, charcoal ink.
-Traditional style, flat ink strokes, no 3D, no text, no watermark.
-<size>.
+主题演讲用的国风水墨信息图插画。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，画成卷轴式版面上的水墨笔触条形与环形，山水云纹只作边饰。
+机位：正视卷轴视角，各组按等宽的列对齐，无透视。
+光线与质感：只用浓淡两级的平涂墨笔，笔尾干笔收梢，宣纸颗粒，不要明暗。
+配色：{{BRAND}} 点色，{{ACCENT}} 细节，{{BG}} / {{BG_ALT}} 纸面背景，炭灰墨色；最多三色。
+收尾：传统风，平涂墨笔，不要 3D，画面不拥挤。
+<size>。
 ```
 
 ---
@@ -143,32 +192,38 @@ Traditional style, flat ink strokes, no 3D, no text, no watermark.
 
 #### concept 模板
 ```
-Cheerful 3D claymorphism illustration for a keynote.
-Theme: <本页主题，1句>.
-<场景描述，圆润角色与物件互动>.
-Color palette: soft {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}} background, warm shadows.
-Clay 3D style, rounded forms, soft diffused lighting, matte surfaces, friendly characters, no text, no watermark.
-<size>.
+主题演讲用的欢快 3D 黏土质感插画。
+主题：<本页主题，1句>。
+主体：<场景描述，圆润角色与物件互动>。一个主角道具明显比周围的小角色大。
+机位：微缩场景的 45 度低角度英雄视角，画面四边有轻微的移轴虚化衰减。
+光线与质感：右上方一盏暖调柔光主灯，再加一片大面积补光，哑光黏土表面带清晰的指压痕与指纹肌理，无缝背景纸上落着柔和的接触投影。
+配色：柔和的 {{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}} 背景，暖调阴影；最多三色。
+收尾：黏土 3D 风，形体圆润，没有尖锐边缘，不要照片级写实，画面不拥挤。
+<size>。
 ```
 
 #### case 模板
 ```
-Cheerful 3D clay-style product/usage scene illustration.
-Theme: <本页主题，1句>.
-<具体使用场景，人物/角色与产品互动>.
-Color palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, warm shadows.
-Clay 3D style, rounded shapes, soft lighting, no photorealism, no text, no watermark.
-<size>.
+欢快的 3D 黏土风产品/使用场景插画。
+主题：<本页主题，1句>。
+主体：<具体使用场景，人物/角色与产品互动>。
+机位：微缩布景的平视四分之三视角，角色和产品在近边，布景其余部分逐渐缩小退后。
+光线与质感：右上方暖调柔光主灯加一片大面积补光，哑光黏土表面带指纹肌理，圆润倒角上挂一道柔和高光，接触处有淡投影。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，暖调阴影；最多三色。
+收尾：黏土 3D 风，形状圆润，光线柔和，不要照片级写实，画面不拥挤。
+<size>。
 ```
 
 #### data 模板
 ```
-Cheerful 3D clay-style infographic illustration for a keynote.
-Theme: <本页主题，1句>.
-Rounded 3D charts, chunky icons, clay numbers and progress bars arranged playfully.
-Color palette: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}}, warm shadows.
-Clay 3D style, no sharp edges, no text, no watermark.
-<size>.
+主题演讲用的欢快 3D 黏土风信息图插画。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，做成圆润的黏土条形、敦实的图标和厚厚的进度环；关键那个值明显最高。
+机位：略微抬高的正视视角，所有元素摆在同一层台面上，透视很弱。
+光线与质感：柔和顶光加一片大面积补光，哑光黏土表面带指纹肌理，每个形状下方有淡淡的接触投影。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}}，暖调阴影；最多三色。
+收尾：黏土 3D 风，没有尖锐边缘，画面不拥挤。
+<size>。
 ```
 
 ---
@@ -182,32 +237,38 @@ Clay 3D style, no sharp edges, no text, no watermark.
 
 #### concept 模板
 ```
-High-end realistic photography-based visual for an enterprise keynote.
-Theme: <本页主题，1句>.
-<真实场景描述，如工厂/城市/产品/人物工作场景>.
-Color treatment: warm highlights in {{BRAND}}, cool accents in {{ACCENT}}, clean {{BG}} / {{BG_ALT}} negative space.
-Real photography aesthetic, natural lighting, subtle graphic overlays, no cartoon, no watermark, no text.
-<size>.
+企业级主题演讲用的高端写实摄影画面。
+主题：<本页主题，1句>。
+主体：<真实场景描述，如工厂/城市/产品/人物工作场景>。只有一个主体，连它的材质都要交代清楚。
+机位：极低角度的虫视广角，主体斜切过整个画面指向天空，透视强烈收敛，体量感宏大。
+光线与质感：强逆光从主体背后来，边缘一圈金色轮廓光，浮尘里透出丁达尔光束，只有一个主光源，反差约 3:1。
+配色：高光偏 {{BRAND}} 暖调，点缀用 {{ACCENT}} 冷调，{{BG}} / {{BG_ALT}} 作干净的留白；最多三色。
+收尾：真实摄影质感，商业级布光，细节锐利，画面干净不拥挤，不要卡通，不要插画感。
+<size>。
 ```
 
 #### case 模板
 ```
-High-end realistic photography showing a product/business scenario.
-Theme: <本页主题，1句>.
-<具体场景，产品/服务在真实环境中的应用>.
-Color treatment: {{BRAND}} warm accents, {{ACCENT}} cool accents, {{BG}} / {{BG_ALT}} negative space.
-Real photography style, shallow depth of field, natural light, minimal graphic overlays, no text, no watermark.
-<size>.
+展示产品/业务场景的高端写实摄影画面。
+主题：<本页主题，1句>。
+主体：<具体场景，产品/服务在真实环境中的应用>。
+机位：35mm 平视中景，主体偏离画面中心，f/2 左右的浅景深，背景化成柔和散景。
+光线与质感：左侧一大片柔和窗光作唯一主光源，向暗部平缓过渡，产品表面材质纹理清晰可辨，光里飘着细微浮尘。
+配色：{{BRAND}} 暖调点缀，{{ACCENT}} 冷调点缀，{{BG}} / {{BG_ALT}} 留白；最多三色。
+收尾：真实摄影风，自然光，商业级布光，细节锐利，图形叠加极少，不要卡通。
+<size>。
 ```
 
 #### data 模板
 ```
-Realistic photography-based infographic visual for an enterprise keynote.
-Theme: <本页主题，1句>.
-Clean data overlays on a real photography background: percentage labels, thin lines, minimal charts.
-Color treatment: {{BRAND}}, {{ACCENT}}, {{BG}} / {{BG_ALT}} overlays.
-Photo-real base, flat data graphics, no cartoon, no watermark, no text.
-<size>.
+企业级主题演讲用的写实摄影底信息图画面。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，以干净的平面图形叠在一张真实照片场景上 —— 细线、条形和环形，不带任何标注。
+机位：抬高的广角，画面里留出一大块平静的表面（墙面、地面、天空或桌面）给图形，这块区域不要有透视变形。
+光线与质感：均匀的阴天日光，反差低，让平面图形保持清晰可读，照片底子上材质纹理细腻。
+配色：{{BRAND}}、{{ACCENT}}、{{BG}} / {{BG_ALT}} 叠加层；最多三色。
+收尾：照片级写实的底子配平面数据图形，画面干净不拥挤，不要卡通。
+<size>。
 ```
 
 ---
@@ -221,32 +282,38 @@ Photo-real base, flat data graphics, no cartoon, no watermark, no text.
 
 #### concept 模板
 ```
-Minimalist line-art illustration for an enterprise keynote.
-Theme: <本页主题，1句>.
-<抽象概念描述，用线条、节点、箭头表达>.
-Color palette: {{BRAND}} lines on {{BG}} background, {{ACCENT}} accent nodes, dark gray details.
-Single-weight line art, no fills or very light fills, precise geometry, generous white space, no text, no watermark.
-<size>.
+企业级主题演讲用的极简线稿插画。
+主题：<本页主题，1句>。
+主体：<抽象概念描述，用线条、节点、箭头表达>。其中一个节点比其余大三倍，作唯一的视觉焦点。
+机位：正视正交视角，无透视，所有元素对齐同一张网格。
+光线与质感：不要明暗、不要投影 —— 纸白底上只有同一粗细的线，唯一加粗的那一档留给焦点。
+配色：{{BG}} 背景上的 {{BRAND}} 线条，{{ACCENT}} 点睛节点，深灰细节；最多三色。
+收尾：等粗线稿，不填色或只极淡地填色，几何精确，留出大片白。
+<size>。
 ```
 
 #### case 模板
 ```
-Minimalist line-art illustration showing a product/service structure.
-Theme: <本页主题，1句>.
-<产品结构/服务流程，用线稿表达>.
-Color palette: {{BRAND}} lines, {{ACCENT}} highlights, {{BG}} / {{BG_ALT}} fills, dark gray details.
-Line-art style, thin consistent strokes, minimal shading, no photorealism, no text, no watermark.
-<size>.
+展示产品结构/服务流程的极简线稿插画。
+主题：<本页主题，1句>。
+主体：<产品结构/服务流程，用线稿表达>。
+机位：正视爆炸图，各部件沿同一根轴等距拉开，无透视。
+光线与质感：不要投影，线条统一纤细，最多极淡的平涂填充，四周留宽边。
+配色：{{BRAND}} 线条，{{ACCENT}} 提亮，{{BG}} / {{BG_ALT}} 填充，深灰细节；最多三色。
+收尾：线稿风，线条细而统一，几乎不要明暗，不要照片级写实，画面不拥挤。
+<size>。
 ```
 
 #### data 模板
 ```
-Minimalist line-art infographic for an enterprise keynote.
-Theme: <本页主题，1句>.
-Clean charts, axes, nodes, flow lines, thin grid — all rendered as precise line art.
-Color palette: {{BRAND}} primary lines, {{ACCENT}} accent lines, {{BG}} / {{BG_ALT}} background, dark gray details.
-Line-art style, no fills, no 3D, no text, no watermark.
-<size>.
+企业级主题演讲用的极简线稿信息图。
+主题：<本页主题，1句>。
+主体：<数据画面描述>，画成精确的线稿 —— 坐标轴、节点、流向线和一层细网格；关键那根线比其余粗一倍。
+机位：正视正交视角，落在同一张网格上，无透视，四边留白相等。
+光线与质感：不要投影、不要填充，线条统一为发丝级细线，各组之间留大片空隙。
+配色：{{BRAND}} 主线，{{ACCENT}} 点睛线，{{BG}} / {{BG_ALT}} 背景，深灰细节；最多三色。
+收尾：线稿风，不填色，不要 3D，画面不拥挤。
+<size>。
 ```
 
 ---
@@ -271,20 +338,28 @@ Line-art style, no fills, no 3D, no text, no watermark.
 
 1. `ppt-design` 基于用户描述 + 设计判断，实时创作该 style 的：
    - 名称、适用描述、渲染技法、构图特征、禁忌；
-   - `concept` / `case` / `data` 三套完整提示词模板（可直接用 `{{BRAND}}` 等占位符）。
+   - `concept` / `case` / `data` 三套完整提示词模板（照 §2.0 那六段写，**一律中文**，`机位：` / `光线与质感：` 不许省，可直接用 `{{BRAND}}` 等占位符）。
 2. 以 `styleId: U1 / U2 ...` 命名，把三套模板作为 **内联 `styleTemplates`** 写入 `design-spec.json`（见 ppt-design 输出契约），不依赖本库文件。
 3. `ppt-gen-images` 执行时：**若 `design-spec.json` 含该 styleId 的内联 `styleTemplates`，优先使用内联模板**；否则回退到本文件风格库。
 4. 若该风格预期会复用，沉淀进本文件新增一条风格条目（按 workflow.md 的沉淀机制），变成团队资产。
 
 > 原则：库是起点不是终点。库内风格保证下限稳定，库外自定义满足上限创意。两者都通过同一套占位符与 mode 机制运行，互不冲突。
 
-## 4. Mode 定义（不变）
+## 4. Mode 定义
 
-每页配图在生成前需标注 mode，由 `ppt-design` 按内容判定：
+**版式里那一格图**的三路，由 `ppt-design` 按内容判定（每套画风各写一份模板，见 §2）：
 
 - **concept**：概念/框架/阶段/趋势页，需要解释抽象关系。
 - **case**：案例/产品/业务场景页，需要展示具体情境。
 - **data**：数据/统计/趋势页，需要图表或信息图。
+
+**整页级**的两路，由用户在「这一页详情」里点出来（模板是**文件级一份**，见 §6）：
+
+- **backdrop**：这一页的图铺成整页背景，文字压在上面 —— **不许有字**。
+- **poster**：整页就是一张图，**文字印在图里**。
+
+`data-img-mode` 写的值一律要在 `styleLibrary.IMAGE_MODES` 里，认不出的值会**静默按 concept 算**
+（出来是一张不错的概念插画，只是答错了题）。
 
 ## 5. 占位符与尺寸规则
 
@@ -312,6 +387,122 @@ Line-art style, no fills, no 3D, no text, no watermark.
 1. 读 `design-spec.json` 得到 `palette` 和 `styleId`。
 2. 从本文件找到 `styleId` 对应风格。
 3. 根据该页 `mode` 取对应模板。
-4. 替换 `<本页主题>`、`<场景描述>`、`<size>` 为规划中的内容。
+4. 替换 `<本页主题>`、`<场景/数据画面描述>`、`<size>`（换成「16:9 横构图」这类中文写法）为规划中的内容。
 5. 替换 `{{BRAND}}` / `{{ACCENT}}` / `{{BG}}` / `{{BG_ALT}}` 为实际色值。
 6. 调用 ImageGen。
+
+---
+
+## 6. 整页图模板（backdrop / poster）
+
+这两路和 §2 那 18 套的区别：**模板在这一节里各只有一份**，画风只往里填三句（`{{RENDER}}` /
+`{{COMPOSITION}}` / `{{TABOO}}` ← 那套画风的「渲染」「构图」「禁忌」）。
+
+**为什么不给六套画风各写一份**：这两路真正承重的不是笔触，而是「哪一块必须留空」——
+页眉（左上 44–100px）、页脚（底部 54px）、文字压在哪一侧。写成 6×2 十二份之后，
+下次调那条留白规则只会改到一份，另外十一份照旧发给模型：出来的图**每一张单看都不错**，
+只是文字正好压在画面最花的那一块上（投影时才看得出来），而一处都不报错。
+
+### 占位符（`styleLibrary.renderStylePrompt` 替换）
+
+| 占位 | 来自 | 缺了会怎样 |
+| --- | --- | --- |
+| `{{RENDER}}` / `{{COMPOSITION}}` / `{{TABOO}}` | 那套画风的「渲染」/「构图」/「禁忌」 | 整页图不跟着画风变 —— 用户换了画风，背景图还是同一个笔触 |
+| `{{SPACE}}` | **代码算的**留白方向（`imageSpace.computeSpaceHints`，算不出来就是空串） | 主体长在标题底下，页面照旧渲染正常 |
+| `{{SLIDE_TEXT}}` | **代码从大纲里取的原文**（只有 poster 用） | 模型自己编几句字印在图上，读起来像是这一页的文案（硬规则 3） |
+
+### 两条硬的
+
+- **backdrop 模板里一个字都不许出现**（同 §2 那 18 套）：尾巴是写死的
+  「画面里不许出现任何文字、字母、数字…」（`BACKDROP_TAIL`），冲突时模型自己挑一边，
+  挑了写字那边就是一张带乱码假字的整页背景，而那一页看起来是「设计感很强」。
+- **backdrop 不许带边框/晕影**（「不要边框、不要暗角」）：它铺满整页，四边被裁一刀，
+  留了框之后画面上是「上下各一条黑边」，而图本身完全正常。
+- **两路都是整页 16:9**（比例由 `findImageSlots` 对整页模式写死，不看原来那张占位图的文件名）：
+  跟着占位图算的话，一张 `ph-3x4` 的分屏图切成背景图之后发出去的 size 是 `1024x1536`，
+  回来一张竖图铺满 16:9 的页面 —— 左右被裁掉一大半，而提示词里还写着「铺满整幅」，接口 200。
+- **`{{COMPOSITION}}` 挂在 `构图：` 段标下面，不是 `机位：`**（那一段是画风自己的「构图」一句，
+  而 §2.0 第四条说了「机位」段里不许出现镜头以外的东西）。挂错段标不会报错也不会少一句话：
+  模型把「留白充分、主体居中偏一侧」当镜头读，于是这一路的机位永远是它的均值（正面平光平视），
+  而单图这一路的全部意义就是冲击力 —— 出来的图单看不错，只是「怎么都不像一张封面」。
+- **「压上文字要读得清」这件事只许写在「文字要压的那一块」上，不许写成整幅的调性。**
+  这两套模板原来写的是「光线柔和均匀、整体低反差」+「低饱和的 {{BRAND}}」—— 那是把一句局部
+  要求摊到了全幅，出来的每一张都是灰蒙蒙、平的、没有光的图（也就是「太单调、没设计感」的
+  真正来源），而它铺上去之后文字确实读得清、一处都不报错。真正保证可读的是另外两件事：
+  代码算出来的那块留空区（`{{SPACE}}`）+ 背景图那一层写死的 `--bg-mask:0.62` 压暗蒙版
+  （`imageModes.toBackdrop`）。所以主体那一侧要明确允许浓烈、强对比、高饱和。
+- **`设计手法：` 那一段是 `{{DEVICE}}`，由代码从 §6.1 那两个代码块里按页码挑一条**（见那一节的
+  三条边界）。模板里**不许再把一串手法列回来**：一起列出来的话模型取均值（每条都做一点点、
+  每条都不明显），让它「挑一条」的话它每次挑同一条 —— 两种结果都是「干净、正常、但每一页
+  长得差不多」，而提示词里明明写着五种手法，一处都不报错。另外这一段里要写死**主体压到一侧
+  或一角、不许摆正中**：居中平摆是均值构图，也是「一张通用配图」和「一张主视觉」的分界。
+- **poster 的字一律是 `{{SLIDE_TEXT}}` 里那几行**，模板里不许再写「加一句标语」之类的话：
+  多出来的那句是模型编的，读起来和这一页的文案一样自然（硬规则 3）。**「文字内容」这个段标
+  要和 `POSTER_TAIL` 里那句「除「文字内容」里那几行之外不要任何字」对得上** —— 两边叫法不一样
+  的话模型不知道那句限制指的是哪一段，于是顺手多印一句标语，而那句读起来完全像这一页的文案。
+
+### 6.1 设计手法库（`{{DEVICE}}` ← **代码按页码轮着挑一条**）
+
+一次只发**一条**。原来是把五条一起列在模板里、让模型「挑一条做到极致」—— 它每次挑的是同一条
+（模型有自己的偏好），于是整份稿子里每一页背景图长得都差不多，而每一张单看都不错、一处不报错。
+所以这件事归代码：`styleLibrary.pageDevices` 解析下面两个代码块，按**页码 + deckId** 取一条
+（`renderStylePrompt` 的 `pageKey` / `deckKey`）。
+
+三条边界：**一路至少三条**（只剩一条 = 全份又变成同一个手法，而提示词读起来完全正常）；
+**同一页两次拼出来必须是同一条**（预览和真发出去的是两次调用 —— 随机挑的话他照着预览调完，
+发出去的是另一条手法，而两条都通顺）；**手法里可以写 `{{BRAND}}`**（替换顺序在颜色之前），
+但**不许写留白方向、尺寸、画面上的字**（那几样是代码在别处算的，写进来就是两句打架）。
+
+#### backdrop 设计手法
+```
+- 一块半透明的 {{BRAND}} 色玻璃、或几条等宽的半透明竖带压在实景上，边界笔直锐利，把画面分成前后两个明确的层。
+- 主体从一个巨大的圆形／拱形／斜切的几何开口里透出来，开口外面是大片平涂色块。
+- 前后两层景深互相穿插遮挡，近处的枝叶、山脊、栏杆或建筑边缘压在远景前面，中间留出空气感。
+- 一道长长的扫掠曲线、水波或笔触把画面切成实景与留白两块，交界处干净利落。
+- 实景朝一侧渐隐成纯色，交界处只剩一层细腻的颗粒或渐变。
+- 主体在一整片单色的大背景里只占一角，其余是大面积的同色块与一道细长的高光。
+```
+
+#### poster 设计手法
+```
+- 大标题做成巨大的镂空字或描边字，主体的一部分从笔画前面穿过去（只许遮住笔画的边缘，每一笔的主体都要完整可读）。
+- 一块半透明的 {{BRAND}} 色磨砂玻璃蒙版斜压在实景上，边界笔直锐利，玻璃后面的东西被柔化成朦胧的色块，小字排在玻璃上。
+- 多层半透明色蒙版像滤色叠印一样从一角压过来，层与层之间是干净的直线交界，越往另一侧越透，最后只剩一层细腻颗粒。
+- 主体从一个巨大的圆形／拱形／斜切的几何开口里透出来，字排在开口外的平涂色块上。
+- 一个超大的几何图形做底，实景从它的镂空里透出来，字压在实色的那一半上。
+- 几块有真实厚度和投影的 3D 几何体（球体、环形、斜切板）在空间里前后穿插，主体夹在它们中间，最前面那一块被画框切掉一角。
+- 前后两层景深互相穿插，文字夹在两层中间：远景在后、主体在前，字被主体的边缘压住一点点。
+- 一束强光在薄雾与尘埃里斜切整幅，只照亮主体的轮廓边缘，其余大面积沉进暗部，光束边界能看见空气里的颗粒。
+- 整幅只有一个巨大的主体特写和一片纯色，主体边缘发出一圈窄窄的高光，字沿着轮廓边缘排成一列。
+```
+
+#### backdrop 模板
+```
+企业级主题演讲里某一页的整页 16:9 背景画面，要像设计师做的主视觉，不是一张通用配图。
+主题：<本页主题，1句>。
+主体：<这一页要的画面>，铺满整幅并被四边裁掉，压在画面的一侧或一角，绝不要摆在正中。
+机位：广角定场，主视觉推到一侧并被画框切掉，其余部分留出大片空旷的纵深。
+设计手法：{{DEVICE}}
+光线与质感：{{RENDER}}；光源方向要明确，明暗关系要有戏剧性，主体那一侧可以浓烈、对比强、色彩饱和。
+构图：{{SPACE}} 文字要压的那一块必须是干净的大色块或柔和渐变，细节全部让开 —— 只有那一块要安静，不要因此把整幅都调灰调平。画面左上角和底部那一条同样空着，页眉和页脚压在那里。不要生硬的竖直分割，不要面板边界，不要边框，不要暗角。
+配色：{{BRAND}} 与 {{ACCENT}} 作主色，压在 {{BG}} / {{BG_ALT}} 上；最多三色，色块之间要有明确的深浅层级。
+收尾：{{TABOO}} 不要繁复花纹，不要把杂乱细节铺到文字要压的那一块上。
+<size>。
+```
+
+#### poster 模板
+```
+一张做完的 16:9 主题演讲页面，整页就是一张印刷级图像，要像获奖海报，不是一张配了字的图。
+主题：<本页主题，1句>。
+主体：<这一页要的画面>，一整幅有冲击力的视觉铺满画面、四边出血，压在画面的一侧或一角，绝不要摆在正中；物体要有真实的体积、厚度和投影，画面要分出前、中、后三层空间。
+设计手法：{{DEVICE}}
+文字排布：只排下面「文字内容」里列出的那几行，一个字都不要多。第一行是大标题，字号至少是其余的四倍，用厚重的现代无衬线；其余几行小字左对齐，聚成一块，四周留足空白。每一个字都要照给出的原样写对，边缘锐利、间距均匀、完整落在画面内，绝不要压在画面最花的那一块上。
+文字内容：{{SLIDE_TEXT}}
+机位：一镜到底的定场视角，主视觉推到一侧并被画框切掉，另一侧留出一整块安静的地方给文字。
+构图：{{COMPOSITION}}
+光线与质感：{{RENDER}}；光源方向要明确，明暗关系要有戏剧性，主体那一侧可以浓烈、对比强、色彩饱和；要有空气感 —— 体积光、薄雾、尘埃或细微粒子里的一束强光，暗部要沉得下去，绝不要平光直照。
+版面：四边各留出至少画面二十分之一的净边，底部那一条保持安静 —— 页脚压在那里。
+配色：{{BRAND}}、{{ACCENT}} 压在 {{BG}} / {{BG_ALT}} 上；最多三色，文字和它背后的东西之间反差要强。
+收尾：{{TABOO}} 杂志封面般的沉稳，不要水印，不要 logo，不要页码，除「文字内容」里那几行之外不要任何字。
+<size>。
+```

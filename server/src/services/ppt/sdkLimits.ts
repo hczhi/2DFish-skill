@@ -17,6 +17,16 @@ import { getDatabase } from '../../db/index.js';
  *  把它们算进来的话接入方点几下排版就把当天的额度耗光，而他一次模型都没调。
  */
 const AI_SPEND_ROUTES: Array<{ methods: string[]; path: RegExp }> = [
+  // 「生成提纲」的对话：不带 deck id（发生在建稿之前），但**每一轮都是一次真实调用** ——
+  // 漏在这张表外面的话它是这几条路里最容易被连着点的一条（聊天）。
+  { methods: ['POST'], path: /^\/outline-chat$/ },
+  // 「生成提纲」页的上传资料。`/extract-file` **也算一条**（和 consult 那张表不同）：
+  // 传图片时它是一次真实的视觉调用，不列的话第三方能无上限地拿他自己那把 key 刷 OCR，
+  // 而每次返回的都是一份正常的提取结果。代价是传 txt/pptx（纯程序解析、不调 AI）也记 1 次 ——
+  // 故意的：中间件跑在解析 body 之前，那时候压根不知道这次传的是图还是文档。
+  // `/tidy-text` 长文件会分几段，差额由 `chargeExtraPptSdkAiCalls` 补。
+  { methods: ['POST'], path: /^\/extract-file$/ },
+  { methods: ['POST'], path: /^\/tidy-text$/ },
   { methods: ['POST'], path: /^\/decks\/[^/]+\/clean-outline$/ },
   { methods: ['POST'], path: /^\/decks\/[^/]+\/plan$/ },
   { methods: ['POST'], path: /^\/decks\/[^/]+\/pages$/ },

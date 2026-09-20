@@ -122,7 +122,8 @@ SSE 流式端点，消耗额度。
 `multipart/form-data`，字段名 `file`，一次一个（前端逐个传，最多 5 个）。**不落库、不存原文件**
 （图片也是 base64 直接进请求，不转存 COS —— `file.qiaonan.vip` 是公开的）。
 按**文件头**分派两条路，回 `{ filename, ext, kind, text, chars, notes, aiCalls, tidied,
-briefLimit, budgetChars, maxFiles, maxImageBytes, tidyPlan:{calls,chunkChars,maxChars} }`：
+briefLimit, budgetChars, fileLimit, maxFiles, maxImageBytes, tidyPlan:{calls,chunkChars,maxChars} }`
+（`fileLimit` = 单份字数上限，**0 = 不限**；咨询这条回 3500）：
 
 - `kind:'file'`（.txt/.md/.docx/.doc/.pptx/.pdf）：程序提取，`aiCalls: 0`、`tidied: false`，
   另带 `emptyPages` = 有几页一个字都没读到（整页是图）。前端把它显示在卡片的字数那一行
@@ -983,6 +984,9 @@ POST /decks                    建一份（进工作台会自动规划一次）
 POST /decks/:id/plan           提纲 → 每页一个版式（1 次 AI 调用，清掉已生成的页）
 POST /decks/:id/replan-images  按真实内容 + 现在挑的版式重排图位清单（1 次 AI，不生图）
 POST /decks/:id/prepare-images 逐格备图（可选，AI 生一张 = 一次真实花费）
+POST /decks/:id/image-prompt    预览这一格真正会发出去的整条提示词（不生图、不写库）
+POST /decks/:id/craft-image-prompt  AI 润色这一格的「画什么」那句（1 次 AI 调用，不生图、不写库）
+POST /decks/:id/rewrite-image-prompt  AI 重写这一格的整条提示词（1 次 AI，回来那条要存成自定义）
 POST /decks/:id/pages          生成第 N 页 HTML（1 次 AI，顺手把备好的图贴进去）
 POST /decks/:id/images         给第 N 页配图（按图位逐张生图）
 POST /decks/:id/edit-text      就地改第 N 页的一段文字（不调 AI、不花额度）
@@ -1074,6 +1078,63 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
 ### DELETE /api/ppt/decks/:id `PROTECTED`
 `{ "ok": true }`；不是自己的回 404。同一个事务里把它的页一起删（`ppt_deck_pages`），
 生成过的图**留在素材库里**（那些是真花过钱的），COS 上的文件也不动。
+
+### POST /api/ppt/outline-chat `PROTECTED`
+「生成提纲」那个对话页的一轮（新建演示稿**之前**用，所以**不带 deck id、不写任何库**）。
+一次 AI 调用。
+
+```json
+{
+  "turns": [{ "role": "user", "content": "给客户讲我们的 AI 转型方案，30 分钟，要他们批预算" }],
+  "currentOutline": "（可选）他在提纲框里已经有的那一份，这次在它基础上改",
+  "attachments": [{ "filename": "产品资料.pptx", "text": "…", "variant": "tidy" }]
+}
+```
+回 `{ "reply": "聊天气泡里那段话（提纲那一整块已经摘掉）", "outline": "整份提纲或 null", "problems": [], "usage": {…} }`。
+
+**整段对话由前端带全，服务端不存**：漏带历史的话模型每一轮都从头问一遍听众和场合，
+而界面上只是「它怎么老在问同样的问题」。
+
+提纲正文靠一对标记（`===提纲开始===` / `===提纲结束===`）抠出来，**标记由服务端写进 prompt、
+也由服务端认**（硬规则 3；两边各写一份的话改了一边之后每次都「聊得很好但一直不出提纲」）。
+不让它整段当提纲：它那句「好的，我按招标场合写了一份：」会跟着进提纲输入框，然后被分页那一步
+当成第一页的要点逐字排上去。不用 JSON：这条路的正文是一大段多行纯文本，偶发的转义会把整次
+对话变成一句「解析失败」，而他要的只是聊天。
+
+**`outline` 为 null 时 `problems` 里必有话，前端必须逐条显示**：最要紧的一种是
+「只贴了开始标记、没有结束标记」（提纲天生是写到哪算哪的东西，把后半截当提纲带回去的话，
+他看到一份读起来完整的提纲、排出来的稿子也完整，只是少了后面几章，一处都不报错）。
+提纲超 12000 字同样不带回去（**只拒不截**，和提纲输入框那道闸门同一个口径）。
+
+后台可在 skill 管理里给 `ppt-outline` 这个 slot 绑一份 skill，它**追加**在
+`library/outline-craft.md` 后面（不覆盖 —— 覆盖掉的话「不许编数字」「提纲是纯文本行」
+这两条要看他写的 skill 里有没有，而编出来的数字会被逐字排上页面）。
+
+`attachments`（最多 5 份，来自下面那两条上传路）**由服务端合成成资料那一段**
+（`composeMaterials`，和 `briefCompose` 同一口径），前端不许自己拼好整段传上来 ——
+拼的话「第 3 份没进去」在界面上完全看不出来（卡片还在），而提纲是照着少一份资料写的，
+读起来一样通顺。它**每一轮都会带上**（字数算在那 20000 字上限里）。
+
+**单份资料不限字数**（咨询那边是 3500 —— 这条路上一份七千字的产品资料是常事，拒掉之后他
+唯一的出路是自己进卡片删掉一半，而删掉的正是排在后面那几节）。拦人的只有合计那道闸门。
+
+400：`turns` 为空 / 超 40 条 / 单条超 4000 字 / 资料合计超 20000 字（只拒不截，并点名每份
+多少字）、那份 md 读不到、模型一个字都没返回（带 `finish_reason` 和思维链 token 数）。
+
+### POST /api/ppt/extract-file · POST /api/ppt/tidy-text `PROTECTED`
+「生成提纲」页上传参考资料用的两条路。**请求和响应与
+`/api/consult/extract-file` · `/api/consult/tidy-text` 逐字相同**（同一份实现
+`server/src/api/extractRoutes.ts`，前端也是同一个面板 `components/common/FileExtractPanel.vue`），
+差别只有三处：① 额度和 `ai_logs.source` 记在 **`ppt`** 上（不是 `consult`）；
+② `briefLimit` 回的是提纲对话那条 20000 字上限；③ `fileLimit` 回 **0 = 单份不限**
+（咨询那边回 3500）。`fileLimit` 和 `budgetChars` 是两件事：后者是 AI 提炼的**目标**字数，
+两条路都还是 3500。前端卡片上那行「N / M 字」按 `fileLimit` 显示，0 时只报字数 ——
+拿 `budgetChars` 当上限显示的话，提纲页上一份 7442 字的资料会标红成「7442 / 3500」，
+而服务端压根不拦它，他会照着那个假上限自己删掉正文。
+
+**接新页面时 `apiBase` 必须跟着换**：图省事沿用 `/api/consult` 的话，传上去、提取出来、
+整理好，界面上一切正常，只是那几次调用记在了品牌咨询的应用额度和日志上 ——
+管理员把咨询限成 5 次/天之后，这个页面会回一句说咨询额度用完了（他压根没在用咨询）。
 
 ### POST /api/ppt/decks/:id/clean-outline `PROTECTED`
 先整理、再分页：把提纲里的无效信息（他写给自己的备注/待办、会议记录的口头语、文件路径、
@@ -1180,6 +1241,9 @@ Authorization 头）以外全是 `PROTECTED`，且**每一条 deck/page/素材�
       "setupLayoutId": "他挑的版式（空 = 照规划）",
       "notes": "这一页那段要求",
       "veilOpacity": 0,
+      "imageMode": "split | backdrop | poster",
+      "backdropMask": 0.62,
+      "posterText": ["我们的能力", "十年行业经验"],
       "updatedAt": "2026-09-03T…"
     }
   ],
@@ -1211,6 +1275,13 @@ replace，出来的是一份没有幻灯片的 deck —— 页脚、缩放全正
 而那十几次调用已经花过了。
 `veilOpacity` 是那层黑蒙版（097，0 = 没有）：前端的滑块**照它画**，不在本地记 ——
 只在本地记的话刷新一次全部归零，而画面上那一页真的还是暗的。
+
+`imageMode` / `backdropMask` / `posterText`（103、104）**全是服务端按 html 里的记号现算的，
+库里没有对应的列**（`backdropMask` 不是背景图模式时回 `null`，`posterText` 不是单图模式时是空数组）。
+前端同样**照它画、不在本地记**：只在本地记的话刷新之后按钮写着「改成背景图」而这一页已经是背景图了，
+点下去回一句「已经是背景图模式了」，看起来像功能坏了。`posterText` 是**会印进那张单图里**的几行字
+（代码从这一页扒的，超长的和超出 6 行的已经丢掉了），必须显示出来 —— 不显示的话「怎么少了一句」
+要等图生出来才发现，而那是一次真实花费。
 
 ### DELETE /api/ppt/decks/:id/pages/:page `PROTECTED`
 删掉这一页（规划里那一条 + 库里那一行），后面的页码整体往前挪一位。**不调 AI。**
@@ -1269,8 +1340,9 @@ replace，出来的是一份没有幻灯片的 deck —— 页脚、缩放全正
 
 #### `planRev`（098）：按页码写库的**每一条**都要带
 `POST /decks/:id/pages`、`POST /decks/:id/images`、`POST /decks/:id/prepare-images`、
-`POST /decks/:id/replan-images`，以及**就地编辑那八条**（`edit-text`、`edit-style`、
-`edit-region-style`、`delete-node`、`canvas`、`ai-edit`、`ai-remake`、`PATCH …/pages/:page/veil`）的 body
+`POST /decks/:id/replan-images`，以及**就地编辑那九条**（`edit-text`、`edit-style`、
+`edit-region-style`、`delete-node`、`canvas`、`ai-edit`、`ai-remake`、`image-mode`、
+`PATCH …/pages/:page/veil`）的 body
 **必须带 `planRev`**（`GET /decks/:id` 的 `deck.plan_rev`，删页和重新规划的响应里都会回新值）。
 **不带 400，对不上 409，两种都不执行。**
 
@@ -1302,6 +1374,45 @@ replace，出来的是一份没有幻灯片的 deck —— 页脚、缩放全正
 会把它带走，而滑块还停在他调的位置。前端必须换成返回的 `previewHtml`，**不要在 iframe 上
 自己叠一层半透明黑**：本地那层压在文字上面，而真 deck 里它在文字下面，照本地效果调完导出的
 文件是另一副样子。改完整份预览和「已导出」那句话都要作废（拼整份是现拼的）。
+
+### POST /api/ppt/decks/:id/image-mode `PROTECTED`
+这一页的图怎么用：`split`（版式原样）/ `backdrop`（那一格铺成整页背景 + 一层幕帘，103）/
+`poster`（整页换成一张把文字印在里面的图，104）。**纯代码搬 DOM，不调 AI、不花额度**
+（真正那张图要他再点一次 `POST /decks/:id/images`）。
+
+```json
+// 请求（mask 只在 mode=backdrop 时有意义：0~1，缺省 0.62）
+{ "page": 3, "mode": "backdrop", "mask": 0.62, "planRev": 4 }
+```
+
+```json
+{
+  "page": 3, "mode": "backdrop", "mask": 0.62,
+  "notes": ["这一页现在是…（必须显示出来）"],
+  "text": ["会印进单图里的那几行字；别的模式是空数组"],
+  "html": "<section …>", "previewHtml": "重拼过的单页 deck"
+}
+```
+
+**`notes` 必须显示出来**：改成背景图之后铺上去的那张图还是按「版式里那一格」的构图生的
+（画面里留着文字那一侧的空白），满屏看就是「这个功能效果很差」，而真正的成因只是还没用
+背景图那套提示词重画一张。前端要把返回的 `html` **和** `previewHtml` 都接回去：不接 html 的话
+本地那份还是变形前那一版，这一页接下来的配图/就地编辑以它为底 —— 变形被下一次编辑悄悄撤掉。
+
+`mode=backdrop` 时**已经是背景图 + 带了 `mask`** = 他在拖幕帘滑块（只改浓度，不再变形一次）。
+深底/品牌色的页、以及压在图上面那一层不是定位元素的页一律 **400 并说出是哪个类名上的哪个值**
+—— 硬把底改透明的话那种页上的白字直接压在照片上读不出来（字确实在那儿，投影时才发现）。
+
+**`mode=split` 在单图页上是「改回原版」**：从库里那两列（`poster_from_html` /
+`poster_from_images`，104）整份取回来，不是再变形一次 —— 原来的文字、版式和那几张图都回来。
+那两列空了（这一页在变成单图之后重新生成过）时 **500 并说清唯一的出路是重新生成这一页**：
+静默回一句成功的话画面上还是那张单图，他会反复点那个按钮。变成单图那一下 `images_json` 会被清空
+（画面上只剩一张占位图），所以前端在这一进一出之后要**重读这一页的配图**：不重读的话
+「配图 3/3 张」还挂着，点开是三张已经不在这一页上的图；改回原版后不重读则写着「还没配过图」
+而画面上图都在 —— 他会照着按钮再花一次钱。
+
+认不出的 `mode` 一律 400（不回落成 backdrop：前端拼错一个字之后这一页被改成了背景图，
+而按钮显示的是另一件事）。要带 `planRev`。
 
 ### GET /api/ppt/layouts `PROTECTED`
 22 条版式案例。**不带 `buildText`**（12 份详情 md 近 2000 行，列表页一个也用不上），
@@ -1524,7 +1635,8 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
   "page": 3, "index": 2,
   "from": "library | ai | clear | subject",
   "assetId": "素材 id（from=library 时必填）",
-  "subject": "可选：用户改写的提示词（≤300 字）"
+  "subject": "可选：用户改写的提示词（≤300 字）",
+  "fullPrompt": "可选：他自己改写的**那一整条**（≤4000 字，\"\" = 恢复自动拼的那条）"
 }
 ```
 
@@ -1536,6 +1648,13 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 正常的图，只是不是他要的那张。空的 / 超 300 字**一律 400**（空的生不出任何东西，那一格会一直停在
 占位图上；截断的话他写在后面那几个条件一处都不生效）。`from=subject` 时那一格**已经备好的图不动**，
 但会回一条 problems 说「那张是照上一句提示词生的，要按新的重画得点 AI 生成」。
+
+`fullPrompt` 写回 `imageSpecs[index-1].fullPrompt`，从此这一格**原样发它**（画风模板、`mode`、
+配色、留白、`subject` 一概不再拼进去），备图和 `POST /decks/:id/images`（换一批图）两条路都按它发。
+三件事不能省：**前端只在他真改过的时候带这个字段** —— 一律带（把取回来那条原样回传）的话，
+他只是打开看了一眼，这一格就从此不跟画风/模式走，之后换画风图纹丝不动而界面上一处都不说；
+`""` = 删掉那一格的自定义（恢复自动拼的那条）；`problems` 里那两句（改成自定义 / 恢复了）
+和界面上那一格的「整条已自定义」标记都必须显示出来。超 4000 字**只拒不截**。
 
 ```json
 {
@@ -1588,6 +1707,137 @@ deck 级共享资料：`{ "template": "外壳 html 全文", "design_tokens": "",
 不然界面上多了一张缩略图而画面里什么都没变。
 `POST /decks/:id/plan` 重新规划会连它们一起删，删了几张在返回的 `clearedImages` 里
 （手写的那几段要求同理，在 `clearedNotes` 里）—— 两个都必须显示出来。
+
+### POST /api/ppt/decks/:id/image-prompt `PROTECTED`
+预览第 `index` 格**真正会发出去的那整条**生图提示词。**不生图、不写库、不花额度。**
+
+```json
+{ "page": 3, "index": 2, "subject": "可选：他此刻在框里改的那句（不带就用库里那句）" }
+```
+
+```json
+{
+  "page": 3, "index": 2,
+  "prompt": "（拼完的整条：画风模板 + 主题 + 这句 subject + 留白方向 + 配色 + 尺寸那一句）",
+  "styleId": "S-A", "styleName": "写实摄影",
+  "mode": "backdrop", "ratio": "16:9", "size": "1536x1024",
+  "custom": false,
+  "problems": ["提示词里还剩没换掉的占位符之类"]
+}
+```
+
+`custom=true` 表示这一条是他自己改写过的（`imageSpecs[index-1].fullPrompt` 有值），原样回给他、
+**不再套模板**。这个字段要显示出来（配一个「恢复成自动拼的那条」的入口）：两种情况下框里都是
+一大段通顺的中文，不说的话他不知道这一格已经不跟画风/模式/配色走了。
+
+`mode` / `ratio` / （单图那一路要印的字）**按这一页已生成的 html 现算**，不是规划里那两个字段：
+「改成背景图 / 改成单图」只改 html 上的 `data-img-mode`，跟着规划走的话他切完模式再看这条预览、
+再点「AI 生成」，拿到的还是概念插画那套模板（而界面上这一页明明写着「整页背景图」）。
+`mode` 必须显示出来 —— 两套模板都是通顺的中文，不写出来的话「切了没生效」只能靠逐句读。
+
+这条提示词由服务端**用生图那条路的同一个函数**（`imageService.buildImagePrompt`）拼出来，
+前端把它贴进那个**唯一的可编辑框**里（改完由 `prepare-images` 的 `fullPrompt` 存回去）。
+前端自己拼一份近似的话，他照着那份把留白/配色/画风调到满意，
+而真发出去的是另一条 —— 图回来还是不对，两边一处都不报错，他只会一张张重生（每张真花钱）。
+`subject` 走**请求体里这一句**（不是库里那句）并且**一个字都不写库**：写库在
+`prepare-images` 那一步（带 `planRev`），这里写的话「只是看看」会静默改掉规划里那一格。
+
+`problems` 是模板里没换掉的占位符（画风库改坏了会原样把 `{{…}}` 发给模型），必须原样显示。
+`size` 是真发给上游的那个值 —— 他唯一能发现「这一格按方图生」的地方。
+
+400：这一页不在规划里、`index` 超出 `imageSpecs` 的格数、`subject` 是空的或超 300 字
+（和 `prepare-images` 同一套判据，所以「预览能出、生成 400」不会发生）。
+
+### POST /api/ppt/decks/:id/craft-image-prompt `PROTECTED`
+让 AI 润色第 `index` 格的「画什么」那**一句**，整条由服务端重新拼一遍回来。
+**1 次真实 AI 调用（扣一次额度）、不生图、不写库。**
+
+```json
+{ "page": 3, "index": 2, "subject": "可选：他此刻在框里那句（不带就用库里那句）" }
+```
+
+```json
+{
+  "page": 3, "index": 2,
+  "subject": "（润色后的那一句 —— 前端必须收着，点确定时一起提交）",
+  "before": "（润色前那一句，给他对照）",
+  "prompt": "（用新那句重新拼出来的整条，和 /image-prompt 同一个函数）",
+  "styleId": "S-A", "styleName": "写实摄影",
+  "mode": "backdrop", "ratio": "16:9", "size": "1536x1024",
+  "problems": ["模型回了 3 段，这里只采用了最长的那一段", "润色回来那句里自己写了构图位置…"],
+  "usage": { "input_tokens": 500, "output_tokens": 60, "total_tokens": 560 }
+}
+```
+
+**模型只改那一句，整条是代码拼的**：留白方向（`imageSpace` 按版式几何算）、尺寸、单图那一路要
+印在图上的原文、写死的禁忌尾巴都不进这次请求 —— 把整条交给模型润一遍的话它会顺手把「左边
+0–50% 留给文字」改成自己想的那个方位、把要印的字改写得更顺口，出来的提示词比原来专业，
+而图回来主体压在标题底下 / 印的是模型编的文案（硬规则 3），一处都不报错。
+润色用的创作规范是 `server/src/services/ppt/library/image-prompt-craft.md`（改那份 md 即可，
+不用改代码；读不到会 400 而不是静默发一条没有规范的请求）。
+
+**返回的 `subject` 必须被前端收下并在 `prepare-images` 时一起提交**：不收的话库里那句还是旧的，
+下次打开那个框又是没润色过的那条（而界面上一处都不说，他只会再润一次、再扣一次）。
+前端还要把框里那条的「原文基线」一起换掉 —— 不换的话他什么都没再改，点确定却把这一条存成
+「他改写的整条」（`fullPrompt`），这一格从此不跟画风/模式/配色走了。
+这一格**原来**有 `fullPrompt` 时，确定那一下要显式传 `fullPrompt: ""` 把它清掉：不清的话生图
+发的是那条旧的自定义，而框里显示的是润色后的新那条。
+
+`problems` 里那几条是**降级要出声**（硬规则 1）：模型回了好几段（只采用最长那一段）、
+回来那句里自己写了留白/尺寸/「画面上的字」（会和代码拼的那几段打架）、句子被截断。
+
+400：这一页不在规划里、`index` 超出格数、这一格还没写「画什么」、模型一个字都没返回
+（报错里带思维链 token 数 —— 不带的话他只会一路调高 `max_tokens`）、润色回来那句超 300 字
+（只拒不截：截一半照样能生图，而他以为润色成功了）。429/503 同其它 AI 端点。
+
+### POST /api/ppt/decks/:id/rewrite-image-prompt `PROTECTED`
+让 AI 重写第 `index` 格**会原样发出去的那一整条**（不是那一句）。
+**1 次真实 AI 调用（扣一次额度）、不生图、不写库。**
+
+```json
+{ "page": 3, "index": 2, "subject": "可选：他此刻在框里那句「画什么」", "draft": "可选：他此刻框里那一整条" }
+```
+
+```json
+{
+  "page": 3, "index": 2,
+  "prompt": "（重写后的那一整条 —— 前端点确定时要作为 fullPrompt 存下来）",
+  "before": "（这次拿去重写的基线，就是 draft 或代码现拼的那条）",
+  "styleId": "S-A", "styleName": "写实摄影",
+  "mode": "poster", "ratio": "16:9", "size": "1536x1024",
+  "problems": ["重写回来那条里少了（或被改写了）「不许出现任何文字」那条尾巴 —— 已经把代码算的那几句原样接在末尾了…"],
+  "usage": { "input_tokens": 900, "output_tokens": 300, "total_tokens": 1200 }
+}
+```
+
+**和 `/craft-image-prompt` 是两件事，前端那两个按钮的话术必须分开写**：润色改的是「画什么」那一句、
+整条照旧由代码拼（换画风还跟着走）；这里回来那条要被存成这一格的 `fullPrompt` —— 从此换画风、
+切背景图/单图、改配色、改那句「画什么」都不再影响它。写成「重写完还跟着画风走」的话，他换完画风
+回来发现这一格纹丝不动，而一处都不报错。
+
+**`draft` 要带上他此刻框里那一整条**：不带的话服务端拿库里/现拼的那条重写，他刚在框里逐句调好的
+那几句全丢了，而回来那条读起来更专业 —— 丢在哪一步看不出来。
+
+**代码算的那几段（禁忌尾巴、比例那句、单图要印进画面的那几行原文、留白方向）会被核对，
+少了或被改写就原样接回末尾并在 `problems` 里点名**（`requiredPromptParts` / `pinRequired`）：
+不核的话那一整条读起来比原来专业，而图回来主体压在标题底下 / 比例不对被裁掉一半 / 印在图上的是
+模型编的文案（硬规则 3），接口 200、缩略图也好看。重写的规范是
+`server/src/services/ppt/library/image-prompt-craft.md` 的「## 重写整条」那一节（同一份 md 按那一行
+切成两半，**两半不许合着发** —— 上半写着「只回一句话」、下半写着「回整条」）。
+
+**那一节末尾的三小节（`### slot / backdrop / poster 重写要求`）由代码按这一格现在是哪一路挑一节发**，
+路数是从这一页 html 现算的（不是规划里那个可能还写着 concept 的字段）。三节的要求互斥：
+普通图「一个字都不许有」对上单图「那几行字要印在画面里」、普通图「主体离四边留一点」对上背景图
+「四边直接出血」。一起发或挑错一节的话模型自己挑一边，回来那条读起来更专业 —— 而背景图缩在中间
+围一圈白边 / 单图里一个字都没印 / 普通图里多出一堆乱码假字，一处都不报错（有测试）。
+缺哪一节就 400，**不拿公共那几节凑**。
+
+`problems` 里其余几条同样是降级要出声（硬规则 1）：像是回了好几个方案、被截断、
+回来那条比原来短一半（画风/机位那几段被压掉了，那几段接不回来）、里面还剩占位符。
+
+400：这一页不在规划里、`index` 超出格数、框里那条或重写回来那条超 4000 字（只拒不截）、
+模型一个字都没返回（报错里带思维链 token 数）、那份 md 里找不到「## 重写整条」那一节。
+429/503 同其它 AI 端点。
 
 ### POST /api/ppt/decks/:id/pages `PROTECTED`
 生成（或重新生成）第 `page` 页的 HTML。一页一次 AI 调用。
@@ -2145,9 +2395,11 @@ Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_ui
 
 ### 上限被触发时的两种 429（带 `code`，都写着真实数字）
 - `sdk_deck_cap`：`POST /api/ppt/decks` 超过 `maxDecks`。
-- `sdk_ai_quota`：会花钱的端点超过 `dailyAiLimit`（`/decks/:id/` 下的 `clean-outline`、`plan`、
+- `sdk_ai_quota`：会花钱的端点超过 `dailyAiLimit`（`/outline-chat`、`/extract-file`、`/tidy-text`，以及 `/decks/:id/` 下的 `clean-outline`、`plan`、
   `pages`、`replan-images`、`prepare-images`、`ai-edit`、`ai-remake`、`images`），服务器时间
   0 点重置。**先扣再放行**；纯代码那几条（改文字/改样式/画布/蒙版/拼整份/导出/插页删页）不计费。
+  `/extract-file` 也在表里（传图片时它是一次真实的视觉调用）—— 代价是传文档也记 1 次，
+  中间件跑在解析 body 之前，那时压根不知道这次传的是图还是文档。
   `POST /decks/:id/images` 一次可能生 4 张图，中间件只扣 1，差额由 `chargeExtraPptSdkAiCalls`
   **按张补扣** —— 不补的话生图那条路对第三方相当于打了 N 折，而后台显示的用量完全正常。
 
