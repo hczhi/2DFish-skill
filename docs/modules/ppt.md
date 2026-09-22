@@ -1990,6 +1990,17 @@
   `detail` 里（撞账号总额还是应用单独额度，解法不同）。前端那六处配一句
   `errText(e, fallback, quotaNote)`：`e.message` 到前端就是 `quota_exceeded` 这个英文记号，
   直接显示的话那一栏是一行英文，看起来像程序崩了。
+- **上游失败也不许落进 `sendPptError` 最后那行 500（`classifyUpstream`，`core/llm/upstreamError.ts`）。**
+  线上真实现象：生成一页回 `500 {"error":"Request timed out."}` —— SDK 的 `APIConnectionTimeoutError`
+  **不设 `name`、`status` 是 undefined**，所以只有 `instanceof` 认得出它，以前就一路兜到 500 并把那句
+  英文原文抄给前端。于是「模型太慢」和「后端崩了」在界面上是同一句 500，而解法完全相反（换掉
+  default 那一档 / 勾「关思维链」 vs 看服务端栈），他只会一路重试，每次等满 120 秒、每次真扣一次额度。
+  四类各自回不同的码和成因（超时 504 / 上游网关掐掉 504·524 → 504 / 上游忙 429·503·500·502 → 502 /
+  其余 APIError 带原文 → 502），三条边界：① 分类在 `core/llm/upstreamError.ts`，**话术留在调用方** ——
+  ppt 说「去换 default 那一档」、consult 说「把客户资料删短」，合成一份的话总有一个模块在给用不上的
+  建议；② 每一句都要带「这次的 AI 额度已经扣了」（不带的话他以为失败是免费的）；③ `api/consult.ts`
+  的 `fail()` 里还有一份同样的 instanceof 阶梯，**新增一类上游失败时两处都要加** —— 只加一处的话另一个
+  模块把它照旧兜成 500 原文，而那一处一个字都不会报。
 - **左边那条缩略图一屏只挂 15 个（`RAIL_SIZE`），窗口跟着当前页和批量生成那一页走。**
   每个缩略图是一个 `srcdoc` iframe，而 srcdoc 是**整份 template.html 套一页**（实测 75KB），
   浏览器要为每个建一个 document、解析一遍那份 CSS、跑一遍它自己的 `fit()`。实测

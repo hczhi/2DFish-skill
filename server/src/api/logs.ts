@@ -8,8 +8,11 @@ logsRouter.get('/', (req: Request, res: Response) => {
 
   const db = getDatabase();
   // 列表故意不取 request_body/response_body（可能几十KB），避免一次拉一屏就把响应撑爆；全文走 /logs/:id。
+  // reasoning_tokens / finish_reason（107）要在**列表**上就有：只在详情里的话，
+  // 「这条接入点的思维链关掉了没」得一行行点开才看得出来，而它的现象（耗时翻十倍）
+  // 在列表上和网络慢长得一模一样。
   const LIST_COLS =
-    'id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, provider_id, provider_owner, created_at';
+    'id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, provider_id, provider_owner, reasoning_tokens, finish_reason, created_at';
   let sql = `SELECT ${LIST_COLS} FROM ai_logs WHERE 1=1`;
   const params: unknown[] = [];
 

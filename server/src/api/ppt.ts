@@ -33,6 +33,7 @@ import {
   addDecor, removeDecor, setDecorAlpha, hasDecor, decorAlpha, applyDefaultImageMode,
   DECOR_ALPHA, deckDecorReport, decorImage,
 } from '../services/ppt/imageModes.js';
+import { classifyUpstream } from '../core/llm/upstreamError.js';
 import { isBlankPage } from '../services/ppt/blankPage.js';
 import { rechartEdited } from '../services/ppt/chartData.js';
 import { addCanvasText, addCanvasImage, setCanvasBox, deleteCanvasEl } from '../services/ppt/canvasEdit.js';
@@ -150,7 +151,31 @@ export function sendPptError(res: Response, e: any, is400: boolean, fallback: st
     res.status(429).json({ error: 'quota_exceeded', remaining: 0, daily_limit: e.dailyLimit, app: e.app, detail: message });
     return;
   }
-  res.status(e?.name === 'DedicatedChannelError' ? 503 : 500).json({ error: message });
+  if (e?.name === 'DedicatedChannelError') {
+    res.status(503).json({ error: message });
+    return;
+  }
+  // 上游失败（超时 / 网关掐掉 / 上游忙 / 模型名不对）**不许兜成 500 原文**。
+  // 线上真实现象：生成一页回 `500 {"error":"Request timed out."}` —— 那是 SDK 的原话
+  // （`APIConnectionTimeoutError` 不设 name、status 是 undefined，所以以前落在下面那行），
+  // 读起来是「后端崩了」。而这两件事的解法完全相反：模型太慢要去换模型 / 关思维链，
+  // 后端崩了要去看栈。指错方向的代价是他一路重试，每次等满 120 秒、每次真扣一次额度（硬规则 1）。
+  const up = classifyUpstream(e);
+  if (up) {
+    res.status(up.status).json({
+      // 「额度已经扣了」必须写：不写的话他以为这次失败是免费的，会连着点五次。
+      // 「换哪儿」要指到具体那一档和那个勾选框 —— 只说「换个快模型」的话他不知道去哪儿换。
+      error:
+        `${up.cause}这次的 AI 额度已经扣了。\n` +
+        (up.kind === 'busy'
+          ? '已经自动重发过一次了还是这句 —— **不是你的内容的问题**，改提纲、删内容、换版式都没用：等几分钟再点一次，或者去后台「AI 模型 Provider」换一条空闲的接入点。'
+          : up.kind === 'api'
+            ? '这一类基本都是接入点配置问题（模型名、余额、Base URL），去后台「AI 模型 Provider」核一下那条接入点。'
+            : '别连着重点 —— 同样的内容它还是要想这么久。管用的只有换模型：去后台「AI 模型 Provider」把这份稿子用的那一档（default）换成思维链短的模型，或者把那条接入点的「关思维链」勾上，勾完点「测试」看结论（有些模型关不掉，那种只能换）。'),
+    });
+    return;
+  }
+  res.status(500).json({ error: message });
 }
 
 /**

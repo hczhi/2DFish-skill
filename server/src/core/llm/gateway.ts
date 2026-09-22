@@ -572,9 +572,13 @@ export async function aiGateway(
   // 参数发出去了不等于生效：宽松的网关对不认识的键**既不报错也不照办**
   // （实测这条接入点连乱造的键都回 200）。那种情况下唯一的现象是「还是很慢」，
   // 日志里一切正常 —— 所以这里对着 usage 核一眼，没关掉就喊出来。
-  const reasoningTokens = (response.usage as any)?.completion_tokens_details?.reasoning_tokens || 0;
+  // **「上游没报这个明细」和「真的想了 0」要分开**（往下一路传到 ai_logs，见 107 迁移）：
+  // 合成 0 的话后台那一列写着「思 0」= 「已经关掉了」，而真相是这条网关压根不报，
+  // 关没关不知道 —— 他会据此排除掉唯一有用的那个方向（换模型）。
+  const rawReasoning = (response.usage as any)?.completion_tokens_details?.reasoning_tokens;
+  const reasoningTokens: number | null = typeof rawReasoning === 'number' ? rawReasoning : null;
   // 退到 low 的那次上面已经喊过一句（而且成因说得更准），这里不重复喊。
-  if (noThinking && !ntOutcome.refused && reasoningTokens > 0) {
+  if (noThinking && !ntOutcome.refused && (reasoningTokens ?? 0) > 0) {
     console.warn(
       `[llm] ${options.operation}: 要求关思维链，但 ${model} 这次还是想了 ${reasoningTokens} token（共 ${outputTokens} 输出 / ${(duration / 1000).toFixed(1)} 秒）——` +
         `这条接入点或这个模型不支持关，得换模型才快得起来。`
@@ -586,7 +590,8 @@ export async function aiGateway(
     options.requestSummary, options.userId,
     safeStringify(params.messages),
     response.choices?.[0]?.message?.content || '',
-    providerId, providerOwner
+    providerId, providerOwner,
+    reasoningTokens, response.choices?.[0]?.finish_reason || null
   );
 
   return {

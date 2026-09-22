@@ -27,6 +27,10 @@
     <p class="hint">
       每一行是一次与 LLM 的完整往返。点「查看」看完整输入（含系统拼装的 skill / 禁用库等上下文）、完整输出与 token。
       「渠道」列区分这次调用烧的是平台的 key 还是该用户专属渠道的 key。
+      <b>「思维链」列是「接入点上勾的『不使用深度思考』到底生效了没」的唯一证据</b>：数字 &gt; 0
+      说明它照旧在想（那一档换个模型才快得起来，勾选框在这条接入点上没用）；「上游没报」是这条网关
+      不返回这个明细，关没关测不出来，去那条接入点点一次「测试」看结论。
+      输出 tok 后面的「截断」= 被 <code>max_tokens</code> 切断了，正文是半句 —— 思维链和正文分的是同一份额度。
     </p>
 
     <div class="hc-table-container">
@@ -40,6 +44,7 @@
             <th>渠道</th>
             <th>输入 tok</th>
             <th>输出 tok</th>
+            <th>思维链</th>
             <th>耗时</th>
             <th></th>
           </tr>
@@ -56,12 +61,24 @@
               </span>
             </td>
             <td class="num">{{ log.input_tokens }}</td>
-            <td class="num">{{ log.output_tokens }}</td>
+            <td class="num">
+              {{ log.output_tokens }}
+              <!-- 截断必须在列表上就出声：正文断在半句、接口 200，看起来只是「模型没答完」。 -->
+              <span v-if="log.finish_reason === 'length'" class="hc-badge hc-badge-red" title="被 max_tokens 切断，正文不完整">截断</span>
+            </td>
+            <td class="num">
+              <!-- null = 上游没报这个明细（≠ 想了 0 个）。显示成 0 的话读起来是「已经关掉了」。 -->
+              <span v-if="log.reasoning_tokens == null" class="dim" title="这条网关不返回 reasoning_tokens，关没关测不出来">上游没报</span>
+              <span v-else-if="log.reasoning_tokens > 0" class="hc-badge hc-badge-red" :title="`这次思维链花了 ${log.reasoning_tokens} tok，和正文分同一份 max_tokens`">
+                {{ log.reasoning_tokens }}
+              </span>
+              <span v-else class="hc-badge hc-badge-green" title="上游报了 0，这次真的没思考">0</span>
+            </td>
             <td class="num dim">{{ log.duration_ms != null ? log.duration_ms + 'ms' : '—' }}</td>
             <td><button class="view-btn" @click="openDetail(log.id)">查看</button></td>
           </tr>
           <tr v-if="!logs.length">
-            <td colspan="9" class="empty">暂无记录</td>
+            <td colspan="10" class="empty">暂无记录</td>
           </tr>
         </tbody>
       </table>
@@ -88,7 +105,10 @@
           <div class="d-meta">
             <span>模型 <b class="mono">{{ detail.model }}</b></span>
             <span>输入 <b>{{ detail.input_tokens }}</b> tok</span>
-            <span>输出 <b>{{ detail.output_tokens }}</b> tok</span>
+            <span>输出 <b>{{ detail.output_tokens }}</b> tok<b v-if="detail.finish_reason === 'length'" class="warn-ink">（截断）</b></span>
+            <span>思维链 <b :class="{ 'warn-ink': (detail.reasoning_tokens || 0) > 0 }">
+              {{ detail.reasoning_tokens == null ? '上游没报' : detail.reasoning_tokens + ' tok' }}
+            </b></span>
             <span>耗时 <b>{{ detail.duration_ms != null ? detail.duration_ms + 'ms' : '—' }}</b></span>
             <span>渠道 <b>{{ detail.provider_owner === 'dedicated' ? '用户专属' : '平台' }}</b></span>
             <span v-if="detail.provider_id">provider <b class="mono">{{ detail.provider_id }}</b></span>
@@ -132,6 +152,10 @@ interface LogRow {
   output_tokens: number
   total_tokens: number
   duration_ms: number | null
+  /** null = 上游没报这个明细（不是「想了 0 个」，见 migration 107） */
+  reasoning_tokens?: number | null
+  /** 'length' = 被 max_tokens 切断；null = 上游没给 */
+  finish_reason?: string | null
   request_summary: string | null
   user_id: string | null
   provider_id?: string | null
@@ -226,6 +250,7 @@ onMounted(() => { load(); loadFilters() })
 
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .dim { color: #9CA3AF; }
+.warn-ink { color: #dc2626; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .empty { text-align: center; color: #9CA3AF; padding: 32px 0; }
 .view-btn {

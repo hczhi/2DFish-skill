@@ -57,13 +57,18 @@ export function logAIUsage(
   requestBody?: string,   // 完整请求 messages（JSON 字符串），供后台日志查全文
   responseBody?: string,  // 模型完整返回正文（流式为累计拼接后的全文）
   providerId?: string | null,              // 用了哪条 ai_providers 记录（旧 system_config 回落时为 null）
-  providerOwner?: 'platform' | 'dedicated' // 成本归属：平台 key 还是用户专属 key
+  providerOwner?: 'platform' | 'dedicated', // 成本归属：平台 key 还是用户专属 key
+  // 这两列（107）是「关思维链到底生效了没」和「是不是被 max_tokens 切了」的唯一可见证据。
+  // **`undefined` 要原样落成 NULL，不许折成 0 / 空串**：那读起来是「想了 0 token」=
+  // 「已经关掉了」，而真相是上游压根没报这个明细。见 107 迁移里的边界 ①。
+  reasoningTokens?: number | null,
+  finishReason?: string | null
 ): void {
   try {
     const db = getDatabase();
     db.prepare(
-      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, provider_id, provider_owner, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, provider_id, provider_owner, reasoning_tokens, finish_reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       uuidv4(), source, operation, model,
       inputTokens, outputTokens, inputTokens + outputTokens,
@@ -71,6 +76,7 @@ export function logAIUsage(
       userId || null,
       requestBody || null, responseBody || null,
       providerId || null, providerOwner || null,
+      reasoningTokens ?? null, finishReason ?? null,
       new Date().toISOString()
     );
   } catch { /* non-critical */ }

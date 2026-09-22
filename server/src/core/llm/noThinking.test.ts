@@ -27,6 +27,8 @@ const completion = {
   choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
   usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
 };
+/** 这几次返回换成这个（用于「上游报了 reasoning_tokens」那条） */
+let nextCompletion: any = null;
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -41,7 +43,7 @@ beforeAll(async () => {
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(completion));
+      res.end(JSON.stringify(nextCompletion || completion));
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -60,8 +62,10 @@ afterAll(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   bodies.length = 0;
   reject400 = 0;
+  nextCompletion = null;
   reject400Message = 'Unrecognized request argument supplied: enable_thinking';
   getDatabase().prepare('DELETE FROM ai_quota').run();
+  getDatabase().prepare('DELETE FROM ai_logs').run();
 });
 
 const call = (noThinking?: boolean) =>
@@ -138,5 +142,32 @@ describe('关思维链的参数', () => {
     expect(String(err.message)).toMatch(/关不掉思维链/);
     expect(String(err.message)).toMatch(/AI 模型 Provider/);   // 换哪里得说清楚
     expect(String(err.message)).toContain('该模型始终思考');   // 上游原话也带上
+  });
+});
+
+describe('ai_logs 里的思维链用量（107）', () => {
+  const lastLog = () =>
+    getDatabase()
+      .prepare('SELECT reasoning_tokens AS r, finish_reason AS f FROM ai_logs ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get() as { r: number | null; f: string | null };
+
+  it('上游没报这个明细时存 NULL，不存 0', async () => {
+    // 折成 0 的话后台那一列写着「思 0」= 「已经关掉了」，而真相是这条网关压根不报。
+    // 这是会伪装成成功的那种：日志一行都不缺、数字看起来还特别理想，
+    // 于是唯一有用的方向（换模型 / 点接入点的「测试」）被这个 0 彻底排除掉。
+    await call(true);
+    expect(lastLog().r).toBeNull();
+  });
+
+  it('上游报了就照数存下来，并且带上 finish_reason', async () => {
+    // 勾了「不使用深度思考」而它照旧想了 900 token —— 这一条就是「后台配了但没生效」的证据，
+    // 以前只在服务器 console.warn 里（线上看不到），后台那一屏和关掉了长得一模一样。
+    nextCompletion = {
+      ...completion,
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 1, completion_tokens: 6000, total_tokens: 6001, completion_tokens_details: { reasoning_tokens: 900 } },
+    };
+    await call(true);
+    expect(lastLog()).toEqual({ r: 900, f: 'length' });
   });
 });

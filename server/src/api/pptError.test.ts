@@ -3,6 +3,7 @@
 // 回 500 的话界面上是「这一页生成失败」，他会一路重试，而每次重试都真的扣一次额度。
 // 手测要先把额度打光才看得出来，所以这条必须有测试。
 import { describe, it, expect } from 'vitest';
+import OpenAI from 'openai';
 import { sendPptError } from './ppt.js';
 import { QuotaExceededError } from '../core/llm/gateway.js';
 import { DedicatedChannelError } from '../services/aiProviderService.js';
@@ -31,5 +32,20 @@ describe('sendPptError', () => {
     sendPptError(res, new DedicatedChannelError('缺 kind=image 的接入点'), false, '生图失败');
     expect(out.code).toBe(503);
     expect(out.body).toEqual({ error: '缺 kind=image 的接入点' });
+  });
+
+  // 线上真实现象：生成一页回 `500 {"error":"Request timed out."}`。SDK 的超时错误不设 name、
+  // status 是 undefined，所以以前落进兜底那行 —— 界面上「模型太慢」和「后端崩了」同一句 500，
+  // 而两者解法相反（换模型/关思维链 vs 看服务端栈）。手测测不出来（要等满 120 秒才复现）。
+  it('上游超时回 504 且说出成因（不是 500 + 一句英文原文）', () => {
+    const { res, out } = fakeRes();
+    sendPptError(res, new OpenAI.APIConnectionTimeoutError({ message: 'Request timed out.' }), false, '这一页生成失败');
+    expect(out.code).toBe(504);
+    expect(out.body.error).not.toBe('Request timed out.');
+    expect(out.body.error).toContain('超时');
+    // 不写「额度已经扣了」的话他以为这次失败是免费的，会连着重点，每次真扣一次。
+    expect(out.body.error).toContain('额度已经扣了');
+    // 真正管用的动作只有换模型/关思维链 —— 没这句他只会重试。
+    expect(out.body.error).toContain('关思维链');
   });
 });
