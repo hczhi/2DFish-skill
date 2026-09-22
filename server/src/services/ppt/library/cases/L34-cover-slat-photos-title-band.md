@@ -11,7 +11,7 @@
 - **核心手法**：① 整幅被切成**三条不等宽的竖图**（`.l34-slats`，`1.18fr / .74fr / 1.08fr`，缝隙 8px），像一排幕帘；② 一条**横贯整幅的白色标题带**（`.l34-band`，`left:0;right:0`）压在上三分之一处，把三条幕帘一起切断 —— 这一刀就是这一条封面的结构签名；③ 带子里三层：细线 eyebrow（`.l34-eyebrow`，英文小字 + 自动延伸的细线）→ 82px 衬线主标题（可用 `<em>` 给主题词上品牌色）→ 一行副标；④ 底部左右两端各一组小字元信息（`.l34-meta`，白字压在图上）
 - **是否全幅**：**是** —— 不包 `.slide-inner`
 - **只当整份第 1 页用**（`归属` 只写封面）：它没有页眉、也没有留给正文的空间
-- **底色**：默认不加类（暗调由图上的蒙版给）
+- **底色**：默认不加类（`.l34-wrap` 自带 `--c-ink-deep`；**图上没有蒙版**，暗调要图自己给）
 
 ---
 
@@ -20,7 +20,8 @@
 ### 1. 幕帘 · `.l34-slats` > `.l34-slat` × 3
 
 - **三条宽度必须不等**（`1.18fr / .74fr / 1.08fr`）：改成 `repeat(3,1fr)` 之后它读成"三宫格图片墙"（那是 L32 干的事），封面的节奏感消失，而页面照样渲染。
-- 每条一张**竖构图**图（缝隙里露出的是 `var(--c-ink-deep)` 底），`::after` 是上下略压、中段最亮的纵向蒙版 —— 中段最亮是因为标题带正好压在那儿，两侧要沉下去。
+- 每条一张**竖构图**图（缝隙里露出的是 `var(--c-ink-deep)` 底）。**幕帘上没有蒙版**（原来 `.l34-slat::after` 那层 `rgba(0,0,0,.48)` 已删，三条一起压黑整幅发灰）——
+  于是底部那两组压在图上的白字元信息全靠图自己暗：三张都挑暗调/低调的，亮图进来那几行小字直接没了，而封面看起来完全正常。不够暗时拉「这一页的蒙版」滑块（20–30%）。
 - **三张必须同一路调性/色温**：不同调性的三张并排时，那道 8px 缝隙会读成"三张不相干的图硬拼"。
 - 配图缺一张时**三条一起去掉**（V4 纯色底），不要只放两张：`grid` 会把第三列留成一条深色空槽，而那条空槽看起来像图没加载出来。
 
@@ -48,7 +49,6 @@
 .l34-slats{position:absolute;inset:0;display:grid;grid-template-columns:1.18fr .74fr 1.08fr;gap:8px}
 .l34-slat{position:relative;overflow:hidden}
 .l34-slat img{width:100%;height:100%;object-fit:cover;display:block}
-.l34-slat::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.48)}
 .l34-band{position:absolute;left:0;right:0;top:33%;z-index:3;padding:46px var(--pad-x) 50px;background:var(--c-card);border-top:6px solid var(--c-brand)}
 .l34-eyebrow{display:flex;align-items:center;gap:18px;font-family:var(--num);font-size:16px;font-weight:700;letter-spacing:.26em;color:var(--c-brand-deep);margin-bottom:18px}
 .l34-eyebrow::after{content:"";flex:1;height:1px;background:var(--c-hairline)}

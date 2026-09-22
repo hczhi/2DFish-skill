@@ -1,0 +1,236 @@
+{
+  "default": {
+    "palette": "P-A",
+    "font": "F-A",
+    "density": "D-B",
+    "header": "H-A",
+    "motif": "M-A"
+  },
+  "paletteVars": [
+    "--c-brand",
+    "--c-brand-deep",
+    "--c-accent",
+    "--c-accent-deep",
+    "--c-brand-on",
+    "--c-accent-on",
+    "--c-bg",
+    "--c-bg-alt",
+    "--c-ink",
+    "--c-ink-deep",
+    "--c-ink-soft",
+    "--c-card",
+    "--c-hairline",
+    "--bg-warm",
+    "--bg-cool",
+    "--bg-plain",
+    "--card-o",
+    "--card-b",
+    "--hl-o",
+    "--hl-b",
+    "--mask-rgb",
+    "--mask-rgb-alt"
+  ],
+  "minFontPx": 14,
+  "palettes": [
+    {
+      "id": "P-A",
+      "name": "暖橙（默认）",
+      "hint": "橙 + 天青（页底纯白）。案例库里所有 demo 就是这一套"
+    },
+    {
+      "id": "P-B",
+      "name": "沉稳蓝",
+      "hint": "深蓝 + 琥珀（页底纯白）。政企、方案汇报",
+      "vars": {
+        "--c-brand": "#2A5DB0",
+        "--c-brand-deep": "#1E4585",
+        "--c-accent": "#E8A33D",
+        "--c-accent-deep": "#CE8A26",
+        "--c-brand-on": "#FFFFFF",
+        "--c-accent-on": "#1F2733",
+        "--c-bg": "#FFFFFF",
+        "--c-bg-alt": "#EDF2F9",
+        "--c-ink": "#4A5260",
+        "--c-ink-deep": "#1F2733",
+        "--c-ink-soft": "#8B93A1",
+        "--c-card": "#FFFFFF",
+        "--c-hairline": "rgba(16,24,40,.10)",
+        "--bg-warm": "#FFFFFF",
+        "--bg-cool": "#FFFFFF",
+        "--bg-plain": "#FFFFFF",
+        "--card-o": "#E9F0FA",
+        "--card-b": "#FDF3E3",
+        "--hl-o": "rgba(42,93,176,.14)",
+        "--hl-b": "rgba(232,163,61,.14)",
+        "--mask-rgb": "255,255,255",
+        "--mask-rgb-alt": "255,255,255"
+      }
+    },
+    {
+      "id": "P-C",
+      "name": "墨绿",
+      "hint": "墨绿 + 陶土（页底纯白）。文旅、健康、国货",
+      "vars": {
+        "--c-brand": "#2F6B52",
+        "--c-brand-deep": "#235340",
+        "--c-accent": "#C4703A",
+        "--c-accent-deep": "#A85A2A",
+        "--c-brand-on": "#FFFFFF",
+        "--c-accent-on": "#141A16",
+        "--c-bg": "#FFFFFF",
+        "--c-bg-alt": "#EDF3EF",
+        "--c-ink": "#4C534E",
+        "--c-ink-deep": "#232A26",
+        "--c-ink-soft": "#8D948F",
+        "--c-card": "#FFFFFF",
+        "--c-hairline": "rgba(20,30,25,.10)",
+        "--bg-warm": "#FFFFFF",
+        "--bg-cool": "#FFFFFF",
+        "--bg-plain": "#FFFFFF",
+        "--card-o": "#E9F1EC",
+        "--card-b": "#FAEFE7",
+        "--hl-o": "rgba(47,107,82,.14)",
+        "--hl-b": "rgba(196,112,58,.14)",
+        "--mask-rgb": "255,255,255",
+        "--mask-rgb-alt": "255,255,255"
+      }
+    },
+    {
+      "id": "P-D",
+      "name": "党建红",
+      "hint": "正红 + 金（页底纯白）。党政机关、党建汇报、政府工作报告",
+      "vars": {
+        "--c-brand": "#C1272D",
+        "--c-brand-deep": "#94191F",
+        "--c-accent": "#C8A15A",
+        "--c-accent-deep": "#8A6A1E",
+        "--c-brand-on": "#FFFFFF",
+        "--c-accent-on": "#2A2422",
+        "--c-bg": "#FFFFFF",
+        "--c-bg-alt": "#FBF4E8",
+        "--c-ink": "#544C4A",
+        "--c-ink-deep": "#2A2422",
+        "--c-ink-soft": "#928A87",
+        "--c-card": "#FFFFFF",
+        "--c-hairline": "rgba(42,20,20,.10)",
+        "--bg-warm": "#FFFFFF",
+        "--bg-cool": "#FFFFFF",
+        "--bg-plain": "#FFFFFF",
+        "--card-o": "#F8E9E7",
+        "--card-b": "#FAF0DC",
+        "--hl-o": "rgba(148,25,31,.14)",
+        "--hl-b": "rgba(200,161,90,.18)",
+        "--mask-rgb": "255,255,255",
+        "--mask-rgb-alt": "255,255,255"
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "id": "F-A",
+      "name": "宋体标题 + 黑体正文（默认）",
+      "hint": "标题有笔锋，正文清楚。通用"
+    },
+    {
+      "id": "F-B",
+      "name": "全黑体",
+      "hint": "标题也用黑体，更硬朗。科技、数据类",
+      "vars": {
+        "--serif": "\"Noto Sans SC\",system-ui,sans-serif"
+      },
+      "promptNote": "标题也是黑体（`var(--serif)` 已经换成黑体了，别自己写 font-family）—— 黑体标题看起来比宋体重，标题字号取阶梯里偏小的那一档。"
+    },
+    {
+      "id": "F-C",
+      "name": "全宋体",
+      "hint": "正文也用宋体，更斯文。文旅、品牌故事",
+      "vars": {
+        "--sans": "\"Noto Serif SC\",serif"
+      },
+      "promptNote": "正文也是宋体（`var(--sans)` 已经换成宋体了，别自己写 font-family）—— 宋体小字发虚，正文字号取阶梯里偏大的那一档，行高也松一点。"
+    }
+  ],
+  "densities": [
+    {
+      "id": "D-B",
+      "name": "标准（默认）",
+      "hint": "上下 100 / 左右 140"
+    },
+    {
+      "id": "D-A",
+      "name": "舒展",
+      "hint": "留白更多，一页少放点东西",
+      "rules": ":root{--pad-x:176px;--pad-top:118px;--pad-bottom:126px}",
+      "promptNote": "这份稿子的页边距更大（左右各 176px），可用宽度比案例窄 —— 每页的内容块比案例少一点，宁可空着也不要挤。"
+    },
+    {
+      "id": "D-C",
+      "name": "紧凑",
+      "hint": "内容多的稿子用它，别让文字挤出画面",
+      "rules": ":root{--pad-x:108px;--pad-top:88px;--pad-bottom:104px}",
+      "promptNote": "这份稿子的页边距更小（左右各 108px），可用宽度比案例宽 —— 内容多的那几页可以比案例多排一块，字号按阶梯里偏小的那一档。"
+    }
+  ],
+  "headers": [
+    {
+      "id": "H-A",
+      "name": "小字加宽字距（默认）",
+      "hint": "17px 黑体加粗、字距拉开，强调色。通用"
+    },
+    {
+      "id": "H-B",
+      "name": "细宋体",
+      "hint": "20px 宋体常规、浅墨色，克制。品牌故事、文旅",
+      "rules": ".slide-header .kicker{font-family:var(--serif);font-size:20px;font-weight:400;letter-spacing:.02em;color:var(--c-ink-soft)}"
+    },
+    {
+      "id": "H-C",
+      "name": "品牌色块",
+      "hint": "反色字压在品牌色小色块上，最显眼。政企、方案汇报",
+      "rules": ".slide-header .kicker{font-size:15px;font-weight:700;letter-spacing:.1em;color:var(--c-brand-on);background:var(--c-brand);padding:7px 16px;border-radius:8px;display:inline-block}"
+    },
+    {
+      "id": "H-D",
+      "name": "不显示",
+      "hint": "整份都不要左上角那行模块名",
+      "rules": ".slide-header{display:none}"
+    }
+  ],
+  "motifs": [
+    {
+      "id": "M-A",
+      "name": "跟着画风（默认）",
+      "hint": "不额外加装饰层，由画风自己决定"
+    },
+    {
+      "id": "M-B",
+      "name": "细线网格",
+      "hint": "极细的直线/网格/同心圆。科技、数据、方案汇报",
+      "imageNote": "画面里贯穿一层极细的直线、网格或同心圆构成，线宽均匀纤细、间距规整，只在空旷的那一侧显形，不盖住主体。"
+    },
+    {
+      "id": "M-C",
+      "name": "几何色块",
+      "hint": "大块平涂的圆/拱形/斜切。政企、品牌主张",
+      "imageNote": "画面的边角上有几块平涂的纯色几何（圆、拱形、斜切矩形）前后穿插，边界笔直锐利，只占边缘与角落，不压到主体和空旷的那一侧。"
+    },
+    {
+      "id": "M-D",
+      "name": "流体渐层",
+      "hint": "柔和的弥散光晕与渐层。互联网、产品发布",
+      "imageNote": "画面深处有一层柔和的流体渐层与弥散光晕缓慢过渡、没有硬边，只在主体之外的空间里铺开。"
+    },
+    {
+      "id": "M-E",
+      "name": "纸纹肌理",
+      "hint": "纸张纤维与印刷颗粒。文旅、品牌故事、国货",
+      "imageNote": "整幅覆一层可见的纸张纤维与印刷颗粒肌理，边缘略有油墨扩散的痕迹，肌理只在质感层，不改变画面的明暗层次。"
+    },
+    {
+      "id": "M-F",
+      "name": "光斑与粒子",
+      "hint": "空气里的尘埃、光斑、体积光。发布会、愿景页",
+      "imageNote": "空气里散布细小的光斑、尘埃与粒子，受光处有微弱的耀斑和体积光，粒子聚在主体周围的空气里，不糊住主体轮廓。"
+    }
+  ]
+}

@@ -81,6 +81,25 @@ export interface PptLayout {
    * 摘掉、代码又不贴），而画面完全正常。
    */
   noHeader: boolean;
+  /**
+   * 库文件里那行 `默认图模式`：这一条生成完**直接变形成哪种图模式**（现在只有 `backdrop`）。
+   * 空 = 照模型排出来的那样（分屏）。
+   *
+   * 为什么写在 md 里而不是代码里挑几个编号：案例库的唯一来源是 md（见文件头），编号列表另写
+   * 一份的话改 md 的人看不到它 —— 现象是「这一条我明明写了默认背景图，生成出来还是左图右图」，
+   * 而两边都不报错。认不出来的写法在 `parseDefaultImageMode` 里**抛**，不当成空。
+   */
+  defaultImageMode: '' | 'backdrop';
+  /**
+   * 那一行括号里可选的 `（幕帘 N%）`：变形时这一页的幕帘浓度。`undefined` = 用
+   * `BACKDROP_MASK` 那个缺省（30%）。
+   *
+   * 存在的理由是**本来就是整页照片的那几条（L13/L21/L55）自己带一层蒙版**（`.lNN-bg::after`，
+   * 托着白标题的就是它），而那一层**在变形之后照旧画在幕帘上面** —— 两层叠起来整张照片
+   * 灰掉一半，而页面、接口、problems 全都正常（他只会以为这张图生得差，一张张重生，
+   * 每张真扣一次额度）。所以这几条写 `（幕帘 0%）`：亮度归版式自己那层管。
+   */
+  defaultBackdropMask?: number;
   /** 有没有详情 md（12 条有，L1–L10 索引条目自足） */
   hasDetail: boolean;
   /** 原始参考截图（客户端静态资源，client/public/ppt-cases/） */
@@ -349,6 +368,45 @@ function parseShape(entry: RawEntry, raw: string): LayoutShape {
   return hit;
 }
 
+/**
+ * 那行 `默认图模式` → 生成完要不要就地变形。目前只认「背景图」。
+ *
+ * 认不出的写法**抛**（不是当成空）：当成空的话那一条从此不做变形，而 md 上写着「默认图模式：
+ * 整页图」、生成出来是一页正常的左图右字幻灯片，一处都不报错 —— 他只会以为这个功能没做。
+ * 「单图」还没接（`toPoster` 要扒这一页的文字印进图里，那是另一条路），所以这里也明说，
+ * 而不是静默忽略。
+ */
+function parseDefaultImageMode(
+  entry: RawEntry,
+  raw: string
+): { mode: '' | 'backdrop'; mask?: number } {
+  // 先剥 markdown 的 `**` 和后面那段说明（`背景图 —— …`）：整行原样比的话写了说明的那几条
+  // 全判成认不出来。**切说明只按破折号切，不按空格**：按空格切的话「背景图（幕帘 0%）」
+  // 在括号里那个空格上就断了，于是括号永远配不上 —— 那个数静默丢掉，这一页照缺省 30% 变形。
+  const head = raw.replace(/^[*_\s]+/, '').split(/—|–|\s-\s/)[0].replace(/[*_]/g, '').trim();
+  // 「背景图（幕帘 0%）」：括号连在词后面，所以从 head 里再切一次。
+  const word = head.replace(/[（(].*$/, '').trim();
+  if (!word) return { mode: '' };
+  if (word !== '背景图') {
+    throw new Error(
+      `${entry.id} 的「默认图模式」写的是「${word}」，目前只认「背景图」（不写这一行 = 照模型排出来的那样）—— ` +
+        '认不出来时会当成没写，那一条生成完还是分屏，而库文件上写着它默认整页图，一处都不报错。'
+    );
+  }
+  const paren = head.match(/[（(]([^）)]*)[）)]/);
+  if (!paren) return { mode: 'backdrop' };
+  // 括号里只认「幕帘 N%」。认不出的写法**抛**（同上）：当成没写的话这一页照 30% 变形，
+  // 而 md 上写着「幕帘 0%」—— 出来是一张被幕帘洗灰的照片，页面完全正常。
+  const m = paren[1].replace(/\s+/g, '').match(/^幕帘(\d+(?:\.\d+)?)%$/);
+  if (!m) {
+    throw new Error(
+      `${entry.id} 的「默认图模式」括号里写的是「${paren[1]}」，这里只认「幕帘 N%」（例：背景图（幕帘 0%））—— ` +
+        '认不出来时会当成没写，那一页照缺省 30% 幕帘变形，而库文件上写的是另一个数，一处都不报错。'
+    );
+  }
+  return { mode: 'backdrop', mask: Number(m[1]) / 100 };
+}
+
 function buildLayout(
   entry: RawEntry,
   root: string,
@@ -365,6 +423,7 @@ function buildLayout(
   const designHint = field(body, 'design 提示');
   const variants = field(body, '变体');
   const source = field(body, '来源');
+  const dflt = parseDefaultImageMode(entry, field(body, '默认图模式'));
 
   // fullbleed 有两个来源：条目自己的「是否全幅」和文末那句集合。条目里明写的优先
   // （L12 写着「否」但要 has-card），没写的按集合判 —— 只靠集合的话新加的条目漏进集合
@@ -398,6 +457,8 @@ function buildLayout(
     designHint,
     variants,
     fullbleed,
+    defaultImageMode: dflt.mode,
+    defaultBackdropMask: dflt.mask,
     hasCard: hasCardSet.has(entry.num),
     noHeader: noHeaderSet.has(entry.num),
     hasDetail: !!detail,
@@ -406,7 +467,10 @@ function buildLayout(
     // `cases/L11-demo.html` 是当初随案例一起抄来的独立 html，它们各自复制了一份版式
     // CSS —— 改了 template 之后那几页照旧好看，而生成出来的页面已经变了。
     demoUrl: `/api/ppt/demo-deck.html?only=${entry.id}`,
-    selectText: selectText(entry, { applicable, roles, shape, structure, imageSlots, designHint, fullbleed }),
+    selectText: selectText(entry, {
+      applicable, roles, shape, structure, imageSlots, designHint, fullbleed,
+      defaultImageMode: dflt.mode,
+    }),
     buildText: detail || entry.raw,
   };
 }
@@ -440,6 +504,7 @@ function selectText(
     imageSlots: string;
     designHint: string;
     fullbleed: boolean;
+    defaultImageMode: '' | 'backdrop';
   }
 ): string {
   const lines = [`${entry.id} ${entry.name}${entry.title ? `（${entry.title}）` : ''}`];
@@ -450,6 +515,12 @@ function selectText(
   // 结构留一句话就够（选型阶段只需要知道它长什么样），完整结构在 buildText 里。
   if (f.structure) lines.push(`结构：${oneLine(f.structure, 160)}`);
   if (f.imageSlots) lines.push(`图槽位：${f.imageSlots}`);
+  // 默认背景图的那几条要在选版式那一次就说出来：不说的话模型按「左图右字」的量给这一页配文字、
+  // 按「全幅图页别超过三分之一」那条数的时候也不把它算进去 —— 而它生成完就是一整页图，
+  // 文字压在图上（每一页单看都正常，整份就是一半篇幅变成了图页，且每张都是一次真花钱的生图）。
+  if (f.defaultImageMode === 'backdrop') {
+    lines.push('默认图模式：背景图（生成完就是整页背景图、文字压在图上，算一页全幅图页）');
+  }
   lines.push(`fullbleed：${f.fullbleed ? '是' : '否'}`);
   if (f.designHint) lines.push(`提示：${oneLine(f.designHint, 160)}`);
   return lines.join('\n');

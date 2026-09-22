@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">
+  <!-- 竖构图的替身：主体在上半，下半留一块没有细节的暗区（配的那句提示词要的就是这个）。 -->
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3a44"/>
+      <stop offset="0.55" stop-color="#1b262d"/>
+      <stop offset="1" stop-color="#101a20"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="1200" fill="url(#room)"/>
+  <rect x="120" y="180" width="200" height="420" rx="8" fill="#31424d"/>
+  <rect x="360" y="140" width="200" height="460" rx="8" fill="#3a4d59"/>
+  <rect x="600" y="200" width="200" height="400" rx="8" fill="#2c3b45"/>
+  <g fill="#7fd0c8" opacity=".75">
+    <rect x="150" y="220" width="140" height="10" rx="5"/>
+    <rect x="150" y="250" width="90" height="10" rx="5"/>
+    <rect x="390" y="190" width="140" height="10" rx="5"/>
+    <rect x="630" y="240" width="110" height="10" rx="5"/>
+  </g>
+  <ellipse cx="450" cy="470" rx="150" ry="120" fill="#e6c79a" opacity=".18"/>
+  <rect y="720" width="900" height="480" fill="#0c1418"/>
+</svg>

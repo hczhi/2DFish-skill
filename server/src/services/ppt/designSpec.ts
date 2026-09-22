@@ -89,6 +89,16 @@ export interface DesignOption {
    * 紧凑档下面留一大块空、舒展档下面挤出画面（`overflow:hidden` 直接切掉，不报错）。
    */
   promptNote?: string;
+  /**
+   * 要塞进**生图提示词**的那一句（整页那几路模板里的 `{{MOTIF}}`，见 `styleLibrary.renderStylePrompt`）。
+   *
+   * **和 `promptNote` 是两条完全不同的路，不许合成一个字段**：`promptNote` 发给写 HTML 的模型，
+   * 而写 HTML 的模型拿到一句「画面里贯穿一层细线网格」之后会照着用 CSS 画出来 ——
+   * 那一层从此写死在这一页的 inline style 里，换母题那天它不会跟着变（而页面完全正常，
+   * 和第 ② 条「靠覆盖变量生效」直接打架）。反过来把 `promptNote` 喂给生图模型的话，
+   * 提示词里会多出一句「页边距 176px」这种它压根执行不了的话。
+   */
+  imageNote?: string;
 }
 
 /**
@@ -253,14 +263,78 @@ export const HEADERS: DesignOption[] = [
   },
 ];
 
+/**
+ * **视觉母题**：整份稿子的图里反复出现的那一层装饰（细线网格 / 几何色块 / 流体渐层…）。
+ *
+ * 它是这份规范里**唯一一档不产生任何 CSS** 的（`vars` / `rules` 都不填，只有 `imageNote`）——
+ * 母题走的是生图提示词那条路（整页图模板里的 `{{MOTIF}}`）。所以和另外四档不一样：
+ * **换母题不会让已经生成的那几张图跟着变**（图是像素），只影响往后生成的。调用方必须把这句
+ * 说出来（`PptPlan.vue` 那段 `dr-note`）—— 跟着另外四档一起说成「改完立刻跟着变」的话，
+ * 他换完母题翻了一遍稿子，画面一张都没变，而下拉、保存、接口全是正常的。
+ *
+ * 默认那一档（M-A）**故意是空句**：`{{MOTIF}}` 换成空串，模板里那一行整行塌掉 ——
+ * 兜一句「随画风自由发挥」之类的话反而是往提示词里多塞一句废话（而且六套画风各自的
+ * 「渲染/构图」里本来就说了笔触）。
+ *
+ * 每一句的写法有三条硬的（改的时候照着来）：
+ * ① **只许写「画面上多出来的那一层装饰长什么样」**，不许写机位、留白方向、尺寸、画面上的字
+ *    —— 那四样是代码在别处算的（`{{SPACE}}` / `<size>` / `{{SLIDE_TEXT}}`），写进来就是
+ *    两句打架，模型自己挑一边，而两种结果都是一张正常的图。
+ * ② **不许写整幅的调性**（「整体低反差」「低饱和」这类）：那正是 md §6「两条硬的」里记的那个坑
+ *    —— 把一句局部要求摊到全幅，出来每张都是灰蒙蒙的平图，而文字确实读得清、一处不报错。
+ * ③ **必须写「让开主体/文字那一块」**：母题铺满之后压在文字底下，投影时才看得出来。
+ */
+export const MOTIFS: DesignOption[] = [
+  { id: 'M-A', name: '跟着画风（默认）', hint: '不额外加装饰层，由画风自己决定' },
+  {
+    id: 'M-B',
+    name: '细线网格',
+    hint: '极细的直线/网格/同心圆。科技、数据、方案汇报',
+    imageNote:
+      '画面里贯穿一层极细的直线、网格或同心圆构成，线宽均匀纤细、间距规整，只在空旷的那一侧显形，不盖住主体。',
+  },
+  {
+    id: 'M-C',
+    name: '几何色块',
+    hint: '大块平涂的圆/拱形/斜切。政企、品牌主张',
+    imageNote:
+      '画面的边角上有几块平涂的纯色几何（圆、拱形、斜切矩形）前后穿插，边界笔直锐利，只占边缘与角落，不压到主体和空旷的那一侧。',
+  },
+  {
+    id: 'M-D',
+    name: '流体渐层',
+    hint: '柔和的弥散光晕与渐层。互联网、产品发布',
+    imageNote:
+      '画面深处有一层柔和的流体渐层与弥散光晕缓慢过渡、没有硬边，只在主体之外的空间里铺开。',
+  },
+  {
+    id: 'M-E',
+    name: '纸纹肌理',
+    hint: '纸张纤维与印刷颗粒。文旅、品牌故事、国货',
+    imageNote:
+      '整幅覆一层可见的纸张纤维与印刷颗粒肌理，边缘略有油墨扩散的痕迹，肌理只在质感层，不改变画面的明暗层次。',
+  },
+  {
+    id: 'M-F',
+    name: '光斑与粒子',
+    hint: '空气里的尘埃、光斑、体积光。发布会、愿景页',
+    imageNote:
+      '空气里散布细小的光斑、尘埃与粒子，受光处有微弱的耀斑和体积光，粒子聚在主体周围的空气里，不糊住主体轮廓。',
+  },
+];
+
 export interface DesignSpec {
   palette: string;
   font: string;
   density: string;
   header: string;
+  /** 视觉母题（见 `MOTIFS`）。**只进生图提示词，不产生 CSS。** */
+  motif: string;
 }
 
-export const DEFAULT_DESIGN: DesignSpec = { palette: 'P-A', font: 'F-A', density: 'D-B', header: 'H-A' };
+export const DEFAULT_DESIGN: DesignSpec = {
+  palette: 'P-A', font: 'F-A', density: 'D-B', header: 'H-A', motif: 'M-A',
+};
 
 export function designOptions() {
   const strip = (o: DesignOption) => ({ id: o.id, name: o.name, hint: o.hint });
@@ -269,8 +343,21 @@ export function designOptions() {
     fonts: FONTS.map(strip),
     densities: DENSITIES.map(strip),
     headers: HEADERS.map(strip),
+    motifs: MOTIFS.map(strip),
     default: DEFAULT_DESIGN,
   };
+}
+
+/**
+ * 母题那一句（整页图模板里 `{{MOTIF}}` 换成的东西）。默认那一档 / 不给规范 = 空串。
+ *
+ * **段标（`视觉母题：`）在这里拼，不写在模板里**：写在模板里的话默认那一档换出来是一行
+ * 光秃秃的 `视觉母题：` 发给模型 —— 它会自己想一个母题（每页想的还不一样），
+ * 而整份稿子「统一风格」这件事就此静默失效，每张图单看都不错。
+ */
+export function motifImageNote(spec?: DesignSpec): string {
+  const note = MOTIFS.find((x) => x.id === spec?.motif)?.imageNote;
+  return note ? `视觉母题：${note}` : '';
 }
 
 export class DesignSpecError extends Error {}
@@ -292,11 +379,31 @@ export function readDesignSpec(raw: unknown): DesignSpec {
     }
     return id;
   };
+  /**
+   * 母题这一档**少了不算错**（缺 = 默认那档），认不出照旧抛。
+   *
+   * 和上面那四档不一样是有理由的：新建页（`PptDeckCreate.vue`）和老的前端发上来的那个 design
+   * 对象里压根没有这个键 —— 跟着 `pick` 一起硬卡的话，整段设计规范一次都存不进去
+   * （现象是新建稿子时选的配色/字体全丢了，回到默认那套，而界面上显示的是他挑的）。
+   * 认不出的值照旧抛：回落的话他选了「细线网格」、存下来是空母题，往后生成的每张图
+   * 都没有那一层，而下拉里还显示着「细线网格」。
+   */
+  const pickOptional = (list: DesignOption[], v: unknown, fallback: string, label: string): string => {
+    const id = String(v ?? '').trim().toUpperCase();
+    if (!id) return fallback;
+    if (!list.some((x) => x.id === id)) {
+      throw new DesignSpecError(
+        `${label} ${id} 不在库里（只有 ${list.map((x) => x.id).join(' / ')}）—— 存下来的话往后生成的图会按默认那档画，而界面上显示的是你挑的这个。`
+      );
+    }
+    return id;
+  };
   return {
     palette: pick(PALETTES, (raw as any)?.palette, '配色'),
     font: pick(FONTS, (raw as any)?.font, '字体'),
     density: pick(DENSITIES, (raw as any)?.density, '疏密'),
     header: pick(HEADERS, (raw as any)?.header, '页眉'),
+    motif: pickOptional(MOTIFS, (raw as any)?.motif, DEFAULT_DESIGN.motif, '视觉母题'),
   };
 }
 
@@ -338,6 +445,8 @@ export function parseDesignSpec(json: string | null | undefined): { spec: Design
       // 静静回到默认那档（那正是它们现在的样子），**不报问题**：报的话每份老稿子
       // 打开都挂一句红字，而它一个字都没错。
       header: one(HEADERS, raw?.header, DEFAULT_DESIGN.header, '页眉'),
+      // 母题同理（这一批老 deck 里也没有这个键）。
+      motif: one(MOTIFS, raw?.motif, DEFAULT_DESIGN.motif, '视觉母题'),
     },
     problems,
   };

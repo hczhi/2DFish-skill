@@ -180,7 +180,7 @@
           <b v-else>这份稿子还没有规划</b>
           <p v-if="running">一次真实 AI 调用，通常 10–40 秒。它只挑版式、不生成 HTML。</p>
           <p v-else>
-            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库那 61 个版式</router-link>里给每页挑一个。
+            打开「提纲与设置」贴一份提纲再点规划 —— 规划会把提纲拆成逐页，并从<router-link to="/ppt/layouts">案例库里的版式</router-link>里给每页挑一个。
           </p>
           <button v-if="!running" class="btn-primary" @click="showSettings = true">去写提纲</button>
         </div>
@@ -467,35 +467,89 @@
               <div class="ins-h">
                 这一页的图
                 <span class="veil-val">{{
-                  imgMode[cur.page] === 'poster' ? '单图（整页就是一张图）'
-                  : imgMode[cur.page] === 'backdrop' ? '整页背景图' : '分屏'
+                  modeOf(cur.page) === 'poster' ? '单图（整页就是一张图）'
+                  : modeOf(cur.page) === 'backdrop' ? '整页背景图'
+                  : decorOn[cur.page] ? '分屏 + 装饰背景' : '分屏'
                 }}</span>
               </div>
               <div class="spec-acts">
+                <!-- 背景图**只在正好 1 格图的页上给按钮**（服务端 `toBackdrop` 的第一条边界）：
+                     0 格 / 多格的页点下去只会收到一句红字，他会一页页去试。格数从**这一页的 html
+                     现数**（`slotCount`，和服务端 `findImageSlots` 同一个正则）—— 另存一份计数的话
+                     换过模式之后按钮的出没跟画面差一拍，而两边看起来都正常。
+                     **`backdropBlock` 是服务端真试了一次变形的结论**（`backdropBlocker`）：深底 /
+                     品牌色底那几条版式（L67 / L29 / L72…）改成透明之后白字直接压在照片上，
+                     `toBackdrop` 一律拒 —— 在这里另写一份「哪些版式不行」的清单的话，库里加一条
+                     深底版式那天按钮又会出现在它上面（点下去还是同一句红字）。 -->
                 <button
-                  v-if="imgMode[cur.page] === 'split'"
+                  v-if="modeOf(cur.page) === 'split' && !decorOn[cur.page] && slotCount(cur.page) === 1
+                    && !backdropBlock[cur.page]"
                   class="btn-ghost sm" :disabled="modeBusy"
                   @click="setImageMode(cur.page, 'backdrop')"
                 >{{ modeBusy ? '处理中…' : '改成背景图' }}</button>
                 <button
-                  v-if="imgMode[cur.page] === 'split'"
+                  v-if="modeOf(cur.page) === 'split' && !decorOn[cur.page]"
                   class="btn-ghost sm" :disabled="modeBusy"
                   @click="setImageMode(cur.page, 'poster')"
                 >{{ modeBusy ? '处理中…' : '改成单图' }}</button>
                 <button
-                  v-if="imgMode[cur.page] !== 'split'"
+                  v-if="modeOf(cur.page) !== 'split'"
                   class="btn-ghost sm" :disabled="modeBusy"
                   @click="setImageMode(cur.page, 'split')"
-                >{{ modeBusy ? '处理中…' : imgMode[cur.page] === 'poster' ? '改回原版' : '改回分屏' }}</button>
+                >{{ modeBusy ? '处理中…' : modeOf(cur.page) === 'poster' ? '改回原版' : '改回分屏' }}</button>
+                <!-- 装饰背景**只在分屏页上给**：另外两路整页已经是一张图了，这一层垫在它
+                     下面等于什么都看不见（而备图栏会多一格、还能点「AI 生成」花一次真钱）。 -->
+                <button
+                  v-if="modeOf(cur.page) === 'split' && !decorOn[cur.page]"
+                  class="btn-ghost sm" :disabled="modeBusy"
+                  @click="setDecor(cur.page, true)"
+                >{{ modeBusy ? '处理中…' : '加装饰背景' }}</button>
+                <button
+                  v-if="decorOn[cur.page]"
+                  class="btn-ghost sm" :disabled="modeBusy"
+                  @click="setDecor(cur.page, false)"
+                >{{ modeBusy ? '处理中…' : '去掉装饰背景' }}</button>
+                <!-- 整份共用那一层（106）。入口放在这里是因为**图就在他眼前这一页上**（刚生成完）。
+                     点它只写 deck 上那三列，**这一页和别的页的 html 一个字都不改**（垫那一层是
+                     拼装时干的）—— 所以它和左边那两个按钮不是一回事：去掉这一页自己的装饰层之后，
+                     整份那一层照旧在，只是这一页从「以自己那层为准」变成跟着整份走。 -->
+                <button
+                  v-if="decorOn[cur.page]"
+                  class="btn-ghost sm" :disabled="deckDecorBusy"
+                  @click="saveDeckDecor({ fromPage: cur.page })"
+                >{{ deckDecorBusy ? '处理中…' : '这张图整份都用' }}</button>
               </div>
-              <template v-if="imgMode[cur.page] === 'backdrop'">
+              <!-- 按钮藏起来了就要说一句为什么：光消失的话「这一页不支持背景图」和「这个功能又坏了」
+                   在界面上分不开，他会去别的页上一个个点。
+                   **有装饰层时这句话要换一版**：装饰那一格也算一格图（`slotCount` 是从 html 现数的），
+                   照旧说「这一页有 2 格图」的话他会去数画面上的图，而真正要做的只是先去掉那一层。 -->
+              <p v-if="modeOf(cur.page) === 'split' && decorOn[cur.page]" class="muted-note">
+                这一页垫着一层装饰背景（它也占一格图位），所以这里没有「改成背景图 / 改成单图」：
+                那两路整页就是一张图，装饰层会跟着这一页的版式一起被换掉。要切模式先点
+                <b>「去掉装饰背景」</b>。
+              </p>
+              <p v-else-if="modeOf(cur.page) === 'split' && slotCount(cur.page) !== 1" class="muted-note">
+                这一页{{ slotCount(cur.page) ? `有 ${slotCount(cur.page)} 格图` : '一格图都没有' }}，
+                背景图模式要<b>正好一格</b>，所以这里没有「改成背景图」：{{
+                  slotCount(cur.page)
+                    ? '铺成整页之后另外那几格会空着，那几格的图再也贴不上去。'
+                    : '「改成单图」会给这一页加一格整页的图（加完在下面那一栏点「AI 生成」才真的出图）。'
+                }}
+              </p>
+              <!-- 这一条版式本身不做背景图（深底/品牌色底）：**原因照服务端那句显示**，不在这里
+                   合成一句「这一页不支持」—— 真实成因有好几种（底是深墨底 / 是品牌色 / 版式自带
+                   整页背景图），说笼统的话他会去换配色、去改这一页的底，而那几条路都没用。 -->
+              <p v-else-if="modeOf(cur.page) === 'split' && backdropBlock[cur.page]" class="muted-note">
+                这一页的版式不做背景图模式，所以这里没有「改成背景图」：{{ backdropBlock[cur.page] }}
+              </p>
+              <template v-if="modeOf(cur.page) === 'backdrop'">
                 <div class="ins-h mt">
                   背景图上那层幕帘
-                  <span class="veil-val">{{ Math.round((bdMask[cur.page] ?? 0.62) * 100) }}%</span>
+                  <span class="veil-val">{{ Math.round((bdMask[cur.page] ?? BACKDROP_MASK_DEFAULT) * 100) }}%</span>
                 </div>
                 <input
                   class="veil-range" type="range" min="0" max="100" step="2"
-                  :value="Math.round((bdMask[cur.page] ?? 0.62) * 100)"
+                  :value="Math.round((bdMask[cur.page] ?? BACKDROP_MASK_DEFAULT) * 100)"
                   :disabled="modeBusy"
                   @change="setImageMode(cur.page, 'backdrop', Number(($event.target as HTMLInputElement).value) / 100)"
                 />
@@ -503,10 +557,37 @@
                   往左拖图更清楚、字更难读；往右拖反过来。<b>不花调用</b>，也不用重新生成这张图。
                 </p>
               </template>
+              <template v-if="decorOn[cur.page]">
+                <div class="ins-h mt">
+                  装饰层浓度
+                  <span class="veil-val">{{ Math.round((decorA[cur.page] ?? DECOR_ALPHA_DEFAULT) * 100) }}%</span>
+                </div>
+                <input
+                  class="veil-range" type="range" min="0" max="100" step="2"
+                  :value="Math.round((decorA[cur.page] ?? DECOR_ALPHA_DEFAULT) * 100)"
+                  :disabled="modeBusy"
+                  @change="setDecor(cur.page, undefined, Number(($event.target as HTMLInputElement).value) / 100)"
+                />
+                <p class="muted-note">
+                  这一层垫在<b>这一页所有文字和图的下面</b>。往右拖纹样更明显、字更难读；
+                  拖到 0 就完全看不见（图还在）。<b>不花调用</b>，也不用重新生成那张图。
+                  它的画风跟着<b>项目设置 › 视觉母题</b>走，全份是一套。
+                </p>
+                <p class="muted-note">
+                  点<b>「这张图整份都用」</b>会把这张图垫到<b>所有分屏页</b>下面（不占图位、不花调用、
+                  一张图反复用）。浓度和「关掉」在<b>项目设置 › 全份装饰背景</b>那一栏。
+                  <b>这一页自己这层优先</b>：整份那层会跳过它，所以这里的滑块只管这一页。
+                </p>
+              </template>
+              <!-- 整份那层的结果必须在**点按钮的这块面板里**说出来：跳过的那几页（背景图 / 单图 /
+                   自己加过装饰层 / 有一层铺满整页的不透明底挡着）在画面上和「垫上了但太淡」长得
+                   一模一样 —— 不说的话他会翻到那几页上反复点这个按钮，或者去把浓度拉到 100%。 -->
+              <p v-if="deckDecorErr" class="banner bad">{{ deckDecorErr }}</p>
+              <p v-if="deckDecorNotes.length" class="banner warn pre">{{ deckDecorNotes.join('\n') }}</p>
               <!-- 单图模式那段话是**常驻的**（不是只在刚变形完那一下说）：这一页的字从此画在
                    图里，「改一个错别字」「换个配色」在界面上都变成了死路 —— 他多半是几天后回来
                    改字的，那时候变形时那句提示早就没了，而画面看起来完全正常。 -->
-              <template v-else-if="imgMode[cur.page] === 'poster'">
+              <!-- <template v-else-if="modeOf(cur.page) === 'poster'">
                 <p v-if="posterText[cur.page]?.length" class="muted-note">
                   会让模型印在画面里的字（第一行当标题）：
                   <b>{{ posterText[cur.page].join(' / ') }}</b>
@@ -517,55 +598,32 @@
                   模型还可能把字写错或写漏 —— 生成完<b>逐字核一遍</b>。原来那一版内容和已经生成
                   的图都留着，「改回原版」能完整退回去。
                 </p>
-              </template>
-              <p v-else class="muted-note">
+              </template> -->
+              <!-- <p v-else class="muted-note">
                 「改成背景图」把这一页那一格图铺成整页背景、文字压在上面；「改成单图」把整页
                 交给模型画成一张带字的主视觉（适合文字少、要冲击力的页）。两样都是
                 <b>纯代码搬，不花调用</b>，随时能改回来。背景图只对<b>只有一张图</b>的浅底页有效。
-              </p>
+              </p> -->
+              <!-- 这两句不能注释掉：换模式会把这一页的图清回占位图（那几张是按上一个模式的构图
+                   生的，都还在素材库里）—— 不说的话他以为变形把真花过钱的图弄丢了；`modeErr`
+                   不显示的话「没改成」在界面上是「点了没反应」。 -->
               <p v-if="modeNote" class="banner warn pre">{{ modeNote }}</p>
               <p v-if="modeErr" class="banner bad">{{ modeErr }}</p>
             </div>
 
             <div class="ins-cols">
-              <div class="ins-col">
-                <div class="ins-h">为什么挑这个版式</div>
-                <p class="why" :class="{ missing: !cur.why }">
-                  {{ cur.why || '（模型没给理由 —— 只能自己看 demo 判断挑得准不准）' }}
-                </p>
-                <ul v-if="cur.points.length" class="points">
-                  <li v-for="(pt, i) in cur.points" :key="i">{{ pt }}</li>
-                </ul>
-
-                <!-- 本页内容（= 生成这一页时真正进 prompt 的那一段提纲原文）。
-                     不显示的话「这一页为什么少了那组数据」在界面上无处可查：上面那几条要点
-                     是模型写的摘要，成稿里少掉的东西在要点里本来也看不见。要改就点「生成」
-                     那个对话框（那里才存得下去）—— 这里只读，写在下面那句话里。 -->
-                <div class="ins-h mt">本页内容</div>
-                <p v-if="cur.coverNote" class="banner warn pre">{{ cur.coverNote }}</p>
-                <pre v-if="cur.outlineText?.trim()" class="page-outline">{{ cur.outlineText.trim() }}</pre>
-                <p v-else class="muted-note">
-                  这一页<b>没有对应的提纲原文</b>（规划没给行号，或者是老规划）——
-                  生成时只有上面那几条要点，提纲里的数字、机构名、条款不会出现在页面上。
-                  重新规划一次才会有；也可以在「生成」那个对话框里自己粘一段进去。
-                </p>
-              </div>
+              
 
               <div class="ins-col">
                 <!-- 规划那一步定下的「这几张图画什么」。显示出来才核得动：主题写空了
                      （「一张相关配图」）、比例和图位形状不对、数据页给了 concept ——
                      三种都不报错，等图生出来只会觉得「这批图不太对」。 -->
                 <div v-if="cur.images" class="plan-imgs">
-                  <div class="ins-h">规划要 {{ cur.images }} 张图</div>
+                 
                   <template v-if="cur.imageSpecs?.length">
                     <!-- 已经生成过的那一页：换一张图当场就贴进画面（服务端纯代码替换，不花钱）。
                          这句要写出来，不然他不确定屏幕上这一版是不是已经换过了，会去重新生成一次。 -->
-                    <p class="muted-note">
-                      <template v-if="built[cur.page]">
-                        换或备一张图会<b>当场贴进这一页的画面</b>（不花钱，不用重新生成）。
-                      </template>
-                      <template v-else>生成这一页 HTML 时，备好的图会按序号自动贴进图位（不再花配图的钱）。</template>
-                    </p>
+                  
                     <ul class="spec-list">
                       <li v-for="(s, i) in cur.imageSpecs" :key="i">
                         <div class="spec-top">
@@ -598,27 +656,7 @@
                           </div>
                         </div>
 
-                        <div class="spec-txt">
-                          <div>
-                            #{{ i + 1 }} {{ s.ratio }} · {{ s.mode }} · {{ s.subject }}
-                            <!-- 改写过整条的那一格：这里不标的话，上面那句 subject、画风、
-                                 背景图/单图的切换对它全都不起作用，而界面上一处都不说。 -->
-                            <em v-if="s.fullPrompt"> · 整条提示词已自定义（不跟画风/模式/这句走）</em>
-                          </div>
-                          <div v-if="curPrepared[i + 1]" class="spec-meta">
-                            {{ curPrepared[i + 1].from === 'ai' ? '刚生成的' : '素材库挑的' }}
-                            · {{ curPrepared[i + 1].ratio }}
-                            <!-- 比例对不上只在这里安静写一句，不进 problems（每挑一张都报
-                                 「要注意」的话，版式塌了那种真问题会被冲下去）；完全不写
-                                 也不行 —— 被 cover 裁掉一块看起来像模型画得不好。 -->
-                            <em v-if="ratioClash(s.ratio, curPrepared[i + 1].ratio)">（会裁掉一块）</em>
-                            <template v-if="curPrepared[i + 1].styleId"> · 画风 {{ curPrepared[i + 1].styleId }}</template>
-                            <em v-if="curPrepared[i + 1].styleId && styleId && curPrepared[i + 1].styleId !== styleId">
-                              （这份稿子是 {{ styleId }}，混着用笔触不统一）
-                            </em>
-                            <em v-if="curPrepared[i + 1].storage === 'local'"> · 存在本机磁盘（换机器会 404）</em>
-                          </div>
-                        </div>
+                        
                       </li>
                     </ul>
                     <p v-if="prepErr[cur.page]" class="banner bad">{{ prepErr[cur.page] }}</p>
@@ -636,21 +674,8 @@
                 <!-- 生图是部分成功为常态的一步：逐张说清哪张成了、哪张还是占位图、图存哪了。
                      只报一个总数的话，失败的那几格在预览里就是「设计上留白」。 -->
                 <div v-if="imgInfo[cur.page]" class="imgs">
-                  <div class="ins-h">
-                    配图 {{ imgInfo[cur.page].images.filter(i => i.url).length }} / {{ imgInfo[cur.page].images.length }} 张
-                    <span class="stylechip">画风 {{ imgInfo[cur.page].style?.id }} {{ imgInfo[cur.page].style?.name }}</span>
-                    <span v-if="imgInfo[cur.page].quotaExceeded" class="quota">额度已用完，剩下的没再试</span>
-                  </div>
-                  <ul>
-                    <li v-for="im in imgInfo[cur.page].images" :key="im.index" :class="{ bad: !im.url }">
-                      #{{ im.index }} {{ im.ratio }} · {{ im.mode }} · {{ im.prompt || '(没写要什么图)' }}
-                      <template v-if="im.url">→ <a :href="im.url" target="_blank">看原图</a>
-                        <em v-if="im.skipped">（上次生成的，这次跳过）</em>
-                        <em v-else-if="im.storage === 'local'">（存在本机磁盘）</em>
-                      </template>
-                      <template v-else>→ <span class="bad">{{ im.error || '没生成' }}（还是占位图）</span></template>
-                    </li>
-                  </ul>
+                  
+                  
                 </div>
                 <div v-else class="ins-h muted">这一页还没配过图</div>
               </div>
@@ -818,14 +843,79 @@
             </select>
             <span class="dr-note">{{ designHint(designOpts.headers, design.header) }}</span>
           </label>
+          <!-- 视觉母题（整份图里反复出现的那一层装饰）：这一档**只进生图提示词**，一条 CSS
+               都不产生 —— 所以它和左边四档不是一回事，换它**已经生成的那几张图不会变**，
+               下面那段话必须把这件事分开说（合着说成「改完立刻跟着变」的话，他换完翻一遍稿子
+               画面一张都没动，而下拉、保存、接口全是正常的）。 -->
+          <label class="field small">
+            <span class="label">视觉母题</span>
+            <select v-model="design.motif" :disabled="running" @change="applyDesign()">
+              <option v-for="o in designOpts.motifs" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+            <span class="dr-note">{{ designHint(designOpts.motifs, design.motif) }}</span>
+          </label>
         </div>
         <p class="dr-note">
-          这四项是整份的<b>设计规范</b>，所有页面统一。改完<b>已经生成的页会立刻跟着变</b>（不用重新生成、不花调用）；
+          前四项是整份的<b>设计规范</b>，所有页面统一。改完<b>已经生成的页会立刻跟着变</b>（不用重新生成、不花调用）；
           拼好的整份会作废，要重拼一次。案例库里的颜色和间距从此只算参考。
           <b>已经生成的图不会跟着变色</b>（图是像素，不是变量）—— 要笔触和配色都统一，得在那几页点「换一批图」，
           每张都是一次真实花费。往后新生成的图会用现在这套配色。
+          <b>「视觉母题」是第五项，走的是另一条路</b>：它只写进<b>往后生成图</b>的提示词（整页背景图 / 单图那两路），
+          <b>已经生成的图和页面上的 CSS 一点都不会变</b> —— 换了它要在那几页点「换一批图」才看得见，每张都是一次真实花费。
         </p>
         <p v-for="(m, i) in designProblems" :key="i" class="dr-note bad">{{ m }}</p>
+
+        <!-- 全份装饰背景（106）：**一张图垫到所有分屏页下面**，不占任何一格图位、不花调用。
+             放在项目设置里而不是只留页内那个按钮：页内那个入口要求「这一页正好有一层装饰层」，
+             图换掉/那一页删了之后整份这一层照旧在，而界面上再也没有任何地方能看到它、关掉它
+             （现象是「有几页莫名有底纹」，他会一页页去找哪里开了开关）。
+             浓度和「关掉」都在这里，两者都是一次 UPDATE，不改任何一页的 html。 -->
+        <div class="decor-card">
+          <div class="ins-h">
+            全份装饰背景
+            <span class="veil-val">{{
+              deckDecor.url ? `已垫上 ${Math.round(deckDecor.alpha * 100)}%` : '没有'
+            }}</span>
+          </div>
+          <div class="decor-body">
+            <img v-if="deckDecor.url" class="decor-thumb" :src="deckDecor.url" :title="deckDecor.prompt || ''" alt="" />
+            <div class="spec-acts">
+              <button class="btn-ghost sm" :disabled="deckDecorBusy" @click="openDeckDecorPicker()">
+                {{ deckDecorBusy ? '处理中…' : deckDecor.url ? '换一张（素材库里挑）' : '素材库里挑一张' }}
+              </button>
+              <button
+                v-if="deckDecor.url" class="btn-ghost sm" :disabled="deckDecorBusy"
+                @click="saveDeckDecor({ url: '' })"
+              >{{ deckDecorBusy ? '处理中…' : '关掉' }}</button>
+            </div>
+          </div>
+          <template v-if="deckDecor.url">
+            <div class="ins-h mt">
+              整份浓度
+              <span class="veil-val">{{ Math.round(deckDecor.alpha * 100) }}%</span>
+            </div>
+            <input
+              class="veil-range" type="range" min="0" max="100" step="2"
+              :value="Math.round(deckDecor.alpha * 100)"
+              :disabled="deckDecorBusy"
+              @change="saveDeckDecor({ alpha: Number(($event.target as HTMLInputElement).value) / 100 })"
+            />
+          </template>
+          <p class="dr-note">
+            一张图垫在<b>所有分屏页</b>的文字和图下面（同一张反复用，<b>不占图位、一次调用都不花</b>）。
+            <!-- 这三件事必须写出来：它们在画面上全都表现为「有几页没有底纹」，
+                 和「浓度太低」「这个功能坏了」分不开。 -->
+            <b>会跳过这几种页</b>：整页背景图 / 单图那两路（整页已经是一张图，垫在下面看不见）、
+            <b>自己加过装饰背景的页</b>（以那一页自己那层为准）、底上有一层铺满整页的不透明色块挡着的页
+            （那几页要底纹就在那一页单独点「加装饰背景」）。点一次「挑一张 / 换一张 / 关掉」都会把
+            逐页结论列在下面。
+            要一张<b>新</b>图：随便挑一页点<b>「加装饰背景」→「AI 生成」</b>（那是一次真实花费），
+            出图后在那一页点<b>「这张图整份都用」</b>。
+            导出的 .html 和 .pptx 里都有这一层（pptx 里它是一张贴死的底图，颜色在 PowerPoint 里改不了）。
+          </p>
+          <p v-if="deckDecorErr" class="banner bad">{{ deckDecorErr }}</p>
+          <p v-if="deckDecorNotes.length" class="banner warn pre">{{ deckDecorNotes.join('\n') }}</p>
+        </div>
 
         <!-- 整份统一的那段要求（093）。放在这里而不是每页写一遍：每页抄一遍的话改口径要
              逐页改，漏掉的那几页照旧按老口径生成，而每一页看起来都正常。 -->
@@ -842,10 +932,10 @@
             placeholder="例：语气克制、不用感叹号；数字用等宽字体；标题不要超过 12 字"
           ></textarea>
         </label>
-        <p class="dr-note">
+        <!-- <p class="dr-note">
           改这一段<b>不会自动重排已经生成的那几页</b> —— 它们还是按老要求排的（画面上看不出来），
           要生效得逐页「重新生成」。某一页要额外补充，在那一页的「生成前改一下」里写（两段会一起发）。
-        </p>
+        </p> -->
 
         <div class="dr-actions">
           <button class="btn-primary" :disabled="!canRun" @click="run">
@@ -862,7 +952,7 @@
              （硬校验，见服务端），不再靠这里一条没人读的提示。服务端照旧返回 problems
              （落在 `plan_json` 里、也进日志），去掉的只是这块界面。 -->
         <p v-if="usage" class="muted">本次规划 token：输入 {{ usage.prompt_tokens }} / 输出 {{ usage.completion_tokens }}</p>
-        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部 61 个版式 demo ↗</a>
+        <a class="muted link" href="/api/ppt/demo-deck.html" target="_blank">看全部版式 demo ↗</a>
       </aside>
     </div>
 
@@ -1227,7 +1317,8 @@
              看起来像卡在这个窗口里出不去了。 -->
         <div class="pick-top">
           <div class="dr-head">
-            <b v-if="pickFor.canvas">往第 {{ pickFor.page }} 页的画布上放一张图（挑图不花额度）</b>
+            <b v-if="pickFor.deckDecor">挑一张垫在<b>整份</b>所有分屏页下面（挑图不花额度，不占图位）</b>
+            <b v-else-if="pickFor.canvas">往第 {{ pickFor.page }} 页的画布上放一张图（挑图不花额度）</b>
             <b v-else>给第 {{ pickFor.page }} 页第 {{ pickFor.index }} 格挑一张（挑图不花额度）</b>
             <div class="head-btns">
               <!-- 筛在某一组上时给一个明确的「回全部」：只靠 tab 的话 tab 条横向滚过去之后
@@ -1387,6 +1478,10 @@ const veilErr = ref('')
 type PageImageMode = 'split' | 'backdrop' | 'poster'
 const imgMode = ref<Record<number, PageImageMode>>({})
 const bdMask = ref<Record<number, number>>({})
+/** 滑块在**还没读到服务端那个值**的那一下显示什么。**要和服务端 `imageModes.BACKDROP_MASK`
+ *  一个数**：对不上的话滑块写着 62% 而这一页实际是 30%，他会往回拖去「改回来」，而那一下
+ *  才是真的改了库里的值（画面跟着变暗，看起来像滑块自己跳了一下）。 */
+const BACKDROP_MASK_DEFAULT = 0.3
 /**
  * 单图模式那一页**要印在画面里的那几行字**（104，服务端从 html 的 `data-poster-text` 读回来）。
  *
@@ -1395,9 +1490,79 @@ const bdMask = ref<Record<number, number>>({})
  * 把那一行改短再变形。
  */
 const posterText = ref<Record<number, string[]>>({})
+/**
+ * 这一页**不能**改成背景图的原因（服务端 `backdropBlocker` 真试了一次变形，能变就是空）。
+ *
+ * 在这边自己判「哪些版式不行」的话，库里加一条深底版式那天按钮又会出现在它上面 ——
+ * 点下去还是同一句红字，而界面上看不出这是两处判据漂开了。
+ */
+const backdropBlock = ref<Record<number, string>>({})
+/**
+ * 这一页有没有那层装饰底图 + 它现在多淡。**照旧从服务端读**（服务端按 html 上的
+ * `data-decor` 现算）—— 只在本地记的话刷新之后按钮又写着「加装饰背景」，点下去回一句
+ * 「这一页已经有一层装饰背景了」，看起来像功能坏了。
+ *
+ * 它**不是第四种模式**（`imgMode` 照旧是 split）：这一层是加在分屏页上的，版式和原来那几格图
+ * 一个字都不动 —— 塞进 `imgMode` 的话「改成背景图 / 改成单图」那两个按钮的判据全乱。
+ */
+const decorOn = ref<Record<number, boolean>>({})
+const decorA = ref<Record<number, number>>({})
+/** 同 `BACKDROP_MASK_DEFAULT`：**要和服务端 `imageModes.DECOR_ALPHA` 一个数**，
+ *  对不上的话滑块写着 30% 而画面上是 18%，他往回拖的那一下才是真改了库里的值。 */
+const DECOR_ALPHA_DEFAULT = 0.18
+/**
+ * **整份共用**的那层装饰底图（106）：一张图，所有符合条件的页自动都有，一格图位都不占。
+ *
+ * 和上面 `decorOn` / `decorA` 那两个 map 不是一回事：那两个是「这一页自己加的那一格」
+ * （要单独生一张图、占 6 格里的一格）。合成一处状态的话，关掉整份这一层会把某一页自己
+ * 配的那一层也从界面上抹掉（而它其实还在页面上）。
+ */
+const deckDecor = ref<{ url: string; alpha: number; prompt: string }>({
+  url: '', alpha: DECOR_ALPHA_DEFAULT, prompt: '',
+})
+const deckDecorBusy = ref(false)
+const deckDecorErr = ref('')
+/** 服务端逐页报回来的「哪几页没垫上、为什么」。**必须显示出来** —— 静默的话现象是
+ *  「这个功能时好时坏」，他会回去反复重新生成那张图（每张真花一次钱）。 */
+const deckDecorNotes = ref<string[]>([])
 const modeBusy = ref(false)
 const modeErr = ref('')
 const modeNote = ref('')
+/**
+ * 这一页现在是哪种图模式。**界面上每一处都走这个函数，不直接读 `imgMode[page]`**：
+ * 那个 map 上没有这一页时（哪条路忘了把状态接回来，就是这个样子）裸读出来是 `undefined`，
+ * 而 `undefined` 在界面上不是「空」—— 标题那一格落到最后一个分支写着「分屏」，按钮那边
+ * `!== 'split'` 成立于是画出一个「改回分屏」，另外三个按钮和全部提示一句都不出现：
+ * 一栏里两句话互相矛盾，而两句各自都是正常文案。
+ */
+function modeOf(page: number): PageImageMode {
+  return imgMode.value[page] || 'split'
+}
+/** 服务端 `pageModeState` 回的那一份（生成这一页 / 读已生成的页 两条路同一份）。 */
+interface PageModeState {
+  imageMode?: PageImageMode
+  backdropMask?: number | null
+  backdropBlock?: string | null
+  decor?: boolean
+  decorAlpha?: number | null
+  posterText?: string[]
+}
+/**
+ * 把服务端那一份状态接回本地那几个 map。**凡是回「这一页的新 html」的请求都要调它** ——
+ * 不调的话这一栏说的是上一版的事（重新生成过的页照旧写着「单图」、按钮是「改回原版」），
+ * 而那几句话各自读起来完全正常。
+ *
+ * **除了两个滑块的值，其余一律无条件写**：`if (r.decor)` 那种写法下，去掉装饰背景之后
+ * 这个 map 里留着 true，按钮一直写着「去掉装饰背景」，点下去回一句「这一页没有装饰背景」。
+ */
+function applyModeState(page: number, r: PageModeState) {
+  imgMode.value[page] = r.imageMode || 'split'
+  if (r.backdropMask != null) bdMask.value[page] = r.backdropMask
+  backdropBlock.value[page] = r.backdropBlock || ''
+  decorOn.value[page] = !!r.decor
+  if (r.decorAlpha != null) decorA.value[page] = r.decorAlpha
+  posterText.value[page] = r.posterText || []
+}
 const showSrc = ref<Record<number, boolean>>({})
 
 const brandCn = ref('')
@@ -1426,7 +1591,9 @@ let savedSnapshot = ''
 function metaSnapshot() {
   return JSON.stringify([
     title.value.trim(), outline.value, brandCn.value, brandEn.value, styleId.value, deckNotes.value,
-    design.value.palette, design.value.font, design.value.density, design.value.header,
+    // 母题也要在这里：漏了的话「只换了母题」这一次 `snap === savedSnapshot` 成立 ——
+    // 请求压根不发，界面上还是「已保存 hh:mm:ss」（那是上一次的），刷新回来又是旧母题。
+    design.value.palette, design.value.font, design.value.density, design.value.header, design.value.motif,
   ])
 }
 
@@ -1464,7 +1631,9 @@ async function saveMeta(): Promise<boolean> {
       brandEn: brandEn.value,
       styleId: styleId.value,
       notes: deckNotes.value,
-      // 四项缺一项服务端就 400（缺的那项会悄悄回到默认那套），所以要么整段传、要么不传。
+      // 前四项缺一项服务端就 400（缺的那项会悄悄回到默认那套），所以要么整段传、要么不传。
+      // 母题**不进这个判断**：它在服务端是可选的（缺 = 默认那档），拿它一起卡的话
+      // `/design-options` 里万一没有 motifs（老服务端），配色/字体这四项就一次都存不进去了。
       design: design.value.palette && design.value.font && design.value.density && design.value.header
         ? { ...design.value } : undefined,
     })
@@ -1551,10 +1720,10 @@ function undoClean() {
  * 不显示的话他打开一份「墨绿」的稿子看到的是橙的，而下拉里也显示成默认那档。
  */
 interface DesignOpt { id: string; name: string; hint: string }
-const designOpts = ref<{ palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[] }>(
-  { palettes: [], fonts: [], densities: [], headers: [] }
-)
-const design = ref({ palette: '', font: '', density: '', header: '' })
+const designOpts = ref<{
+  palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[]; motifs: DesignOpt[]
+}>({ palettes: [], fonts: [], densities: [], headers: [], motifs: [] })
+const design = ref({ palette: '', font: '', density: '', header: '', motif: '' })
 const designProblems = ref<string[]>([])
 const designHint = (list: DesignOpt[], id: string) => list.find(x => x.id === id)?.hint || ''
 
@@ -1870,10 +2039,11 @@ interface AssetGroup { deckId: string; title: string; deckGone: boolean; count: 
  *  那个 tab 点下去回的是全部素材 —— 而 tab 是选中的，看起来像这一组有三百张。 */
 const ASSET_NO_DECK = '__none__'
 
-/** 挑图这个抽屉现在是给谁挑的：图槽（`index` ≥ 1）还是空白页的画布（`canvas`）。
- *  **两条路必须分开**：画布那条压根没有「格号」，共用一条的话抽屉标题会写「第 0 格」，
- *  而挑完那张图会走备图那条路 —— 接口说「已备好」，画布上什么都没多出来。 */
-const pickFor = ref<{ page: number; index: number; canvas?: boolean } | null>(null)
+/** 挑图这个抽屉现在是给谁挑的：图槽（`index` ≥ 1）、空白页的画布（`canvas`），还是整份那层
+ *  装饰底图（`deckDecor`，106 —— 它压根不属于任何一页）。
+ *  **三条路必须分开**：画布和整份那条都没有「格号」，共用一条的话抽屉标题会写「第 0 格」，
+ *  而挑完那张图会走备图那条路 —— 接口说「已备好」，画布上/整份上什么都没多出来。 */
+const pickFor = ref<{ page: number; index: number; canvas?: boolean; deckDecor?: boolean } | null>(null)
 const assets = ref<AssetItem[]>([])
 const assetsTotal = ref(0)
 const assetsErr = ref('')
@@ -1910,7 +2080,20 @@ async function loadAssets() {
 }
 
 async function openPicker(page: number, index: number, canvas = false) {
-  pickFor.value = { page, index, canvas }
+  await openPickerFor({ page, index, canvas })
+}
+
+/** 给整份那层装饰底图挑一张（106）。`page/index` 填 0：这条路上它们压根没有意义，
+ *  抽屉标题和上传提示都按 `deckDecor` 那一支写（照旧写「第 0 页第 0 格」的话，
+ *  他会以为挑完贴到了某一页上）。 */
+async function openDeckDecorPicker() {
+  deckDecorErr.value = ''
+  deckDecorNotes.value = []
+  await openPickerFor({ page: 0, index: 0, deckDecor: true })
+}
+
+async function openPickerFor(target: NonNullable<typeof pickFor.value>) {
+  pickFor.value = target
   // 上一次的上传提示必须清掉：那句话里写着页码和格号（「点它贴进第 3 页第 1 格」），
   // 留着的话它在另一格上照旧读起来完全正常，而他会照那句话把图贴到别的地方。
   uploadErr.value = ''
@@ -1989,9 +2172,11 @@ async function uploadLocalImage(e: Event) {
     const at = pickFor.value
     uploadNote.value =
       `已上传 ${file.name}（${data.pixels}，按 ${data.ratio} 记进素材库）` +
-      (at ? (at.canvas
-        ? `—— 点下面高亮那张就放到第 ${at.page} 页的画布上。`
-        : `—— 点下面高亮那张就贴进第 ${at.page} 页第 ${at.index} 格。`) : '') +
+      (at ? (at.deckDecor
+        ? `—— 点下面高亮那张就当整份的装饰底图。`
+        : at.canvas
+          ? `—— 点下面高亮那张就放到第 ${at.page} 页的画布上。`
+          : `—— 点下面高亮那张就贴进第 ${at.page} 页第 ${at.index} 格。`) : '') +
       (data.note ? ` ${data.note}` : '')
     // 切到本稿那一组再刷新：停在别的 tab 上的话刚传的图不在网格里，看起来像没传上去。
     assetDeck.value = deckId.value
@@ -2008,6 +2193,18 @@ function pickAsset(assetId: string) {
   if (!at) return
   // 空白页画布那条走 canvas 接口。走错的话备图那条会回一句「已备好第 0 格」（那一格不存在），
   // 而画布上什么都没多出来。
+  if (at.deckDecor) {
+    // 整份那层要的是**地址**，而抽屉给的是 assetId。网格就是从 `assets` 渲染出来的，
+    // 所以这里一定找得到；找不到时必须出声 —— 静默 return 的话抽屉关了、什么都没变，
+    // 和「已经设好了但浓度太低」长得一模一样。
+    const a = assets.value.find((x) => x.id === assetId)
+    if (!a?.url) {
+      deckDecorErr.value = '这张图的地址读不出来（素材库刚刷新过？），整份那层没有改。重新打开「素材库里挑」再点一次。'
+      return
+    }
+    saveDeckDecor({ url: a.url, prompt: a.prompt || '' })
+    return
+  }
   if (at.canvas) saveCanvas('add-image', { assetId })
   else prepare(at.page, at.index, 'library', assetId)
 }
@@ -2398,7 +2595,8 @@ function ratioClash(slot?: string, got?: string): boolean {
  */
 function modeText(mode: string): string {
   return mode === 'concept' ? '概念插画' : mode === 'case' ? '实景/产品' : mode === 'data' ? '数据图'
-    : mode === 'backdrop' ? '整页背景图' : mode === 'poster' ? '单图（字印在图里）' : mode
+    : mode === 'backdrop' ? '整页背景图' : mode === 'poster' ? '单图（字印在图里）'
+    : mode === 'decor' ? '装饰背景（垫在整页底下那一层）' : mode
 }
 
 /** 版式那段图位说明是**库里的原文**（不在前端拆开），太长时只显示开头，全文放 title。 */
@@ -3588,7 +3786,7 @@ async function build(
     // 每次都原样回传的话，内存里那份万一是上一次规划的，它就成了事实上的输入，生成出来的页
     // 每一页都好看、只是和这份稿子对不上。带了的话服务端先存下来再按新的那份生成。
     const data = await apiPost<
-      BuiltPage & {
+      BuiltPage & PageModeState & {
         images?: FilledImage[]
         style?: { id: string; name: string }
         setup?: { layoutId: string; notes: string }
@@ -3625,6 +3823,11 @@ async function build(
       specsLayout.value[p.page] = data.setup.layoutId
     }
     built.value[p.page] = { html: data.html, previewHtml: data.previewHtml, problems: data.problems || [] }
+    // 「这一页的图」那一栏照服务端回的那份接回来（`applyModeState`）。**不接的话这一栏从
+    // 生成完那一刻起就是错的**：这一页的图模式可能被版式自带的默认值变成了整页背景图 / 单图，
+    // 而那一栏写着「分屏」、按钮却是一个「改回分屏」（重新生成一页时反过来：库里已经退回
+    // 分屏了，这一栏还留着上一版的「单图」和「改回原版」）—— 刷新一下才对。
+    applyModeState(p.page, data)
     // 备好的图是服务端在生成完当场贴进去的（`applyPreparedImages`）。贴上了几张要接过来 ——
     // 不接的话这一页写着「还没配过图」而图就在画面里，他会再点一次配图。
     // 没贴上任何图时**必须清掉上一版的配图记录**（服务端也清了 `images_json`）：留着的话
@@ -3884,10 +4087,12 @@ onMounted(async () => {
   }
   try {
     const d = await apiGet<{
-      palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[]
-      default: { palette: string; font: string; density: string; header: string }
+      palettes: DesignOpt[]; fonts: DesignOpt[]; densities: DesignOpt[]; headers: DesignOpt[]; motifs: DesignOpt[]
+      default: { palette: string; font: string; density: string; header: string; motif: string }
     }>('/api/ppt/design-options')
-    designOpts.value = { palettes: d.palettes, fonts: d.fonts, densities: d.densities, headers: d.headers }
+    designOpts.value = {
+      palettes: d.palettes, fonts: d.fonts, densities: d.densities, headers: d.headers, motifs: d.motifs || [],
+    }
     design.value = { ...d.default }
   } catch (e: any) {
     // 出声：静默的话抽屉里那三个下拉是空的，看起来像「这一版没有设计规范这回事」，
@@ -3932,7 +4137,11 @@ async function loadDeck() {
   }
   try {
     const { deck, design: spec, designProblems: dp } = await apiGet<{
-      deck: any; design?: { palette: string; font: string; density: string; header: string }; designProblems?: string[]
+      deck: any
+      // 五项都要接住：少接一个键（比如 motif）的话那个下拉打开是空的，而库里存着的那档
+      // 照旧在往提示词里生效 —— 他会当成「这份稿子没设置过母题」，随手选一个就把它换掉了。
+      design?: { palette: string; font: string; density: string; header: string; motif: string }
+      designProblems?: string[]
     }>(`/api/ppt/decks/${deckId.value}`)
     title.value = deck.title || ''
     outline.value = deck.outline || ''
@@ -3942,6 +4151,13 @@ async function loadDeck() {
     // 页序版本号（098）。**每次读 deck 都要跟上**：不跟的话删过一页之后这一页上所有
     // 花钱的操作都会 409，而他刚刚才刷新过。
     planRev.value = Number(deck.plan_rev) || 0
+    // 整份那层装饰底图（106）。**从库里读**，不在本地记：只在本地记的话刷新之后那一栏写着
+    // 「还没设置」，而页面上底纹照旧在（他会再挑一张，两张之间只有最后一次点的生效）。
+    deckDecor.value = {
+      url: deck.decor_url || '',
+      alpha: deck.decor_alpha == null ? DECOR_ALPHA_DEFAULT : Number(deck.decor_alpha),
+      prompt: deck.decor_prompt || '',
+    }
     if (deck.style_id) styleId.value = deck.style_id
     // 规范用服务端解析过的那份（`parseDesignSpec`），不自己读 `design_json`：两处各解析一遍的话
     // 画面按服务端那份渲染、下拉显示前端这份，认不出的 id 上两边会不一样而都不报错。
@@ -3991,6 +4207,11 @@ interface StoredPage {
   backdropMask: number | null
   /** 单图模式要印进画面的那几行字（104，不是单图模式就是空数组）。 */
   posterText: string[]
+  /** 这一页不能改成背景图的原因（能改 / 不是分屏页就是 null）。 */
+  backdropBlock: string | null
+  /** 这一页有没有那层装饰底图 + 它多淡（没有就是 null）。 */
+  decor: boolean
+  decorAlpha: number | null
 }
 
 /**
@@ -4033,9 +4254,9 @@ async function loadPages() {
       if (r.setupLayoutId) setupLayout.value[r.page] = r.setupLayoutId
       if (r.notes) setupNotes.value[r.page] = r.notes
       if (r.veilOpacity) veil.value[r.page] = r.veilOpacity
-      if (r.imageMode) imgMode.value[r.page] = r.imageMode
-      if (r.backdropMask != null) bdMask.value[r.page] = r.backdropMask
-      if (r.posterText?.length) posterText.value[r.page] = r.posterText
+      // 「这一页的图」那一整栏（模式 / 幕帘 / 装饰层 / 印进图里的那几行字 / 为什么不能改成
+      // 背景图）—— 生成那条路上也是这一份（`applyModeState` 上的注释）。
+      applyModeState(r.page, r)
       if (!r.html) continue
       builtLayout.value[r.page] = r.layoutId
       const previewHtml = previewOf(shell, previewSlot, r.section)
@@ -4098,8 +4319,8 @@ async function saveVeil(page: number, next: number) {
  * 四条是承重的：
  * ① **画面用服务端回的 previewHtml 换掉、html 也接回来**：不接 html 的话本地那份还是分屏那一版，
  *    而这一页接下来的配图/就地编辑都以它为底 —— 变形会被下一次编辑悄悄撤掉。
- * ② **`notes` 必须显示**（`modeNote`）：铺好的那张图还是按版式里那一格的构图生的，
- *    满屏看就是「效果很差」，而他要的只是再点一次配图（用背景图那套提示词重画一张）。
+ * ② **`notes` 必须显示**（`modeNote`）：换模式会把这一页的图清回占位图（那张是按上一个模式
+ *    那一格的构图生的），而它还在素材库里 —— 不说的话他以为变形把真花过钱的那张弄丢了。
  * ③ **失败时状态要退回服务端那份**：本地先改成 'backdrop' 的话按钮显示「改回分屏」而库里
  *    还是分屏，点下去回一句「这一页不是背景图模式」，看起来像功能坏了。
  * ④ **`text` 一律照返回值覆盖**（包括改回原版时那个空数组）：只在有值时写的话改回原版之后
@@ -4114,6 +4335,7 @@ async function setImageMode(page: number, mode: PageImageMode, mask?: number) {
   try {
     const r = await apiPost<{
       mode: PageImageMode; mask: number | null; notes: string[]; text: string[]; html: string; previewHtml: string
+      imageSpecs?: PlannedImage[]
     }>(`/api/ppt/decks/${deckId.value}/image-mode`, { page, mode, mask, planRev: planRev.value })
     imgMode.value[page] = r.mode
     if (r.mask != null) bdMask.value[page] = r.mask
@@ -4122,12 +4344,29 @@ async function setImageMode(page: number, mode: PageImageMode, mask?: number) {
     if (b) built.value[page] = { ...b, html: r.html, previewHtml: r.previewHtml }
     if (imgInfo.value[page]) imgInfo.value[page] = { ...imgInfo.value[page], html: r.html, previewHtml: r.previewHtml }
     modeNote.value = (r.notes || []).join('　')
-    // 单图那一进一出**必须重读这一页的配图**：变成单图时服务端把 `images_json` 清了（画面上
-    // 只剩一张占位图），本地不删的话「配图 3/3 张」还挂着，点开是三张已经不在这一页上的图；
-    // 改回原版时那三张又回到了库里，不重读的话这一栏写着「还没配过图」而画面上图都在
-    // —— 他会照着按钮再花一次钱重配。
-    if (r.mode === 'poster' || before === 'poster') {
+    // **规划里这一页那份图位清单要就地换掉**（服务端按新 html 上的图槽对齐过了，见
+    // `realignSpecsAfterMode`）：`loadPages` 只重读库里那几页，不碰内存里这份规划。
+    // 不换的话「一格图都没有的页改成单图」之后备图那一栏还是一个图位都不出现 —— 那张整页图
+    // **压根没有按钮可以生成**，这一页从此停在占位图上，而画面、提示、按钮全是正常的。
+    // 输入框里那几句也要跟着换（`draftSubject`）：留着旧的那份，随便一次失焦就把上一个模式
+    // 的那句提示词写回库了（同 `replanImages`）。
+    if (r.imageSpecs) {
+      const row = pages.value.find(x => x.page === page)
+      if (row) {
+        row.imageSpecs = r.imageSpecs
+        row.images = r.imageSpecs.length
+      }
+      r.imageSpecs.forEach((s, i) => { draftSubject.value[subjectKey(page, i + 1)] = s.subject })
+    }
+    // **换了模式就得重读这一页的图**（不只是单图那一进一出）：服务端换模式时会把这一页的图
+    // 清回占位图，`images_json` / 备着的那几张一起清（那几张是按上一个模式的构图生的）。
+    // 本地这两份不删的话面板上写着「配图 3/3 张」、那几格挂着缩略图，而画面里全是占位图
+    // —— 他会当这一页图是齐的直接去导出，或者以为变形把图弄丢了再花一次钱重生。
+    // 改回原版那一路反过来：那三张又回到了库里，不重读的话这一栏写着「还没配过图」而画面上
+    // 图都在（他会照着按钮再花一次钱重配）。拖幕帘浓度那一路 `r.mode` 没变，不重读。
+    if (r.mode !== before) {
       delete imgInfo.value[page]
+      delete pending.value[page]
       await loadPages()
     }
     // 整份预览和「已导出」都过期了 —— 不作废的话「看整份」里这一页还是分屏那一版。
@@ -4139,6 +4378,96 @@ async function setImageMode(page: number, mode: PageImageMode, mask?: number) {
     modeErr.value = `${what}（这一页还是原来那样）：${e?.message || '请求失败'}`
   }
   modeBusy.value = false
+}
+
+/**
+ * 加/去掉这一页那层装饰底图，或者只拖它的浓度（**纯代码搬 DOM，不调 AI、不花额度**；
+ * 那一格真正的图要他再点一次「AI 生成」）。
+ *
+ * 和 `setImageMode` 共用 `modeBusy / modeNote / modeErr`（就在同一块里显示），但有三处不一样：
+ * ① **不重读这一页的图**（`loadPages`）：这一条加的是一层，原来那几格的图和备好的图一个字都不动
+ *    —— 跟着模式那条路重读一遍的话没坏处也没必要，但下面那份 `imageSpecs` 必须换。
+ * ② **`imageSpecs` 一定要就地换掉**：不换的话备图那一栏还是原来那几格，装饰那一格
+ *    **压根没有按钮可以生成**，这一页永远停在淡淡的占位图上（画面、接口、notes 全正常）。
+ * ③ 失败时 `decorOn` 要退回原值：本地先翻成 true 的话按钮写着「去掉装饰背景」而库里没有那一层。
+ */
+async function setDecor(page: number, on?: boolean, alpha?: number) {
+  if (modeBusy.value) return
+  const before = !!decorOn.value[page]
+  const beforeA = decorA.value[page]
+  modeBusy.value = true
+  modeErr.value = ''
+  modeNote.value = ''
+  try {
+    const r = await apiPost<{
+      decor: boolean; alpha: number | null; notes: string[]; html: string; previewHtml: string
+      imageSpecs?: PlannedImage[]
+    }>(`/api/ppt/decks/${deckId.value}/page-decor`, { page, on, alpha, planRev: planRev.value })
+    decorOn.value[page] = r.decor
+    if (r.alpha != null) decorA.value[page] = r.alpha
+    const b = built.value[page]
+    if (b) built.value[page] = { ...b, html: r.html, previewHtml: r.previewHtml }
+    if (imgInfo.value[page]) imgInfo.value[page] = { ...imgInfo.value[page], html: r.html, previewHtml: r.previewHtml }
+    modeNote.value = (r.notes || []).join('　')
+    if (r.imageSpecs) {
+      const row = pages.value.find(x => x.page === page)
+      if (row) {
+        row.imageSpecs = r.imageSpecs
+        row.images = r.imageSpecs.length
+      }
+      r.imageSpecs.forEach((s, i) => { draftSubject.value[subjectKey(page, i + 1)] = s.subject })
+    }
+    // 整份预览和「已导出」都过期了 —— 不作废的话「看整份」里这一页还是没有装饰层那一版。
+    invalidateDeck()
+  } catch (e: any) {
+    decorOn.value[page] = before
+    if (beforeA != null) decorA.value[page] = beforeA
+    const what = on === false ? '装饰背景没去掉' : on === true ? '装饰背景没加上' : '装饰层浓度没存上'
+    modeErr.value = `${what}（这一页还是原来那样）：${e?.message || '请求失败'}`
+  }
+  modeBusy.value = false
+}
+
+/**
+ * 整份共用那层装饰底图（106）：挑一张 / 换一张（`url`）、关掉（`url: ''`）、
+ * 拖浓度（`alpha`）、把某一页那张拿来整份用（`fromPage`）。**不花一分钱**。
+ *
+ * 三处是承重的：
+ * ① **改完必须 `loadPages()` 重读**：这一层是拼页时现注的，本地手上那份 `section`
+ *    还是没有底纹的那一版 —— 不重读的话他点完「整份都用」画面一点变化都没有
+ *    （接口 200、那一栏写着「已应用」），只有刷新之后才出现。
+ * ② **服务端逐页报回来的 `notes` 要显示**：背景图/单图页、自己加过装饰的页、有一层铺满整页
+ *    的底挡着的那些页上这一层是看不见的。不说的话现象是「这个功能时好时坏」。
+ * ③ **失败时本地那份状态退回原值**：先改本地的话那一栏显示着新图/新浓度，而库里还是旧的。
+ */
+async function saveDeckDecor(patch: { url?: string; alpha?: number; prompt?: string; fromPage?: number }) {
+  if (deckDecorBusy.value) return
+  const before = { ...deckDecor.value }
+  deckDecorBusy.value = true
+  deckDecorErr.value = ''
+  deckDecorNotes.value = []
+  try {
+    const r = await api('/api/ppt/decks/' + deckId.value + '/decor', {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error((data as any).error || `HTTP ${r.status}`)
+    const d = data as { decor: { url: string; alpha: number; prompt: string }; notes: string[] }
+    deckDecor.value = {
+      url: d.decor.url || '',
+      alpha: d.decor.alpha == null ? DECOR_ALPHA_DEFAULT : d.decor.alpha,
+      prompt: d.decor.prompt || '',
+    }
+    deckDecorNotes.value = d.notes || []
+    await loadPages()
+    // 整份预览和「已导出」都过期了（每一页都换了样子）。
+    invalidateDeck()
+  } catch (e: any) {
+    deckDecor.value = before
+    deckDecorErr.value = `整份那层装饰底图没改成（还是原来那样）：${e?.message || '请求失败'}`
+  }
+  deckDecorBusy.value = false
 }
 
 // ── 删一页（结构改动，098）────────────────────────────
@@ -4165,6 +4494,9 @@ function resetPageState() {
   imgMode.value = {}
   bdMask.value = {}
   posterText.value = {}
+  backdropBlock.value = {}
+  decorOn.value = {}
+  decorA.value = {}
   showSrc.value = {}
   imgBusy.value = {}
   imgErr.value = {}
@@ -5009,6 +5341,17 @@ async function run() {
 .dr-head b { font-size: 18px; font-weight: 800; }
 .dr-note { margin: 0; font-size: 12px; line-height: 1.8; color: var(--color-soft); }
 .dr-note.bad { color: #FCA5A5; }
+/* 全份装饰背景那一栏（106）。缩略图必须有：只写一句「已垫上 18%」的话，
+   他分不出配的是哪张图（素材库里那几张纹理长得都差不多）。 */
+.decor-card {
+  padding: 12px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 8px;
+  background: rgba(255, 255, 255, .03); display: flex; flex-direction: column; gap: 8px;
+}
+.decor-body { display: flex; align-items: flex-start; gap: 12px; }
+.decor-thumb {
+  width: 96px; height: 54px; object-fit: cover; border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, .14); background: rgba(0, 0, 0, .25);
+}
 .field { display: block; }
 .field.small { flex: 1; min-width: 150px; }
 /* 折起来的提纲：一行字 + 一个「查看 / 修改」。 */

@@ -216,14 +216,18 @@ function ratioOf(url: string): string {
 }
 
 /**
- * 五路画法的中文名。**报错/提示里一律用它**，直接写 `backdrop` 的话那句话里夹着一个英文单词，
+ * 六路画法的中文名。**报错/提示里一律用它**，直接写 `backdrop` 的话那句话里夹着一个英文单词，
  * 而界面上这一页写的是「整页背景图」—— 他对不上是不是在说同一件事。
+ *
+ * **新增一路必须补进来**：漏了的话它掉进末尾那个 `: '概念插画'`，于是装饰背景那一格的提示词
+ * 里写着「现在这一页这一格是概念插画」、报错也这么说 —— 他会照着概念插画去改那句话。
  */
 export function modeCn(mode: ImageMode): string {
   return mode === 'backdrop' ? '整页背景图'
     : mode === 'poster' ? '单图（字印在图里）'
-      : mode === 'case' ? '实景/产品'
-        : mode === 'data' ? '数据图' : '概念插画';
+      : mode === 'decor' ? '装饰背景（垫在整页底下那一层）'
+        : mode === 'case' ? '实景/产品'
+          : mode === 'data' ? '数据图' : '概念插画';
 }
 
 /** `16:9 landscape` → `16:9`（`ratioText` 的反向）。备好的图那一列存的是规划那套字面。 */
@@ -242,12 +246,25 @@ function ratioKey(text: string): string {
  * **备图/素材库挑/换图一个入口都没有** —— 而画面上就是 4 张占位图，页面渲染完全正常，
  * 他唯一还能点的是「配全部图」（那是真花钱的那条路，且换一张要重花一次）。
  *
- * 三件事是承重的：
+ * 四件事是承重的：
  * ① **已有那几格原样留着**（连他改过的 subject 一起）：照 html 的 `data-img-prompt` 覆盖回去
  *    的话，他刚在面板里改的那句提示词会被模型写的那句悄悄换掉（面板上照旧是一句正常的话）。
  * ② **只按条数变化动清单**（`changed`）：条数一样时就算文字不一样也不动 —— 那种情况是他
  *    改了提示词还没重新生成，覆盖等于把他的修改吞掉。
- * ③ **改了必须出声**，并且说清是「按页面实际的图位」改的：静默改的话他上一次看到的 3 格
+ * ③ **整页那三路（backdrop / poster / decor）的 mode 一律照 html 改回来**（②的例外）：那三个
+ *    值规划那一步压根出不来（`normalizeImageSpecs` 只认一格里的三路），只有「改成背景图 /
+ *    单图 / 加装饰层」写得进去 —— 所以清单上还挂着它而页面上已经不是了，一定是这一页在那之后
+ *    重新生成过（格数没变，①于是把它整条留下来）。留着的后果是**先备图那条路读的是清单**
+ *    （`specJob`：没有 html 时 mode / 比例都只能从这里来）：一格 16:9 的气氛底图会按单图那套
+ *    模板生成 —— 那条模板要把文字印进画面，而这时候一个字都传不进去（html 还不存在），
+ *    于是 `{{SLIDE_TEXT}}` 原样发出去、模型自己编几句印上，出来一张「整页幻灯片」贴进底图槽位：
+ *    页面照旧渲染正常，只是标题出现了两遍，一处都不报错（L67 那一页就是这么来的）。
+ *    反过来漏认也一样：页面已经是整页背景图而清单还写着概念插画，先备的那张是一张四边留白、
+ *    中间一个主体的插画，铺满整页之后主体正好压在标题底下。
+ *    **只认「一边是整页那三路」这种对不上**：concept/case/data 三个之间的差异留给①，
+ *    那三个规划和面板都改得动，而 `data-img-mode` 少写一个就按 concept 算 —— 跟着 html 改的话
+ *    「数据图」会被页面上漏写的那个属性悄悄降成概念插画。
+ * ④ **改了必须出声**，并且说清是「按页面实际的图位」改的：静默改的话他上一次看到的 3 格
  *    变成 4 格，会以为自己记错了；而空的 `data-img-prompt` 那几格要单独点名（空提示词生不出
  *    图，那一格会一直停在占位图上，而备图面板上它和别的格子长得一样）。
  */
@@ -263,17 +280,32 @@ export function specsFromSlots(
         `第 ${use.length + 1} 格往后的那几格备不了图（只能走「配全部图」那条真花钱的路），要么重新生成一版少几格的。`
     );
   }
+  const reMode: string[] = [];
   const specs: PlannedImage[] = use.map((s, i) => {
-    if (prev[i]) return prev[i]; // ①
     const key = ratioKey(s.ratio);
-    return {
-      subject: s.prompt,
-      mode: s.mode,
-      ratio: ((IMAGE_RATIOS as readonly string[]).includes(key) ? key : '16:9') as ImageRatio,
-    };
+    const ratio = ((IMAGE_RATIOS as readonly string[]).includes(key) ? key : '16:9') as ImageRatio;
+    const p = prev[i];
+    if (p) {
+      // ③ 整页那三路和一格里那三路对不上：mode 和比例照页面来（subject 不动，那可能是他写的）。
+      if (p.mode !== s.mode && (isPageMode(p.mode) || isPageMode(s.mode))) {
+        reMode.push(`第 ${i + 1} 格 ${modeCn(p.mode)} → ${modeCn(s.mode)}`);
+        return { ...p, mode: s.mode, ratio };
+      }
+      return p; // ①
+    }
+    return { subject: s.prompt, mode: s.mode, ratio };
   });
-  const changed = specs.length !== prev.length; // ②
-  if (changed) {
+  const changed = specs.length !== prev.length || reMode.length > 0; // ②③
+  if (reMode.length) {
+    problems.push(
+      `规划里这几格的画法和页面上对不上，已经按页面改过来：${reMode.join('、')} —— ` +
+        '这一页在切过「背景图 / 单图 / 装饰层」之后重新生成过，清单上还挂着那时候的画法。' +
+        '先备图那一步读的是这份清单（那时候还没有 html），不改的话备出来的那张是按另一路画的' +
+        '（整页的字会印进图里，或者一张四边留白的插画被铺满整页），而它贴上去照样是一页正常的幻灯片。' +
+        '那几格「画什么」那句没动 —— 上一路写的那句现在不一定合用，看一眼再生成。'
+    );
+  }
+  if (specs.length !== prev.length) {
     problems.push(
       `规划里这一页是 ${prev.length} 个图位，页面上实际排出 ${slots.length} 个 —— ` +
         `已按页面上的图位把清单改成 ${specs.length} 格（备图、换图、素材库都认这份清单）。`

@@ -10,10 +10,10 @@ import { templateClasses } from './deckShell.js';
 // 手测看不出来（页面是好看的，只是不是那个版式），所以必须有测试。
 
 describe('版式案例库', () => {
-  it('73 条案例全部解析出来，且每条都有非空的选型文本和生成文本', () => {
+  it('76 条案例全部解析出来，且每条都有非空的选型文本和生成文本', () => {
     const lib = loadLibrary();
     const ids = lib.layouts.map((l) => l.id);
-    expect(ids).toEqual(Array.from({ length: 73 }, (_, i) => `L${i + 1}`));
+    expect(ids).toEqual(Array.from({ length: 76 }, (_, i) => `L${i + 1}`));
 
     // 空文本进 prompt 等于这一条案例不存在，而它在列表里还是一行
     const empty = lib.layouts.filter((l) => !l.selectText.trim() || !l.buildText.trim());
@@ -36,6 +36,21 @@ describe('版式案例库', () => {
     expect(layoutById('L12')?.fullbleed).toBe(false);
     expect(layoutById('L12')?.hasCard).toBe(true);
     expect(layoutById('L14')?.fullbleed).toBe(false);
+  });
+
+  it('默认背景图那几条要解析出来，而且选版式那一次就看得见', () => {
+    // 两头都静默：那一行没解析出来 = 这几条生成完还是左图右字（一页正常的幻灯片，他只会
+    // 以为这个设置没生效、反复重新生成）；解析出来而没进 `selectText` = 模型按分屏的量给
+    // 这一页配文字、数「全幅图页不超过三分之一」时也不算它，整份一半篇幅悄悄变成图页。
+    const on = loadLibrary().layouts.filter((l) => l.defaultImageMode === 'backdrop').map((l) => l.id);
+    expect(on).toEqual(['L1', 'L3', 'L13', 'L21', 'L55', 'L66']);
+    // 本来就是整页照片的那三条写「（幕帘 0%）」：解析丢了这个数（或者拿 `||` 吃掉 0）就退回
+    // 缺省 30% 白幕帘，叠在它们自己那层黑蒙版上 = 一张灰掉的照片，而白字清清楚楚、一处不报错。
+    const zero = loadLibrary().layouts.filter((l) => l.defaultBackdropMask === 0).map((l) => l.id);
+    expect(zero).toEqual(['L13', 'L21', 'L55']);
+    expect(layoutById('L1')!.defaultBackdropMask).toBeUndefined();
+    expect(layoutById('L1')!.selectText).toContain('默认图模式：背景图');
+    expect(layoutById('L7')!.selectText).not.toContain('默认图模式');
   });
 
   it('详情按 L 编号找而不是按版式名，改过名的 L12 也要带上 CSS 骨架', () => {

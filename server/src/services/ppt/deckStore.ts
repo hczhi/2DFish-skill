@@ -32,6 +32,15 @@ export interface PptDeck {
    * 它是靠覆盖 `:root` 生效的，所以改一次**已经生成的页刷新就变**，不用重新生成。
    */
   design_json: string;
+  /**
+   * 整份共用的那层装饰底图（106）：空地址 = 没有这一层。
+   * 和页上那一层（`.page-decor`，一页一格图位）不是一回事 —— 这一层一张图全份复用、
+   * 拼页时现注（`deckShell.applyDeckDecor`），一格图位都不占。
+   */
+  decor_url: string;
+  decor_alpha: number;
+  /** 生这张图用的那句话。存下来是为了「再生一张」时不用他重新写（也让他看出这张是怎么来的）。 */
+  decor_prompt: string;
   /** planService 的整份返回（JSON 字符串）。空串 = 还没规划过。 */
   plan_json: string;
   planned_total: number;
@@ -167,6 +176,38 @@ export function updateDeckMeta(
   push('style_id', data.styleId);
   push('notes', data.notes);
   push('design_json', data.design ? JSON.stringify(data.design) : undefined);
+  if (!sets.length) return false;
+  sets.push('updated_at = ?');
+  args.push(new Date().toISOString(), id, ...tenantArgs(owner));
+  const r = db
+    .prepare(`UPDATE ppt_decks SET ${sets.join(', ')} WHERE id = ? AND ${tenantSql()}`)
+    .run(...(args as any[]));
+  return r.changes > 0;
+}
+
+/**
+ * 存整份那层装饰底图（106）。
+ *
+ * **三个字段各自按 `!== undefined` 保留旧值**：写成「没传就当空」的话，任何一次只拖浓度滑块的
+ * 保存都会把地址清掉 —— 接口 200、滑块停在他拖的位置，而底纹整份消失。
+ * 地址传空串是合法值（= 关掉这一层），所以不能用真值判断。
+ */
+export function setDeckDecor(
+  id: string,
+  owner: DeckOwner,
+  data: { url?: string; alpha?: number; prompt?: string }
+): boolean {
+  const db = getDatabase();
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  const push = (col: string, v: string | number | undefined) => {
+    if (v === undefined) return;
+    sets.push(`${col} = ?`);
+    args.push(v);
+  };
+  push('decor_url', data.url);
+  push('decor_alpha', data.alpha);
+  push('decor_prompt', data.prompt);
   if (!sets.length) return false;
   sets.push('updated_at = ?');
   args.push(new Date().toISOString(), id, ...tenantArgs(owner));

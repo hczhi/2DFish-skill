@@ -53,6 +53,27 @@ describe('排版规划', () => {
     expect(r.problems.join('\n')).toMatch(/第 2–4 页连续 3 页都是 L5/);
   });
 
+  it('同一模块里同类型的页用了两条版式要点名，而同模块连着几页同一条不许再喊单调', async () => {
+    // 两头都静默：不点名的话这几页每一页单看都对（编号在库里、页型也对得上），翻起来才发现
+    // 三页案例长三个样；反过来「同模块统一成一条」是刚定下的规范，还照旧报「连续 3 页单调」
+    // 的话，做对了的事每次换来一句红字，真正该看的那几句被一起划过去。
+    const inSec = (layoutId: string, title: string) => ({
+      ...page(layoutId, title), kind: '内容', section: '第二部分 · 落地',
+    });
+    gateway.mockResolvedValue(
+      reply([
+        { ...page('L2', '封面'), kind: '封面' },
+        inSec('L5', '规模'), inSec('L5', '增速'), inSec('L5', '复用率'), inSec('L21', '回滚次数'),
+      ])
+    );
+    const r = await planDeck('提纲', 'u1');
+    const said = r.problems.join('\n');
+    expect(said).toContain('第 2、3、4、5 页');
+    expect(said).toContain('L5 / L21'); // 两条编号都要点出来
+    expect(said).toContain('都改成 L5'); // 建议统一成用得最多的那条
+    expect(said).not.toMatch(/连续 3 页/);
+  });
+
   it('页型和版式归属对不上要点名（每一页单看都合法，整份少了封面和过渡）', async () => {
     // 这是 `layoutId` 校验放行的那一类错：编号确实在库里，于是界面上是一份挑得「都对」的
     // 规划 —— 而封面那一页排出来是四栏矩阵、章节扉页排出来是一页数据网格，翻起来只是

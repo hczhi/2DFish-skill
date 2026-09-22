@@ -105,6 +105,7 @@ import { migration_102 } from './102_ppt_chart_bar_max.js';
 import { migration_103 } from './103_ppt_disable_toc_layouts.js';
 import { migration_104 } from './104_ppt_page_poster.js';
 import { migration_105 } from './105_seed_ppt_outline_skill.js';
+import { migration_106 } from './106_ppt_deck_decor.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -211,4 +212,5 @@ export const allMigrations: Migration[] = [
   migration_103,
   migration_104,
   migration_105,
+  migration_106,
 ];

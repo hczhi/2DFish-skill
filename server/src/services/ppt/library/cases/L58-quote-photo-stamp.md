@@ -7,9 +7,9 @@
 
 ## 一、结构速览
 
-- **比例**：16:9，**一张实物/意象特写照铺满整页**（一颗番茄、一只手、一台设备的局部、一片水面），上下浓中间淡的深色蒙版，整页只有**一句话**（约 20–60 字）
+- **比例**：16:9，**一张实物/意象特写照铺满整页**（一颗番茄、一只手、一台设备的局部、一片水面），**没有蒙版**（暗调靠照片自己），整页只有**一句话**（约 20–60 字）
 - **核心手法**：三层叠 —— ① 底层照片 ② 两层**水印**（左上一行 172px 的**空心**英文 + 右下角一个 460px 的**巨型汉字**，都只露一半、被画面裁掉）③ 最上层画面正中的 96px 衬线白色宣言 + 一行加宽字距的品牌色副题；左下角两行英文小字
-- **是否全幅**：**是** —— 不包 `.slide-inner`（照片、蒙版、两层水印都要出画）
+- **是否全幅**：**是** —— 不包 `.slide-inner`（照片和两层水印都要出画）
 - **页眉照旧贴**：这一条是过渡/内容页，左上角那行模块名由代码贴（`.slide-header`，44–100px），**md 和模型都不要自己写**
 - **什么时候用**：章节之间**换一口气**、或者结尾立一句主张，而这句话有**具体的物**可以配图（产品、原料、现场、材料）
 
@@ -17,10 +17,12 @@
 
 ## 二、结构拆解（由后到前）
 
-### 1. 照片与蒙版 · `.l58-bg`
+### 1. 照片 · `.l58-bg`
 
-- `<img>` 铺满 + `object-fit:cover`；`::after` 是一层 **180deg、上（.62）→ 中（.4，44% 处）→ 下（.68）** 的深色蒙版。
-- **这层蒙版是整条唯一的可读性依赖**：实物特写通常有大片高光（果皮、金属、水面），去掉之后白字压在亮部只是「若隐若现」，浏览器、`checkPage`、导出全都不报错。
+- `<img>` 铺满 + `object-fit:cover`；**上面没有任何蒙版**（原来 `.l58-bg::after` 那层 `rgba(10,16,22,.62)` 已删 —— 它和「这一页的蒙版」滑块叠起来整本发灰）。
+- **于是「照片自己够暗」是整条唯一的可读性依赖**：实物特写通常有大片高光（果皮、金属、水面），
+  要的是**暗调、逆光、深色背景**的那一路；亮底特写进来，白字压在亮部只是「若隐若现」，
+  浏览器、`checkPage`、导出全都不报错。不够暗时拉「这一页的蒙版」滑块到 20–35%。
 - 照片要**特写、简单、别有文字**：主体填满画面、背景干净。给一张远景图或构图很花的图，那句 96px 的字会落在杂乱处，那几个字就读不出来了（要远景请换 L59）。
 
 ### 2. 两层水印 · `.l58-echo` / `.l58-char`
@@ -53,7 +55,6 @@
 .l58-wrap{position:absolute;inset:0;overflow:hidden}
 .l58-bg{position:absolute;inset:0;z-index:0}
 .l58-bg img{width:100%;height:100%;object-fit:cover;display:block}
-.l58-bg::after{content:"";position:absolute;inset:0;background:rgba(10,16,22,.62)}
 .l58-echo{position:absolute;left:var(--pad-x);top:128px;z-index:1;font-family:var(--num);font-size:172px;font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap;color:transparent;-webkit-text-stroke:2px rgba(255,255,255,.28)}
 .l58-char{position:absolute;right:-30px;bottom:-120px;z-index:1;font-family:var(--serif);font-size:460px;font-weight:900;line-height:1;color:rgba(255,255,255,.1)}
 .l58-main{position:absolute;left:var(--pad-x);right:var(--pad-x);top:50%;transform:translateY(-46%);z-index:2;text-align:center}
@@ -111,7 +112,7 @@
 ## 七、design 提示
 
 - **整页只有一句话**：这一条的功能就是「空出一页只放一句主张」，往里加要点列表、卡片、数据就把它变成一页普通的图文页了（而画面完全正常）
-- **蒙版一层都不能去**（`.l58-bg::after`）：白字压在实物高光上只是「若隐若现」，不报错
+- **图必须自己是暗的**（版式里一层蒙版都没有）：白字压在实物高光上只是「若隐若现」，不报错
 - **`-webkit-text-stroke` 和 `color:transparent` 必须成对**：少一句是「一整行看不见」或「一行厚白字抢主角」
 - **`.l58-char` 只能一个汉字**；**`.l58-echo` 只能一行 ≤12 字符、不写汉字**
 - **水印是 `z-index:1`、正文是 `z-index:2`**，别对调（水印压字，看起来只是「这一页有点脏」）

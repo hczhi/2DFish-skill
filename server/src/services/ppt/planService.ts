@@ -242,6 +242,7 @@ export async function planDeck(outline: string, userId: string): Promise<PlanRes
     ...coverageWarnings(pages, outlineLines, badRanges),
     ...fitWarnings(pages),
     ...repeatWarnings(pages),
+    ...shapeSplitWarnings(pages),
     ...kindWarnings(pages),
     ...missingWhy(pages),
     ...altWarnings(pages, badAlts)
@@ -598,6 +599,10 @@ function preview(text: string): string {
 /**
  * 连续 3 页以上同版式。**只报不改** —— 自动打散的话用户看到的是一份「模型挑的」规划，
  * 而实际上是代码挑的，下次同样的提纲又是这个结果，他永远不知道要去改提纲还是改 prompt。
+ *
+ * **同一个模块里连着几页同版式不算问题**（规划 prompt 第 2 条：同模块同类型的页要用同一条）——
+ * 照旧报的话「三页案例统一成一条」这件做对了的事每次都换来一句红字，而真正该看的那几句
+ * （漏了提纲行、装不下）混在里面一起被划过去。跨模块的连读照旧报：那是整份翻起来单调的来源。
  */
 function repeatWarnings(pages: PlannedPage[]): string[] {
   const out: string[] = [];
@@ -607,10 +612,55 @@ function repeatWarnings(pages: PlannedPage[]): string[] {
       run++;
       continue;
     }
-    if (run >= 3) {
-      out.push(`第 ${i - run + 1}–${i} 页连续 ${run} 页都是 ${pages[i - 1].layoutId}（规范是连续 ≤2 页），翻起来会很单调。`);
+    const seg = pages.slice(i - run, i);
+    // 模块名空着的不算「同一个模块」：算的话没给 section 的那种规划（老提纲、模型漏了）
+    // 整份都被当成一个模块，连着六页同版式一句话都不报。
+    const oneSection = !!seg[0].section && new Set(seg.map((p) => p.section)).size === 1;
+    if (run >= 3 && !oneSection) {
+      out.push(`第 ${i - run + 1}–${i} 页连续 ${run} 页都是 ${pages[i - 1].layoutId}（跨了模块，规范是连续 ≤2 页），翻起来会很单调。`);
     }
     run = 1;
+  }
+  return out;
+}
+
+/**
+ * 同一个模块里**同类型**的页用了不同版式（规划 prompt 第 2 条那件事）。
+ *
+ * 「同类型」在代码里的判据是**同 `section` + 同页型 + 挑中那两条版式的 `形状` 相同**
+ * （硬规则 3：让模型自己判「这两页是不是一类」的话它每次判得都不一样）。形状相同基本就是
+ * 同一类内容（两页都是 `数据`、两页都是 `分屏` 案例），而它选了两条不同的版式。
+ *
+ * **只报不改**（同 `repeatWarnings`）：代码替他统一的话，界面上是一份「模型挑的」规划而
+ * 实际是代码改的，下次同样的提纲又这样，他不知道该改提纲还是改 prompt。报的那句话要点到
+ * **页码 + 两条编号 + 建议统一成哪条**，只说「版式不统一」的话他得自己把三十几页比一遍；
+ * 末尾那句「要是这两页其实不是一类内容就忽略」是留给误判的 —— 不留的话他会去改一份本来
+ * 就对的规划。
+ */
+function shapeSplitWarnings(pages: PlannedPage[]): string[] {
+  const groups = new Map<string, PlannedPage[]>();
+  for (const p of pages) {
+    const shape = layoutById(p.layoutId)?.shape;
+    // 封面/章节/结尾一份稿子里各就一两页，本来就该各有各的样子 —— 拉进来只会报假警告。
+    if (!shape || !p.section || p.kind !== '内容') continue;
+    const key = `${p.section}||${shape}`;
+    (groups.get(key) || groups.set(key, []).get(key)!).push(p);
+  }
+  const out: string[] = [];
+  for (const [key, group] of groups) {
+    const ids = [...new Set(group.map((p) => p.layoutId))];
+    if (ids.length < 2) continue;
+    // 建议统一成**用得最多**的那条（并列时取先出现的）：它最可能是他认下来的那一版。
+    const most = ids
+      .map((id) => ({ id, n: group.filter((p) => p.layoutId === id).length }))
+      .sort((a, b) => b.n - a.n)[0].id;
+    const shape = key.split('||')[1];
+    out.push(
+      `「${group[0].section}」里第 ${group.map((p) => p.page).join('、')} 页都是${shape}型的内容页，` +
+        `却用了 ${ids.join(' / ')} ${ids.length} 条版式 —— 同一模块里同类型的页要用同一条` +
+        `（建议都改成 ${most}，在「生成前改一下」里换）。不然这几页单看都对，翻起来像几份稿子拼的。` +
+        '要是这几页其实不是一类内容（比如一页讲规模、一页讲流程），这句忽略。'
+    );
   }
   return out;
 }
@@ -695,7 +745,8 @@ function buildPrompt(outlineLines: string[], lib: PptLayout[]): string {
 
 ## 硬规则（违反其中任何一条，这次规划就是废的）
 1. \`layoutId\` **只能**是清单里出现过的编号（只有 ${lib.map((l) => l.id).join(' / ')} 这几个，停用的已经不在里面），**原样照抄**。清单里没有的版式一律不许用，也不要自己发明版式或写 CSS。
-2. 相邻页不要撞版式：**连续最多 2 页**用同一个版式。整份用到的版式种类越丰富越好，但每页仍要选最贴合内容的那个。
+2. **同一模块里同类型的页用同一个版式** —— 这一条优先于下面的「别撞版式」。同一个 \`section\` 下讲同一类事情的页（几页企业案例、几页产品模块、几页指标、几页时间线），从第一页定下哪条版式，后面同类的**每一页都照抄那条**，连着 4 页也照抄；只有当这一模块里内容的类型真的变了（案例讲完开始讲数字）才换另一条。换成「每页都挑最贴合的那条」的话，三页案例会排出三种样子 —— 每一页单看都对，翻起来像三份不同的稿子拼在一起。
+   在**这一条不适用**的地方（不同模块之间、同模块里类型不同的页）才轮着换：别让不同类型的相邻页撞同一条，整份用到的版式种类越丰富越好。
    **整份还要有节奏**：连着 5 页以上都是 \`并列\` / \`数据\` 这种密集页的话，每一页单看都对、整份翻起来像一叠表格 —— 每 4–6 页要留一页「喘气的」（\`章节\` 扉页 / 全幅图页 / \`聚焦\` 金句页）；数字堆完要接一页给落点的（结论或金句），不要连着三页都是指标；全幅图页别超过整份的三分之一（那一页的图是真花钱生成的）。
 3. 每页都要给 \`kind\`（这一页是什么页）：\`${PAGE_ROLES.join('\` / \`')}\`。**第 1 页固定是 \`封面\`**；每个章节开头是 \`章节\`；最后一页通常是 \`结尾\`。
 4. \`layoutId\` **只能从下面「页型 → 可用版式」里这一页页型那一行挑**。标了 \`章节\` 却挑一条只归 \`内容\` 的版式，那一页会排成一页正文 —— 每一页单看都合法，整份就是少了过渡感。

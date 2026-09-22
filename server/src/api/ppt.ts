@@ -8,7 +8,9 @@ import { planDeck, replanPageImages, PlanError, type PlannedPage } from '../serv
 import { cleanOutline, OutlineCleanError } from '../services/ppt/outlineCleanService.js';
 import { chatOutline, composeMaterials, OutlineChatError } from '../services/ppt/outlineChatService.js';
 import { generatePage, buildDeck, PageError } from '../services/ppt/pageService.js';
-import { assemblePreview, previewShell, previewSection, PREVIEW_SLOT } from '../services/ppt/deckShell.js';
+import {
+  assemblePreview, previewShell, previewSection, deckDecorUrlProblem, PREVIEW_SLOT,
+} from '../services/ppt/deckShell.js';
 import {
   fillPageImages, generateSpecImage, previewSpecPrompt, applyPreparedImages, pasteIntoBuiltPage, keepAsPrepared,
   findImageSlots, specsFromSlots, realignImageRecords,
@@ -26,7 +28,10 @@ import {
   PageEditError,
 } from '../services/ppt/pageEdit.js';
 import {
-  toBackdrop, toSplit, setBackdropMask, backdropMask, pageImageMode, toPoster, posterText, ImageModeError,
+  toBackdrop, toSplit, setBackdropMask, backdropMask, backdropBlocker, pageImageMode, toPoster, posterText,
+  ImageModeError,
+  addDecor, removeDecor, setDecorAlpha, hasDecor, decorAlpha, applyDefaultImageMode,
+  DECOR_ALPHA, deckDecorReport, decorImage,
 } from '../services/ppt/imageModes.js';
 import { isBlankPage } from '../services/ppt/blankPage.js';
 import { rechartEdited } from '../services/ppt/chartData.js';
@@ -44,6 +49,7 @@ import {
   createDeck,
   getDeck,
   updateDeckMeta,
+  setDeckDecor,
   savePlan,
   listPages,
   savePageHtml,
@@ -184,7 +190,15 @@ function checkPlanRev(req: Request, res: Response, deck: { plan_rev: number }): 
 pptRouter.get('/decks', (req: Request, res: Response) => {
   const owner = ownerOf(req, res);
   if (!owner) return;
-  res.json({ decks: listDecks(owner) });
+  // 顺路回一个版式条数（列表页那颗「版式案例库（N 个）」用）。**不为它多开一个请求、
+  // 也不让它把这条路弄坏**：案例库读不出来时这里回 0（那颗按钮上不显示数字），
+  // 库坏了这件事由 /layouts 那条路去喊 —— 在这里 500 的话「演示稿列表打不开」
+  // 指向的是完全另一个地方。
+  let layoutTotal = 0;
+  try {
+    layoutTotal = layouts().length;
+  } catch { /* 案例库的问题在 /layouts 那条路上报 */ }
+  res.json({ decks: listDecks(owner), layoutTotal });
 });
 
 pptRouter.post('/decks', (req: Request, res: Response) => {
@@ -716,12 +730,23 @@ function planOf(deck: { plan_json: string }): { pages: PlannedPage[] } {
  * deck 外壳上的品牌/主题/设计规范。**所有拼装都从这里拿**（生成、配图、就地编辑、拼整份、
  * 导出十几处）：漏一处的话那一处是默认配色 —— 预览里蓝的、导出的文件橙的，两份各自都好看。
  */
-function shellMeta(deck: { title: string; brand_cn: string; brand_en: string; design_json?: string }) {
+function shellMeta(deck: {
+  title: string;
+  brand_cn: string;
+  brand_en: string;
+  design_json?: string;
+  decor_url?: string;
+  decor_alpha?: number | null;
+}) {
   return {
     brandCn: deck.brand_cn || '示例企业',
     brandEn: deck.brand_en || 'SAMPLE',
     topic: deck.title,
     design: parseDesignSpec(deck.design_json).spec,
+    // 整份那层装饰底图（106）也跟着 meta 走：单独往那十几处拼装里传的话，漏掉的那一处
+    // （配完图那次预览是最容易漏的）静默没有这一层 —— 现象是「换了张图底纹就没了，
+    // 刷新一下又回来」，两份各自都是正常的一页。
+    decor: deck.decor_url ? { url: deck.decor_url, alpha: deck.decor_alpha ?? DECOR_ALPHA } : undefined,
   };
 }
 
@@ -882,6 +907,17 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       },
       owner.userId
     );
+    // 这一条版式默认哪种图模式（库文件里那行 `默认图模式`）。**在贴备好的图之前做** ——
+    // 放到后面的话备好的那张先贴进 hero 那一格，紧接着 `toBackdrop` 又把它清回占位图
+    // （那张图是真花钱生的，画面上只是「备的图怎么没了」）。
+    const lay = layoutById(result.layoutId);
+    const dflt = applyDefaultImageMode(result.html, lay?.defaultImageMode || '', {
+      page: row.page,
+      layoutId: result.layoutId,
+      mask: lay?.defaultBackdropMask,
+    });
+    result.html = dflt.html;
+    result.problems.push(...dflt.problems);
     // 备好的图**当场贴进这份 html**（不调 AI、不花钱）。不贴的话「先备图」那一步等于白做：
     // 页面第一次显示出来仍然全是占位图，他会去点配图，那才是重新花一次钱。
     const prepared = safeJson<any[]>(
@@ -891,7 +927,10 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
     const fill = applyPreparedImages(result.html, prepared);
     const problems = [...result.problems, ...fill.problems];
     const html = fill.html;
-    const previewHtml = fill.used.length
+    // 变形过（`dflt.changed`）也要重拼这份预览：`result.previewHtml` 是变形**之前**那一版，
+    // 回旧的那一份时界面上刚生成完那一眼是左图右字、刷新之后才变成整页背景图 ——
+    // 两版都是一页正常的幻灯片，看起来像「这一页自己跳了一下」。
+    const previewHtml = fill.used.length || dflt.changed
       ? assemblePreview(html, meta, stored?.veil_opacity || 0)
       : result.previewHtml;
     // 图位清单**按这一页真的排出来的图位对齐**（纯代码，不调 AI、不花钱，见 `specsFromSlots`）。
@@ -939,6 +978,10 @@ pptRouter.post('/decks/:id/pages', async (req: Request, res: Response) => {
       problems,
       images: fill.used,
       style: fill.used.length && deck.style_id ? { id: deck.style_id, name: '' } : undefined,
+      // 「这一页的图」那一栏照这份走（`pageModeState`）。**必须回**：这条路上版式自带的默认
+      // 图模式（`applyDefaultImageMode`）刚刚就可能把这一页变成整页背景图 / 单图，而前端那几个
+      // map 里没有这一页 —— 那一栏于是写着「分屏」，按钮却是一个「改回分屏」，刷新一下才对。
+      ...pageModeState(html),
       // 这次到底按哪条版式、带了什么要求（092）。回出来前端才对得上：他换了版式而这里
       // 用的是别的一条时，画面上那一页照样是一页正常的幻灯片，看不出用错了。
       // `deckNotes` 一起回：界面上只显示页级那段的话，「这一页什么要求都没写」和
@@ -1092,14 +1135,9 @@ pptRouter.get('/decks/:id/pages', (req: Request, res: Response) => {
     pendingImages: safeJson<unknown[]>(p.pending_images_json, []),
     /** 这一页的蒙版透明度（097）。滑块照它画 —— 不回的话每次刷新都归零，而库里是他调过的值。 */
     veilOpacity: p.veil_opacity || 0,
-    // 这一页的图是分屏还是整页背景（103）+ 幕帘浓度。**按 html 现算**（记号就在 html 里），
-    // 不另存一列：两处各存一份的话刷新之后按钮写着「改成背景图」而这一页已经是背景图了，
-    // 点下去回一句「已经是背景图模式了」，看起来像这个功能坏了。
-    imageMode: p.html ? pageImageMode(p.html) : 'split',
-    backdropMask: p.html ? backdropMask(p.html) : null,
-    // 单图模式（104）：**真的印在图里**的那几行字。刷新之后不回的话，界面上那条「这几句在图里、
-    // 改不了」的提示消失 —— 他会去双击改字（改不动），或者以为漏掉的那两条要点还在。
-    posterText: p.html ? posterText(p.html) : [],
+    // 这一页的图模式那一整栏（分屏 / 整页背景 / 单图 + 幕帘 + 装饰层 + 印在图里的那几行字）。
+    // **一处算、几条路共用**，见 `pageModeState`。
+    ...pageModeState(p.html),
     // 生成前改的那两样（092）。`setupLayoutId` 是**他挑的**那条，`layoutId` 是这份 html
     // 实际用的那条 —— 两个不一样就是「换了版式还没重新生成」，前端必须显眼说出来：
     // 不说的话他看着旧版式排的那一页，以为新版式就长这样。
@@ -1119,6 +1157,33 @@ function safeJson<T>(text: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * 「这一页的图」那一整栏的状态（模式 / 幕帘 / 装饰层 / 印进图里的那几行字 / 为什么不能改成
+ * 背景图）。**按 html 现算**（记号就在 html 里），不另存一列：两处各存一份的话刷新之后按钮
+ * 写着「改成背景图」而这一页已经是背景图了，点下去回一句「已经是背景图模式了」，
+ * 看起来像这个功能坏了。
+ *
+ * **凡是回「这一页的新 html」的接口都要带上这一份**（`GET /pages` 和「生成这一页」）：
+ * 生成那条不带的话前端那几个 map 上压根没有这一页，而空值在界面上不是「空」——
+ * 标题回落成「分屏」，按钮却按「不是分屏」画成一个「改回分屏」，另外三个按钮和全部提示
+ * 一句都不出现。版式自带默认图模式（`applyDefaultImageMode`）时更糟：这一页生成出来就是
+ * 整页背景图，而那一栏写着「分屏」、幕帘滑块不出现，刷新一下才对 —— 两版都是正常界面。
+ *
+ * `backdropBlock` **只有分屏页算**：别的模式上压根没有这个按钮，把「已经是背景图模式了」
+ * 当成「不支持」发过去的话，前端会照它画一句「这一页不能改成背景图」，而那一页恰恰正是背景图。
+ */
+function pageModeState(html: string) {
+  const mode = html ? pageImageMode(html) : 'split';
+  return {
+    imageMode: mode,
+    backdropMask: html ? backdropMask(html) : null,
+    backdropBlock: html && mode === 'split' ? backdropBlocker(html) : null,
+    decor: html ? hasDecor(html) : false,
+    decorAlpha: html ? decorAlpha(html) : null,
+    posterText: html ? posterText(html) : [],
+  };
 }
 
 /**
@@ -1666,6 +1731,71 @@ function pastePrepared(
 }
 
 /**
+ * 换图片模式（103/104）之后把这一页**备着的那几张图**清掉，并说出清了几张。
+ *
+ * 为什么必须清：变形已经把 html 里的图清回占位图（`imageModes.clearSlotImages` —— 那几张是按
+ * 上一个模式的构图生的），这一份不清的话面板上那一格还挂着缩略图、写着「已备」，而画面里是
+ * 占位图 —— 两处对不上、一处都不报错，他会以为「变形把图弄丢了」再点一次「AI 生成」（真花一次），
+ * 或者以为这一页图是齐的直接去导出。
+ *
+ * 清不掉**也要出声**：静默的话就是上面那个对不上的状态，而界面上只有一句「已改成背景图」。
+ */
+function clearPreparedOnModeSwitch(
+  deckId: string,
+  owner: DeckOwner,
+  page: number,
+  row: ReturnType<typeof listPages>[number]
+): string[] {
+  const had = safeJson<any[]>(row.pending_images_json || '', []).filter((x) => x?.url);
+  if (!had.length) return [];
+  if (!savePendingImages(deckId, owner, { page, images: [] })) {
+    return [
+      `这一页备着的那 ${had.length} 张图没清掉（画面里已经是占位图了）—— 面板上那几格还挂着缩略图，` +
+        '和画面对不上。刷新一下，在那几格点「清掉」。',
+    ];
+  }
+  return [
+    `这一页原来备着的 ${had.length} 张图也清掉了（它们是按上一个模式的构图生的）—— ` +
+      '都还在素材库 /ppt/assets 里，要用回去就在那一格「素材库里挑」。',
+  ];
+}
+
+/**
+ * 换图片模式之后把规划里这一页的**图位清单**（`imageSpecs`）按新 html 上的图槽对齐一次
+ * （`specsFromSlots`，和「重排图位」那条路同一个函数）。
+ *
+ * 两个方向都是死路，而且都不报错：
+ * ① **一格图都没有的页改成单图**（`toPoster` 会给这一页加一格整页的图）：清单里还是 0 格的话
+ *    面板上一个图位都不出现 —— 那张单图**压根没有按钮可以生成**，这一页从此停在占位图上，
+ *    而画面、接口、`notes` 全是正常的。
+ * ② 反过来「改回原版」退回一页没有图槽的版式：清单里留着那一格的话他会在那儿点「AI 生成」
+ *    （一次真实花费），生出来的图没有槽位可贴，面板上照旧挂着缩略图。
+ *
+ * 清单变了要把 `specsFromSlots` 的那几句原样回给前端（`notes`）：备图、换图、素材库认的都是
+ * 这份清单，悄悄改掉的话他上一格写的那句「画什么」跑到了另一格上。
+ */
+function realignSpecsAfterMode(
+  deck: NonNullable<ReturnType<typeof getDeck>>,
+  owner: DeckOwner,
+  page: number,
+  html: string
+): { specs: PlannedImage[]; notes: string[] } {
+  const prev = planOf(deck).pages.find((p) => p.page === page)?.imageSpecs || [];
+  const r = specsFromSlots(prev, findImageSlots(html));
+  if (!r.changed) return { specs: prev, notes: [] };
+  if (!updatePlanPageImages(deck.id, owner, page, r.specs).ok) {
+    return {
+      specs: prev,
+      notes: [
+        `这一页的图位清单没对上（页面上是 ${r.specs.length} 格，清单里还是 ${prev.length} 格）——` +
+          '刷新一下，或者点一次「重排图位」；不对上的话备图那一栏和画面里的格子对不起来。',
+      ],
+    };
+  }
+  return { specs: r.specs, notes: r.problems };
+}
+
+/**
  * 调这一页那层黑色蒙版的透明度（097，**不调 AI、不花额度**）。
  *
  * 三条在这一层：
@@ -1755,13 +1885,20 @@ pptRouter.post('/decks/:id/image-mode', (req: Request, res: Response) => {
         res.status(500).json({ error: `第 ${page} 页改回原版之后读不出内容了，刷新一下看看。` });
         return;
       }
+      const backSpecs = realignSpecsAfterMode(deck, owner, page, back.html);
       res.json({
         page,
         mode: pageImageMode(back.html),
         mask: backdropMask(back.html),
         notes: [
           '已经改回单图之前那一版（文字、版式、原来那几张图都回来了）。刚才那张单图还在素材库里（/ppt/assets）。',
+          // 这一路**不清 html 和 `images_json`**（那两列写回的是变成单图之前的原样，图和记录本来就
+          // 是配对的），只清「备着的那几张」—— 那里面可能是在单图模式下生的那张（字印在图里），
+          // 留着的话下一次在这一格挑/生图时它会被贴回一页普通分屏页上，画面里是一张带字的图。
+          ...clearPreparedOnModeSwitch(deck.id, owner, page, row),
+          ...backSpecs.notes,
         ],
+        imageSpecs: backSpecs.specs,
         text: [],
         html: back.html,
         previewHtml: previewOf(deck, back, back.html),
@@ -1785,6 +1922,10 @@ pptRouter.post('/decks/:id/image-mode', (req: Request, res: Response) => {
       });
       return;
     }
+    // 真的换了模式（不是在拖幕帘浓度那个滑块）。**这一条必须分开**：滑块那一路 `r.mode` 和
+    // 原来一样，跟着走清图的话他每拖一次浓度就把这一页配好的背景图清掉一次 —— 画面上只是
+    // 「图突然不见了」，一处都不报错。
+    const switched = r.mode !== cur;
     const saved =
       r.mode === 'poster'
         ? // 单图：新 html + 变形前那一页原样，**同一句 SQL**（分两次写的话中间失败之后
@@ -1795,18 +1936,33 @@ pptRouter.post('/decks/:id/image-mode', (req: Request, res: Response) => {
             fromHtml: row.html,
             fromImages: row.images_json || '[]',
           })
-        : savePageEditedHtml(deck.id, owner, { page, html: r.html });
+        : // 换了模式之后 html 里是占位图（`clearSlotImages`），所以 `images_json` **一起清空**
+          // （`images: []`）：留着的话面板上写着「配图 1/1 张」并挂着上一个模式那张缩略图，
+          // 而画面里是占位图 —— 他会当这一页已经配好，直接去拼整份/导出。
+          savePageEditedHtml(deck.id, owner, { page, html: r.html, ...(switched ? { images: [] } : {}) });
     if (!saved) {
       res.status(500).json({
         error: `第 ${page} 页没存上 —— 画面上是变过的样子，而库里还是原来那一版（配图、拼整份和导出用的都是它）。刷新一下再试一次。`,
       });
       return;
     }
+    // 图位清单跟着新 html 对齐（`realignSpecsAfterMode`）：一格图都没有的页改成单图之后，
+    // 清单里还是 0 格的话面板上一个图位都不出现 —— 那张单图压根没有按钮可以生成。
+    const aligned = switched
+      ? realignSpecsAfterMode(deck, owner, page, r.html)
+      : { specs: planOf(deck).pages.find((p) => p.page === page)?.imageSpecs || [], notes: [] };
     res.json({
       page,
       mode: r.mode,
       mask: backdropMask(r.html),
-      notes: r.notes,
+      notes: [
+        ...r.notes,
+        ...(switched ? clearPreparedOnModeSwitch(deck.id, owner, page, row) : []),
+        ...aligned.notes,
+      ],
+      // 对齐之后的图位清单：前端要**就地换掉**内存里那份规划（备图、换图、素材库都认它），
+      // 不换的话一格图都没有的页改成单图之后面板上还是一个图位都没有 —— 那张图没有按钮可生成。
+      imageSpecs: aligned.specs,
       // 真的会印进图里的那几行字（界面要显示出来：漏掉的那几句在画面上看不出来）。
       text: r.text || [],
       html: r.html,
@@ -1816,6 +1972,176 @@ pptRouter.post('/decks/:id/image-mode', (req: Request, res: Response) => {
     const code = e instanceof ImageModeError ? 400 : 500;
     res.status(code).json({ error: e?.message || '这一页的图片模式没改成' });
   }
+});
+
+/**
+ * 这一页的**装饰背景**（`on=true` 加 / `on=false` 去掉 / 只带 `alpha` = 拖那个滑块）。
+ * 纯代码搬 DOM，**不调 AI、不花一分钱**；那一格真正的图要他再点一次「AI 生成」。
+ *
+ * 为什么不塞进上面那条 `image-mode`：那一条的三个值是**互斥的模式**，而装饰背景是在分屏页上
+ * **多垫一层**（版式和原来那几格图一个字都不动）。合成一条的话前端那几个按钮会长成
+ * 「背景图 / 单图 / 分屏 / 装饰」四选一，他点了装饰之后以为原来那几格图被换掉了 ——
+ * 而真正的差别是「加一层」和「换一种用法」。
+ *
+ * 三件事是承重的：
+ * ① **`imageSpecs` 必须回给前端**（`realignSpecsAfterMode`）：装饰层是新的一格图位，清单不跟上
+ *    的话面板上那一格压根不出现 —— 那张装饰图**没有按钮可以生成**，而接口 200、`notes` 也正常。
+ * ② **备好的那几张图不清**（不走 `clearPreparedOnModeSwitch`）：加的是最后一格，原来那几格的
+ *    序号一个都没动 —— 跟着清的话他点一下「加装饰背景」，备好的图全没了（每张都真花过钱）。
+ * ③ **`html`/`images_json` 里原来那几张图也不清**：同上，这一条路一格图都不该动。
+ */
+pptRouter.post('/decks/:id/page-decor', (req: Request, res: Response) => {
+  const t = editTarget(req, res, '，还没有可以加装饰背景的东西。');
+  if (!t) return;
+  const { owner, deck, page, row } = t;
+  const rawAlpha = req.body?.alpha;
+  const alpha = rawAlpha === undefined || rawAlpha === null || rawAlpha === '' ? undefined : Number(rawAlpha);
+  const on = req.body?.on;
+  try {
+    let r;
+    if (on === false) {
+      r = removeDecor(row.html);
+    } else if (on === true) {
+      // 已经有一层 + 带了浓度 = 他在拖滑块。照旧走 `addDecor` 的话回的是一句「这一页已经有一层
+      // 装饰背景了」，而滑块看起来就是「拖不动」（同 `setBackdropMask` 那一条）。
+      r = hasDecor(row.html) && alpha !== undefined ? setDecorAlpha(row.html, alpha) : addDecor(row.html, { alpha });
+    } else if (alpha !== undefined) {
+      r = setDecorAlpha(row.html, alpha);
+    } else {
+      // 静默当成「加一层」的话，前端漏带一个字段就在这一页加了一层他没要的东西（还多一格图位）。
+      res.status(400).json({ error: '要加装饰背景请带 on=true，去掉带 on=false，只调浓度就带 alpha。这一页没动。' });
+      return;
+    }
+    if (!savePageEditedHtml(deck.id, owner, { page, html: r.html })) {
+      res.status(500).json({
+        error: `第 ${page} 页没存上 —— 画面上是改过的样子，而库里还是原来那一版（配图、拼整份和导出用的都是它）。刷新一下再试一次。`,
+      });
+      return;
+    }
+    const aligned = realignSpecsAfterMode(deck, owner, page, r.html);
+    res.json({
+      page,
+      decor: hasDecor(r.html),
+      alpha: r.alpha,
+      notes: [...r.notes, ...aligned.notes],
+      imageSpecs: aligned.specs,
+      html: r.html,
+      previewHtml: previewOf(deck, row, r.html),
+    });
+  } catch (e: any) {
+    const code = e instanceof ImageModeError ? 400 : 500;
+    res.status(code).json({ error: e?.message || '这一页的装饰背景没改成' });
+  }
+});
+
+/**
+ * **整份共用**的那层装饰底图（106）：一张图，所有符合条件的页自动都有，一格图位都不占。
+ * `url` 传空串 = 关掉这一层。只带 `alpha` = 拖那个滑块（浓度）。**不调 AI、不花一分钱** ——
+ * 那张图是他从素材库挑的（或者在某一页生成好之后点「这张图整份都用」）。
+ *
+ * 和上面那条 `page-decor` 的分工：那一条给**这一页**加一个真的图位（要单独生一张图、占 6 格里
+ * 的一格、pptx 导出里在）；这一条只在库里存一个地址，拼页时现注成 `<section>` 上两个 CSS 变量。
+ * 合成一条的话「给这一页加一层」和「整份都用这一张」会共用一个开关 —— 他点一下就是四十页
+ * 各多一格图位、各等一次生成（每张真花一次钱）。
+ *
+ * 三件事是承重的：
+ * ① **逐页报出垫得上垫不上**（`deckDecorReport`）：背景图/单图那两种页、自己加过装饰背景的页、
+ *    以及有一层铺满整页的不透明底挡着的那二十来条版式，这一层在上面是看不见的。静默跳过的话
+ *    现象是「这个功能时好时坏」，他会回去反复重新生成那张图（每张真花一次钱）。
+ * ② **地址先过 `deckDecorUrlProblem`**：带引号/括号的地址拼进 `style="…"` 会把那一页的整条
+ *    style 从那个字符起截断 —— 背景图和蒙版跟着一起消失，而页面照旧渲染、一处不报错。
+ * ③ **一页 html 都不改**：这一层不落库到页上，所以关掉 = 一条 UPDATE，不用逐页回滚
+ *    （逐页写的话漏一页就是那一页从此比别的页浓一档，而两种画面都正常）。
+ */
+pptRouter.put('/decks/:id/decor', (req: Request, res: Response) => {
+  const owner = ownerOf(req, res);
+  if (!owner) return;
+  const deck = getDeck(req.params.id, owner);
+  if (!deck) {
+    res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
+    return;
+  }
+  const b = req.body || {};
+  // 「这张图整份都用」：地址和提示词**由服务端从那一页的 html 现读**（`decorImage`）。
+  // 让前端传地址的话，它另写一遍「装饰层那张图是哪一格」—— 换过模式/删过一格之后挑中的是
+  // 别的一格，于是整份底纹变成了那一页正文里的一张配图（而接口 200、图也确实在）。
+  let fromPrompt: string | undefined;
+  let fromUrl: string | undefined;
+  if (b.fromPage !== undefined) {
+    const page = Number(b.fromPage);
+    const row = pageRow(deck.id, owner, page);
+    if (!isBuilt(row)) {
+      res.status(400).json({ error: `第 ${page} 页还没生成，上面没有可以整份用的装饰图。` });
+      return;
+    }
+    const img = decorImage(row.html);
+    if (!img) {
+      res.status(400).json({
+        error: hasDecor(row.html)
+          ? `第 ${page} 页的装饰背景还是占位图 —— 先点那一格的「AI 生成」出一张真图，再点这个按钮。`
+          : `第 ${page} 页没有装饰背景（先点「加装饰背景」，生成好那张图再点这个按钮）。`,
+      });
+      return;
+    }
+    fromUrl = img.url;
+    fromPrompt = img.prompt;
+  }
+  const url = b.url === undefined ? fromUrl : String(b.url).trim();
+  if (url) {
+    const bad = deckDecorUrlProblem(url);
+    if (bad) {
+      res.status(400).json({ error: `${bad}这一层没改。` });
+      return;
+    }
+  }
+  const rawAlpha = b.alpha;
+  const alpha = rawAlpha === undefined || rawAlpha === null || rawAlpha === '' ? undefined : Number(rawAlpha);
+  if (alpha !== undefined && (!Number.isFinite(alpha) || alpha < 0 || alpha > 1)) {
+    res.status(400).json({ error: `浓度要是 0 到 1 之间的数（收到 ${JSON.stringify(rawAlpha)}），这一层没改。` });
+    return;
+  }
+  const prompt =
+    b.prompt === undefined ? fromPrompt : String(b.prompt).slice(0, MAX_FULL_PROMPT_CHARS);
+  if (url === undefined && alpha === undefined && prompt === undefined) {
+    // 静默回 200 的话前端那句「已保存」是假的（他会以为这张图已经整份都用上了）。
+    res.status(400).json({
+      error: '要整份用一张装饰底图请带 url 或者 fromPage（url 传空串是关掉这一层），只调浓度就带 alpha。这一层没改。',
+    });
+    return;
+  }
+  if (!setDeckDecor(deck.id, owner, { url, alpha, prompt })) {
+    res.status(500).json({ error: '这一层没存上（刷新一下再试一次）。' });
+    return;
+  }
+  const saved = getDeck(deck.id, owner)!;
+  const decor = saved.decor_url ? { url: saved.decor_url, alpha: saved.decor_alpha ?? DECOR_ALPHA } : null;
+  const report = deckDecorReport(
+    listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html })),
+    decor
+  );
+  const skipped = report.filter((r) => !r.applied && r.reason);
+  const notes: string[] = [];
+  if (!decor) {
+    notes.push('已经关掉整份那层装饰底图（每一页自己加的那一层不受影响，还在）。');
+  } else {
+    notes.push(
+      `整份 ${report.length} 页里有 ${report.length - skipped.length} 页垫上了这一层底图（浓度 ${Math.round(
+        decor.alpha * 100
+      )}%，一格图位都不占、也没花钱）。`
+    );
+    if (decor.alpha === 0) {
+      notes.push('浓度是 0 —— 这一层在页面上完全看不见（图还在，拖一下滑块就出来）。');
+    }
+    for (const s of skipped) notes.push(`第 ${s.page} 页没垫上：${s.reason}`);
+    notes.push('导出的 .html 和 .pptx 里都有这一层（pptx 里它是一张贴死的底图，颜色在 PowerPoint 里改不了）。');
+  }
+  res.json({
+    decor: { url: saved.decor_url, alpha: saved.decor_alpha ?? DECOR_ALPHA, prompt: saved.decor_prompt },
+    applied: report.length - skipped.length,
+    total: report.length,
+    skipped,
+    notes,
+  });
 });
 
 /**

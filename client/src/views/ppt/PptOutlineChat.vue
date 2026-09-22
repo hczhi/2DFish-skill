@@ -167,14 +167,19 @@ const starters = [
     <SiteHeader />
 
     <main class="chat-layout">
+      <div class="bg-elements">
+        <div class="bg-overlay"></div>
+        <div class="grid-bg"></div>
+      </div>
+
       <header class="bar">
-        <div>
+        <!-- <div>
           <h1>AI 生成提纲</h1>
           <p class="sub">
             说清楚给谁讲、什么场合、要对方做什么，它会先问缺的、再出一份能直接排版的提纲。
             <b>每发一句是一次真实 AI 调用</b>；这段对话不保存，离开这一页就没了。
           </p>
-        </div>
+        </div> -->
         <button class="btn-ghost" @click="back">返回新建页</button>
       </header>
 
@@ -219,7 +224,7 @@ const starters = [
 
           <div v-if="busy" class="msg assistant">
             <span class="who">AI</span>
-            <div class="bubble thinking">正在想…（这一轮已经扣了 1 次 AI 额度）</div>
+            <div class="bubble thinking">正在想… </div>
           </div>
 
           <div v-for="(n, i) in notes" :key="`n${i}`" class="note">{{ n }}</div>
@@ -238,16 +243,12 @@ const starters = [
             spellcheck="false"
           ></textarea>
           <p v-else class="side-empty">
-            它还没给出提纲。聊到你觉得够了，说一句「按这些出提纲」——
-            提纲出来会显示在这里，可以直接在这儿改完再带回去。
+            还没提纲信息, 请先说一句你要讲什么。
           </p>
           <button class="btn-primary" :disabled="!outline || busy" @click="useOutline">
-            用这份提纲（带回新建页）
+            用这份提纲
           </button>
-          <p class="side-hint">
-            带回去之后新建页那个提纲框会被<b>整份替换</b>（那边有一个「撤销」可以恢复原来那份）。
-            这一页的对话不会跟着回去。
-          </p>
+         
         </aside>
       </div>
 
@@ -262,7 +263,7 @@ const starters = [
         <div class="composer-side">
           <em :class="{ over: input.length > MAX_MESSAGE }">{{ input.length }} / {{ MAX_MESSAGE }}</em>
           <button class="btn-primary" :disabled="!canSend" @click="send">
-            {{ busy ? '发送中…' : filesBusy ? '资料还在处理…' : '发送（1 次额度）' }}
+            {{ busy ? '发送中…' : filesBusy ? '资料还在处理…' : '发送' }}
           </button>
         </div>
       </div>
@@ -283,11 +284,40 @@ const starters = [
   --text-primary: #FFFFFF;
   --color-soft: rgba(255, 255, 255, 0.6);
   --bg-color: #12182B;
-
+  padding-top: 50px;
   display: flex; flex-direction: column; min-height: 100vh;
   background: var(--bg-color); font-family: var(--font-sans); color: var(--text-primary);
 }
-.chat-layout { flex: 1; width: 100%; max-width: 1240px; margin: 0 auto; padding: 32px 4vw 64px; box-sizing: border-box; }
+.chat-layout { position: relative; flex: 1; width: 100%; max-width: 1240px; margin: 0 auto; padding: 32px 4vw 64px; box-sizing: border-box; }
+
+.bg-elements {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url('https://file.qiaonan.vip/uploads/2026/09/03/01bf04c8-8d07-4af2-b94a-4261ee342576.png');
+  background-size: cover;
+  background-position: center;
+}
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 24, 43, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+  z-index: 1;
+}
+
+.bar, .alert, .files, .chat-body, .composer { position: relative; z-index: 1; }
+
 .bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .bar h1 { margin: 0 0 8px; font-size: 28px; font-weight: 800; letter-spacing: -0.03em; }
 .sub { margin: 0; font-size: 13px; color: var(--color-soft); line-height: 1.8; max-width: 760px; }
@@ -304,7 +334,7 @@ const starters = [
 }
 .files-toggle em { font-style: normal; font-weight: 400; font-size: 12px; color: var(--color-soft); }
 .files-body { padding: 0 18px 16px; }
-.chat-body { display: grid; grid-template-columns: 1fr 400px; gap: 20px; align-items: start; }
+.chat-body { display: grid; grid-template-columns: 1fr 400px; gap: 20px; align-items: stretch; }
 .stream {
   min-height: 440px; max-height: 60vh; overflow-y: auto; padding: 20px;
   background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px;
@@ -335,18 +365,19 @@ const starters = [
 .side {
   position: sticky; top: 20px; padding: 18px; border-radius: 20px;
   background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex; flex-direction: column;
 }
-.side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-shrink: 0; }
 .side-head span { font-size: 14px; font-weight: 700; }
 .side-head em { font-size: 12px; font-family: var(--font-mono); color: var(--color-soft); font-style: normal; }
 .outline-box {
-  width: 100%; box-sizing: border-box; font-family: var(--font-mono); font-size: 12.5px;
-  line-height: 1.8; padding: 12px 14px; border-radius: 12px; resize: vertical; margin-bottom: 12px;
+  width: 100%; flex: 1; box-sizing: border-box; font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.8; padding: 12px 14px; border-radius: 12px; resize: none; margin-bottom: 12px;
   background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--text-primary);
 }
 .outline-box:focus { outline: none; border-color: var(--brand-yellow); }
-.side-empty { font-size: 13px; line-height: 1.8; color: var(--color-soft); margin: 0 0 14px; }
-.side-hint { font-size: 12px; line-height: 1.8; color: var(--color-soft); margin: 10px 0 0; }
+.side-empty { font-size: 13px; line-height: 1.8; color: var(--color-soft); margin: 0 0 14px; flex: 1; }
+.side-hint { font-size: 12px; line-height: 1.8; color: var(--color-soft); margin: 10px 0 0; flex-shrink: 0; }
 .composer { display: flex; gap: 14px; margin-top: 20px; }
 .composer textarea {
   flex: 1; box-sizing: border-box; padding: 14px 16px; font-size: 15px; line-height: 1.8;

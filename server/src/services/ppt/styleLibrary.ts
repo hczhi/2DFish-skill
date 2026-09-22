@@ -15,16 +15,27 @@
 //    调用方必须把这件事说出来（见 imageService / PptPlan.vue）。
 
 import { library, libraryVersion } from './layoutLibrary.js';
-import { designVars, type DesignSpec } from './designSpec.js';
+import { designVars, motifImageNote, type DesignSpec } from './designSpec.js';
 
 /** 版式里那一格图的三路（每套画风各一份模板） */
 export type SlotImageMode = 'concept' | 'case' | 'data';
-/** 整页级的两路（模板是**文件级一份**，见 md §6） */
-export type PageImageMode = 'backdrop' | 'poster';
+/**
+ * 整页级的三路（模板是**文件级一份**，见 md §6）：背景图 / 单图 / **装饰背景**（`decor`，
+ * 铺在文字底下那一层很淡的线条几何，见 `imageModes.addDecor`）。
+ *
+ * 「整页那几路」这件事在三处有后果，所以只有这一个清单：模板在 md §6 里（不在 18 套画风里）、
+ * 比例锁 16:9（`findImageSlots`）、尾巴不是 `HARD_TAIL`。decor 少进哪一处都不报错 ——
+ * 少进比例那一处就是发 3:4 的 size 出去，回来一张竖图铺在整页上。
+ */
+export type PageImageMode = 'backdrop' | 'poster' | 'decor';
+/** 会轮着换**设计手法**的那两路（md §6.1）。**decor 不在里面**：装饰层要全份统一
+ *（那是「视觉母题」这一档的意义），按页轮的话每页的装饰各一个样，而每一页单看都正常。 */
+export type DeviceImageMode = 'backdrop' | 'poster';
 export type ImageMode = SlotImageMode | PageImageMode;
 
 export const PER_STYLE_MODES: SlotImageMode[] = ['concept', 'case', 'data'];
-export const PAGE_MODES: PageImageMode[] = ['backdrop', 'poster'];
+export const PAGE_MODES: PageImageMode[] = ['backdrop', 'poster', 'decor'];
+export const DEVICE_MODES: DeviceImageMode[] = ['backdrop', 'poster'];
 /**
  * `data-img-mode` 认的全部取值。**新增一路必须同时进这里**：`findImageSlots` 认不出的值一律
  * 按 concept 算 —— 整页背景图会拿 concept 那套模板生成（主体居中、四边留白、还带一句
@@ -91,6 +102,40 @@ const POSTER_TAIL =
   '不要水印、不要 UI 界面元素、不要 logo、不要页码，除「文字内容」里那几行之外不要出现任何别的字。';
 
 /**
+ * 装饰背景（decor）的尾巴。它铺在**整页文字的底下**、只有一两成不透明度，所以三句话都和
+ * 另外两路不一样：
+ *
+ * ① **「不许有字」照旧**（同 backdrop）：那一层上面正好压着这一页全部的文字，图里再有字
+ *    就是两层字叠着，而页面每一层都渲染正常。
+ * ② **「不要具体主体」**：装饰层里出现一个人/一台设备的话，它被压成两成不透明度之后是一团
+ *    认不出来的影子横在文字底下 —— 画面上只是「这一页有点脏」，一处都不报错（而这条路的
+ *    全部意义就是「加一层看不出是什么、但让页面不空」的东西）。
+ * ③ **不许暗**：这一层要垫在字底下，暗部会把字吃掉。这句是**局部要求摊到全幅
+ *    的唯一一处例外**（md §6「两条硬的」说的那件事在这里反过来）—— 因为这一层压根没有
+ *    「主体那一侧」，它整幅都在文字底下。**但「不许暗」不等于「平」**：原来这里还写着
+ *    「低对比」，加上模板里那句「极淡的点色、纤细均匀的线条」，回来的是一张接近全白的细线
+ *    框图 —— 再乘上 `DECOR_ALPHA` 那一两成不透明度，页面上压根看不见这一层，而缩略图、
+ *    接口、problems 全都正常（他只会以为装饰层没生成，一页页重生，每次真扣一次额度）。
+ *    所以只封「暗」这一端（暗部/重色块/最深到中间调），亮的那一端留给模板去要体积和高光。
+ */
+const DECOR_TAIL =
+  '画面铺满整幅、四边直接出血，不要边框、不要外框、不要暗角。' +
+  '整幅保持明亮、干净，大面积留白，不要暗部、不要重色块，最深的地方也只到中间调 —— 这一层会被压到很淡并垫在整页文字的下面。' +
+  '不要具体的人物、动物、产品、建筑或场景，只要抽象的形状、肌理与渐层。' +
+  '画面里不许出现任何文字、字母、数字、水印、UI 界面元素。';
+
+/**
+ * 这一路用哪条尾巴。**只有这一处在挑**（渲染和「重写整条」的对账清单共用）：两边各写一个
+ * 三元的话，改了尾巴之后对账用的还是旧那句 —— 于是「它每次都被改掉」永远成立（每次都在末尾
+ * 接一遍旧尾巴），而提示词读起来完全正常。
+ */
+function tailFor(mode: ImageMode): string {
+  return mode === 'backdrop' ? BACKDROP_TAIL
+    : mode === 'poster' ? POSTER_TAIL
+      : mode === 'decor' ? DECOR_TAIL : HARD_TAIL;
+}
+
+/**
  * 「画什么」那句里点了人的词。只用来**出声**（`personConflictNote`），不用来改提示词。
  *
  * 不写成「自动把人删掉」：subject 是规划那一步写的、也可能是他自己改的，替换掉之后
@@ -119,7 +164,7 @@ export function personConflictNote(mode: ImageMode, subject: string): string | n
 let cachedStyles: PptStyle[] | null = null;
 let cachedPageTemplates: Record<PageImageMode, string> | null = null;
 let cachedColors: DeckColors | null = null;
-let cachedDevices: Record<PageImageMode, string[]> | null = null;
+let cachedDevices: Record<DeviceImageMode, string[]> | null = null;
 // 这两份是 library 的派生物，所以跟着它的版本号一起作废：不跟的话改了
 // illustration-style.md / template.html 的 `:root` 之后生成用的是新骨架、生图提示词
 // 还是旧画风旧色值，「md 改了一半生效」而两边都不报错。
@@ -159,12 +204,20 @@ export function resetStyleCache(): void {
   cachedDevices = null;
 }
 
+/** 报错里用的中文名（只给人看，别拿去拼提示词）。 */
+const PAGE_MODE_CN: Record<PageImageMode, string> = {
+  backdrop: '背景图',
+  poster: '单图',
+  decor: '装饰背景',
+};
+
 /**
- * 整页图那两路的模板（md §6，**全库一份**）。
+ * 整页图那几路的模板（md §6，**全库一份**）。
  *
  * 缺一路就抛：回落到 concept 模板的话，「背景图」拿到的是一张主体居中、四边留白、还写着
  * 「主体离边缘留一点」的概念插画 —— 铺满整页之后就是「这张图怎么看都不像背景」，
- * 而生成成功、贴上了、一处不报错（而且真扣了一次额度）。
+ * 而生成成功、贴上了、一处不报错（而且真扣了一次额度）。装饰背景回落过去更隐蔽：
+ * 出来一张主体明确、有暗部的插画压在整页文字底下，页面上只是「这一页有点脏」。
  */
 export function pageTemplates(): Record<PageImageMode, string> {
   freshen();
@@ -175,9 +228,7 @@ export function pageTemplates(): Record<PageImageMode, string> {
       const tpl = codeBlockAfter(md, `#### ${mode} 模板`);
       if (!tpl) {
         throw new Error(
-          `配图画风库里找不到「#### ${mode} 模板」那个代码块（library/illustration-style.md §6 整页图模板）—— 整页${
-            mode === 'backdrop' ? '背景图' : '单图'
-          }没有模板可用。`
+          `配图画风库里找不到「#### ${mode} 模板」那个代码块（library/illustration-style.md §6 整页图模板）—— 整页${PAGE_MODE_CN[mode]}没有模板可用。`
         );
       }
       out[mode] = tpl;
@@ -195,13 +246,17 @@ export function pageTemplates(): Record<PageImageMode, string> {
  * 这就是「太单调、没设计感」剩下的那一半。
  *
  * **一路少于三条就抛**：只剩一条的话全份又变成同一个手法，而提示词读起来完全正常。
+ *
+ * **只有 `DEVICE_MODES` 那两路有手法库**（装饰背景不轮，见那个常量上的注释）——
+ * 这里跟着 `PAGE_MODES` 走的话，加一路就要求 md 里多一个「#### <那一路> 设计手法」代码块，
+ * 缺了整个整页图这条路全抛（现象是每一页的「AI 生成」都红一句找不到代码块）。
  */
-export function pageDevices(): Record<PageImageMode, string[]> {
+export function pageDevices(): Record<DeviceImageMode, string[]> {
   freshen();
   if (!cachedDevices) {
     const md = library().illustrationStyle;
-    const out = {} as Record<PageImageMode, string[]>;
-    for (const mode of PAGE_MODES) {
+    const out = {} as Record<DeviceImageMode, string[]>;
+    for (const mode of DEVICE_MODES) {
       const block = codeBlockAfter(md, `#### ${mode} 设计手法`);
       const list = block
         .split('\n')
@@ -228,7 +283,7 @@ export function pageDevices(): Record<PageImageMode, string[]> {
  * 没给页码时退到 `theme` 的哈希（主题里带页标题，所以每页也还是不一样）——
  * 一律回第一条的话，忘了传页码的那条路上全份又是同一个手法，而一处都不报错。
  */
-function pickDevice(mode: PageImageMode, input: RenderStyleInput): string {
+function pickDevice(mode: DeviceImageMode, input: RenderStyleInput): string {
   const list = pageDevices()[mode];
   const key = input.pageKey ?? hashKey(input.theme);
   return list[Math.abs(key + hashKey(input.deckKey || '')) % list.length];
@@ -375,7 +430,17 @@ export function renderStylePrompt(style: PptStyle, mode: ImageMode, input: Rende
     // 这一页的设计手法：**代码挑的那一条**（md §6.1）。必须排在颜色几句**之前** ——
     // 手法原文里带 `{{BRAND}}`，放到后面的话那几个字原样发给模型（它自己配一个颜色，
     // 而图和这份稿子不是一套色，每张单看都不错）。
-    .replace(/\{\{DEVICE\}\}/g, () => (page ? pickDevice(mode as PageImageMode, input) : ''))
+    // 装饰背景那一路的模板里压根没有这个位子（它不轮手法），所以这里也不许去挑一条 ——
+    // 挑了没地方填是小事，`pageDevices()` 会去解析一个 md 里不存在的代码块然后抛（每一页的
+    // 「AI 生成」红一句「找不到设计手法」）。
+    .replace(/\{\{DEVICE\}\}/g, () =>
+      (DEVICE_MODES as string[]).includes(mode) ? pickDevice(mode as DeviceImageMode, input) : ''
+    )
+    // 这份稿子的**视觉母题**（096 规范的第五档）。同样排在颜色几句之前（母题那句里允许写
+    // `{{BRAND}}`）。**只有整页那几路的模板有这个位子**：18 套 slot 模板各塞一个的话，
+    // 下次改这条规则只会改到一套，而另外 17 套照旧 —— 现象是「有的页跟着母题走、有的没跟」，
+    // 每张图单看都不错。`motifImageNote` 连段标一起给（默认那档回空串，模板里那一行整行塌掉）。
+    .replace(/\{\{MOTIF\}\}/g, () => (page ? motifImageNote(input.design) : ''))
     // 留白那一句：算不出来就是空串（不是一句编的默认值）。
     .replace(/\{\{SPACE\}\}/g, () => input.spaceHint || '')
     .replace(/\{\{SLIDE_TEXT\}\}/g, () => slideTextLines(input.slideText))
@@ -386,8 +451,7 @@ export function renderStylePrompt(style: PptStyle, mode: ImageMode, input: Rende
   // 版式里那一格（三路）的模板没有 `{{SPACE}}` 这个位子，留白那句接在尾巴前面 ——
   // 18 套模板各塞一个占位符的话，下次改这条规则只会改到一套（而另外 17 套照旧发出去）。
   const space = !page && input.spaceHint ? ` ${input.spaceHint}` : '';
-  const tail = page ? (mode === 'backdrop' ? BACKDROP_TAIL : POSTER_TAIL) : HARD_TAIL;
-  return `${body.replace(/\s*\n\s*/g, ' ').trim()}${space} ${tail}`;
+  return `${body.replace(/\s*\n\s*/g, ' ').trim()}${space} ${tailFor(mode)}`;
 }
 
 /** 「重写整条」那一步**必须原样留在那一条里**的一段（代码算的，见 `requiredPromptParts`）。 */
@@ -412,14 +476,20 @@ export function requiredPromptParts(
   mode: ImageMode,
   input: { ratio: string; slideText?: string[]; spaceHint?: string }
 ): RequiredPromptPart[] {
-  const page = isPageMode(mode);
-  const tail = page ? (mode === 'backdrop' ? BACKDROP_TAIL : POSTER_TAIL) : HARD_TAIL;
   const phrase = ratioPhrase(input.ratio);
   const out: RequiredPromptPart[] = [
     {
-      label: mode === 'poster' ? '「不要出现人物 / 除那几行外不要别的字」那条尾巴' : '「不许出现任何文字」那条尾巴',
-      text: tail,
-      probes: [mode === 'poster' ? '不要出现人物' : '不许出现任何文字'],
+      label:
+        mode === 'poster' ? '「不要出现人物 / 除那几行外不要别的字」那条尾巴'
+          : mode === 'decor' ? '「不许有字、只要抽象形状」那条尾巴'
+            : '「不许出现任何文字」那条尾巴',
+      text: tailFor(mode),
+      // 装饰背景要多核一句「不要具体主体」：它被压到两成不透明度垫在文字底下，出现一个
+      // 认得出来的东西时画面上只是「这一页有点脏」，而重写回来那条读起来完全正常。
+      probes:
+        mode === 'poster' ? ['不要出现人物']
+          : mode === 'decor' ? ['不许出现任何文字', '不要具体的人物']
+            : ['不许出现任何文字'],
     },
     { label: `比例（${phrase}）`, text: `画面按${phrase}。`, probes: [phrase] },
   ];

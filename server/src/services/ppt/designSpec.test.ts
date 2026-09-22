@@ -99,9 +99,14 @@ describe('deck 设计规范', () => {
     expect(() => readDesignSpec({ palette: 'P-Z', font: 'F-A', density: 'D-B' })).toThrow(DesignSpecError);
     // 缺一项也抛：缺的那项悄悄回默认的话，界面上三个下拉都对，而整份混了两套规范。
     expect(() => readDesignSpec({ palette: 'P-B', density: 'D-B' })).toThrow(DesignSpecError);
+    // 母题是**第五档而且可以不带**（新建页和老前端发上来的那个 design 对象里没有这个键）——
+    // 跟着一起硬卡的话整段规范一次都存不进去，现象是「新建时选的配色全丢了」。
     expect(readDesignSpec({ palette: 'p-b', font: 'F-C', density: 'D-A', header: 'h-b' })).toEqual({
-      palette: 'P-B', font: 'F-C', density: 'D-A', header: 'H-B',
+      palette: 'P-B', font: 'F-C', density: 'D-A', header: 'H-B', motif: DEFAULT_DESIGN.motif,
     });
+    // 带了但认不出照旧抛：回落的话他选了「细线网格」而往后生成的每张图都没有那一层。
+    expect(() => readDesignSpec({ palette: 'P-A', font: 'F-A', density: 'D-B', header: 'H-A', motif: 'M-Z' }))
+      .toThrow(DesignSpecError);
   });
 
   it('库里存着一个已经删掉的 id 时回落到默认那档并说出来', () => {
@@ -157,7 +162,9 @@ describe('deck 设计规范', () => {
   it('默认那一套注出来是空字符串（外壳里一句覆盖都没有）', () => {
     // 不空的话默认稿子上多一段和 template 抄重的色值，template 改了色它就钉在旧值上。
     expect(designStyleBlock(DEFAULT_DESIGN)).toBe('');
-    const block = designStyleBlock({ palette: 'P-B', font: 'F-B', density: 'D-C', header: 'H-C' });
+    // 母题那一档**故意不进这段 `<style>`**（它一条 CSS 都不产生，只进生图提示词）：
+    // 在这里注一句的话，写 HTML 那条路上的模型会照着用 CSS 画一层出来，从此写死在那一页上。
+    const block = designStyleBlock({ palette: 'P-B', font: 'F-B', density: 'D-C', header: 'H-C', motif: 'M-B' });
     expect(block).toContain('--c-brand:#2A5DB0');
     expect(block).toContain(DENSITIES.find(d => d.id === 'D-C')!.rules!);
     // 页眉那档的规则也要注：漏了的话下拉里选着「品牌色块」而每页左上角还是默认那行小字，

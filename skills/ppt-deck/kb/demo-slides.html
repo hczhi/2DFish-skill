@@ -1,0 +1,2576 @@
+<!--
+  版式 demo 的 69 个 <section> 片段。每个片段前面必须有一行 `<!-- @demo L<编号> -->`，
+  工作流靠它切分（顺序 = 页码顺序）。
+
+  三条约束，改这个文件时逐条对：
+  ① **只用 template.html 里已有的 class**（对账 逐个 token 核对）。写错一个类名
+     不报错，只是那一块回到默认流式布局 —— 而这份 demo 的全部作用就是「照我们的骨架跑出来
+     长这样」，塌了的那一版看起来就是版式本身不行。要临时调整用 inline style。
+  ② CSS 一律不写在这里，来自 template.html（拼装 在请求时把两边拼起来）。各存一份的话
+     改了 template 的版式 CSS，demo 照旧好看，而生成出来的页面已经变了。
+  ③ 图统一用 /ppt-cases/ph-*.svg 占位。案例只关注排版结构（见 layout-library.md 的核心原则），
+     配上真照片反而会让人按那张照片的调性去期待产出。
+  颜色一律走 var(--c-*)：demo 和真 deck 共用一套变量，换配色时这里跟着变。
+-->
+
+<!-- @demo L1 -->
+<section class="slide" data-demo="L1">
+  <div class="p5-visual" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="corners"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+  <div class="slide-inner">
+    <div class="p5-content">
+      <div class="kicker">KEY POINT</div>
+      <h1 class="page-title">能力的演进不是叠功能，<br>而是换底座</h1>
+      <div class="title-bar"></div>
+      <div class="quote-card">过去十年做的是<b>把流程搬上线</b>，接下来十年做的是<b>把判断交出去</b>。</div>
+      <p style="font-size:21px;line-height:1.9;max-width:640px">同一套业务动作，决策权从人转到系统之后，组织要重排的是审批链和责任边界，而不是再加一个模块。</p>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L2 -->
+<section class="slide has-bg tinted" data-demo="L2">
+  <div class="case-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+  <div class="slide-inner" style="align-items:center;justify-content:center;text-align:center">
+    <div class="kicker">SECTION 02</div>
+    <h1 class="page-title" style="font-size:88px;margin-top:14px">从试点走向规模化</h1>
+    <div class="title-bar" style="margin:26px auto 22px"></div>
+    <p style="font-size:24px;color:var(--c-ink-soft);letter-spacing:2px">三个试点跑通之后，真正的难题才开始</p>
+  </div>
+</section>
+
+<!-- @demo L3 -->
+<section class="slide" data-demo="L3">
+  <div class="hero-case" style="background-image:url(/ppt-cases/ph-16x9.svg)"></div>
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="slide-inner" style="width:54%;justify-content:center;gap:26px">
+    <div class="kicker">CASE 01 · 精密制造</div>
+    <div class="hc-name">恒益<b>精密</b></div>
+    <div class="point-bar"><span class="ic">1</span>排产从 3 人 2 天，压到 1 人 40 分钟</div>
+    <div class="point-bar"><span class="ic">2</span>换型损耗下降 18%，靠的是历史工单而非新设备</div>
+    <div class="point-bar"><span class="ic">3</span>第一版只上了一条线，第 7 周才铺开</div>
+  </div>
+</section>
+
+<!-- @demo L4 -->
+<section class="slide" data-demo="L4">
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">两种落地路径，代价不一样</h1>
+    <div class="title-bar"></div>
+    <div class="two-col" style="flex:1;align-content:center">
+      <div class="card orange">
+        <h3 style="font-size:30px;color:var(--c-ink-deep);margin-bottom:18px">自上而下：先定标准</h3>
+        <p style="font-size:19px;line-height:1.9">口径统一、能横向比；但第一版要等 3–4 个月，业务部门在这期间看不到东西，配合度会掉。</p>
+      </div>
+      <div class="card blue">
+        <h3 style="font-size:30px;color:var(--c-ink-deep);margin-bottom:18px">自下而上：先跑一个点</h3>
+        <p style="font-size:19px;line-height:1.9">两周就有人在用；代价是三个月后有四套口径，合并时要重做一遍数据层。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L5 -->
+<section class="slide cool" data-demo="L5">
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">上线 9 个月的四个数</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:46px 64px;align-content:center">
+      <div class="data-card"><div class="v">62%</div><p style="font-size:20px;margin-top:12px">重复性工单由系统直接闭环</p></div>
+      <div class="data-card"><div class="v">2.4h</div><p style="font-size:20px;margin-top:12px">平均响应时长（原 11.6 小时）</p></div>
+      <div class="data-card"><div class="v">18</div><p style="font-size:20px;margin-top:12px">进入常态运行的业务场景</p></div>
+      <div class="data-card"><div class="v">0.7‰</div><p style="font-size:20px;margin-top:12px">人工复核后的纠错率</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L6 -->
+<section class="slide" data-demo="L6">
+  <div class="slide-header"><div class="kicker">第一部分 · 趋势判断</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">四个阶段，各自的坎不同</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:34px">
+      <div style="height:3px;background:linear-gradient(90deg,var(--c-brand),var(--c-accent));border-radius:2px"></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:26px">
+        <div class="prog-item"><span class="yr">2022</span><b style="font-size:22px;color:var(--c-ink-deep)">工具期</b><p style="font-size:17px;line-height:1.75">个人自发使用，没有口径</p></div>
+        <div class="prog-item"><span class="yr">2023</span><b style="font-size:22px;color:var(--c-ink-deep)">试点期</b><p style="font-size:17px;line-height:1.75">三个场景验证，数据要人工搬</p></div>
+        <div class="prog-item"><span class="yr">2024</span><b style="font-size:22px;color:var(--c-ink-deep)">平台期</b><p style="font-size:17px;line-height:1.75">统一接入，开始有运营成本</p></div>
+        <div class="prog-item"><span class="yr">2025</span><b style="font-size:22px;color:var(--c-ink-deep)">常态期</b><p style="font-size:17px;line-height:1.75">进考核，责任边界要重写</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L7 -->
+<section class="slide tinted" data-demo="L7">
+  <div class="slide-header"><div class="kicker">过渡</div></div>
+  <div class="corners"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+  <div class="slide-inner" style="align-items:center;justify-content:center;text-align:center">
+    <div class="quote-card" style="font-size:58px;line-height:1.5;max-width:1240px;padding:64px 80px 58px">真正卡住规模化的从来不是模型，<br>是<b>没人愿意为它的输出签字</b>。</div>
+    <p style="margin-top:44px;font-size:22px;color:var(--c-ink-soft);letter-spacing:3px">—— 第二部分 · 组织与责任</p>
+  </div>
+</section>
+
+<!-- @demo L8 -->
+<section class="slide" data-demo="L8">
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">三家客户的同一块界面</h1>
+    <div class="title-bar"></div>
+    <div class="gallery g3" style="flex:1;align-content:center">
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">恒益精密 · 排产看板</p>
+      </div>
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">南岸物流 · 异常派单</p>
+      </div>
+      <div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <p style="font-size:18px;margin-top:12px;color:var(--c-ink-soft)">明泉零售 · 门店巡检</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L9 -->
+<section class="slide cool" data-demo="L9">
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">同一张工单，改造前后</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:1fr 96px 1fr;align-items:center;gap:18px">
+      <div>
+        <div class="kicker" style="margin-bottom:14px">改造前 · 11.6 小时</div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid var(--c-hairline)">
+        <p style="font-size:18px;margin-top:14px;line-height:1.8">四个系统之间人工转抄，每次转抄都要重新描述一遍现场。</p>
+      </div>
+      <div style="text-align:center;font-size:76px;font-weight:800;color:var(--c-brand)">→</div>
+      <div>
+        <div class="kicker" style="margin-bottom:14px">改造后 · 2.4 小时</div>
+        <img src="/ppt-cases/ph-16x9.svg" alt="" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px;border:1px solid var(--c-hairline)">
+        <p style="font-size:18px;margin-top:14px;line-height:1.8">现场一次录入，后续三个环节读同一条记录，人只做确认。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L10 -->
+<section class="slide" data-demo="L10">
+  <div class="slide-header"><div class="kicker">第四部分 · 我们能做什么</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">四项能力，可单独交付</h1>
+    <div class="title-bar"></div>
+    <div style="flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:26px;align-content:center">
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">现状盘点</b>
+        <p style="font-size:17px;line-height:1.8;margin-top:10px">两周内出一份可执行的场景清单</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">场景共建</b>
+        <p style="font-size:17px;line-height:1.8">和业务一起写验收标准，不替他们写</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">数据接入</b>
+        <p style="font-size:17px;line-height:1.8">先接三个系统，其余按需要再加</p>
+      </div>
+      <div class="card">
+        <img src="/ppt-cases/ph-1x1.svg" alt="" style="width:76px;height:76px;border-radius:18px;margin-bottom:20px">
+        <b style="font-size:24px;color:var(--c-ink-deep)">运营托管</b>
+        <p style="font-size:17px;line-height:1.8">头三个月我们盯着，之后交回去</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L11 -->
+<section class="slide" data-demo="L11">
+  <div class="tri-narrative">
+    <div class="tri-title">三条轨道同时推进，<span class="em">先后顺序不能换</span></div>
+    <div class="tri-cols">
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>01</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q1–Q2</div>
+          <div class="tri-subtitle">先立口径</div>
+          <ul class="tri-list">
+            <li>三个核心指标定义收口</li>
+            <li>只接已有系统，不新建表</li>
+            <li>验收人写进项目章程</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>02</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q3</div>
+          <div class="tri-subtitle">再铺场景</div>
+          <ul class="tri-list">
+            <li>从排产、派单两条线起</li>
+            <li>每个场景配一名业务负责人</li>
+            <li>两周一次现场复盘</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tri-col">
+        <div class="photo" style="background-image:url(/ppt-cases/ph-3x4.svg)"></div>
+        <div class="tri-num"><span class="step">PHASE</span>03</div>
+        <div class="tri-text">
+          <div class="tri-label">2025 Q4 起</div>
+          <div class="tri-subtitle">最后进考核</div>
+          <ul class="tri-list">
+            <li>纳入部门月度指标</li>
+            <li>责任边界与免责条款成文</li>
+            <li>预算从项目转运营</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第四部分 · 推进节奏</div></div>
+</section>
+
+<!-- @demo L12 -->
+<section class="slide has-card tinted" data-demo="L12">
+  <div class="slide-header"><div class="kicker">第二部分 · 团队</div></div>
+  <div class="bio-wrap">
+    <div class="bio-card">
+      <div class="bio-corner-tag">PROJECT LEAD</div>
+      <div class="bio-text">
+        <div class="bio-kicker">项目负责人</div>
+        <div class="bio-mega">陈叙</div>
+        <div class="bio-title-cn">解决方案总监 · 制造业方向</div>
+        <p class="bio-desc">带过 11 个制造业落地项目，其中 7 个进了客户的年度考核。习惯先砍需求再排期：第一版只做一条产线，第七周才铺开。</p>
+        <p class="bio-desc">在这个项目里负责口径评审和验收标准，不负责开发排期。</p>
+        <div class="bio-accent-line"></div>
+      </div>
+      <!-- badge 必须是 .bio-portrait 的**兄弟**：portrait 自己 overflow:hidden（圆形裁切），
+           放进去会被裁掉，而那一格看起来只是「这版没有徽章」。 -->
+      <div class="bio-portrait-wrap">
+        <div class="bio-portrait"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="bio-badge">12 YRS</div>
+      </div>
+      <div class="bio-bleed">
+        <span class="bleed-text">CORE TEAM</span>
+        <span class="bleed-dots"><span></span><span></span><span></span><span></span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L13 -->
+<section class="slide" data-demo="L13">
+  <div class="l13-wrap">
+    <div class="l13-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l13-pill">2025 年度回顾</div>
+    <div class="l13-stack">
+      <div class="l13-year">2025</div>
+      <div class="l13-mega">把「<em>能用</em>」做成「每天都在用」</div>
+      <div class="l13-sub">18 个场景进入常态运行，其中 11 个已经没有人再看它的日志</div>
+      <div class="l13-bilingual">
+        <div class="zh">云启数科 · 年度成效发布</div>
+        <div class="en">Annual Review · From Pilot to Practice</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L14 -->
+<section class="slide" data-demo="L14">
+  <div class="slide-header"><div class="kicker">第二部分 · 标杆案例</div></div>
+  <div class="slide-inner">
+    <div class="l14-wrap">
+      <div class="l14-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l14-hero-text">
+          <div class="l14-kicker">CASE 02 · 冷链物流</div>
+          <div class="l14-mega-en">Cold Chain, Warm Numbers</div>
+          <div class="l14-mega-cn">南岸物流的异常派单</div>
+        </div>
+      </div>
+      <div class="l14-info">
+        <div class="l14-info-col">
+          <h3>他们原来怎么干</h3>
+          <p class="l14-cn-p">温控报警先进值班群，再由值班人电话找车队，找到人之后手工补一张工单。夜班平均要 40 分钟才有人接手。</p>
+          <p class="l14-en-p">Alerts landed in a chat group; the night shift averaged 40 minutes to first response.</p>
+        </div>
+        <div class="l14-info-col">
+          <h3>现在怎么干</h3>
+          <p class="l14-cn-p">报警直接生成派单并指到人，值班人只做一次确认。夜班首响 6 分钟，但代价是前两周误派了 30 多单。</p>
+          <p class="l14-en-p">Six minutes to first response — after two noisy weeks of mis-routing.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L15 -->
+<section class="slide" data-demo="L15">
+  <div class="slide-header"><div class="kicker">第四部分 · 我们的主张</div></div>
+  <div class="slide-inner">
+    <div class="l15-wrap">
+      <div class="l15-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l15-hero-tl">
+          <div class="logo">云启数科</div>
+          先把边界画清楚，<br>再谈效率
+        </div>
+        <div class="l15-hero-tr">三条原则来自 11 个落地项目的复盘，不是行业白皮书的摘录。</div>
+      </div>
+      <div class="l15-text">
+        <div class="l15-col">
+          <h3>不替业务定义成功</h3>
+          <p class="l15-cn">验收标准由业务部门自己写，我们只负责让它可度量。我们写的那份，最后总会变成「技术上达标、业务上没人用」。</p>
+          <p class="l15-en">The acceptance bar is written by the business, not by us.</p>
+        </div>
+        <div class="l15-col">
+          <h3>先砍范围再排期</h3>
+          <p class="l15-cn">第一版只做一条产线、一个班次。范围小到能在两周内被真实使用，比覆盖全厂的三个月方案更容易活下来。</p>
+          <p class="l15-en">One line, one shift, two weeks — scope first, schedule second.</p>
+        </div>
+        <div class="l15-col">
+          <h3>把责任写进文件</h3>
+          <p class="l15-cn">系统给的结论谁签字、错了谁承担，在上线之前成文。没有这一页，规模化会停在「大家都说好用」的阶段。</p>
+          <p class="l15-en">Who signs off — and who owns the error — before go-live.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L16 -->
+<section class="slide" data-demo="L16">
+  <div class="slide-header"><div class="kicker">第二部分 · 服务网络</div></div>
+  <div class="slide-inner">
+  <div class="l16-wrap">
+    <div class="l16-title">
+      <h2>四个交付中心，就近响应</h2>
+      <p>现场问题 4 小时内到人，不靠远程截图来回问</p>
+    </div>
+    <div class="l16-grid">
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">深圳</div>
+        <div class="l16-cell-title-en">SHENZHEN</div>
+        <div class="l16-cell-desc">制造业交付主力，14 人常驻<div class="en">Manufacturing delivery hub</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">成都</div>
+        <div class="l16-cell-title-en">CHENGDU</div>
+        <div class="l16-cell-desc">西南区现场支持，9 人<div class="en">On-site support, southwest</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">上海</div>
+        <div class="l16-cell-title-en">SHANGHAI</div>
+        <div class="l16-cell-desc">零售与快消，11 人<div class="en">Retail &amp; FMCG</div></div>
+      </div>
+      <div class="l16-cell">
+        <div class="l16-cell-img"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+        <div class="l16-cell-title">天津</div>
+        <div class="l16-cell-title-en">TIANJIN</div>
+        <div class="l16-cell-desc">港口与冷链，6 人<div class="en">Port &amp; cold chain</div></div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L17 -->
+<section class="slide" data-demo="L17">
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="slide-inner">
+    <div class="l17-wrap">
+      <div class="l17-left">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l17-logo">云启数科</div>
+        <div class="l17-pill">2025</div>
+        <div class="l17-cn">在路上</div>
+        <div class="l17-en">On the way</div>
+      </div>
+      <div class="l17-right">
+        <div class="l17-head">CONTENTS<span class="accent">目录</span></div>
+        <div class="l17-list">
+          <div class="l17-item">
+            <div class="l17-num">01</div>
+            <div>
+              <div class="title">趋势判断</div>
+              <div class="desc">这一轮变化落在决策权上，不在功能清单上</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">02</div>
+            <div>
+              <div class="title">标杆案例</div>
+              <div class="desc">三家客户，三种起步方式，各自的代价</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">03</div>
+            <div>
+              <div class="title">成效盘点</div>
+              <div class="desc">九个月的四个数，以及没做成的那两件</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">04</div>
+            <div>
+              <div class="title">推进节奏</div>
+              <div class="desc">三条轨道同时推，但先后顺序不能换</div>
+            </div>
+          </div>
+          <div class="l17-item">
+            <div class="l17-num">05</div>
+            <div>
+              <div class="title">下一步</div>
+              <div class="desc">两周内需要你们决定的三件事</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L18 -->
+<section class="slide" data-demo="L18">
+  <div class="l18-wrap">
+    <div class="l18-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l18-headline">
+      <div class="l18-en">Nobody Signs<br>The Output</div>
+      <div class="l18-cn">没人愿意<br>为它签字
+        <svg viewBox="0 0 600 14" preserveAspectRatio="none"><path d="M0 9 Q 50 0 100 8 T 200 8 T 300 8 T 400 8 T 500 8 T 600 8" fill="none" stroke="var(--c-accent)" stroke-width="4"/></svg>
+      </div>
+      <div class="l18-lead">试点跑完、指标也达标，推到全量时却停在同一处：<br>没有人愿意在那份输出上签自己的名字。</div>
+    </div>
+    <div class="l18-cards">
+      <div class="l18-card">
+        <div class="quote">“</div>
+        <div class="title">责任没人接</div>
+        <div class="desc">系统给的结论，出错时算谁的。这一页不写清楚，业务部门永远只把它当参考。</div>
+      </div>
+      <div class="l18-card">
+        <div class="num">62%</div>
+        <div class="title">复核变成二次录入</div>
+        <div class="desc">怕担责就全量复核，于是省下来的时间又还回去了，账面上看不出问题。</div>
+      </div>
+      <div class="l18-card">
+        <div class="num">3</div>
+        <div class="title">口径各自一套</div>
+        <div class="desc">三个部门各跑一个试点，三个月后合并时要把数据层重做一遍。</div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第三部分 · 三个真实障碍</div></div>
+</section>
+
+<!-- @demo L19 -->
+<section class="slide" data-demo="L19">
+  <div class="l19-wrap">
+    <div class="l19-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l19-logo">云启数科<small>PRODUCT SPEC</small></div>
+    <div class="l19-title">
+      <h1>现场巡检终端 P3</h1>
+      <div class="sub">离线可用 | 手套可操作 | -20℃ 至 55℃ | 整机 2 年保</div>
+    </div>
+    <div class="l19-product"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l19-desc">为冷库和产线现场做的一版：断网时本地留 500 条记录，回到有网的位置自动补传；戴手套按得动，摘手套的那几秒是漏检最多的地方。</div>
+    <div class="l19-specs">
+      <div class="l19-spec"><div class="v">11.5h</div><div class="k">连续作业续航（-18℃ 实测）</div></div>
+      <div class="l19-spec"><div class="v">500 条</div><div class="k">断网离线留存上限</div></div>
+      <div class="l19-spec"><div class="v">IP66</div><div class="k">防尘防水等级</div></div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第四部分 · 交付物</div></div>
+</section>
+
+<!-- @demo L20 -->
+<section class="slide" data-demo="L20">
+  <div class="slide-header"><div class="kicker">第一部分 · 我们是谁</div></div>
+  <div class="slide-inner">
+    <div class="l20-wrap">
+      <div class="l20-textband">
+        <div class="l20-en">Built On<br>Site</div>
+        <div class="l20-cn">从现场长出来的方案</div>
+        <div class="l20-stat">
+          <span class="num">11</span>
+          <span class="lab">个已交付项目<small>其中 7 个进了客户年度考核</small></span>
+        </div>
+        <p class="l20-body">我们不做通用平台。每一版都是在客户的产线、库房、门店里改出来的，所以能说清哪些地方它做不到。</p>
+        <div class="l20-icons">
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-8h6v8"/></svg></div>
+            <div class="lab">制造</div>
+          </div>
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 7h13v10H1z"/><path d="M14 10h5l4 4v3h-9z"/><circle cx="5" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></svg></div>
+            <div class="lab">物流</div>
+          </div>
+          <div class="l20-icon">
+            <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9h18l-2 12H5z"/><path d="M8 9V5a4 4 0 018 0v4"/></svg></div>
+            <div class="lab">零售</div>
+          </div>
+        </div>
+      </div>
+      <div class="l20-hero"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L21 -->
+<section class="slide" data-demo="L21">
+  <div class="l21-wrap">
+    <div class="l21-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l21-left">
+      <div class="l21-en">One Pipe,<br>Three Numbers</div>
+      <div class="l21-cn">一条链路，三个指标</div>
+      <div class="l21-rule"></div>
+      <p class="l21-body">从现场录入到结算，中间原本有四次转抄。收拢成一条链路之后，能被度量的只剩三个数 —— 也正因为只剩三个，业务部门愿意把它写进考核。</p>
+    </div>
+    <div class="l21-right">
+      <div class="l21-stat">
+        <div class="num">2.4h</div>
+        <div class="lab">平均首响</div>
+        <div class="lab-en">First response</div>
+      </div>
+      <div class="l21-stat">
+        <div class="num">62%</div>
+        <div class="lab">系统直接闭环</div>
+        <div class="lab-en">Auto-closed</div>
+      </div>
+      <div class="l21-stat">
+        <div class="num">18</div>
+        <div class="lab">常态运行场景</div>
+        <div class="lab-en">Live scenarios</div>
+      </div>
+    </div>
+    <div class="l21-nav"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+  </div>
+  <div class="slide-header"><div class="kicker">第三部分 · 成效盘点</div></div>
+</section>
+
+<!-- @demo L22 -->
+<section class="slide" data-demo="L22">
+  <div class="l22-wrap">
+    <div class="l22-upper">
+      <div class="l22-hero">
+        <img src="/ppt-cases/ph-16x9.svg" alt="">
+        <div class="l22-hero-txt">
+          <div class="cn">先看得见，再谈自动<span class="en">SEE IT FIRST</span></div>
+        </div>
+      </div>
+      <div class="l22-info">
+        <h3>Brand summary</h3>
+        <div class="row"><strong>成立</strong>　2016 年 · 深圳</div>
+        <div class="row"><strong>方向</strong>　制造 / 物流 / 零售的现场数字化</div>
+        <div class="row"><strong>规模</strong>　40 人，其中 31 人常驻客户现场</div>
+        <div class="row"><strong>不做</strong>　通用平台、纯咨询交付、按人头外包</div>
+      </div>
+    </div>
+    <div class="l22-lower">
+      <div class="l22-lower-col">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
+        <h3>我们怎么起步</h3>
+        <p>第一次上门不谈方案，只跟着班组走一遍完整流程。四次转抄、两个 Excel、一个微信群 —— 这些在需求文档里从来不会出现。</p>
+      </div>
+      <div class="l22-lower-col">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20h-20"/></svg>
+        <h3>品牌定位</h3>
+        <p>不是最快出方案的那家，是敢在验收会上说「这三件我们做不到」的那家。11 个项目里有 7 个进了客户的年度考核，靠的是这一句。</p>
+      </div>
+    </div>
+  </div>
+  <div class="slide-header"><div class="kicker">第一部分 · 我们是谁</div></div>
+</section>
+
+<!-- @demo L23 -->
+<section class="slide" data-demo="L23">
+  <div class="l23-bg">
+    <img src="/ppt-cases/ph-16x9.svg" alt="">
+  </div>
+  <div class="slide-inner">
+    <div class="l23-stack">
+      <h1 class="l23-mega">被看不见的那一层拖住的制造业</h1>
+      <div class="l23-sub">让现场数据成为下一代生产系统的地基，而不是月底那份补录的报表</div>
+      <div class="l23-meta">
+        <div class="l23-owner">云启数科（深圳）有限公司</div>
+        <span class="l23-tag">A+ 轮 · 2026</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L24 -->
+<section class="slide" data-demo="L24">
+  <div class="slide-header"><div class="kicker">第二部分 · 传递场景</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">一份 deck 服务不了四种传递场景</h1>
+      <div class="lead">按「谁在读」和「有没有现场讲者」分，四种场景对密度和字号的要求是互斥的。</div>
+    </div>
+    <div class="l24-grid">
+      <div class="l24-cell">
+        <div class="l24-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <div class="l24-ttl">演讲者主导</div>
+        <div class="l24-txt">远距离可读性、节奏、视觉锚点，页面只做口头表达的补充。</div>
+      </div>
+      <div class="l24-cell">
+        <div class="l24-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <div class="l24-ttl">读者主导</div>
+        <div class="l24-txt">自解释的逻辑、明确的上下文、更完整的证据与可导航性。</div>
+      </div>
+      <div class="l24-cell">
+        <div class="l24-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <div class="l24-ttl">混合场景</div>
+        <div class="l24-txt">先明确主要模式，用备注、附录或补充细节服务次要那一种。</div>
+      </div>
+      <div class="l24-cell on">
+        <div class="l24-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <div class="l24-ttl">录制或自动播放</div>
+        <div class="l24-txt">旁白、计时、转场与播放可靠性，全程不依赖现场讲者。</div>
+      </div>
+    </div>
+    <div class="rp-foot">稀疏的演讲页当不了决策记录，密集的董事会页在大屏上讲不动 —— <b>先定主要场景，再决定信息密度与字号</b>。</div>
+  </div>
+</section>
+
+<!-- @demo L25 -->
+<section class="slide" data-demo="L25">
+  <div class="slide-header"><div class="kicker">第二部分 · 生命周期</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">同一份 deck，在不同阶段扮演不同角色</h1>
+    </div>
+    <div class="l25-axis">
+      <div class="l25-node">
+        <div class="l25-stage">活动前</div>
+        <div class="l25-dot"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="l25-desc">思考、综合、评审与排练的工具</div>
+      </div>
+      <div class="l25-node">
+        <div class="l25-stage">活动中</div>
+        <div class="l25-dot"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="l25-desc">协调注意力与节奏的共同视觉界面</div>
+      </div>
+      <div class="l25-node">
+        <div class="l25-stage">活动后</div>
+        <div class="l25-dot"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="l25-desc">决策记录、讲义与可复用的来源</div>
+      </div>
+      <div class="l25-node on">
+        <div class="l25-stage">没有现场活动</div>
+        <div class="l25-dot"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="l25-desc">异步阅读、录制、旁白或自动播放</div>
+      </div>
+    </div>
+    <div class="rp-foot">四段的读者和读法都不一样 —— <b>做之前先说清这一份主要活在哪一段</b>。</div>
+  </div>
+</section>
+
+<!-- @demo L26 -->
+<section class="slide" data-demo="L26">
+  <div class="slide-header"><div class="kicker">第三部分 · 模板</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">模板存在，是因为某种东西预计会重复出现</h1>
+    </div>
+    <div class="l26-duo">
+      <div class="l26-a">
+        <h3>主题 Theme</h3>
+        <p>提供协调一致的颜色、字体与效果。</p>
+      </div>
+      <div class="l26-b">
+        <h3>模板 Template</h3>
+        <p>在主题之上，再加一层面向用途的内容与结构。</p>
+      </div>
+    </div>
+    <div class="l26-quote">视觉上相似，不会自动形成一套模板。</div>
+    <div class="l26-cap">一套模板可以组合多个可复用层次：</div>
+    <div class="l26-row">
+      <div class="l26-cell">
+        <div class="l26-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>主题</b>
+        <span>颜色 / 字体 / 效果</span>
+      </div>
+      <div class="l26-cell">
+        <div class="l26-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>母版</b>
+        <span>共用格式与对象</span>
+      </div>
+      <div class="l26-cell">
+        <div class="l26-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>版式</b>
+        <span>占位符与构图</span>
+      </div>
+      <div class="l26-cell on">
+        <div class="l26-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>预置内容</b>
+        <span>起始页、示例与指引</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L27 -->
+<section class="slide" data-demo="L27">
+  <div class="slide-header"><div class="kicker">第三部分 · 页面判据</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">一页只做一件事，怎么判断做到了</h1>
+      <div class="lead">四条判据从上到下依次收紧，任何一条不过，这一页就该拆成两页。</div>
+    </div>
+    <div class="l27-wrap">
+      <div class="l27-list">
+        <div class="l27-item">
+          <div class="l27-no">01</div>
+          <div>
+            <h3>能用一句话说完</h3>
+            <p>标题就是那句话。要用「和」「以及」把两件事连起来才说得完，说明这页装了两页的内容。</p>
+          </div>
+        </div>
+        <div class="l27-item">
+          <div class="l27-no">02</div>
+          <div>
+            <h3>只有一个视觉主角</h3>
+            <p>大图、大数字、金句，三者里挑一个放大，其余全部降到辅助位。</p>
+          </div>
+        </div>
+        <div class="l27-item">
+          <div class="l27-no">03</div>
+          <div>
+            <h3>删掉任一块都会缺东西</h3>
+            <p>逐块问一遍「删了会不会看不懂」。答案是不会的，那一块就是装饰。</p>
+          </div>
+        </div>
+        <div class="l27-item">
+          <div class="l27-no">04</div>
+          <div>
+            <h3>三米外还读得出重点</h3>
+            <p>把页面缩到四分之一大小看一眼，先跳出来的东西就是观众记住的那一件。</p>
+          </div>
+        </div>
+      </div>
+      <div class="l27-fig">
+        <img src="/ppt-cases/ph-3x4.svg" alt="">
+        <div class="l27-cap">评审现场：先把页面缩到四分之一大小看一眼</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L28 -->
+<section class="slide" data-demo="L28">
+  <div class="slide-header"><div class="kicker">第三部分 · 交付自检</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">交付前的八项自检</h1>
+      <div class="lead">八条都是能在两分钟内核完的，全过一遍再发出去。</div>
+    </div>
+    <div class="l28-cols">
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>标题都是判断句</b>，不是「关于…的说明」这类栏目名</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>相邻两页版式不同</b>，同一版式连着不超过两页</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>每个数字都有口径</b>，写清时间窗口和数据来源</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>颜色只用规范里的变量</b>，没有临时调出来的色值</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>正文最小 17px</b>，缩到四分之一时仍能认出层级</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>图片有裁切余量</b>，主体不压在文字要落的那一侧</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>章节页承上启下</b>，不是只放一个部分编号</p>
+      </div>
+      <div class="l28-line">
+        <div class="l28-tick">✓</div>
+        <p><b>最后一页给动作</b>，谁在什么时候做什么决定</p>
+      </div>
+    </div>
+    <div class="l28-band">
+      <img src="/ppt-cases/ph-16x9.svg" alt="">
+      <p>八条里最常漏的是第三条：数字写了，口径没写，评审现场一问就得回去重算。</p>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L29 -->
+<section class="slide" data-demo="L29">
+  <div class="slide-header"><div class="kicker">第四部分 · 工作方式</div></div>
+  <div class="l29-wrap">
+    <div class="l29-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l29-say">
+      <h1 class="page-title">先写清楚<em>要让谁做什么决定</em>，<br>再决定这份东西长什么样。</h1>
+      <div class="l29-sub">顺序倒过来的那些版本，最后都在改字号和配色 —— 因为真正的问题在第一步就已经跳过去了。</div>
+    </div>
+    <div class="l29-loop">
+      <div class="l29-step">
+        <i>STEP 01</i>
+        <b>定题</b>
+        <span>一句话写出这份东西要促成的那个决定</span>
+      </div>
+      <div class="l29-step">
+        <i>STEP 02</i>
+        <b>取证</b>
+        <span>先把口径和来源钉住，再谈怎么呈现</span>
+      </div>
+      <div class="l29-step">
+        <i>STEP 03</i>
+        <b>排版</b>
+        <span>一页一件事，挑一个视觉主角放大</span>
+      </div>
+      <div class="l29-step">
+        <i>STEP 04</i>
+        <b>复述</b>
+        <span>请没参与的人讲一遍，听他讲丢了什么</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L30 -->
+<section class="slide" data-demo="L30">
+  <div class="slide-header"><div class="kicker">第四部分 · 三处真实改动</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">三处改动，都不在美化上</h1>
+    </div>
+    <div class="l30-row">
+      <div class="l30-card">
+        <div class="l30-pic">
+          <img src="/ppt-cases/ph-16x9.svg" alt="">
+          <div class="l30-no">01</div>
+        </div>
+        <div class="l30-body">
+          <h3>把栏目名改成判断句</h3>
+          <p>「关于渠道结构的说明」换成「三个渠道里只有一个还在增长」，页面一个像素没动。</p>
+          <div class="l30-tail">评审时长 42 分 → 26 分</div>
+        </div>
+      </div>
+      <div class="l30-card">
+        <div class="l30-pic">
+          <img src="/ppt-cases/ph-16x9.svg" alt="">
+          <div class="l30-no">02</div>
+        </div>
+        <div class="l30-body">
+          <h3>每个数字标上口径</h3>
+          <p>时间窗口、数据源、统计方式各一行小字，放在图表下方，问答环节的返工基本消失。</p>
+          <div class="l30-tail">会后补数请求 7 次 → 1 次</div>
+        </div>
+      </div>
+      <div class="l30-card">
+        <div class="l30-pic">
+          <img src="/ppt-cases/ph-16x9.svg" alt="">
+          <div class="l30-no">03</div>
+        </div>
+        <div class="l30-body">
+          <h3>最后一页只写动作</h3>
+          <p>谁、在什么时候、做什么决定。原来那页「总结与展望」被整页删掉。</p>
+          <div class="l30-tail">当场拍板率 3/10 → 8/10</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L31 -->
+<section class="slide" data-demo="L31">
+  <div class="slide-header"><div class="kicker">第五部分 · 从模板到规范</div></div>
+  <div class="l31-wrap">
+    <div class="l31-head">
+      <h1 class="page-title">模板只能管一次，规范才管得住第二十次</h1>
+      <p>模板解决的是「这一页怎么摆」，规范解决的是「下一个人接手时怎么摆也不会歪」。</p>
+    </div>
+    <div class="l31-band">
+      <img src="/ppt-cases/ph-16x9.svg" alt="">
+      <div class="l31-card">
+        <h3>差别只在一件事</h3>
+        <p>模板是一份文件，改完就散在各人电脑里；规范是一组判据，能被别人拿去核对自己的那一版。</p>
+        <b>先写判据，再做文件</b>
+      </div>
+      <div class="l31-meta">
+        <strong>21</strong>
+        <span>条判据覆盖全部版式</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L32 -->
+<section class="slide" data-demo="L32">
+  <div class="slide-header"><div class="kicker">第五部分 · 同一内容的三个版本</div></div>
+  <div class="l32-wrap">
+    <div class="l32-a">
+      <img src="/ppt-cases/ph-1x1.svg" alt="">
+      <div class="l32-txt">
+        <div class="l32-kick">MAIN VERSION</div>
+        <h1 class="page-title">同一份内容，<br>三个场合三个版本</h1>
+        <p>不是三份文件，是同一套判据在三种密度下的三次落地 —— 主张不变，能删的是证据的颗粒度。</p>
+      </div>
+    </div>
+    <div class="l32-b">
+      <img src="/ppt-cases/ph-16x9.svg" alt="">
+      <div class="l32-txt">
+        <h3>大屏演讲版</h3>
+        <p>一页一句，字号最大，证据留在口头。</p>
+      </div>
+    </div>
+    <div class="l32-c">
+      <img src="/ppt-cases/ph-16x9.svg" alt="">
+      <div class="l32-txt">
+        <h3>异步阅读版</h3>
+        <p>自解释，补上口径与附录，去掉转场页。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L33 -->
+<section class="slide" data-demo="L33">
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">目录</h1>
+    </div>
+    <div class="l33-wrap">
+      <div class="l33-list">
+        <div class="l33-row">
+          <div class="l33-no">01</div>
+          <h3>它到底是什么</h3>
+          <span>3 页</span>
+        </div>
+        <div class="l33-row">
+          <div class="l33-no">02</div>
+          <h3>四种传递场景</h3>
+          <span>4 页</span>
+        </div>
+        <div class="l33-row on">
+          <div class="l33-no">03</div>
+          <h3>一页只做一件事</h3>
+          <span>5 页</span>
+        </div>
+        <div class="l33-row">
+          <div class="l33-no">04</div>
+          <h3>三处真实改动</h3>
+          <span>3 页</span>
+        </div>
+        <div class="l33-row">
+          <div class="l33-no">05</div>
+          <h3>从模板到规范</h3>
+          <span>4 页</span>
+        </div>
+      </div>
+      <div class="l33-fig">
+        <img src="/ppt-cases/ph-3x4.svg" alt="">
+        <div class="l33-cap">第三部分是这份东西的重心：五页判据，全部可核对</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L34 -->
+<section class="slide" data-demo="L34">
+  <div class="l34-wrap">
+    <div class="l34-slats">
+      <div class="l34-slat"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+      <div class="l34-slat"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+      <div class="l34-slat"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+    </div>
+    <div class="l34-band">
+      <div class="l34-eyebrow">ANNUAL REVIEW 2026</div>
+      <h1 class="page-title">一页只做一件事，<em>其余全部删掉</em></h1>
+      <div class="l34-sub">这一年我们把 47 页的汇报砍到 18 页，评审时长反而从 42 分掉到 26 分。</div>
+    </div>
+    <div class="l34-meta">
+      <div><b>SPEAKER</b>内容工程组 · 陈</div>
+      <div><b>DATE</b>2026 年 9 月 · 年度复盘会</div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L35 -->
+<section class="slide" data-demo="L35">
+  <div class="l35-wrap">
+    <div class="l35-block"></div>
+    <div class="l35-fig"><img src="/ppt-cases/ph-3x4.svg" alt=""></div>
+    <div class="l35-en">2026 MID-YEAR REPORT</div>
+    <div class="l35-txt">
+      <div class="l35-rule"></div>
+      <h1 class="page-title">把判断写进版式，<em>不是写进备注</em></h1>
+      <p>每一条版式都带着一个已经踩过的坑，翻到那一页就不用再想一遍。</p>
+    </div>
+    <div class="l35-foot">
+      <div><b>SPEAKER</b>内容工程组 · 陈</div>
+      <div><b>DATE</b>2026 年 9 月</div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L36 -->
+<section class="slide" data-demo="L36">
+  <div class="slide-header"><div class="kicker">结尾</div></div>
+  <div class="l36-wrap">
+    <div class="l36-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l36-frame">
+      <h1 class="page-title">谢谢</h1>
+      <div class="l36-en">THANK YOU</div>
+      <div class="l36-say">下一步只有一件事：把这份规范挂到评审入口上，下个月的第一份汇报照它跑一遍。</div>
+    </div>
+    <div class="l36-contact">
+      <div><b>TEAM</b><span>内容工程组</span></div>
+      <div><b>CONTACT</b><span>deck@example.com</span></div>
+      <div><b>DATE</b><span>2026 年 9 月 · 年度复盘会</span></div>
+    </div>
+  </div>
+</section>
+
+
+<!-- @demo L37 -->
+<section class="slide" data-demo="L37">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="l37-head">
+      <h1 class="page-title">版式不是装饰，是把判断固化下来的那一层</h1>
+      <div class="l37-dateline">内容工程 · 方法论<br>2026-09 · 全库 39 条口径</div>
+    </div>
+    <div class="l37-wrap">
+      <div class="l37-col">
+        <p>做汇报最贵的不是排版，是每一次都从零开始想「这一页该长什么样」。同一个团队里，十个人对「重点」的理解会给出十种间距、十种字号，最后拼成的那份文件读起来像十个人各写了一页——而每个人都觉得自己那页是对的。</p>
+        <p>所以我们把判断写进版式：每一条案例对应一种<b>已经被验证过的信息结构</b>，而不是一张好看的图。挑版式的动作因此从审美判断变成了内容判断——这一页是要讲一个观点，还是要摊开四组并列的事实，还是要把一段没法拆的说明完整交出去。</p>
+        <p>这件事的收益不在单页上。单看一页，谁排都差不多；三十页连起来看，节奏、留白、强调的位置是不是同一套规则，读的人在第五页就能感觉出来，哪怕他说不清是哪里不对。</p>
+        <p>所以案例库里存的不是模板，是三十九个已经吵完的结论：这一档内容用几栏、字号到哪儿为止、哪种图放进来会盖掉正文。每一条后面都跟着一次返工。</p>
+      </div>
+      <div class="l37-col">
+        <p>长文页是这套体系里最容易被滥用的一档。它能装下一千字，于是任何写不完的内容都会往这儿倒。但读者的注意力不会因为版式能装就跟着变长，连着两页长文之后，翻页的人已经在等下一张图了。</p>
+        <p>真正的约束写在每一条案例的 design 提示里：整份最多两页、中间必须夹一页图为主的、内容不足六行时换用别的版式。这些不是建议，是踩过之后记下来的行数——写超一行不会报错，只会在投屏那一刻从下缘被切掉。</p>
+        <p>所以这一页的正确用法很窄：一段必须连着读完的背景、一份要交代口径的方法论、一条需要论证而不是罗列的立场。除此以外的内容，库里都有更合适的那一条。</p>
+        <p>判断的方法也很简单：把这一段念出来，如果每一句都能单独拎成一个要点，那它本来就该是清单页；只有那些拆开就不成立的段落，才值得占掉一整页的阅读时间。</p>
+      </div>
+      <div class="l37-aside">
+        <div class="l37-fig"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <div class="l37-note">
+          <h3>BACKGROUND</h3>
+          <p>两栏正文合计 24–28 行，约 900–1100 字，是全库文字容量最大的一条；超出的部分会顶到页脚色带上。</p>
+        </div>
+        <div class="l37-pull">读者的注意力不会因为版式能装就跟着变长。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L38 -->
+<section class="slide" data-demo="L38">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">四种最常被混用的页型</h1>
+      <div class="lead">按「一页要承担的任务」排序，不是按出现频率——排在前面的那两条决定了整份文件读起来是不是一件事。</div>
+    </div>
+    <div class="l38-rows">
+      <div class="l38-row">
+        <div class="l38-thumb"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <h3>聚焦页<em>FOCUS</em></h3>
+        <p>整页只讲一个判断，配一张主视觉，其余全是留白。用它的前提是这句话本身足够硬——摊不开的观点放在这儿只会显得空，读者会盯着那张图找线索。</p>
+        <div class="l38-no">01</div>
+      </div>
+      <div class="l38-row">
+        <div class="l38-thumb"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <h3>并列页<em>PARALLEL</em></h3>
+        <p>三到四组同级事实横排，彼此之间没有先后关系。一旦其中一组明显更重要，就该换成聚焦页加一段补充——并列的形式本身就是在说「这几件事一样重」。</p>
+        <div class="l38-no">02</div>
+      </div>
+      <div class="l38-row">
+        <div class="l38-thumb"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <h3>对比页<em>CONTRAST</em></h3>
+        <p>左右两块必须是同一维度上的两个取值：改造前后、我方对方、两条路线。左右各写一件不相干的事时，读者会自己编出一个不存在的对立，而这一页看起来排得很整齐。</p>
+        <div class="l38-no">03</div>
+      </div>
+      <div class="l38-row">
+        <div class="l38-thumb"><img src="/ppt-cases/ph-1x1.svg" alt=""></div>
+        <h3>长文页<em>PROSE</em></h3>
+        <p>需要一句句读下去、不能压缩成要点的说明。整份最多两页，且前后要夹一页以图为主的，否则第二页会被直接翻过去——版式装得下不等于人读得下。</p>
+        <div class="l38-no">04</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L39 -->
+<section class="slide" data-demo="L39">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="l39-wrap">
+    <div class="l39-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l39-side">
+      <h1 class="page-title">我们的判断</h1>
+      <div class="l39-en">OUR POSITION · 2026</div>
+    </div>
+    <div class="l39-body">
+      <p>过去一年里，所有返工都集中在同一个环节：内容已经定稿，页面还要重排三遍。排版本身不难，难的是每一次都要重新决定「这一页长什么样」——而这个决定平均花掉十几分钟，一份汇报有三十页。</p>
+      <p>我们的判断是，<b>版式应该先于内容存在</b>。写的人只负责回答三个问题：这一页要讲什么、有几组同级的事实、有没有图。剩下的间距、字号、留白、强调放在哪儿，都是已经定好并且被验证过的，不再是每次现场发挥。</p>
+      <p>这不是为了统一好看。统一只是副产品，真正省下来的是那个反复出现的决定；更重要的是，出错的方式从此收敛——每一条版式都带着一份写清楚了的行数上限和禁用项，翻到那一页就不用再想一遍。</p>
+    </div>
+    <div class="l39-stats">
+      <div><b>44</b><span>条已固化的版式，每条带一份踩过的坑</span></div>
+      <div><b>3×</b><span>同一份提纲的出稿速度</span></div>
+      <div><b>0</b><span>需要现场决定的间距与字号</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L40 -->
+<section class="slide" data-demo="L40">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="l40-wrap">
+    <div class="l40-img"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l40-edge"></div>
+    <div class="l40-txt">
+      <h1 class="page-title">先定<em>版式</em>，再写内容</h1>
+      <p class="l40-lead">一份三十页的汇报，真正耗时间的从来不是写字，而是每翻到一页都要重新决定「这一页长什么样」。</p>
+      <div class="l40-list">
+        <div><b>01</b><span>51 条版式，每条带一份行数上限和禁用项</span></div>
+        <div><b>02</b><span>提纲原文跟着每一页走，数字一个都不丢</span></div>
+        <div><b>03</b><span>配图、配色、疏密都是选出来的，不是现场发挥</span></div>
+      </div>
+    </div>
+    <div class="l40-cap">
+      <b>ON SITE · 2026</b>
+      <span>交付现场：一份提纲进来，四十分钟出稿</span>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L41 -->
+<section class="slide" data-demo="L41">
+  <div class="slide-header"><div class="kicker">章节</div></div>
+  <div class="l41-wrap">
+    <div class="l41-num">03</div>
+    <div class="l41-txt">
+      <h1 class="page-title">落地路径</h1>
+      <div class="l41-en">IMPLEMENTATION · 2026</div>
+      <p class="l41-say">从一页试点到整份自动成稿，中间只有三步 —— 每一步都能单独验收。</p>
+    </div>
+    <div class="l41-sub">
+      <div><b>01</b><span>单页试点</span></div>
+      <div><b>02</b><span>整份规划</span></div>
+      <div><b>03</b><span>批量出稿</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L42 -->
+<section class="slide" data-demo="L42">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="l42-wrap">
+    <div class="l42-head">
+      <h1 class="page-title">一年之后的三个数</h1>
+      <p>不是全部成绩，只是这三个数最能说明「先定版式」这件事到底改变了什么。</p>
+    </div>
+    <div class="l42-stage">
+      <img src="/ppt-cases/ph-16x9.svg" alt="">
+    </div>
+    <div class="l42-arc"></div>
+    <div class="l42-m l42-m1"><b>44</b><span>已固化的版式</span></div>
+    <div class="l42-m l42-m2"><b>40<i style="font-style:normal;font-size:28px">min</i></b><span>一份提纲到出稿</span></div>
+    <div class="l42-m l42-m3"><b>0</b><span>现场决定的字号</span></div>
+  </div>
+</section>
+
+<!-- @demo L43 -->
+<section class="slide" data-demo="L43">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <h1 class="page-title">三份交付样张</h1>
+    <p class="l43-lead">按交付时间排，从左到右依次是最早的那一份到上个月刚出的那一份。</p>
+    <div class="l43-deck">
+      <div class="l43-card">
+        <div class="l43-fig"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>CASE 01</b>
+        <h3>年度汇报</h3>
+        <p>32 页，全部走案例库版式。写的人只提供提纲，间距和字号一次都没有现场决定。</p>
+      </div>
+      <div class="l43-card">
+        <div class="l43-fig"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>CASE 02</b>
+        <h3>方案投标</h3>
+        <p>18 页，两天内改过四轮。改的都是内容，没有一轮是在调排版。</p>
+      </div>
+      <div class="l43-card">
+        <div class="l43-fig"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+        <b>CASE 03</b>
+        <h3>产品发布</h3>
+        <p>24 页，含 11 张生成图。图槽位的比例和构图要求都写在版式里，不用逐张交代。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L44 -->
+<section class="slide" data-demo="L44">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="l44-grid">
+      <div class="l44-side">
+        <h1 class="page-title">五步落地</h1>
+        <p>这条路线按「能不能被单独验收」排，不按依赖漂亮度排 —— 每一步做完都有一个能打开看的东西，不用等下一步、也不用等整套跑通。中间任何一步停下来，前面那几步都已经在用了；出了问题也能一眼看出是哪一步带进来的。</p>
+        <div class="l44-note">判据只有一条：这一步做完，他能打开哪一页、看到什么变化。</div>
+      </div>
+      <div class="l44-axis">
+        <div class="l44-step"><b>第一步</b><h3>单页试点</h3><p>挑一页最难排的内容，手工套一次版式，确认这套骨架撑得住。</p></div>
+        <div class="l44-step"><b>第二步</b><h3>提纲入库</h3><p>提纲原文跟着每一页走，数字和专有名词一个都不许在中途丢掉。</p></div>
+        <div class="l44-step"><b>第三步</b><h3>整份规划</h3><p>按归属和形状给每一页挑版式，相邻页不重复。</p></div>
+        <div class="l44-step"><b>第四步</b><h3>配图接入</h3><p>图槽位的比例、构图要求、禁用项都由版式给出，不逐张交代。</p></div>
+        <div class="l44-step"><b>第五步</b><h3>批量出稿</h3><p>一份提纲进来，四十分钟出一份可以直接讲的稿子。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L45 -->
+<section class="slide" data-demo="L45">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">三档投入对照</h1>
+      <div class="lead">按一份 30 页提案的实际用量算，从少到多排。三档的交付物口径一致，差别只在页数、生成图数量和陪改轮次。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：元</span>
+      <span>口径：单份成稿</span>
+    </div>
+    <div class="dt-wrap">
+      <table class="dt-table">
+        <thead>
+          <tr>
+            <th style="width:230px">档位</th>
+            <th>适用场合</th>
+            <th class="num">页数</th>
+            <th class="num">生成图</th>
+            <th class="num">出稿用时</th>
+            <th class="num">费用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>速稿</td>
+            <td>内部过会</td>
+            <td class="num">12</td>
+            <td class="num">3</td>
+            <td class="num">18 分钟</td>
+            <td class="num">240</td>
+          </tr>
+          <tr>
+            <td>标准</td>
+            <td>客户初次汇报</td>
+            <td class="num">24</td>
+            <td class="num">9</td>
+            <td class="num">36 分钟</td>
+            <td class="num">680</td>
+          </tr>
+          <tr>
+            <td>完整提案</td>
+            <td>正式投标</td>
+            <td class="num">36</td>
+            <td class="num">16</td>
+            <td class="num">52 分钟</td>
+            <td class="num">1,150</td>
+          </tr>
+          <tr>
+            <td>加配图版</td>
+            <td>发布会 / 展会</td>
+            <td class="num">36</td>
+            <td class="num">28</td>
+            <td class="num">71 分钟</td>
+            <td class="num">1,640</td>
+          </tr>
+          <tr class="on">
+            <td>四档合计</td>
+            <td>—</td>
+            <td class="num">108</td>
+            <td class="num">56</td>
+            <td class="num">177 分钟</td>
+            <td class="num">3,710</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="dt-src">用时含规划、逐页生成与配图，不含人工改稿；费用按当前接入点的实际 token 用量折算。</div>
+    <div class="rp-foot">同一份提纲，<b>页数翻三倍时用时只涨到 2.9 倍</b> —— 涨的那部分几乎全在配图，不在排版。</div>
+  </div>
+</section>
+
+<!-- @demo L46 -->
+<section class="slide" data-demo="L46">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">方案概述</h1>
+      <div class="lead">按「先能用、再好用」的顺序落地：第一周就能在群里直接用，后面两步都是在同一套鉴权和网关上加东西，不推翻已经在用的部分。</div>
+    </div>
+    <div class="l46-list">
+      <div class="l46-item">
+        <div class="l46-no">01</div>
+        <div>
+          <h3>整体思路<em>OVERVIEW</em></h3>
+          <p>把提纲、版式库、生成、导出四段拆成各自可以单独验证的一步，每一步做完都有一个能打开看的页面，不用等整套跑通。提纲进来先做一次清洗和分页，分页的结果逐页可改；版式从案例库里挑，理由和效果 demo 都摊在界面上，挑得准不准当场就能核。</p>
+        </div>
+      </div>
+      <div class="l46-item">
+        <div class="l46-no">02</div>
+        <div>
+          <h3>核心功能<em>FEATURES</em></h3>
+          <p>四十多条版式各自带着行数上限、图槽位比例和禁用项，生成那一页时只把它那一份说明喂进去；提纲原文按行号在代码里切、逐字跟着每一页走，<b>装不下时只喊不改</b>，不会让模型自己把六行数据压成一句结论。配图、导出 PDF、逐页重做都在同一份稿子上做，改一页不动别的页。</p>
+        </div>
+      </div>
+      <div class="l46-item">
+        <div class="l46-no">03</div>
+        <div>
+          <h3>预期效果<em>OUTCOME</em></h3>
+          <p>一份三十页的提纲，从贴进来到拿到可以直接讲的稿子约四十分钟，其中人工只花在两处：核一遍分页、挑几张图。<b>省下来的不是排版时间，是那个反复出现的决定</b>——这一页该用什么版式、这段字该放多大，现在由案例库替你答。</p>
+        </div>
+      </div>
+    </div>
+    <div class="rp-foot">三步都在同一套鉴权和网关上，<b>任何一步停下来，前面那几步都已经在用了</b>。</div>
+  </div>
+</section>
+
+<!-- @demo L47 -->
+<section class="slide" data-demo="L47">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">时间花在哪儿</h1>
+      <div class="lead">一份 30 页提案从贴进提纲到拿到成稿，各段实测耗时。条的长短由数值本身算出来，不是照着眼睛画的。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：分钟</span>
+      <span>口径：单份 30 页</span>
+    </div>
+    <div class="l47-rows" style="--bar-max:20">
+      <div class="l47-row" style="--bar-v:3">
+        <div class="l47-name">提纲清洗<em>OUTLINE</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">3<i>分钟</i></div>
+      </div>
+      <div class="l47-row" style="--bar-v:5">
+        <div class="l47-name">整份规划<em>PLAN</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">5<i>分钟</i></div>
+      </div>
+      <div class="l47-row on" style="--bar-v:19">
+        <div class="l47-name">逐页生成<em>BUILD</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">19<i>分钟</i></div>
+      </div>
+      <div class="l47-row" style="--bar-v:11">
+        <div class="l47-name">配图<em>IMAGES</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">11<i>分钟</i></div>
+      </div>
+      <div class="l47-row dim" style="--bar-v:2">
+        <div class="l47-name">导出 PDF<em>EXPORT</em></div>
+        <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+        <div class="l47-val">2<i>分钟</i></div>
+      </div>
+    </div>
+    <div class="dt-src">同一条接入点、同一份提纲连跑五次取中位数；人工核分页和挑图的时间不计入。</div>
+    <div class="rp-foot">四十分钟里 <b>一半花在逐页生成</b> —— 想再快只有关掉思维链那一个开关，砍 prompt 没用。</div>
+  </div>
+</section>
+
+<!-- @demo L48 -->
+<section class="slide" data-demo="L48">
+  <div class="l48-band"></div>
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="l48-card">
+    <div class="l48-head">
+      <h1 class="page-title">这份稿子怎么走</h1>
+      <div class="l48-en">CONTENTS · 06 CHAPTERS</div>
+    </div>
+    <div class="l48-rows">
+      <div class="l48-item">
+        <div class="l48-no">01</div>
+        <div>
+          <h3>提纲进来之后</h3>
+          <p>贴一份提纲，先整理掉写给自己的备注，再拆成逐页。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">02</div>
+        <div>
+          <h3>版式是怎么挑的</h3>
+          <p>整份一次挑完，相邻页去重，每页给一句理由。</p>
+        </div>
+      </div>
+      <div class="l48-item on">
+        <div class="l48-no">03</div>
+        <div>
+          <h3>逐页生成</h3>
+          <p>四十分钟里一半花在这一步，也是最值得盯的一步。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">04</div>
+        <div>
+          <h3>配图与替换</h3>
+          <p>占位图先上，挑好的图从素材库里换进去。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">05</div>
+        <div>
+          <h3>逐页改与重做</h3>
+          <p>说一句话改一页，改不动的那一页整页重做。</p>
+        </div>
+      </div>
+      <div class="l48-item">
+        <div class="l48-no">06</div>
+        <div>
+          <h3>导出与交付</h3>
+          <p>浏览器直接打印成 PDF，字号和留白和预览一致。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L49 -->
+<section class="slide" data-demo="L49">
+  <div class="l49-wrap"></div>
+  <div class="l49-block"></div>
+  <div class="slide-header"><div class="kicker">结尾</div></div>
+  <div class="l49-txt">
+    <div class="l49-en">NEXT STEPS</div>
+    <div class="l49-rule"></div>
+    <h1 class="page-title">下一版<em>今天就跑</em></h1>
+    <p>提纲贴进来、挑好版式、四十分钟出一版，剩下的时间用来改那三页你最在意的。</p>
+  </div>
+  <div class="l49-card">
+    <h2>接下来三件事</h2>
+    <div class="l49-steps">
+      <div class="l49-step">
+        <div class="l49-no">01</div>
+        <div>
+          <h3>贴一份真提纲进来</h3>
+          <p>手上那份提案的提纲就行，备注不用删。</p>
+        </div>
+      </div>
+      <div class="l49-step">
+        <div class="l49-no">02</div>
+        <div>
+          <h3>只盯规划那一步</h3>
+          <p>每页的「本页内容」对了，后面基本不会跑偏。</p>
+        </div>
+      </div>
+      <div class="l49-step">
+        <div class="l49-no">03</div>
+        <div>
+          <h3>把不满意的整页重做</h3>
+          <p>改不动的那一页别硬改，换个版式重来更快。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="l49-foot">
+    <div><b>CONTACT</b>云启数科 · 年度发布</div>
+    <div><b>DATE</b>2026 年 9 月</div>
+  </div>
+</section>
+
+<!-- @demo L50 -->
+<section class="slide" data-demo="L50">
+  <div class="l50-wrap"></div>
+  <div class="l50-block"></div>
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="l50-txt">
+    <h1 class="page-title">这套东西是怎么搭的</h1>
+    <p>三层从上往下看：上面几个模块各自独立可用，中间那层是所有模块共用的，最下面一层不对外。</p>
+  </div>
+  <div class="l50-layers">
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>应用层</h3>
+        <b>APPLICATION</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">调度台</div>
+        <div class="l50-cell">巡检 App</div>
+        <div class="l50-cell">工单中心</div>
+        <div class="l50-cell">数据看板</div>
+      </div>
+    </div>
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>能力层</h3>
+        <b>CAPABILITY</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">规则引擎</div>
+        <div class="l50-cell">权限与配额</div>
+        <div class="l50-cell">口径表</div>
+        <div class="l50-cell">指标库</div>
+      </div>
+    </div>
+    <div class="l50-layer">
+      <div class="l50-tag">
+        <h3>数据层</h3>
+        <b>DATA</b>
+      </div>
+      <div class="l50-cells">
+        <div class="l50-cell">运营主库</div>
+        <div class="l50-cell">影像资料</div>
+        <div class="l50-cell">作业日志</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L51 -->
+<section class="slide" data-demo="L51">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">三种用法，怎么选</h1>
+      <div class="lead">三档的差别只在「谁来盯那两处人工」——核一遍分页、挑几张图；生成本身三档是同一套。</div>
+    </div>
+    <div class="l51-trio">
+      <div class="l51-plan">
+        <b>SELF-SERVE</b>
+        <h3>自己跑</h3>
+        <div class="l51-price">40<i>分钟出一版</i></div>
+        <div class="l51-feat">贴提纲、核分页、挑版式，全在界面上</div>
+        <div class="l51-feat">改不动的那一页整页重做</div>
+        <div class="l51-feat">配图从素材库里换，导出直接打印 PDF</div>
+        <div class="l51-feat">用平台的额度，每天有次数上限</div>
+        <div class="l51-note">适合：手上已经有一份提纲</div>
+      </div>
+      <div class="l51-plan">
+        <div class="l51-flag">推荐</div>
+        <b>GUIDED</b>
+        <h3>陪跑一版</h3>
+        <div class="l51-price">1<i>天含两轮改稿</i></div>
+        <div class="l51-feat">第一版由我们跑，逐页过一遍再交给你</div>
+        <div class="l51-feat">按你的品牌色和字体调一套配置</div>
+        <div class="l51-feat">留一份改稿说明，之后你自己接着跑</div>
+        <div class="l51-feat">这一版的图我们挑好，不用你自己找</div>
+        <div class="l51-note">适合：第一次用，且这份稿子要对外讲</div>
+      </div>
+      <div class="l51-plan">
+        <b>EMBEDDED</b>
+        <h3>接进你的系统</h3>
+        <div class="l51-price">1<i>周含对接</i></div>
+        <div class="l51-feat">你的系统里点一下就生成，走中转接口</div>
+        <div class="l51-feat">版式和配色按你们的规范做一套</div>
+        <div class="l51-feat">用量走你们自己的 key，不占平台额度</div>
+        <div class="l51-feat">接口和错误码照 OpenAI 那一套</div>
+        <div class="l51-note">适合：每周都要出好几份</div>
+      </div>
+    </div>
+    <div class="rp-foot">三档用的是同一套版式库和同一条网关，换档不用重做已经生成的稿子。</div>
+  </div>
+</section>
+
+<!-- @demo L52 -->
+<section class="slide" data-demo="L52">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">半年里生成了多少页</h1>
+      <div class="lead">三月到八月，每个月经这条流水线跑出来、并且真的导出成稿的页数。柱高由数值本身算出来，轨道上限是代码取的整齐刻度。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：页</span>
+      <span>口径：已导出的稿子</span>
+    </div>
+    <div class="l52-plot">
+      <div class="l52-cols" style="--bar-max:500"><!-- demo 是静态 html，这里的上限手写；生成出来的页由 chartData.ts 算 -->
+        <div class="l52-col" style="--bar-v:120">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">120<i>页</i></div></div>
+          </div>
+          <div class="l52-name">三月<em>MAR</em></div>
+        </div>
+        <div class="l52-col" style="--bar-v:180">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">180<i>页</i></div></div>
+          </div>
+          <div class="l52-name">四月<em>APR</em></div>
+        </div>
+        <div class="l52-col" style="--bar-v:260">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">260<i>页</i></div></div>
+          </div>
+          <div class="l52-name">五月<em>MAY</em></div>
+        </div>
+        <div class="l52-col" style="--bar-v:305">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">305<i>页</i></div></div>
+          </div>
+          <div class="l52-name">六月<em>JUN</em></div>
+        </div>
+        <div class="l52-col" style="--bar-v:390">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">390<i>页</i></div></div>
+          </div>
+          <div class="l52-name">七月<em>JUL</em></div>
+        </div>
+        <div class="l52-col on" style="--bar-v:470">
+          <div class="l52-track">
+            <div class="l52-gap"></div>
+            <div class="l52-fill"><div class="l52-val">470<i>页</i></div></div>
+          </div>
+          <div class="l52-name">八月<em>AUG</em></div>
+        </div>
+      </div>
+    </div>
+    <div class="dt-src">按导出时间统计；草稿、重跑的版本和 demo 页不计入。</div>
+    <div class="rp-foot">半年里 <b>月产量涨了近四倍</b>，最急的一段是案例库补齐之后的六、七月。</div>
+  </div>
+</section>
+
+<!-- @demo L53 -->
+<section class="slide" data-demo="L53">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">一次生成就采用的比例</h1>
+      <div class="lead">三月到八月，每个月生成出来没有重跑、直接进了成稿的页数占比。基线是 0，一组百分比的满格钉在 100 —— 抬基线的话这条线会画成断崖。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：%</span>
+      <span>口径：当月首次生成的页</span>
+    </div>
+    <div class="l53-plot">
+      <!-- demo 是静态 html，上限、每个点的 --pt-y 和这条线的 points 都手写；生成出来的页由 chartData.ts 一次算出来 -->
+      <div class="l53-cols" style="--bar-max:100">
+        <svg class="l53-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <polyline class="l53-line" points="8.3333,68 25,59 41.6667,52 58.3333,43 75,37 91.6667,29"></polyline>
+        </svg>
+        <div class="l53-col" style="--bar-v:32;--pt-y:32%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">32<i>%</i></div>
+        </div>
+        <div class="l53-col" style="--bar-v:41;--pt-y:41%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">41<i>%</i></div>
+        </div>
+        <div class="l53-col" style="--bar-v:48;--pt-y:48%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">48<i>%</i></div>
+        </div>
+        <div class="l53-col" style="--bar-v:57;--pt-y:57%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">57<i>%</i></div>
+        </div>
+        <div class="l53-col" style="--bar-v:63;--pt-y:63%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">63<i>%</i></div>
+        </div>
+        <div class="l53-col on" style="--bar-v:71;--pt-y:71%">
+          <b class="l53-dot"></b>
+          <div class="l53-val">71<i>%</i></div>
+        </div>
+      </div>
+      <div class="l53-axis">
+        <div class="l53-name">三月<em>MAR</em></div>
+        <div class="l53-name">四月<em>APR</em></div>
+        <div class="l53-name">五月<em>MAY</em></div>
+        <div class="l53-name">六月<em>JUN</em></div>
+        <div class="l53-name">七月<em>JUL</em></div>
+        <div class="l53-name">八月<em>AUG</em></div>
+      </div>
+    </div>
+    <div class="dt-src">按页统计；同一页重跑多次只算第一次的结果。</div>
+    <div class="rp-foot">半年里一次过的比例从三成爬到 <b>七成</b>，最陡的一段是案例库补齐之后的五、六月。</div>
+  </div>
+</section>
+
+<!-- @demo L54 -->
+<section class="slide" data-demo="L54">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">一份稿子里的页型构成</h1>
+      <div class="lead">按最近三十份稿子统计，每一页归到四类页型里的哪一类。四块加起来就是全部的页 —— 合计必须是 100%，少了的那一份会在环上留一段灰缺口。</div>
+    </div>
+    <div class="dt-unit">
+      <span>单位：%</span>
+      <span>口径：已导出的稿子</span>
+    </div>
+    <!-- demo 是静态 html，环那一圈和每块的颜色都手写；生成出来的页由 chartData.ts 一次算出来（角度从 0 累加，图例色片取同一份色序） -->
+    <div class="l54-plot">
+      <div class="l54-ring" style="--ring:conic-gradient(var(--c-brand) 0deg 165.6deg, var(--c-accent) 165.6deg 262.8deg, var(--c-ink) 262.8deg 327.6deg, var(--c-brand-deep) 327.6deg 360deg)">
+        <div class="l54-hole">
+          <b>46<i>%</i></b>
+          <span>内容页 · 占比最大的一档</span>
+        </div>
+      </div>
+      <div class="l54-legend">
+        <div class="l54-item on" style="--bar-v:46;--slice:var(--c-brand)">
+          <b class="l54-chip"></b>
+          <div class="l54-label">正文内容页<em>CONTENT</em></div>
+          <div class="l54-val">46<i>%</i></div>
+        </div>
+        <div class="l54-item" style="--bar-v:27;--slice:var(--c-accent)">
+          <b class="l54-chip"></b>
+          <div class="l54-label">章节扉页与过渡<em>SECTION</em></div>
+          <div class="l54-val">27<i>%</i></div>
+        </div>
+        <div class="l54-item" style="--bar-v:18;--slice:var(--c-ink)">
+          <b class="l54-chip"></b>
+          <div class="l54-label">数据与图表页<em>DATA</em></div>
+          <div class="l54-val">18<i>%</i></div>
+        </div>
+        <div class="l54-item" style="--bar-v:9;--slice:var(--c-brand-deep)">
+          <b class="l54-chip"></b>
+          <div class="l54-label">封面与结尾<em>OTHER</em></div>
+          <div class="l54-val">9<i>%</i></div>
+        </div>
+      </div>
+    </div>
+    <div class="dt-src">按页型分类统计；一页只归一类，目录页并进「封面与结尾」。</div>
+    <div class="rp-foot">结构相当集中：<b>正文加章节扉页就占了七成三</b>，所以这两档的版式最值得先补。</div>
+  </div>
+</section>
+
+<!-- @demo L55 -->
+<section class="slide" data-demo="L55">
+  <div class="l55-wrap">
+    <div class="l55-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="远景雾山与水面，塔影在右半，左半是干净的天与雾，整体偏淡偏冷" data-img-mode="case">
+    </div>
+    <div class="l55-eyebrow">
+      <b>MOUNTAIN RIVER<br>WELLNESS RESORT</b>
+      <span>山 · 水 · 街 · 安</span>
+    </div>
+    <div class="l55-main">
+      <h1 class="page-title">从山而川，身心<em>「街」安</em></h1>
+      <div class="l55-cn">新山群康养旅游度假区</div>
+      <div class="l55-en">A RIVERSIDE WELLNESS DISTRICT WHERE STREETS SLOW DOWN AND MOUNTAINS COME CLOSER</div>
+    </div>
+    <div class="l55-sign">
+      <i></i>
+      <div>
+        <b>中国 · 新山 二零二六年 · 一月</b>
+        <span>XINSHAN · JANUARY 2026</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L56 -->
+<section class="slide" data-demo="L56">
+  <div class="l56-wrap">
+    <div class="l56-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="亮调实景：现代重工厂区玻璃幕墙建筑，主体在右半，天光充足" data-img-mode="case">
+    </div>
+    <div class="l56-mark">YUAN LI · 1998</div>
+    <div class="l56-main">
+      <h1 class="page-title">深耕高精尖 · 智造新重工</h1>
+      <div class="l56-caps">
+        <span><em>PRECISE</em></span>
+        <span>MACHINE LTD.</span>
+      </div>
+      <div class="l56-rule"></div>
+      <div class="l56-tags">
+        <div><b>五轴攻坚组</b><span>FIVE-AXIS</span></div>
+        <div><b>数字孪生</b><span>DIGITAL TWIN</span></div>
+        <div><b>产线联调</b><span>LINE TUNING</span></div>
+        <div><b>品质管控</b><span>QUALITY</span></div>
+        <div><b>全球交付</b><span>DELIVERY</span></div>
+      </div>
+      <div class="l56-org">原力精工智能装备公司</div>
+    </div>
+    <div class="l56-rail"></div>
+  </div>
+</section>
+<!-- @demo L57 -->
+<section class="slide" data-demo="L57">
+  <div class="slide-header"><div class="kicker">内容</div></div>
+  <div class="slide-inner">
+    <div class="rp-head">
+      <h1 class="page-title">投入与产出，两组口径分开看</h1>
+    </div>
+    <div class="l57-stack">
+      <div class="l57-block">
+        <div class="l57-cap">
+          <h3>三档投入</h3>
+          <div class="l57-unit"><span>单位：元</span><span>口径：单份成稿</span></div>
+        </div>
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th style="width:300px">档位</th>
+              <th class="num">页数</th>
+              <th class="num">生成图</th>
+              <th class="num">费用</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>速稿</td>
+              <td class="num">12</td>
+              <td class="num">3</td>
+              <td class="num">240</td>
+            </tr>
+            <tr>
+              <td>标准</td>
+              <td class="num">24</td>
+              <td class="num">9</td>
+              <td class="num">680</td>
+            </tr>
+            <tr class="on">
+              <td>完整提案</td>
+              <td class="num">36</td>
+              <td class="num">16</td>
+              <td class="num">1,150</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="l57-block">
+        <div class="l57-cap">
+          <h3>同一份稿子的出稿节奏</h3>
+          <div class="l57-unit"><span>单位：分钟</span></div>
+        </div>
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th style="width:300px">环节</th>
+              <th>谁在等</th>
+              <th class="num">用时</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>规划逐页</td>
+              <td>贴完提纲</td>
+              <td class="num">4</td>
+            </tr>
+            <tr>
+              <td>逐页生成</td>
+              <td>可以边看边改</td>
+              <td class="num">31</td>
+            </tr>
+            <tr>
+              <td>配图</td>
+              <td>只等有图位的页</td>
+              <td class="num">17</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="dt-src">费用按当前接入点的实际 token 用量折算；用时为连续跑完一份 24 页稿子的实测值，不含人工改稿。</div>
+    <div class="rp-foot">两张表的口径完全不同 —— 并成一张之后，<b>「分钟」那一列会被读成钱</b>。</div>
+  </div>
+</section>
+
+<!-- @demo L58 -->
+<section class="slide" data-demo="L58">
+  <div class="slide-header"><div class="kicker">过渡</div></div>
+  <div class="l58-wrap">
+    <div class="l58-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="一颗带蒂的红番茄特写，主体填满画面，背景干净偏暗" data-img-mode="concept">
+    </div>
+    <div class="l58-echo">FRESH 2026</div>
+    <div class="l58-char">鲜</div>
+    <div class="l58-main">
+      <h1 class="page-title">从地里到桌上，<br>只留<em>一天</em>的时间</h1>
+      <div class="l58-sub">下一节 · 冷链与到店节奏</div>
+    </div>
+    <div class="l58-en">FROM FIELD TO TABLE<br>WITHIN TWENTY FOUR HOURS</div>
+  </div>
+</section>
+
+<!-- @demo L59 -->
+<section class="slide" data-demo="L59">
+  <div class="slide-header"><div class="kicker">过渡</div></div>
+  <div class="l59-wrap">
+    <div class="l59-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="清晨的连绵山脊远景，上方留出大片天空，整体偏暗偏冷" data-img-mode="concept">
+    </div>
+    <div class="l59-main">
+      <div class="l59-kicker">CHAPTER TWO · WHAT HOLDS IT UP</div>
+      <h1 class="page-title">看得见的效率，<em>算得清</em>的成本</h1>
+      <div class="l59-sub">这一句不是口号 —— 下面五件事各自都有一页在讲清楚它怎么做到。</div>
+      <div class="l59-nodes">
+        <div class="l59-node"><b>选</b><span>选题共写</span></div>
+        <div class="l59-node"><b>排</b><span>版式匹配</span></div>
+        <div class="l59-node"><b>核</b><span>逐页自检</span></div>
+        <div class="l59-node"><b>图</b><span>按位配图</span></div>
+        <div class="l59-node"><b>交</b><span>一键导出</span></div>
+      </div>
+    </div>
+    <div class="l59-en">FIVE STEPS · ONE DECK · ZERO SILENT FAILURES</div>
+  </div>
+</section>
+
+<!-- @demo L60 -->
+<section class="slide" data-demo="L60">
+  <div class="slide-header"><div class="kicker">阶段小结</div></div>
+  <div class="l60-wrap">
+    <div class="l60-top">
+      <div class="l60-notes">
+        <div class="l60-note"><b>61</b><span>版式清单里可挑的骨架条数</span></div>
+        <div class="l60-note"><b>4.5 分</b><span>一页从规划到出稿的平均耗时</span></div>
+        <div class="l60-note"><b>0</b><span>静默失败：每一次降级都出声</span></div>
+      </div>
+      <div class="l60-head">
+        <h1 class="page-title">先把版式定下来，<br>再让 AI <em>照着排</em></h1>
+        <div class="l60-arrow"><i></i><b></b></div>
+      </div>
+    </div>
+    <div class="l60-band">
+      <b>骨架是人定的，内容才交给模型 —— 这一条是整套流程的地基。</b>
+      <span>STRUCTURE FIRST</span>
+    </div>
+    <div class="l60-strip">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="团队在长桌上摊开一排打印稿的横向宽景，主体在中间偏左，上方留白" data-img-mode="case">
+      <div class="l60-pills"><span>版式匹配</span><span>逐页自检</span><span>按位配图</span><span>一键导出</span></div>
+      <div class="l60-em">ONE SLICE AT A TIME · FIFTEEN MINUTES EACH</div>
+      <div class="l60-go">→</div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L61 -->
+<section class="slide" data-demo="L61">
+  <div class="slide-header"><div class="kicker">机制</div></div>
+  <div class="l61-wrap">
+    <div class="l61-panel">
+      <div class="l61-illus">
+        <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="浅色调等距示意插画：一份文稿被拆成若干卡片后重新拼成一叠幻灯片，主体居中、背景干净" data-img-mode="concept">
+      </div>
+      <div class="l61-wave"></div>
+    </div>
+    <div class="l61-txt">
+      <div class="l61-kicker">HOW IT WORKS · 三步</div>
+      <h1 class="page-title">一份资料进来，<br>先<em>拆</em>再排</h1>
+      <p>资料先被拆成一页一件事，每一页按内容形状去清单里挑骨架，最后才让模型往骨架里填字。顺序反过来的话，模型会先写好一段话再去找版式，而那段话往往塞不进任何一条。</p>
+    </div>
+    <div class="l61-foot">
+      <div><b>拆页</b><span>一页只讲一件事，多的拖到下一页</span></div>
+      <div><b>挑骨架</b><span>按形状匹配，不按标题里的词匹配</span></div>
+      <div><b>填字自检</b><span>超出容量的那一段当场点名</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L62 -->
+<section class="slide" data-demo="L62">
+  <div class="slide-header"><div class="kicker">第三部分 · 项目组配置</div></div>
+  <div class="slide-inner">
+  <div class="l62-wrap">
+    <div class="l62-head">
+      <h2 class="page-title">这个项目谁来做</h2>
+      <div class="l62-lead">四个人全程在项目上，不是签合同时露一面的挂名专家</div>
+    </div>
+    <div class="l62-grid">
+      <div class="l62-card">
+        <div class="l62-photo"><img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="中年男性项目负责人的半身工作照，浅灰背景、自然光、齐胸景别、正面平视" data-img-mode="case"></div>
+        <div class="l62-txt">
+          <div class="l62-name">周维安</div>
+          <div class="l62-role">项目总负责 · 12 年</div>
+          <div class="l62-note">带过 3 个同类型省级平台，负责节奏和对外汇报</div>
+        </div>
+      </div>
+      <div class="l62-card">
+        <div class="l62-photo"><img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="青年女性技术负责人的半身工作照，浅灰背景、自然光、齐胸景别、正面平视" data-img-mode="case"></div>
+        <div class="l62-txt">
+          <div class="l62-name">许清和</div>
+          <div class="l62-role">技术负责 · 9 年</div>
+          <div class="l62-note">数据打通那一段由她拍板，驻场到上线为止</div>
+        </div>
+      </div>
+      <div class="l62-card">
+        <div class="l62-photo"><img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="青年男性实施顾问的半身工作照，浅灰背景、自然光、齐胸景别、正面平视" data-img-mode="case"></div>
+        <div class="l62-txt">
+          <div class="l62-name">林致远</div>
+          <div class="l62-role">实施顾问 · 6 年</div>
+          <div class="l62-note">每周两天在现场，培训和验收清单他跟</div>
+        </div>
+      </div>
+      <div class="l62-card">
+        <div class="l62-photo"><img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="中年女性质量与运维主管的半身工作照，浅灰背景、自然光、齐胸景别、正面平视" data-img-mode="case"></div>
+        <div class="l62-txt">
+          <div class="l62-name">戴舒宁</div>
+          <div class="l62-role">质量与运维 · 8 年</div>
+          <div class="l62-note">上线后一年的响应由她排班，报障 4 小时到人</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L63 -->
+<section class="slide" data-demo="L63">
+  <div class="slide-header"><div class="kicker">第三部分 · 组织架构</div></div>
+  <div class="slide-inner">
+  <div class="l63-wrap">
+    <div class="l63-head">
+      <h2 class="page-title">谁向谁汇报</h2>
+      <p>三个组同时开工，出了问题往上只走一级</p>
+    </div>
+    <div class="l63-top">
+      <b>项目领导小组</b>
+      <span>甲方分管领导 + 我方总负责，每两周一次例会</span>
+    </div>
+    <div class="l63-cols">
+      <div class="l63-col on">
+        <div class="l63-box">
+          <b>项目管理组</b>
+          <span>3 人 · 对进度和交付物负责</span>
+        </div>
+        <div class="l63-list">
+          <div>周报、月报和验收材料</div>
+          <div>变更评审，超两天的变更上会</div>
+          <div>对接甲方各处室</div>
+        </div>
+      </div>
+      <div class="l63-col">
+        <div class="l63-box">
+          <b>技术实施组</b>
+          <span>6 人 · 对系统和数据负责</span>
+        </div>
+        <div class="l63-list">
+          <div>平台搭建与配置</div>
+          <div>历史数据迁移与核对</div>
+          <div>与三个已有系统对接</div>
+          <div>上线演练</div>
+        </div>
+      </div>
+      <div class="l63-col">
+        <div class="l63-box">
+          <b>质量与运维组</b>
+          <span>4 人 · 对上线后一年负责</span>
+        </div>
+        <div class="l63-list">
+          <div>测试用例与缺陷跟踪</div>
+          <div>培训和操作手册</div>
+          <div>值班响应，报障 4 小时到人</div>
+        </div>
+      </div>
+    </div>
+    <div class="l63-foot">三个组每周一次联席会，纪要当天出；跨组的事由项目管理组落到人，不留「等对方」的状态。</div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L64 -->
+<section class="slide" data-demo="L64">
+  <div class="slide-header"><div class="kicker">第四部分 · 实施节奏</div></div>
+  <div class="slide-inner">
+  <div class="l64-wrap">
+    <div class="rp-head">
+      <h2 class="page-title">两条线同时走</h2>
+      <p class="lead">上面一条是我们交付什么，下面一条是同期需要贵方配合什么 —— 每个阶段两边都有一件明确的事。</p>
+    </div>
+    <div class="l64-body">
+      <div class="l64-row">
+        <div class="l64-lane">
+          <b>我方交付</b>
+          <span>项目组主责</span>
+        </div>
+        <div class="l64-card">
+          <b>现状盘点与方案定稿</b>
+          <span>走访三个处室，出一份带口径的现状报告和实施方案。</span>
+        </div>
+        <div class="l64-card">
+          <b>平台搭建与数据迁移</b>
+          <span>环境部署、三个已有系统对接，历史数据双向核对。</span>
+        </div>
+        <div class="l64-card">
+          <b>试运行与培训</b>
+          <span>两个处室先上，操作手册和三场培训同步落地。</span>
+        </div>
+        <div class="l64-card">
+          <b>全量上线与验收</b>
+          <span>全部处室切换，按验收清单逐项签字。</span>
+        </div>
+      </div>
+      <div class="l64-axis">
+        <div class="l64-node on">
+          <b>盘点</b>
+          <span>2026 Q1</span>
+        </div>
+        <div class="l64-node">
+          <b>建设</b>
+          <span>2026 Q2</span>
+        </div>
+        <div class="l64-node">
+          <b>试运行</b>
+          <span>2026 Q3</span>
+        </div>
+        <div class="l64-node">
+          <b>上线</b>
+          <span>2026 Q4</span>
+        </div>
+      </div>
+      <div class="l64-row l64-dn">
+        <div class="l64-lane">
+          <b>贵方配合</b>
+          <span>信息中心牵头</span>
+        </div>
+        <div class="l64-card">
+          <b>指定各处室对接人</b>
+          <span>一处一人，能拍板口径，两周内给到名单。</span>
+        </div>
+        <div class="l64-card">
+          <b>开放数据与网络权限</b>
+          <span>三个系统的接口账号、专网访问白名单。</span>
+        </div>
+        <div class="l64-card">
+          <b>排出参训人员时间</b>
+          <span>每场 20 人以内，避开月末结算周。</span>
+        </div>
+        <div class="l64-card off"></div>
+      </div>
+    </div>
+    <div class="rp-foot">四个阶段的边界都是<b>可验收的东西</b>：现状报告、迁移核对表、培训签到、验收清单 —— 任一阶段延期，下面那条线的配合事项跟着往后挪。</div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L65 -->
+<section class="slide" data-demo="L65">
+  <div class="slide-header"><div class="kicker">目录</div></div>
+  <div class="slide-inner">
+  <div class="l65-wrap">
+    <div class="l65-head">
+      <h2 class="page-title">目录</h2>
+      <span>CONTENTS</span>
+    </div>
+    <div class="l65-grid">
+      <div class="l65-item">
+        <div class="l65-num">01</div>
+        <div class="l65-txt">
+          <b>现状与问题</b>
+          <span>三个处室走访下来的原话，和数据对不上的三处</span>
+        </div>
+      </div>
+      <div class="l65-item on">
+        <div class="l65-num">02</div>
+        <div class="l65-txt">
+          <b>整体思路</b>
+          <span>先统一口径，再动系统 —— 为什么是这个顺序</span>
+        </div>
+      </div>
+      <div class="l65-item">
+        <div class="l65-num">03</div>
+        <div class="l65-txt">
+          <b>平台方案</b>
+          <span>四个模块、三处对接，以及不做什么</span>
+        </div>
+      </div>
+      <div class="l65-item">
+        <div class="l65-num">04</div>
+        <div class="l65-txt">
+          <b>实施与排期</b>
+          <span>四个阶段的交付物，和需要贵方配合的事</span>
+        </div>
+      </div>
+      <div class="l65-item">
+        <div class="l65-num">05</div>
+        <div class="l65-txt">
+          <b>组织保障</b>
+          <span>三个组怎么分工，出了问题往上走几级</span>
+        </div>
+      </div>
+      <div class="l65-item">
+        <div class="l65-num">06</div>
+        <div class="l65-txt">
+          <b>投入与效益</b>
+          <span>一次性投入、年运维，以及三年后省下的人力</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- @demo L66 -->
+<section class="slide" data-demo="L66">
+  <div class="slide-header"><div class="kicker">趋势判断</div></div>
+  <div class="l66-wrap">
+    <div class="l66-img">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="夜里的机房冷通道，主体和光源都靠画面右侧，左三分之一是暗背景" data-img-mode="case">
+    </div>
+    <div class="l66-txt">
+      <div class="l66-kicker">行业口径 · 2026</div>
+      <div class="l66-rule"></div>
+      <h1 class="page-title">算力不再是<em>门槛</em>，调度才是</h1>
+      <p class="l66-lead">三年里单卡成本降了六成，能不能按小时把闲置的卡调出去，成了这一轮真正拉开差距的地方。我们把调度做进了交付流程，而不是让它停在一份规划里。</p>
+      <div class="l66-stats">
+        <div><b>62%</b><span>单卡成本三年降幅</span></div>
+        <div><b>18h</b><span>闲置算力平均回收时长</span></div>
+        <div><b>3.4×</b><span>同一批卡的有效吞吐</span></div>
+      </div>
+    </div>
+    <div class="l66-cap">
+      <b>DATA CENTER · 2026</b>
+      <span>华东三号机房冷通道</span>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L67 -->
+<section class="slide" data-demo="L67">
+  <div class="slide-header"><div class="kicker">第三部分 · 三条落地路径</div></div>
+  <div class="l67-wrap">
+    <div class="l67-bg"><img src="/ppt-cases/ph-16x9.svg" alt=""></div>
+    <div class="l67-txt">
+      <div class="l67-kicker">落地路径 · 2026</div>
+      <h1 class="page-title">不是三个方案，<em>是三个阶段</em></h1>
+      <p class="l67-lead">同一批人、同一套数据，按这三段推进：先把口径钉死，再把调度接进现有流程，最后才谈复制到别的城市。跳过任何一段，后面那段都要返工，而返工的代价通常是一个季度。</p>
+      <div class="l67-figs">
+        <div><b>32</b><span>已落地城市</span></div>
+        <div><b>11</b><span>平均上线周数</span></div>
+      </div>
+    </div>
+    <div class="l67-cards">
+      <div class="l67-card">
+        <div class="l67-ico">01</div>
+        <em>PHASE ONE</em>
+        <b>口径对齐</b>
+        <p>把八个部门各自的算法统一到一份口径表上，先不动任何系统、不改任何报表。这一段最容易被跳过，也是后面所有返工的唯一来源。</p>
+      </div>
+      <div class="l67-card">
+        <div class="l67-ico">02</div>
+        <em>PHASE TWO</em>
+        <b>调度进流程</b>
+        <p>把闲置资源的回收动作接进现有的交付单，不新开系统、不加人、不改考核。上线四周内每一条都可以按单回滚。</p>
+      </div>
+      <div class="l67-card">
+        <div class="l67-ico">03</div>
+        <em>PHASE THREE</em>
+        <b>按城市复制</b>
+        <p>前两段跑满一个季度之后再开新城，每开一城只复制口径表和调度规则两份文件，本地团队不需要重新建模。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L68 -->
+<section class="slide" data-demo="L68">
+  <div class="slide-header"><div class="kicker">第二部分 · 为什么现在动手</div></div>
+  <div class="l68-wrap">
+    <div class="l68-ghost">窗口期 WINDOW</div>
+    <div class="l68-txt">
+      <div class="l68-kicker">时机 · 未来 18 个月</div>
+      <h1 class="page-title">这件事只在<em>这一段</em>做得成</h1>
+      <p class="l68-lead">补贴还在、口径还没被别人定死、你们手上那八个部门的数据还愿意开放 —— 三个条件同时成立的时间不会超过一年半。</p>
+    </div>
+    <div class="l68-rows">
+      <div class="l68-row"><i>01</i><div><b>补贴按季度递减</b><span>今年报上去的项目按 30% 补，明年同样的项目是 18%。</span></div></div>
+      <div class="l68-row"><i>02</i><div><b>口径谁先定谁说话</b><span>行业标准草案在征求意见阶段，现在提得进去，定稿后只能跟着改。</span></div></div>
+      <div class="l68-row"><i>03</i><div><b>数据开放是一次性的</b><span>八个部门这次是同一个考核压下来才肯放数据，下一轮各管一段。</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L69 -->
+<section class="slide" data-demo="L69">
+  <div class="slide-header"><div class="kicker">第一部分 · 一年跑出来的数</div></div>
+  <div class="slide-inner">
+    <div class="l69-grid">
+      <div class="l69-say">
+        <div class="l69-say-bg"><img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="夜里的调度中心，暖光从右上打下来，画面整体压暗、没有强主体" data-img-mode="case"></div>
+        <div class="l69-kicker">2026 · 全年口径</div>
+        <h1 class="page-title">这四个数是同一套口径下量出来的</h1>
+        <p>八个部门的算法先统一到一份口径表上，再回头重算这一年 —— 所以这四个数彼此可以相加、也可以和明年比。</p>
+        <div class="l69-note">口径表版本 v4，2026-08 冻结；未含试点城市的两个月空档。</div>
+      </div>
+      <div class="l69-cell brand">
+        <em>CITIES</em>
+        <b>32</b>
+        <p>已按同一口径完成结算的城市</p>
+      </div>
+      <div class="l69-cell">
+        <em>WEEKS</em>
+        <b>11</b>
+        <p>从签约到第一张调度单的平均周数</p>
+      </div>
+      <div class="l69-cell">
+        <em>REUSE</em>
+        <b>68%</b>
+        <p>闲置资源被二次调度掉的比例</p>
+      </div>
+      <div class="l69-cell accent">
+        <em>ROLLBACK</em>
+        <b>0</b>
+        <p>上线后需要整城回滚的次数</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L70 -->
+<section class="slide" data-demo="L70">
+  <div class="slide-header"><div class="kicker">第二部分 · 技术研发与创新</div></div>
+  <div class="slide-inner">
+    <div class="l70-grid">
+      <div class="l70-fig">
+        <img src="/ppt-cases/ph-3x4.svg" alt="" data-img-prompt="竖构图：工程师在暗光机房过道里看手持终端，主体在画面上半，下半是没有细节的暗区" data-img-mode="case">
+        <div class="l70-cap">
+          <em>二月</em>
+          <b>2026</b>
+          <p>第一批手持终端在华东三号机房完成灰度，连续 42 天没有回滚过一单。</p>
+        </div>
+      </div>
+      <div class="l70-say">
+        <div class="l70-kicker">研发口径 · 第三年</div>
+        <h1 class="page-title">研发的钱只<em>花在</em>能被第二个城市直接拿走的那一层</h1>
+        <p class="l70-lead">前两年我们按项目立项，每个城市都重写一遍调度规则；今年改成按能力立项，规则表和口径表是同一份，新城只做配置。</p>
+        <div class="l70-notes">
+          <div class="l70-note">
+            <b>按能力立项，不按项目</b>
+            <p>同一个能力只做一次，验收标准是「第二个城市不改代码能用」，达不到这条就不算做完。</p>
+          </div>
+          <div class="l70-note">
+            <b>规则表和口径表合一</b>
+            <p>调度规则直接读口径表的字段，改口径不用再同步改规则 —— 原来两边漂开的那半年全花在对账上。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L71 -->
+<section class="slide" data-demo="L71">
+  <div class="slide-header"><div class="kicker">第一部分 · 我们是一家什么样的公司</div></div>
+  <div class="l71-wrap">
+    <div class="l71-img">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="横构图：白天的开放式办公区，两三个人在白板前讨论，主体偏画面右上，底部是一条没有细节的地面" data-img-mode="case">
+    </div>
+    <div class="l71-txt">
+      <div class="l71-kicker">团队口径 · 2026</div>
+      <h1 class="page-title">我们把<em>返工率</em>当成唯一的考核项</h1>
+      <p class="l71-lead">不看交付了多少个项目，只看有多少个项目在验收之后还要回头改。这一条写进了每个人的季度目标，也写进了合同的验收条款里 —— 它是我们唯一愿意对外承诺的数。</p>
+    </div>
+    <div class="l71-notes">
+      <div class="l71-note">
+        <em>EXCELLENCE</em>
+        <b>一次做对</b>
+        <p>口径先对齐再动手，宁可多花一周在前面，也不让后面返工一个季度。</p>
+      </div>
+      <div class="l71-note">
+        <em>DYNAMIC</em>
+        <b>随时可回滚</b>
+        <p>每一次上线都按单回滚，出问题不用等版本窗口，当天就能退回上一态。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L72 -->
+<section class="slide" data-demo="L72">
+  <div class="slide-header"><div class="kicker">第三部分 · 三类接入方式</div></div>
+  <div class="l72-wrap">
+    <div class="l72-field">
+      <div class="l72-band">
+        <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="横构图：城市夜景的一条横带，远景灯带连成水平线，画面底部是没有细节的暗面" data-img-mode="case">
+      </div>
+    </div>
+    <div class="l72-txt">
+      <h1 class="page-title">同一套调度，三种接进去的方式</h1>
+      <p class="l72-sub">按你现有系统的改造余地挑一种，三种的口径表和结算规则完全一样，换一种不用重新对账。</p>
+    </div>
+    <div class="l72-cards">
+      <div class="l72-card">
+        <em>EMBEDDED</em>
+        <b>嵌进现有工单</b>
+        <p>不新开系统，调度动作作为一个字段挂在你原来的工单上。改造量最小，一般两周上线，适合流程已经跑顺的团队。</p>
+      </div>
+      <div class="l72-card">
+        <em>GATEWAY</em>
+        <b>网关转发</b>
+        <p>你的系统只对接一个地址，调度、限额、日志都在我们这一侧。适合内部系统改不动、但愿意把出口交出来的场景。</p>
+      </div>
+      <div class="l72-card">
+        <em>STANDALONE</em>
+        <b>独立跑一套</b>
+        <p>先在一个城市单独跑，和原系统不打通，跑满一个季度再决定要不要合并。适合还想留退路的第一次合作。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L73 -->
+<section class="slide" data-demo="L73">
+  <div class="slide-header"><div class="kicker">第一部分 · 五年走势</div></div>
+  <div class="slide-inner">
+    <div class="l73-grid">
+      <div class="l73-say">
+        <div class="l73-kicker">口径表 v4 · 2022–2026</div>
+        <h1 class="page-title">五年里每一次翻倍都来自同一件事</h1>
+        <p class="l73-lead">不是开了更多城市，是同一批资源被调度掉的比例从 <b>31%</b> 涨到了 <b>68%</b> ——新城带来的增量只占其中三成，剩下的全是原有城市里被重新用起来的那部分。</p>
+        <div class="l73-chart">
+          <div class="l73-ctitle">调度成交额<span>单位：亿元 · 口径表 v4 重算</span></div>
+          <div class="l47-rows" style="--bar-max:25">
+            <div class="l47-row" style="--bar-v:4.2">
+              <div class="l47-name">2022</div>
+              <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+              <div class="l47-val">4.2<i>亿元</i></div>
+            </div>
+            <div class="l47-row" style="--bar-v:7.6">
+              <div class="l47-name">2023</div>
+              <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+              <div class="l47-val">7.6<i>亿元</i></div>
+            </div>
+            <div class="l47-row" style="--bar-v:11.4">
+              <div class="l47-name">2024</div>
+              <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+              <div class="l47-val">11.4<i>亿元</i></div>
+            </div>
+            <div class="l47-row" style="--bar-v:16.9">
+              <div class="l47-name">2025</div>
+              <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+              <div class="l47-val">16.9<i>亿元</i></div>
+            </div>
+            <div class="l47-row on" style="--bar-v:23.5">
+              <div class="l47-name">2026</div>
+              <div class="l47-track"><div class="l47-fill"></div><div class="l47-gap"></div></div>
+              <div class="l47-val">23.5<i>亿元</i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="l73-notes">
+        <div class="l73-note">
+          <em>WHY IT HELD</em>
+          <b>口径先冻结</b>
+          <p>每年只在 8 月改一次口径表，改完全量重算历史 —— 所以这五根条子彼此可比。</p>
+        </div>
+        <div class="l73-note">
+          <em>WHERE IT CAME</em>
+          <b>增量七成在老城</b>
+          <p>新开城市只贡献了三成，剩下的是原有城市里被重新调度起来的闲置资源。</p>
+        </div>
+        <div class="l73-note brand">
+          <em>WHAT'S NEXT</em>
+          <b>2027 不再靠开城</b>
+          <p>复用率再往上一档要动调度规则本身，开城这条路今年已经走到头了。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L74 -->
+<section class="slide" data-demo="L74">
+  <div class="slide-header"><div class="kicker">第一部分 · 关于我们</div></div>
+  <div class="l74-wrap">
+    <div class="l74-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="夜里的城市天际线，右侧一座亮着灯的塔，左半是压暗的楼群和天空" data-img-mode="case">
+    </div>
+    <div class="l74-txt">
+      <div class="num-kicker">
+        <b>02</b>
+        <i></i>
+        <span>
+          <em>ABOUT US</em>
+          <small>关于我们</small>
+        </span>
+      </div>
+      <h1 class="page-title">把闲下来的运力<i class="l74-bar"></i>重新调度出去</h1>
+      <div class="l74-rule"></div>
+      <p class="l74-lead">云启数科 2014 年从一间机房起步，做的一直是同一件事：把已经买下来、却有一半时间闲着的运力和仓位重新排一遍。十二年里我们把这套调度装进了 38 座城市的车队，没有一台新车是为了增长买的。</p>
+      <div class="metric-row">
+        <div><span>落地城市</span><b>38</b></div>
+        <div><span>调度过的订单</span><b>10000+</b></div>
+        <div><span>常驻调度团队</span><b>100+</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L75 -->
+<section class="slide" data-demo="L75">
+  <div class="slide-header"><div class="kicker">第一部分 · 关于我们</div></div>
+  <div class="l75-wrap">
+    <div class="l75-bg">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="清晨的货运场站，左半是一排待发的厢车和调度员的身影，右半只有空地和淡色的天" data-img-mode="case">
+    </div>
+    <div class="l75-panel">
+      <div class="num-kicker">
+        <b>03</b>
+        <i></i>
+        <span>
+          <em>ABOUT US</em>
+          <small>关于我们</small>
+        </span>
+      </div>
+      <h1 class="page-title">把一半时间闲着的车排满</h1>
+      <p class="l75-lead">我们不做增量：一座城市的运力在早高峰之后有六个小时是空转的，云启数科把这六个小时拆成可以被别人买走的时段。十二年里这套排法进了 38 座城市，客户的车队规模一台没涨。</p>
+      <div class="l75-pills">
+        <span>调度托管</span>
+        <span>时段交易</span>
+        <span>司机结算</span>
+      </div>
+      <div class="metric-row">
+        <div><span>落地城市</span><b>38</b></div>
+        <div><span>排过的时段</span><b>10000+</b></div>
+        <div><span>常驻团队</span><b>100+</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- @demo L76 -->
+<section class="slide" data-demo="L76">
+  <div class="slide-header"><div class="kicker">第一部分 · 关于我们</div></div>
+  <div class="l76-wrap">
+    <div class="l76-img">
+      <img src="/ppt-cases/ph-16x9.svg" alt="" data-img-prompt="晴天的盘山公路，右半是层叠的山脊和一条上行的路，左半只有淡色的远山和天空" data-img-mode="case">
+    </div>
+    <div class="l76-txt">
+      <div class="num-kicker">
+        <b>01</b>
+        <i></i>
+        <span>
+          <em>ABOUT US</em>
+          <small>关于我们</small>
+        </span>
+      </div>
+      <h1 class="page-title">把空转的六小时排满</h1>
+      <div class="l76-rule"></div>
+      <p class="l76-lead">云启数科 2014 年从一间机房起步，做的一直是同一件事：把已经买下来、却有一半时间闲着的运力重新排一遍。十二年过去，客户的车队一台没涨。</p>
+      <div class="metric-row">
+        <div><span>落地城市</span><b>38</b></div>
+        <div><span>排过的时段</span><b>10000+</b></div>
+        <div><span>常驻团队</span><b>100+</b></div>
+      </div>
+    </div>
+  </div>
+</section>

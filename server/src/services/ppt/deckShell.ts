@@ -6,6 +6,7 @@
 
 import { library, libraryVersion } from './layoutLibrary.js';
 import { designStyleBlock, type DesignSpec } from './designSpec.js';
+import { pageImageMode, hasDecor } from './pageMarkers.js';
 
 /** template.html 里 `<section>` 的插入点。 */
 export const SLOT = '<!-- partN_fragment.html 的 <section> 在此按顺序插入 -->';
@@ -20,6 +21,18 @@ export interface DeckMeta {
    * 导出的文件橙的，两份各自都好看。没有就是默认那套（老 deck）。
    */
   design?: DesignSpec;
+  /**
+   * 整份共用的那层装饰底图（106）。**跟着 meta 走，理由同 `design`**：拼装的调用点有十几处，
+   * 另开一个参数的话漏传的那一处（比如配完图那次预览）静默没有这一层 —— 现象是
+   * 「换了张图之后底纹怎么没了，刷新一下又回来了」，两份各自都是正常的一页。
+   */
+  decor?: DeckDecor;
+}
+
+/** 整份共用的那层装饰底图：一个地址 + 一个浓度（`ppt_decks.decor_url` / `decor_alpha`）。 */
+export interface DeckDecor {
+  url: string;
+  alpha: number;
 }
 
 export interface AssembleOptions {
@@ -116,9 +129,16 @@ export function previewShell(meta: DeckMeta): string {
   );
 }
 
-/** 塞进 `PREVIEW_SLOT` 的那一段（贴好蒙版、剥掉页码、填过品牌记号）。 */
+/**
+ * 塞进 `PREVIEW_SLOT` 的那一段（贴好蒙版和整份那层装饰底图、剥掉页码、填过品牌记号）。
+ *
+ * **整份那层底图在这里贴，不在存 html 的时候贴**：存进去的话「改一张图」要重写所有页
+ * （一页失败就是半份有半份没有），而这里是每一处拼装的唯一入口 —— 预览、整份放映、导出 HTML
+ * 走的都是它，所以三处不可能显示成三种样子。
+ */
 export function previewSection(html: string, meta: DeckMeta, veilOpacity: number): string {
-  return fillMeta(applyVeil(stripPageNumber(html), veilOpacity), meta);
+  const decor = applyDeckDecor(stripPageNumber(html), meta.decor);
+  return fillMeta(applyVeil(decor.html, veilOpacity), meta);
 }
 
 /**
@@ -154,23 +174,113 @@ export function applyVeil(html: string, opacity: number): string {
   // 夹逼 + 非数字回落到 0：NaN 写进去的话 `opacity:var(--veil,0)` 整条声明在计算值那一步
   // 作废、回到初始值 1，那一页只剩一块黑，而没有一处报错。
   const o = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0;
+  // 这里静默返回原文的话，那一页就是唯一一页没有蒙版的 —— 而它在放映里翻过去只是「亮了一下」。
+  return writeSectionVars(cleaned, { '--veil': String(o) }, '蒙版');
+}
+
+/**
+ * 往 `<section>` 开标签上写若干个自定义属性（`--veil` / `--deck-decor…` 都走这一份）。
+ *
+ * **只有这一份实现**：贴一层背景到页上就是「往 section 上写一个变量」，而这件事有三个坑，
+ * 各写一遍的话下一层只踩中其中一两个：
+ * ① 已经有 `style` 的（版式会往 section 上写背景图）必须**并进那一个属性里** —— 另起一个
+ *    `style="…"` 的话 HTML 只认前面那一个，后加的整条被丢掉，这一层对那几页静默失效；
+ *    单引号的 `style='…'` 也要认（同一个原因）。
+ * ② 先摘掉上一次写进去的同名变量：不摘的话同一页越叠越浓（看起来只是「这一页怎么越来越暗」），
+ *    而 style 里出现两次时生效的是后一个 —— 他调的那个数悄悄不作数。
+ * ③ 扫不到 `<section>` 一律抛，不静默返回原文。
+ */
+function writeSectionVars(html: string, vars: Record<string, string>, what: string): string {
+  const names = Object.keys(vars);
   let injected = false;
-  const out = cleaned.replace(/<section\b[^>]*>/, (m) => {
+  const out = html.replace(/<section\b[^>]*>/, (m) => {
     injected = true;
-    const tag = m.replace(/\s*--veil\s*:[^;"']*;?/g, '');
-    // 已经有 style 的（版式会往 section 上写背景图）必须**并进那一个属性里**：另起一个
-    // `style="…"` 的话 HTML 只认前面那一个，后加的整条被丢掉 —— 蒙版对这几页静默失效。
-    // 单引号也要认（同一个原因）。
+    let tag = m;
+    for (const name of names) tag = tag.replace(new RegExp(`\\s*${name}\\s*:[^;"']*;?`, 'g'), '');
+    const decls = names.map((name) => `${name}:${vars[name]};`).join('');
     const has = /\sstyle\s*=\s*(["'])/.exec(tag);
     return has
-      ? tag.slice(0, has.index + has[0].length) + `--veil:${o};` + tag.slice(has.index + has[0].length)
-      : `${tag.slice(0, -1)} style="--veil:${o}">`;
+      ? tag.slice(0, has.index + has[0].length) + decls + tag.slice(has.index + has[0].length)
+      : `${tag.slice(0, -1)} style="${decls}">`;
   });
   if (!injected) {
-    // 这里静默返回原文的话，那一页就是唯一一页没有蒙版的 —— 而它在放映里翻过去只是「亮了一下」。
-    throw new Error('这一页里找不到 <section> 开标签，蒙版贴不上去（这段 HTML 不是一页幻灯片）。');
+    throw new Error(`这一页里找不到 <section> 开标签，${what}贴不上去（这段 HTML 不是一页幻灯片）。`);
   }
   return out;
+}
+
+export interface DeckDecorApply {
+  html: string;
+  /** 这一页到底垫上了没有 */
+  applied: boolean;
+  /** 没垫上的**真实成因**（垫上了就是空串）—— 给接口原样报出去 */
+  reason: string;
+}
+
+/**
+ * 地址里不许出现的东西：引号、括号、空白、反斜杠。
+ *
+ * 这一层的地址是拼进 `style="…--deck-decor:url(…)"` 的，所以带引号/括号的地址**不是「这一页
+ * 没底纹」，而是整个 style 属性从那个字符起断掉** —— 那一页的背景图、蒙版跟着一起消失，
+ * 而页面照旧渲染、一处不报错。写成 `url(xxx)` 不加引号也是为了这个（属性本身可能是单引号的）。
+ */
+const BAD_URL = /["'()\s\\]/;
+
+/** 地址能不能拼进 CSS（不能就回一句原因，给接口原样报出去）。 */
+export function deckDecorUrlProblem(url: string): string | null {
+  if (!url) return '没有地址。';
+  if (BAD_URL.test(url)) return `图片地址里有引号/括号/空格（${url}）—— 拼进 CSS 会把这一页的 style 整条截断。`;
+  if (!/^(https?:\/\/|\/)/.test(url)) return `图片地址要是 / 开头或者 http(s) 开头（收到 ${url}）。`;
+  return null;
+}
+
+/**
+ * 把整份共用的那层装饰底图贴到这一页上（**只写 section 上那两个变量，不加任何孩子** ——
+ * 理由同 `applyVeil`）。这一层长什么样见 template.html 里 `.slide::after` 那段注释。
+ *
+ * **永不抛**：拼一整份的时候抛出去等于「配了这层底纹之后整份稿子打不开了」。垫不上的页
+ * 回一句真实成因（`reason`），由接口报给他看 —— 静默跳过的话他翻到那几页只会以为
+ * 「这个功能时好时坏」，然后一遍遍重新生成那张图（每张真花一次钱）。
+ *
+ * 三种跳过（前两种在这里判，第三种判不了 —— 见 `imageModes.deckDecorBlocker`）：
+ * ① 背景图/单图模式那两页：它们自己就是整页一张图，`::after` 在绘制顺序里压在那张图上面，
+ *    垫上去等于给花钱生的那张图糊一层底纹；
+ * ② 这一页自己加过装饰背景：两层叠着比别的页浓一档，而那一层是他单独配过的，以它为准；
+ * ③ 铺满整页的不透明底（`.lNN-wrap{inset:0;background:…}` 那二十来条）挡着 —— 这里看不出来。
+ */
+export function applyDeckDecor(html: string, decor?: DeckDecor | null): DeckDecorApply {
+  // 跳过的页也把这两个变量摘一遍：库里那份 html 里正常不会有，但真混进去一个（手工改过、
+  // 从别处拷来的一页）的话，这一页会在「已跳过」的报告下面照旧显示着底纹。
+  const skip = (reason: string): DeckDecorApply => ({
+    html: html.includes('--deck-decor') ? safeClear(html) : html,
+    applied: false,
+    reason,
+  });
+  // 「整份没配这一层 / 刚关掉」走同一条摘变量的路（理由同上）：残留一个变量的话，
+  // 开关上写着「没有」而那几页照旧有底纹 —— 他会去找是哪一页自己加的（找不到）。
+  if (!decor || !decor.url) return skip('');
+  const bad = deckDecorUrlProblem(decor.url);
+  if (bad) return skip(bad);
+  const mode = pageImageMode(html);
+  if (mode !== 'split') {
+    return skip(mode === 'poster' ? '这一页是单图模式（整页就是一张图）。' : '这一页是背景图模式（图已经铺满整页）。');
+  }
+  if (hasDecor(html)) return skip('这一页自己加过装饰背景（以那一层为准）。');
+  const a = Number.isFinite(decor.alpha) ? Math.min(1, Math.max(0, decor.alpha)) : 0;
+  return {
+    html: writeSectionVars(html, { '--deck-decor': `url(${decor.url})`, '--deck-decor-a': String(a) }, '装饰底图'),
+    applied: true,
+    reason: '',
+  };
+}
+
+/** 摘变量那一步也不许因为「扫不到 section」把整份拼装带下去（那一页本来就没底纹）。 */
+function safeClear(html: string): string {
+  try {
+    return writeSectionVars(html, { '--deck-decor': 'none', '--deck-decor-a': '0' }, '装饰底图');
+  } catch {
+    return html;
+  }
 }
 
 /**

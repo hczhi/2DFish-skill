@@ -1,0 +1,28 @@
+{
+  "_": "assemble.mjs 吃的就是这个形状。pages 的数组顺序 = 页码顺序；html 里只许用 kb/template.html 定义过的 class。",
+  "meta": {
+    "brandCn": "示例科技",
+    "brandEn": "EXAMPLE TECH",
+    "topic": "轨道运维数字化 · 年度汇报"
+  },
+  "design": {
+    "palette": "P-A",
+    "font": "F-A",
+    "density": "D-B",
+    "header": "H-A",
+    "motif": "M-B"
+  },
+  "imageBase": ".",
+  "pages": [
+    {
+      "veil": 0.15,
+      "html": "<section class=\"slide\" data-layout=\"L55\">\n  <div class=\"l55-wrap\">\n    <div class=\"l55-bg\">\n      <img src=\"images/cover.svg\" alt=\"\" data-img-prompt=\"远景雾山与水面，塔影在右半，左半是干净的天与雾，整体偏淡偏冷\" data-img-mode=\"case\">\n    </div>\n    <div class=\"l55-eyebrow\">\n      <b>EXAMPLE TECH<br>RAIL OPERATIONS</b>\n      <span>线 · 车 · 人 · 时</span>\n    </div>\n    <div class=\"l55-main\">\n      <h1 class=\"page-title\">从看得见，到<em>来得及</em></h1>\n      <div class=\"l55-cn\">轨道运维数字化年度汇报</div>\n      <div class=\"l55-en\">FROM VISIBILITY TO RESPONSE TIME</div>\n    </div>\n    <div class=\"l55-sign\">\n      <i></i>\n      <div>\n        <b>示例科技 · 二零二六年 · 九月</b>\n        <span>EXAMPLE TECH · SEPTEMBER 2026</span>\n      </div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "html": "<section class=\"slide\" data-layout=\"L70\">\n  <div class=\"slide-header\"><div class=\"kicker\">第二部分 · 现场与班组</div></div>\n  <div class=\"slide-inner\">\n    <div class=\"l70-grid\">\n      <div class=\"l70-fig\">\n        <img src=\"images/site.svg\" alt=\"\" data-img-prompt=\"竖构图：值班员在暗光机房过道里看手持终端，主体在画面上半，下半是没有细节的暗区\" data-img-mode=\"case\">\n        <div class=\"l70-cap\">\n          <em>二月</em>\n          <b>2026</b>\n          <p>第一批手持终端在三号线完成灰度，连续 42 天没有回滚过一单。</p>\n        </div>\n      </div>\n      <div class=\"l70-say\">\n        <div class=\"l70-kicker\">口径 · 第三年</div>\n        <h1 class=\"page-title\">钱只<em>花在</em>第二条线能直接拿走的那一层</h1>\n        <p class=\"l70-lead\">前两年按项目立项，每条线都重写一遍巡检规则；今年改成按能力立项，规则表和口径表是同一份，新线只做配置。</p>\n        <div class=\"l70-notes\">\n          <div class=\"l70-note\">\n            <b>按能力立项，不按项目</b>\n            <p>同一个能力只做一次，验收标准是「第二条线不改代码能用」，达不到这条就不算做完。</p>\n          </div>\n          <div class=\"l70-note\">\n            <b>规则表和口径表合一</b>\n            <p>巡检规则直接读口径表的字段，改口径不用再同步改规则 —— 原来两边漂开的那半年全花在对账上。</p>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n</section>"
+    },
+    {
+      "html": "<section class=\"slide\" data-layout=\"L36\">\n  <div class=\"slide-header\"><div class=\"kicker\">结尾</div></div>\n  <div class=\"l36-wrap\">\n    <div class=\"l36-bg\"><img src=\"/ppt-cases/ph-16x9.svg\" alt=\"\" data-img-prompt=\"夜色里的站台长曝光，光带向远处收，画面中央大片安静\" data-img-mode=\"case\"></div>\n    <div class=\"l36-frame\">\n      <h1 class=\"page-title\">谢谢</h1>\n      <div class=\"l36-en\">THANK YOU</div>\n      <div class=\"l36-say\">下一步只有一件事：把这份口径挂到评审入口上，下个月的第一份汇报照它跑一遍。</div>\n    </div>\n    <div class=\"l36-contact\">\n      <div><b>TEAM</b><span>运维数字化组</span></div>\n      <div><b>CONTACT</b><span>deck@example.com</span></div>\n      <div><b>DATE</b><span>2026 年 9 月 · 年度汇报</span></div>\n    </div>\n  </div>\n</section>"
+    }
+  ]
+}

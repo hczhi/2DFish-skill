@@ -425,10 +425,10 @@ function remove(id: number) {
       </span>
     </div>
 
-    <p class="fx-lead">
+    <!-- <p class="fx-lead">
       上传后<strong>自动 AI 提炼</strong>（每份 ≤ {{ limits.budgetChars }} 字），{{ carryHint }}。
       文档 1 次额度起（长文件分几次），图片 1 次/张 —— 每份实际花了几次写在卡片上。
-    </p>
+    </p> -->
 
     <div v-if="err" class="fx-err">{{ err }}</div>
     <div v-if="quotaHit" class="fx-err">
@@ -532,12 +532,12 @@ function remove(id: number) {
     <div v-if="cards.length" class="fx-total">
       <!-- 「手打 N 字」只在真有那一段时显示：没有输入框的页面（展示稿提纲）上写着
            「手打 0 字 +」会让他去找那个不存在的框。 -->
-      <span :class="{ over: overBy > 0 }">
+      <!-- <span :class="{ over: overBy > 0 }">
         <template v-if="currentChars > 0">手打 {{ currentChars }} 字 + </template>{{ ready.length }} 个文件 {{ attachChars }} 字 =
         合计 {{ total }} / {{ limits.briefLimit }} 字<template v-if="overBy > 0">，超出 {{ overBy }} 字（提交会被拒）</template>
-      </span>
-      <span class="fx-tip">这次上传花了 {{ spentCalls }} 次 AI 额度。</span>
-      <span v-if="anyBusy" class="fx-tip">还有文件在处理，跑完再提交 —— 没跑完的那几份不会带进去。</span>
+      </span> -->
+     
+      <span v-if="anyBusy" class="fx-tip">还有文件在处理，处理完再提交。</span>
     </div>
   </div>
 </template>

@@ -99,9 +99,20 @@ function absolutize(
   return {
     html: out,
     rewritten,
-    placeholders: (out.match(/\/ppt-cases\/ph-/g) || []).length,
-    localFiles: (out.match(/\/uploads\//g) || []).length,
+    // 只数**图片地址**上的，不是整份文件里这几个字出现过几次：骨架的 CSS 里也有
+    // `img[src^="/ppt-cases/ph-"]`（装饰层那条豁免），跟着数进来的话这句警告写的是
+    // 「还有 3 格是占位图」而实际只有 1 格 —— 他会满份稿子去找那两格不存在的灰块，
+    // 而每一格都已经是真图了。同理 `/uploads/` 那条也只数地址。
+    placeholders: countRefs(out, '/ppt-cases/ph-'),
+    localFiles: countRefs(out, '/uploads/'),
   };
+}
+
+/** 数「有几处图片**地址**里带这一段」：`src=`/`href=` 和 CSS 的 `url()` 都算，别的字面不算。 */
+function countRefs(html: string, needle: string): number {
+  const seg = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?:(?:src|href)="[^"]*${seg})|(?:url\\(\\s*['"]?[^'")\\s]*${seg})`, 'g');
+  return (html.match(re) || []).length;
 }
 
 /**

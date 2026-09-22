@@ -12,7 +12,7 @@ const meta = {
   brandEn: 'QiaoNan',
   topic: '这是主题',
   // 默认那套之外的一档，四样都换掉 —— 用默认值的话「设计规范这一段漏了」测不出来。
-  design: { palette: 'P-C', font: 'F-C', density: 'D-C', header: 'H-D' },
+  design: { palette: 'P-C', font: 'F-C', density: 'D-C', header: 'H-D', motif: 'M-B' },
 };
 
 // `$&` 在字符串形式的 replace 里会被当成「刚匹配到的那一段」展开，悄悄吃掉几个字符。

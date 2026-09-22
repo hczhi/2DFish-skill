@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { styles, styleById, defaultStyleId, renderStylePrompt, deckColors, leftoverPlaceholders, pageTemplates } from './styleLibrary.js';
+import {
+  styles, styleById, defaultStyleId, renderStylePrompt, deckColors, leftoverPlaceholders,
+  pageTemplates, requiredPromptParts, PAGE_MODES,
+} from './styleLibrary.js';
+import { MOTIFS } from './designSpec.js';
 
 // 画风这条路上的失败全是「每张图单看都不错」：解析不出来 = 换画风没有任何区别；
 // 占位符没换掉 = 把「本页主题，1句」这几个字发给模型；颜色没换掉 = 图和 deck 不是一套色。
@@ -45,7 +49,7 @@ describe('配图画风库', () => {
     // 一处都不报错，他只会以为「这个模型画不了蓝色」，或者一张张重生（每张都真花钱）。
     const s = styleById('S-A')!;
     const input = { theme: '增长', scene: '柱状图', ratio: '16:9 landscape' };
-    const blue = renderStylePrompt(s, 'concept', { ...input, design: { palette: 'P-B', font: 'F-A', density: 'D-B', header: 'H-A' } });
+    const blue = renderStylePrompt(s, 'concept', { ...input, design: { palette: 'P-B', font: 'F-A', density: 'D-B', header: 'H-A', motif: 'M-A' } });
     expect(blue).toContain('#2A5DB0');
     expect(blue).not.toContain(deckColors().brand); // 默认那套的橙不能出现
     // 不传规范 = 默认那套（老 deck），照旧是 template 里那个色
@@ -75,11 +79,11 @@ describe('配图画风库', () => {
     }
   });
 
-  it('18 套模板 + 两套整页模板里不许再剩下英文句子（夹一句英文 = 那一句他核不动、模型也不当真）', () => {
+  it('18 套模板 + 整页那几套里不许再剩下英文句子（夹一句英文 = 那一句他核不动、模型也不当真）', () => {
     // 只挑一半翻的话症状是「不许写字/留白那一句好像没生效」，而图每张都正常、一处不报错。
     const all = [
       ...styles().flatMap((s) => (['concept', 'case', 'data'] as const).map((m) => [`${s.id}/${m}`, s.templates[m]] as const)),
-      ...(['backdrop', 'poster'] as const).map((m) => [m, pageTemplates()[m]] as const),
+      ...PAGE_MODES.map((m) => [m, pageTemplates()[m]] as const),
     ];
     for (const [key, tpl] of all) {
       // 连着三个以上的英文单词才算「英文句子」（`SaaS 插画风`、`f/2`、`35mm`、占位符不算）
@@ -90,8 +94,8 @@ describe('配图画风库', () => {
 
   it('整页那两路要有「设计手法」段、而且不许把整幅调成低反差低饱和（回来的是灰蒙蒙的均值图）', () => {
     // 这两条一起丢掉的症状是「背景图/单图出来都挺正常，就是单调、没设计感、每页长得差不多」——
-    // 一处都不报错，而每张都是一次真实花费。「读得清」靠的是代码算的留空区 + 0.62 压暗蒙版，
-    // 不是把整幅拉灰（见 md §6）。
+    // 一处都不报错，而每张都是一次真实花费。「读得清」靠的是代码算的留空区 + 那层压暗蒙版
+    // （`BACKDROP_MASK`），不是把整幅拉灰（见 md §6）。
     for (const mode of ['backdrop', 'poster'] as const) {
       const tpl = pageTemplates()[mode];
       expect(tpl, `${mode} 少了设计手法段`).toContain('设计手法：');
@@ -114,6 +118,52 @@ describe('配图画风库', () => {
     // 手法里写了 {{BRAND}}，所以它必须在颜色替换**之前**填进去，否则那几个字原样发出去
     expect(leftoverPlaceholders(p3)).toEqual([]);
     expect(leftoverPlaceholders(renderStylePrompt(s, 'poster', { ...base, pageKey: 3 }))).toEqual([]);
+  });
+
+  it('这份稿子的视觉母题要真进整页那两路的提示词，而默认那一档不许剩下一行空段标', () => {
+    // 两头都静默：母题没进去的话整份稿子的图各画各的装饰层（每张单看都不错，摆在一起才
+    // 看得出不是一套，而下拉、保存、接口全正常）；默认那档留下一行光秃秃的 `视觉母题：`
+    // 的话模型自己想一个母题、每页想的还不一样 —— 同样是「怎么还是不统一」。
+    const s = styleById('S-A')!;
+    const base = {
+      theme: '增长', scene: '一条向上的曲线', ratio: '16:9 landscape',
+      slideText: ['三年三步走'], pageKey: 3, deckKey: 'd1',
+    };
+    const spec = { palette: 'P-A', font: 'F-A', density: 'D-B', header: 'H-A', motif: 'M-B' };
+    const line = MOTIFS.find((m) => m.id === 'M-B')!.imageNote!;
+    for (const mode of PAGE_MODES) {
+      const p = renderStylePrompt(s, mode, { ...base, design: spec });
+      expect(p, mode).toContain(`视觉母题：${line}`);
+      expect(leftoverPlaceholders(p), mode).toEqual([]);
+    }
+    // 默认那一档（空句）：段标也不许出现。
+    const dft = renderStylePrompt(s, 'backdrop', { ...base, design: { ...spec, motif: 'M-A' } });
+    expect(dft).not.toContain('视觉母题');
+    // 版式里那一格（slot 三路）不跟母题走 —— 18 套模板里塞 18 个占位符的话，下次改这条
+    // 规则只会改到一套，现象是「有的页跟着母题、有的没跟」。
+    expect(renderStylePrompt(s, 'concept', { ...base, design: spec })).not.toContain('视觉母题');
+  });
+
+  it('装饰背景那一路：不跟画风走、不轮设计手法，尾巴是「不许有字 + 不要具体主体」那条', () => {
+    // 这一层被压到两成不透明度垫在整页文字底下，所以三样都是静默的：拿到 poster 那条尾巴
+    // （允许画面里印字）= 文字层底下透出一层假字；掺进画风的「渲染/禁忌」= 出来一张有明暗
+    // 有主体的图（页面上只是「这一页有点脏」）；轮设计手法 = 每页底下那层各一个路子。
+    // 三样都 200、都贴上了、都真扣了一次额度。
+    const tpl = pageTemplates().decor;
+    for (const ph of ['{{DEVICE}}', '{{RENDER}}', '{{COMPOSITION}}', '{{TABOO}}', '{{SLIDE_TEXT}}']) {
+      expect(tpl, `decor 模板里不该有 ${ph}`).not.toContain(ph);
+    }
+    expect(tpl).toContain('{{MOTIF}}'); // 全份统一只靠这一条
+    const p = renderStylePrompt(styleById('S-E')!, 'decor', {
+      theme: '增长', scene: '几条斜向细线', ratio: '16:9 landscape', pageKey: 3, deckKey: 'd1',
+    });
+    expect(p).toContain('不要具体的人物');
+    expect(p).toContain('不许出现任何文字');
+    expect(p).not.toContain('真实摄影'); // S-E 的「渲染」一句不许漏进来
+    expect(leftoverPlaceholders(p)).toEqual([]); // 剩一个 `{{MOTIF}}` 就是把这几个字发给模型
+    // 「重写整条」核对的也得是这条尾巴 —— 核 poster 那条的话它每次都在末尾接一遍错尾巴
+    const parts = requiredPromptParts('decor', { ratio: '16:9 landscape' });
+    expect(parts[0].probes).toContain('不要具体的人物');
   });
 
   it('三路 mode 出来的提示词不一样（不然 data 页拿到的是概念插画）', () => {

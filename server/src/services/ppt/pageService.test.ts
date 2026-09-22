@@ -173,7 +173,7 @@ describe('生成一页 HTML', () => {
     // 一行）；prompt 里还留着一份色值表 = 模型把 `#C8A24B` 写进 inline style，换配色那天
     // 那一处不跟着变。两种都是一页完整正常的幻灯片。
     reply('<section class="slide"><div class="slide-inner"><h2>三阶段路径</h2></div></section>');
-    await generatePage({ ...base, layoutId: 'L1', design: { palette: 'P-C', font: 'F-B', density: 'D-C', header: 'H-A' } }, 'u1');
+    await generatePage({ ...base, layoutId: 'L1', design: { palette: 'P-C', font: 'F-B', density: 'D-C', header: 'H-A', motif: 'M-A' } }, 'u1');
     const prompt = (aiGateway as any).mock.calls[0][0].messages[0].content as string;
     expect(prompt).toContain('墨绿');
     expect(prompt).toContain('全黑体');

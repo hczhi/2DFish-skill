@@ -7,7 +7,7 @@
 
 ## 一、结构速览
 
-- **比例**：16:9，**暗底全幅**（背景图 `opacity:.4` + 径向暗蒙版），信息密度中等
+- **比例**：16:9，**暗底全幅**（背景图 `opacity:.4` 压在 `--c-ink-deep` 深底上），信息密度中等
 - **核心手法**：① 整页一张压暗的背景图，只做气氛；② 中部**一句 64px 衬线金句**（`h1.page-title`，关键几个字用 `<em>` 染品牌色）+ 一行 21px 补充；③ 底部**四步回环**（`.l29-loop`，四个半透明描边格，格间一个 `→`，**最后一格是 `↺`**，读成"回到第一步"）
 - **是否全幅**：**是** —— 内容不包 `.slide-inner`（位置靠 `.l29-say` / `.l29-loop` 两个绝对定位的子块给）
 - **它既能当内容页也能当结尾页**：金句收一段论证 + 四步给出可循环的做法
@@ -19,7 +19,8 @@
 
 ### 1. 背景图 · `.l29-bg`
 
-- 图 `opacity:.4` + 上面一层径向暗蒙版（中心 `.34` → 边缘 `.84`），所以**选图只按气氛选**，细节全部会没。
+- 图 `opacity:.4`（原来那层烙死的 `rgba(0,0,0,.70)` 已删，整页原本压到两成、发灰）——
+  剩下的 .4 压在 `--c-ink-deep` 上就是这一页白字唯一的依靠，**别再动它**；**选图只按气氛选**，细节全部会没。
 - 没有配图时整个 `.l29-bg` 删掉即可（`.l29-wrap` 回落到 `var(--c-ink-deep)` 纯深底，V5）。
 
 ### 2. 金句 · `.l29-say`（`top:24%`）
@@ -44,7 +45,6 @@
 .l29-wrap{position:absolute;inset:0;overflow:hidden;background:var(--c-ink-deep)}
 .l29-bg{position:absolute;inset:0;z-index:0}
 .l29-bg img{width:100%;height:100%;object-fit:cover;display:block;opacity:.4}
-.l29-bg::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.70)}
 .l29-say{position:absolute;top:24%;left:var(--pad-x);right:var(--pad-x);z-index:2}
 .l29-say .page-title{font-family:var(--serif);font-size:64px;font-weight:900;line-height:1.28;color:#fff;max-width:1400px;margin-top:0}
 .l29-say .page-title em{font-style:normal;color:var(--c-brand)}
@@ -102,7 +102,7 @@
 
 | 槽位 | 必填? | 模式 | 比例 | 构图要求 |
 |------|-------|------|------|----------|
-| `pXX_bg` | 可选（没有就走 V5） | concept | 16:9 | 整页气氛底图：**大面积低对比**（夜景、雾、深色质感），被压到 40% 亮度 + 径向暗蒙版，主体在哪都无所谓，但**不能有文字或图表** |
+| `pXX_bg` | 可选（没有就走 V5） | concept | 16:9 | 整页气氛底图：**大面积低对比**（夜景、雾、深色质感），被压到 40% 亮度，主体在哪都无所谓，但**不能有文字或图表** |
 
 **禁用**：高饱和亮图（压暗之后一团脏色）、人脸特写（半张脸浮在字后面）、任何带字的截图
 

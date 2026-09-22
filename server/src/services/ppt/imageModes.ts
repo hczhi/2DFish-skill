@@ -3,8 +3,10 @@
 // `toPoster`）。三路都是纯代码搬 DOM，**不调 AI、不花一分钱**（真正那张图要他再点一次生成配图）。
 //
 // 为什么是「就地变形 + 可逆」而不是换版式重生成：换版式要重新生成整页（一次真实调用），而他要的
-// 只是「这张图别再切一条硬边」。变形只动 html 那一列，`images_json` 一个字不动 —— **已经生成好
-// 的那张图跟着搬过去**，改回来也跟着搬回来。
+// 只是「这张图别再切一条硬边」。变形只动 html 那一列（版式、文字、`data-img-prompt` 原样留着），
+// **但这一页的图一律清回占位图**（`clearSlotImages`：那张是按上一个模式的构图生的，搬过去就是
+// 一页「看起来效果很差」的正常页面）；`images_json` / `pending_images_json` 跟着清由调用方做
+// （`api/ppt.ts` 的 image-mode）—— 只清 html 的话面板上那一格挂着缩略图而画面里是占位图。
 //
 // 四条边界（每一条都是「画面上一切正常」的那种事故）：
 // ① **变形后这一页必须还是正好 1 个图槽，而且是第 1 个。** 配图记录（`images_json`）、备好的图
@@ -24,17 +26,37 @@
 //    它下面 —— 变形之后这一页看起来「只剩一张图」，文字并没有丢，而这一条在库里所有版式上都成立
 //    （`.slide-inner` / `.lNN-wrap` 都是 absolute），真出现就是新写的版式破了这个前提。
 
-import { findImageSlots, replaceSlotUrls, type ImageSlot } from './imageService.js';
+import { findImageSlots, replaceSlotUrls, MAX_SLOTS_PER_PAGE, type ImageSlot } from './imageService.js';
 import { classDecls } from './imageSpace.js';
 import { PLACEHOLDERS, stripHeaders } from './pageService.js';
 import { POSTER_TEXT_ATTR, encodePosterText, decodePosterText } from './posterText.js';
+// 这两个判据和类型挪到了 `pageMarkers.ts`（拼页那一层也要判，而它不能 import 这个文件
+// —— 理由见那个文件顶上）。这里照旧往外 export，调用点一个都不用改。
+import { pageImageMode, hasDecor, type PageImageMode } from './pageMarkers.js';
+import { applyDeckDecor, type DeckDecor } from './deckShell.js';
+
+export { pageImageMode, hasDecor, type PageImageMode };
 
 export class ImageModeError extends Error {}
 
-export type PageImageMode = 'split' | 'backdrop' | 'poster';
+/**
+ * 变形时给这一页写的幕帘浓度（骨架缺省是 .80 —— 那么浓的话图只剩一层底纹，见文件头 ③）。
+ *
+ * **改这个数要一起改三处**：前端滑块那个兜底值（`PptPlan.vue` 的 `BACKDROP_MASK_DEFAULT`，
+ * 不改的话没读到服务端值的那一下滑块写着旧数而页面是新数）、发给生图模型那句「压暗多少」
+ * （`library/illustration-style.md` §6 —— 说浓了模型会主动把画面提亮提反差，说淡了它会交一张
+ * 灰蒙蒙的均值图，两种都不报错）、`docs/API.md` 里那个缺省值。
+ */
+export const BACKDROP_MASK = 0.3;
 
-/** 变形时给这一页写的幕帘浓度（骨架缺省是 .80 —— 那么浓的话图只剩一层底纹，见文件头 ③）。 */
-export const BACKDROP_MASK = 0.62;
+/**
+ * 装饰底图那一层的缺省浓度（`--decor-a`）。
+ *
+ * **改这个数要一起改三处**（同 `BACKDROP_MASK`）：骨架里 `.page-decor` 那条 CSS 的缺省值
+ * （不对的话没写过这个变量的老页面和滑块显示的数差一截）、前端滑块的兜底值
+ * （`PptPlan.vue` 的 `DECOR_ALPHA_DEFAULT`）、`docs/API.md` 里那个缺省值。
+ */
+export const DECOR_ALPHA = 0.18;
 
 /** 这几个底色是「页面本来的底」，可以就地改透明；其余（品牌色/强调色/墨色/写死的颜色）一律拒。 */
 const NEUTRAL_BG = new Set([
@@ -199,16 +221,56 @@ function fullBleed(el: OpenTag): boolean {
 }
 
 /**
- * 这一页现在是哪个模式（`data-backdrop` / `data-poster` 是变形时留下的记号）。
+ * 铺满整页又刷了实底的那一层：**浅底就地改透明**（原文存进 `keep` 那个属性，撤的时候原样放回），
+ * **别的底一律拒**并说出是哪个类名上的哪个值。没刷底的回 null（不用动）。
  *
- * **poster 先判**：单图那一页是从任意一页变过来的，section 上可能还留着上一次背景图变形的
- * `has-bg`（无害），而 `data-backdrop` 那一层已经不在了 —— 反过来判的话界面上这一页写着
- * 「背景图模式」，点「改回分屏」回的是一句「扫不出背景图那一层」，而他要的那个「改回原版」
- * 按钮压根不出现。
+ * 背景图和装饰背景两条路共用这一份：各写一遍的话「哪几个底算浅底」会分叉 ——
+ * 一边放过去的那种底在另一边被拒（或者更糟：放过去之后白字压在图上读不出来），
+ * 而两边遇到的是同一层 `.lNN-wrap{background:var(--c-bg)}`。
  */
-export function pageImageMode(html: string): PageImageMode {
-  if (/\sdata-poster="1"/.test(html)) return 'poster';
-  return /\sdata-backdrop="1"/.test(html) ? 'backdrop' : 'split';
+function clearCover(
+  el: OpenTag,
+  keep: string,
+  tail: string
+): { at: number; len: number; text: string } | null {
+  const bg = bgOf(el);
+  if (!bg) return null;
+  if (!NEUTRAL_BG.has(bg.value.trim().toLowerCase())) {
+    throw new ImageModeError(
+      `这一页的底是 ${bg.from} 上的 ${bg.value}（不是页面本来的浅底）：改成透明之后这一页的字` +
+        '（那种底上用的是白字 / `var(--c-brand-on)`）会直接压在照片上读不出来，不改的话' +
+        tail
+    );
+  }
+  return { at: el.at, len: el.text.length, text: addStyle(el.text, 'background:transparent', keep) };
+}
+
+/**
+ * 把这一页图槽上的图**清回占位图**（分屏 ⇄ 背景图两个方向都清，单图那一路换上的本来就是占位图）。
+ *
+ * 为什么不把原来那张搬过去：那张是按**上一个模式**的构图生的 —— 分屏那一格的图铺满整页时主体被
+ * 裁掉一大半、正好压在文字底下；反过来背景图那张（画面里留着文字那一侧的大片空白）塞回一格里看
+ * 就是一张空图。搬过去的话这一页每一层都渲染正常、面板上写着「配图 1/1 张」，唯一的症状是
+ * 「这个功能效果很差」，而真正要做的只是按新模式的提示词再生一张（`notes` 里那句话就是说这个，
+ * 可他看着画面里明明有图，不会去点）。清回占位图之后画面上直接就写着「这一格还没有图」。
+ *
+ * `data-img-prompt` / `data-img-mode` **一个字不动**：清的只是地址。连提示词一起清的话下一次
+ * 生成没有「画什么」，模型自己编一张 —— 图很好看，和这一页无关（硬规则 3）。
+ */
+export function clearSlotImages(html: string): { html: string; cleared: string[] } {
+  const slots = findImageSlots(html);
+  const urls = new Map<number, string>();
+  const cleared: string[] = [];
+  for (const s of slots) {
+    // 占位图按这一格的比例挑：一律 16x9 的话，3:4 那一格下一次生成发出去的 size 也跟着变成横图
+    // （`ratioOf` 是照占位图地址算的），回来一张横图塞进竖格子里被裁掉两边，而接口 200。
+    const ph = s.ratio.startsWith('1:1') ? PLACEHOLDERS[1]
+      : s.ratio.startsWith('3:4') ? PLACEHOLDERS[2] : PLACEHOLDERS[0];
+    if (s.src === ph) continue;
+    if (s.src && !PLACEHOLDERS.includes(s.src)) cleared.push(s.src);
+    urls.set(s.index, ph);
+  }
+  return { html: urls.size ? replaceSlotUrls(html, slots, urls) : html, cleared };
 }
 
 function rootSection(els: OpenTag[]): OpenTag {
@@ -241,7 +303,8 @@ export interface ModeResult {
 }
 
 /**
- * 分屏 → 背景图：那一格的图搬到 `.case-bg`（整页铺底 + 幕帘），原来那一格藏起来但**留在原地**。
+ * 分屏 → 背景图：那一格的**图位**搬到 `.case-bg`（整页铺底 + 幕帘，图本身清回占位图，
+ * 见 `clearSlotImages`），原来那一格藏起来但**留在原地**。
  *
  * 为什么不是「删掉原来那一格」：那一格是版式网格/绝对定位的一部分，删了之后旁边那一栏会摊开
  * 占满整行（画面照旧完整，只是排版变成另一页），而且改回来时没法还原。藏着的那一格同时是
@@ -251,10 +314,23 @@ export function toBackdrop(html: string, opts: { mask?: number } = {}): ModeResu
   if (pageImageMode(html) === 'backdrop') {
     throw new ImageModeError('这一页已经是背景图模式了（要调幕帘浓度就直接改浓度，要改回分屏点「改回分屏」）。');
   }
+  // 装饰层自己占一格，不先去掉的话下面那条判据回的是「这一页有 2 格图」—— 他会去找那第二格图
+  // 在哪（画面上压根看不出装饰层是一格），而真正要点的是「去掉装饰背景」。
+  if (hasDecor(html)) {
+    throw new ImageModeError(
+      '这一页有一层装饰背景 —— 先点「去掉装饰背景」再改成背景图。' +
+        '（背景图模式整页就是一张图，装饰层垫在它下面完全看不见，而它照旧占一格图位、照旧能点「AI 生成」花钱。）'
+    );
+  }
   const mask = opts.mask ?? BACKDROP_MASK;
   if (!Number.isFinite(mask) || mask < 0 || mask > 1) {
     throw new ImageModeError(`幕帘浓度要是 0 到 1 之间的数（收到 ${JSON.stringify(opts.mask)}），这一页没改。`);
   }
+  // 原来那张图**先清回占位图**（`clearSlotImages`），再往下搬图位 —— 藏起来那一格里也不留
+  // 那个地址：留着的话「改回分屏」会把它原样放回这一格（等于图自己回来了），而导出的那份 html
+  // 里浏览器照旧会去拉一张谁也看不见的图。
+  const wipe = clearSlotImages(html);
+  html = wipe.html;
   const slots = findImageSlots(html);
   if (slots.length !== 1) {
     throw new ImageModeError(
@@ -292,20 +368,12 @@ export function toBackdrop(html: string, opts: { mask?: number } = {}): ModeResu
     if (el.classes.includes('case-bg')) {
       throw new ImageModeError('这一页的图已经是整页背景图了（版式自带的那种），不用再变形。');
     }
-    const bg = bgOf(el);
-    if (!bg) continue;
-    if (!NEUTRAL_BG.has(bg.value.trim().toLowerCase())) {
-      throw new ImageModeError(
-        `这一页的底是 ${bg.from} 上的 ${bg.value}（不是页面本来的浅底）：改成透明之后这一页的字` +
-          '（那种底上用的是白字 / `var(--c-brand-on)`）会直接压在照片上读不出来，不改的话背景图整片被它挡住 ' +
-          '—— 两种都是「页面看起来完全正常」。这一页不做背景图模式，换一页浅底的（左字右图那种）。'
-      );
-    }
-    edits.push({
-      at: el.at,
-      len: el.text.length,
-      text: addStyle(el.text, 'background:transparent', 'data-backdrop-bg'),
-    });
+    const edit = clearCover(
+      el,
+      'data-backdrop-bg',
+      '背景图整片被它挡住 —— 两种都是「页面看起来完全正常」。这一页不做背景图模式，换一页浅底的（左字右图那种）。'
+    );
+    if (edit) edits.push(edit);
   }
 
   // 原槽位：摘掉 `data-img-prompt`/`data-img-mode`（文件头 ①），原文存起来，整块藏掉。
@@ -336,20 +404,47 @@ export function toBackdrop(html: string, opts: { mask?: number } = {}): ModeResu
   // position:relative;z-index:2」只适用于库里自带背景图的那几条版式）—— 一个不定位的文字块
   // 会被整片盖住，画面上是「这一页只剩一张图」，文字并没有丢，没有一处会报错。
   // -1 等于「排在 section 自己的底色之上、所有内容之下」，任何版式都成立。
+  // 背景图那一层换上的是**占位图**，不是原来那一格那张（见 `clearSlotImages` 上的注释）。
   const bd =
     `<div class="case-bg" data-backdrop="1" style="z-index:-1">` +
-    `<img src="${slot.src}" alt="" data-img-prompt="${prompt}" data-img-mode="backdrop">` +
+    `<img src="${PLACEHOLDERS[0]}" alt="" data-img-prompt="${prompt}" data-img-mode="backdrop">` +
     `</div>`;
   const out = splice(html, edits);
   const head = out.indexOf('>', out.indexOf('<section')) + 1;
   const withBd = out.slice(0, head) + bd + out.slice(head);
 
+  const had = wipe.cleared.length > 0;
   notes.push(
-    '这一页的图已经铺成整页背景（原来那一格藏起来了，点「改回分屏」能还原）。' +
-      '这张图还是原来那张 —— 要一张真正当背景用的（画面里留出文字那一侧、不带任何文字），' +
-      '在这一页点一次「生成配图」。'
+    '这一页的图位已经铺成整页背景（原来那一格藏起来了，点「改回分屏」能还原）。' +
+      (had
+        ? '原来那张图**清掉了**（它是按那一格的构图生的，铺满整页会被裁掉一大半、主体正好压在文字底下）' +
+          ' —— 那张还在素材库 /ppt/assets 里，要用回它就在这一格「素材库里挑」。'
+        : '') +
+      '现在这一页是占位图 —— 点一次「生成配图」才会按背景图那套提示词出真图' +
+      '（画面里留出文字那一侧、不带任何文字，一次真实花费）。'
   );
   return { html: withBd, mode: 'backdrop', notes };
+}
+
+/**
+ * 这一页**能不能**改成背景图：能就回 `null`，不能就回那句真实原因（`toBackdrop` 抛的原文）。
+ *
+ * 实现是「真变一次再把结果丢掉」（纯字符串活，不落库、不花钱），**故意不另写一份判据**：
+ * 另写一份的话两边早晚漂开，而两个方向都是静默的 —— 判「能」而实际抛的话按钮在那儿、点下去
+ * 一句红字（这个还看得见）；判「不能」而实际能变的话**那个按钮直接不出现**，他只会以为
+ * 这一页不支持这个功能（而库里那几条深底版式里真正不支持的只是一部分），一处都不报错。
+ *
+ * 只对**分屏页**有意义（别的模式压根没有「改成背景图」这个按钮），所以调用方对非分屏页
+ * 一律回 `null`，而不是把「已经是背景图模式了」这种话当成不支持的理由发给前端。
+ */
+export function backdropBlocker(html: string): string | null {
+  try {
+    toBackdrop(html);
+    return null;
+  } catch (e) {
+    if (e instanceof ImageModeError) return e.message;
+    throw e;
+  }
 }
 
 /**
@@ -387,7 +482,7 @@ export function backdropMask(html: string): number | null {
   return Number.isFinite(v) ? v : BACKDROP_MASK;
 }
 
-/** 背景图 → 分屏：把背景图那一层现在挂着的地址搬回原来那一格，再把变形时加的记号全撤掉。 */
+/** 背景图 → 分屏：把变形时加的记号全撤掉，图清回占位图（背景图那张**不**搬回这一格）。 */
 export function toSplit(html: string): ModeResult {
   if (pageImageMode(html) !== 'backdrop') {
     throw new ImageModeError('这一页不是背景图模式，没有可以改回去的东西。');
@@ -400,8 +495,9 @@ export function toSplit(html: string): ModeResult {
   if (!bd || !hidden) {
     throw new ImageModeError('这一页的背景图那一层扫不出来（这一页在别处改过？刷新一下再试）。');
   }
-  // 背景图那一层现在挂的地址（可能是变形之后重新生成的那张）—— 搬回原来那一格，
-  // 不搬的话改回分屏之后那一格是占位图，而那张图是真花过钱的（面板上还挂着缩略图）。
+  // 背景图那一层现在挂的地址（可能是变形之后重新生成的那张）。**不搬回原来那一格**：那张是按
+  // 「整页铺底」生的（画面里留着文字那一侧的大片空白），塞回一格里看是一张空图，而面板上写着
+  // 「配图 1/1 张」—— 详见 `clearSlotImages`。只用来决定下面那句话怎么说。
   const url = bdImg ? attrOf(bdImg.text, 'src') : null;
 
   const edits: { at: number; len: number; text: string }[] = [];
@@ -429,17 +525,19 @@ export function toSplit(html: string): ModeResult {
   if (close < 0) throw new ImageModeError('背景图那一层没有闭合标签，改不回去（刷新一下再试）。');
   edits.push({ at: bd.at, len: close + '</div>'.length - bd.at, text: '' });
 
-  let out = splice(html, edits);
-  if (url) {
-    const slots = findImageSlots(out);
-    if (slots.length === 1) out = replaceSlotUrls(out, slots, new Map([[1, url]]));
-  }
+  // 藏起来那一格的 `src` 是变成背景图**之前**的样子（没配过图就还是占位图），所以这里只要把
+  // 剩下的真图清掉就行 —— 一律换成 16x9 占位图的话，本来是 3:4 的那一格下一次生成会出横图。
+  const cleared = clearSlotImages(splice(html, edits));
+  const dropped = (url && !PLACEHOLDERS.includes(url) ? [url] : []).concat(cleared.cleared);
   return {
-    html: out,
+    html: cleared.html,
     mode: 'split',
     notes: [
-      '已经改回分屏。刚才那张背景图搬回了这一格 —— 它是按「整页铺底」生的（画面里留着文字那一侧的空白），' +
-        '在这一格里看会偏空，要合适的话在这一页再点一次「生成配图」。',
+      dropped.length
+        ? '已经改回分屏。刚才那张背景图**没有搬回这一格**（它是按「整页铺底」生的，画面里留着文字那一侧的' +
+          '大片空白，塞回一格里看就是一张空图）—— 那张还在素材库 /ppt/assets 里，要用回它就在这一格' +
+          '「素材库里挑」。这一格现在是占位图，点一次「生成配图」会按这一格的构图重画一张（一次真实花费）。'
+        : '已经改回分屏（这一格是占位图 —— 点一次「生成配图」才会出真图，一次真实花费）。',
     ],
   };
 }
@@ -484,6 +582,23 @@ function textLines(html: string): string[] {
     .filter(Boolean);
 }
 
+/** 这一页真正属于内容的那一段（去掉代码贴的页眉、去掉脚本/样式）。 */
+function pageBody(html: string): string {
+  return stripHeaders(html).replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ');
+}
+
+/**
+ * 这一页的标题那一行。**单图和装饰背景两条路共用这一份**：各写一遍正则的话，改了「标题算哪个
+ * 元素」之后只会改到一处 —— 另一条路上「画什么」那句围的是眼标（`.kicker` 那个「02 / 能力」），
+ * 而提示词、图、界面全部正常。
+ */
+function headlineIn(body: string): string {
+  const head =
+    /<(h1|h2)\b[^>]*>([\s\S]*?)<\/\1>/i.exec(body) ||
+    /<([a-z][\w-]*)\b[^>]*class="[^"]*(?<![\w-])page-title(?![\w-])[^"]*"[^>]*>([\s\S]*?)<\/\1>/i.exec(body);
+  return head ? textLines(head[2]).join(' ') : '';
+}
+
 /**
  * 这一页要印进单图里的那几行字，**全部由代码从这一页的 html 里扒**（硬规则 3）。
  *
@@ -498,9 +613,8 @@ function textLines(html: string): string[] {
  * ④ **一个字都扒不到时不许兜一句**（调用方拒掉）：模型编的那几句读起来和这一页的文案一样自然。
  */
 export function posterLines(html: string): { lines: string[]; notes: string[] } {
-  const body = stripHeaders(html).replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ');
-  const head = /<(h1|h2)\b[^>]*>([\s\S]*?)<\/\1>/i.exec(body) || /<([a-z][\w-]*)\b[^>]*class="[^"]*(?<![\w-])page-title(?![\w-])[^"]*"[^>]*>([\s\S]*?)<\/\1>/i.exec(body);
-  const headline = head ? textLines(head[2]).join(' ') : '';
+  const body = pageBody(html);
+  const headline = headlineIn(body);
 
   const seen = new Set<string>();
   const all: string[] = [];
@@ -571,6 +685,14 @@ export function toPoster(html: string): ModeResult {
   if (pageImageMode(html) === 'poster') {
     throw new ImageModeError('这一页已经是单图模式了（要换一张就点「生成配图」，要回到有文字的版式点「改回原版」）。');
   }
+  // 单图会把 section 里的东西整个换掉 —— 装饰层（连那张已经花钱生出来的图）会跟着一起消失，
+  // 而变形本身成功、画面上是一张挺好的图，他压根不会想到那一层去哪了。
+  if (hasDecor(html)) {
+    throw new ImageModeError(
+      '这一页有一层装饰背景 —— 先点「去掉装饰背景」再改成单图。' +
+        '（单图整页就是一张图，装饰层会跟着这一页的版式一起被换掉，包括那一格已经生成的图。）'
+    );
+  }
   const { lines, notes } = posterLines(html);
   if (!lines.length) {
     throw new ImageModeError(
@@ -617,4 +739,289 @@ export function toPoster(html: string): ModeResult {
       '换配色/改标题都要先「改回原版」。模型偶尔会把某个字写错或者写成别的字形，生成完请把图放大看一眼。'
   );
   return { html: out, mode: 'poster', notes, text: lines };
+}
+
+// ---------------------------------------------------------------- 装饰背景（decor）
+//
+// 和上面三路**不是一回事**：那三路是「这一页的图怎么用」（互斥的模式），这一条是**在分屏页上
+// 多垫一层**很淡的线条/几何/肌理，版式和原来那几格图一个字都不动。所以：
+// ① 它不进 `pageImageMode`（那个函数回的是这一页的模式，硬塞一个 'decor' 进去的话界面上
+//    这一页显示成「装饰背景模式」，而「改成背景图 / 改成单图」那两个按钮的判据全靠它）；
+// ② **这一页的图一律不清**（不走 `clearSlotImages`）：加的是一层，原来那几格该长什么样还长什么样
+//    —— 清掉的话他点一下「加装饰背景」，这一页配好的图全变回占位图（每张都是真花过钱的）；
+// ③ 图槽插在**最后**（`</section>` 之前）：插在前面的话原来那几格的序号整体后移一位，而
+//    `images_json` / 备好的图 / 面板上「配图 N 张」认的都是序号 —— 下一次生成的图贴进别的格子里，
+//    接口 200、缩略图也在。
+
+/** 这一层现在多淡（没有这一层就回 null）。 */
+export function decorAlpha(html: string): number | null {
+  if (!hasDecor(html)) return null;
+  const el = scanTags(html).find((e) => /\sdata-decor="1"/.test(e.text));
+  const v = Number(el?.style['--decor-a']);
+  return Number.isFinite(v) ? v : DECOR_ALPHA;
+}
+
+export interface DecorResult {
+  html: string;
+  /** 加完/调完之后这一层的浓度（没有这一层就是 null） */
+  alpha: number | null;
+  notes: string[];
+}
+
+function checkAlpha(alpha: number): void {
+  if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) {
+    throw new ImageModeError(`装饰层浓度要是 0 到 1 之间的数（收到 ${JSON.stringify(alpha)}），这一页没改。`);
+  }
+}
+
+/** 浓度 0 的时候必须说出来：页面上那一层完全看不见，而他刚点过「AI 生成」（真扣过一次额度）。 */
+function alphaNote(alpha: number): string[] {
+  return alpha === 0
+    ? ['浓度是 0 —— 这一层在页面上完全看不见（图还在，拖一下滑块就出来）。']
+    : [];
+}
+
+/**
+ * 给这一页加一层装饰底图（**纯代码搬 DOM，不调 AI、不花钱**；真正那张图要他再点一次生成）。
+ *
+ * 四条边界：
+ * ① **只在分屏页上加。** 背景图/单图那两页整页已经是一张图了，再垫一层在它**下面**等于什么都
+ *    没发生 —— 接口 200、备图栏多一格、还能点「AI 生成」（一次真实花费），而画面上一点变化都没有。
+ * ② **已经有一层时拒掉**，并指到滑块上：再加一层的话这一页有两个 decor 槽位，序号往后的那些
+ *    记录全错位，而画面上只是「颜色好像深了一点」。
+ * ③ **满 6 格时拒掉**（`MAX_SLOTS_PER_PAGE`）：第 7 格会被 `specsFromSlots` 截掉 —— 那一格
+ *    在备图面板上压根不出现，只能走「配全部图」那条真花钱的路，而装饰层这一层是加上了的。
+ * ④ **「画什么」由代码从这一页的标题算**（硬规则 3）：让模型自己看着页面编一句的话，它每一页
+ *    编的方向都不一样，而全份统一正是这条路的全部意义（统一那件事归「视觉母题」那一档）。
+ */
+export function addDecor(html: string, opts: { alpha?: number } = {}): DecorResult {
+  const cur = pageImageMode(html);
+  if (cur !== 'split') {
+    throw new ImageModeError(
+      cur === 'backdrop'
+        ? '这一页是背景图模式 —— 整页已经是一张图了，装饰层垫在它下面等于什么都看不见（还会多出一格图位、多花一次钱）。要装饰背景就先「改回分屏」。'
+        : '这一页是单图模式 —— 整页就是一张图（连字都印在里面），装饰层垫在它下面完全看不见。要装饰背景就先「改回原版」。'
+    );
+  }
+  if (hasDecor(html)) {
+    throw new ImageModeError('这一页已经有一层装饰背景了（要它淡一点/浓一点就拖「装饰层浓度」那个滑块，要换一张就点那一格的「AI 生成」）。');
+  }
+  const alpha = opts.alpha ?? DECOR_ALPHA;
+  checkAlpha(alpha);
+  const slots = findImageSlots(html);
+  if (slots.length >= MAX_SLOTS_PER_PAGE) {
+    throw new ImageModeError(
+      `这一页已经有 ${slots.length} 格图（上限 ${MAX_SLOTS_PER_PAGE} 格），再加一层装饰背景的话那一格备不了图、` +
+        '也换不了图（只剩「配全部图」那条真花钱的路）。这一页不加装饰背景。'
+    );
+  }
+  const els = scanTags(html);
+  const root = rootSection(els);
+  const close = html.lastIndexOf('</section>');
+  if (close < 0) throw new ImageModeError('这一页的 HTML 里找不到 </section>（先重新生成这一页）。');
+
+  // 铺满整页又刷了实底的那几层会把这一层整片挡住（装饰层是 `z-index:-1`，在它们下面）——
+  // 浅底就地改透明，别的底拒掉。不处理的话「加完一点变化都没有」，而一处都不报错。
+  const rootAt = els.indexOf(root);
+  const edits: { at: number; len: number; text: string }[] = [];
+  for (const el of els) {
+    if (el.parent !== rootAt || el.classes.includes('slide-header') || !fullBleed(el)) continue;
+    const edit = clearCover(
+      el,
+      'data-decor-bg',
+      '装饰背景整片被它挡住（加完画面上一点变化都没有）—— 两种都是「页面看起来完全正常」。这一页不加装饰背景。'
+    );
+    if (edit) edits.push(edit);
+  }
+
+  const headline = headlineIn(pageBody(html));
+  const subject = headline
+    ? `和「${headline}」这一页气质一致的一层抽象装饰底纹`
+    : '一层抽象装饰底纹';
+  // 前后**不加换行/缩进**：`removeDecor` 是按标签位置整块删的，加了的话去掉之后那几个空白字符
+  // 留在 html 里 —— 加上再去掉五次，这一页的 html 和原来差十行空白（画面上完全一样，
+  // 而「这一页改过没有」那类对账全是按字符串比的）。
+  const layer =
+    `<div class="page-decor" data-decor="1" style="--decor-a:${alpha}">` +
+    `<img src="${PLACEHOLDERS[0]}" alt="" data-img-prompt="${attrText(subject)}" data-img-mode="decor">` +
+    `</div>`;
+  const out = splice(html, edits);
+  const at = out.lastIndexOf('</section>');
+  const notes = [
+    `这一页多了一层装饰背景（第 ${slots.length + 1} 格，垫在所有内容底下，原来那几格图一个字都没动）。` +
+      '现在它是占位图 —— 点那一格的「AI 生成」才会出真图（一次真实花费），画风跟着「项目设置 › 视觉母题」走。',
+    ...alphaNote(alpha),
+  ];
+  if (!headline) {
+    notes.push(
+      '这一页扫不出标题，那一格的「画什么」写的是一句通用的（「一层抽象装饰底纹」）—— 要它跟这一页的内容有关就在那一格的提示词里自己写一句。'
+    );
+  }
+  if (edits.length) {
+    notes.push(
+      `这一页有 ${edits.length} 层铺满整页的浅色底，已经就地改成透明（不改的话装饰层整片被挡住，看起来像没生效）—— 去掉装饰背景时会原样放回。`
+    );
+  }
+  return { html: out.slice(0, at) + layer + out.slice(at), alpha, notes };
+}
+
+/** 只调这一层的浓度（**不重新生成、不花钱**，同 `setBackdropMask`）。 */
+export function setDecorAlpha(html: string, alpha: number): DecorResult {
+  if (!hasDecor(html)) throw new ImageModeError('这一页没有装饰背景，没有浓度可调。');
+  checkAlpha(alpha);
+  const el = scanTags(html).find((e) => /\sdata-decor="1"/.test(e.text))!;
+  // 把原来那条 `--decor-a` 摘掉再写一条：直接追加的话「调五次」会在 style 里叠五条
+  // （生效的是最后一条，而 `decorAlpha` 读到的是第一条 —— 滑块和画面从此差一截）。
+  const kept = (attrOf(el.text, 'style') || '')
+    .split(';')
+    .filter((d) => d.trim() && !/^--decor-a\s*:/.test(d.trim()))
+    .join(';');
+  const style = kept ? `${kept};--decor-a:${alpha}` : `--decor-a:${alpha}`;
+  return {
+    html: splice(html, [{ at: el.at, len: el.text.length, text: setAttr(el.text, 'style', style) }]),
+    alpha,
+    notes: alphaNote(alpha),
+  };
+}
+
+/** 去掉装饰背景：那一层整块删掉，为它改透明的那几层原样放回。 */
+export function removeDecor(html: string): DecorResult {
+  if (!hasDecor(html)) throw new ImageModeError('这一页没有装饰背景。');
+  const els = scanTags(html);
+  const layer = els.find((e) => /\sdata-decor="1"/.test(e.text))!;
+  const img = els.find((e) => e.parent === els.indexOf(layer));
+  const url = img ? attrOf(img.text, 'src') : null;
+  const close = html.indexOf('</div>', layer.at);
+  if (close < 0) throw new ImageModeError('装饰背景那一层没有闭合标签，去不掉（刷新一下再试）。');
+  const edits: { at: number; len: number; text: string }[] = [
+    { at: layer.at, len: close + '</div>'.length - layer.at, text: '' },
+  ];
+  for (const el of els) {
+    if (el === layer || !/\sdata-decor-bg="/.test(el.text)) continue;
+    edits.push({ at: el.at, len: el.text.length, text: restoreStyle(el.text, 'data-decor-bg') });
+  }
+  const notes = ['已经去掉这一页的装饰背景（版式和那几格图原样留着）。'];
+  if (url && !PLACEHOLDERS.includes(url)) {
+    // 不说的话他以为那张图跟着没了，会重新加一层再生一张（一次真实花费）。
+    notes.push('刚才那张装饰图还在素材库里（/ppt/assets）—— 再加一层的话可以在那一格「素材库里挑」，不用重新生成。');
+  }
+  return { html: splice(html, edits), alpha: null, notes };
+}
+
+// ---------------------------------------------------------------- 整份共用的那层装饰底图（106）
+//
+// 贴那一层的代码在 `deckShell.applyDeckDecor`（拼页那一处，一张图全份复用、不占图位）。
+// 这里只管**它在这一页上会不会被挡住** —— 那件事要读骨架里的类名声明（`classDecls`），
+// 而 deckShell 不能 import 这个文件（成环，见 `pageMarkers.ts` 头注）。
+
+/**
+ * 铺满整页的不透明底会把这一层整片挡住（它是 `z-index:-1`，盖得住 `.slide` 自己的底色、
+ * 盖不住任何铺满的子元素）。挡住就回一句**真实成因**给接口报出去。
+ *
+ * **这里不像 `addDecor` 那样把浅底就地改透明**：那一条是他给这一页单独点的，改的是这一页；
+ * 而整份这一层一按下去就是几十页，顺手改掉每一页的底色属于「他没要求的改动」——
+ * 而且撤的时候要逐页放回，漏一页就是那一页的底色从此是透明的（画面上看不出来，导出 pptx 才发现）。
+ * 所以这几页照实报出去，让他对那几页单独加页级的装饰背景。
+ */
+export function deckDecorBlocker(html: string): string | null {
+  const els = scanTags(html);
+  const root = els.find((e) => e.name === 'section');
+  if (!root) return '这一页的 HTML 里找不到 <section>（先重新生成这一页）。';
+  const rootAt = els.indexOf(root);
+  for (const el of els) {
+    if (el.parent !== rootAt || el.classes.includes('slide-header') || !fullBleed(el)) continue;
+    const bg = bgOf(el);
+    if (!bg) continue;
+    const v = bg.value.trim().toLowerCase();
+    if (v === '' || v === 'none' || v === 'transparent') continue;
+    return (
+      `这一页有一层铺满整页的底（${bg.from} 上的 ${bg.value}）挡着 —— 整份那一层垫在它下面看不见。` +
+      '要这一页也有底纹就在「这一页的图」里单独给它加一层装饰背景。'
+    );
+  }
+  return null;
+}
+
+/**
+ * 这一页装饰层里那张**真图**（地址 + 那一格的提示词），给「这张图整份都用」那个按钮用。
+ *
+ * 还是占位图的话回 null 而不是那个 `/ppt-cases/ph-…` 地址：占位图被整份垫上去之后，几十页
+ * 底下各多一张浅灰细纹 —— 画面上几乎看不出变化，而接口 200、后台记着地址，看起来像这个功能没生效。
+ * 地址由服务端从 html 现读，**不让前端传**：前端另写一遍「装饰层那张图是哪一个」的话，
+ * 换过模式/删过一格之后它挑中的是别的一格，而整份底纹变成了那一页正文里的一张配图。
+ */
+export function decorImage(html: string): { url: string; prompt: string } | null {
+  if (!hasDecor(html)) return null;
+  const els = scanTags(html);
+  const layer = els.find((e) => /\sdata-decor="1"/.test(e.text));
+  if (!layer) return null;
+  const img = els.find((e) => e.parent === els.indexOf(layer));
+  const url = img ? attrOf(img.text, 'src') : null;
+  if (!url || PLACEHOLDERS.includes(url)) return null;
+  return { url, prompt: decodeEntities(attrOf(img!.text, 'data-img-prompt') || '') };
+}
+
+export interface DeckDecorPageReport {
+  page: number;
+  applied: boolean;
+  /** 没垫上的真实成因（垫上了就是空串） */
+  reason: string;
+}
+
+/**
+ * 整份那层底图**逐页**垫得上垫不上（给接口原样报给他看）。
+ *
+ * 静默跳过是这个功能最容易出的事故：他点一下「整份都用」，四十页里有六页没有 ——
+ * 不说的话现象是「这个功能时好时坏」，他会回去反复重新生成那张图（每张真花一次钱）。
+ */
+export function deckDecorReport(
+  pages: Array<{ page: number; html: string }>,
+  decor: DeckDecor | null
+): DeckDecorPageReport[] {
+  return pages.map(({ page, html }) => {
+    if (!html) return { page, applied: false, reason: '这一页还没生成。' };
+    const r = applyDeckDecor(html, decor);
+    if (!r.applied) return { page, applied: false, reason: r.reason };
+    const blocked = deckDecorBlocker(html);
+    return { page, applied: !blocked, reason: blocked || '' };
+  });
+}
+
+// ---------------------------------------------------------------- 版式自带的默认图模式
+
+/**
+ * 库文件里 `- **默认图模式**：背景图` 那一档：**生成完这一页就地变形**，不用他每次手点
+ * 「改成背景图」（L1 / L3 / L20 / L66 这几条本来就是「一张大图 + 一侧文字」的版式）。
+ *
+ * 两条边界：
+ * ① **变形失败不许吞**。深底/品牌色整页那几页 `toBackdrop` 会拒（图整片被挡住），这时这一页
+ *    留在分屏是**对的**，但必须把真实成因喊出来 —— 吞掉的话库文件上写着「默认背景图」、
+ *    生成出来是一页正常的左图右字，他只会以为这一行没生效、反复重新生成（每次一次真调用）。
+ * ② **只在生成那一次做**，不在读取/拼整份那条路上做：那两条路上做的话他点「改回分屏」之后
+ *    一刷新又变回背景图，而两次都不报错（现象是「这个按钮点了没用」）。
+ */
+export function applyDefaultImageMode(
+  html: string,
+  want: '' | 'backdrop',
+  ctx: { page: number; layoutId: string; mask?: number }
+): { html: string; changed: boolean; problems: string[] } {
+  if (want !== 'backdrop') return { html, changed: false, problems: [] };
+  // 版式自带整页背景图的（`.case-bg`）或者已经是背景图记号的，本来就到位了。
+  if (pageImageMode(html) === 'backdrop') return { html, changed: false, problems: [] };
+  try {
+    // 幕帘浓度跟着版式那一行走（`（幕帘 N%）`，见 `PptLayout.defaultBackdropMask`）：
+    // 本来就是整页照片的那几条自己带一层蒙版，它在变形之后照旧画在幕帘上面，两层叠起来
+    // 照片灰掉一半 —— 而页面、接口、problems 全都正常。`??` 不是 `||`：0 是有效值，
+    // 写成 `||` 的话「幕帘 0%」静默变回 30%，md 上写的那个数永远不生效。
+    return { html: toBackdrop(html, { mask: ctx.mask ?? BACKDROP_MASK }).html, changed: true, problems: [] };
+  } catch (e: any) {
+    return {
+      html,
+      changed: false,
+      problems: [
+        `第 ${ctx.page} 页的版式 ${ctx.layoutId} 默认是背景图模式，但这一页没能改过去：${e?.message || e}` +
+          ' —— 这一页现在是分屏（图占一侧）。要整页背景图就先按上面那句改这一页的内容，再点「改成背景图」。',
+      ],
+    };
+  }
 }

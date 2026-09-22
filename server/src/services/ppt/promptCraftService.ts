@@ -87,7 +87,7 @@ export function craftRules(): string {
  * 模型自己挑一边，回来那一整条读起来更专业 —— 而背景图缩在中间围一圈白边 / 单图里一个字都没印 /
  * 普通图里多出一堆乱码假字，接口 200、缩略图也好看，每张都真花了钱。
  */
-const REWRITE_MODE_HEADS = /^### (slot|backdrop|poster) 重写要求[^\n]*$/gm;
+const REWRITE_MODE_HEADS = /^### (slot|backdrop|poster|decor) 重写要求[^\n]*$/gm;
 
 /**
  * 重写整条那一步的指令（md 的下半：公共那几节 + **这一路那一节**）。
@@ -113,7 +113,7 @@ export function rewriteRules(mode: ImageMode): string {
   const mine = heads.find((h) => h[1] === key);
   if (!mine) {
     throw new PromptCraftError(
-      `生图提示词创作规范里找不到「### ${key} 重写要求」那一节（image-prompt-craft.md 末尾那三节，现在有 ${heads.map((h) => h[1]).join(' / ') || '零'} 节）—— ` +
+      `生图提示词创作规范里找不到「### ${key} 重写要求」那一节（image-prompt-craft.md 末尾那几节，现在有 ${heads.map((h) => h[1]).join(' / ') || '零'} 节）—— ` +
         '这一格是这一路，而三路的要求是互相冲突的（普通图「一个字都不许有」对上单图「那几行字要印在画面里」、普通图「主体离四边留一点」对上背景图「四边出血」）。' +
         '拿公共那几节凑的话回来那条读起来照样专业，而背景图缩在中间围一圈白边 / 单图里一个字都没印，一处都不报错。'
     );

@@ -22,7 +22,9 @@
         </div>
 
         <div class="header-actions">
-          <router-link class="btn-ghost" to="/ppt/layouts">版式案例库（61 个）</router-link>
+          <router-link class="btn-ghost" to="/ppt/layouts">
+            版式案例库<template v-if="layoutTotal">（{{ layoutTotal }} 个）</template>
+          </router-link>
           <!-- 没有入口的话生成过的图只存在于各页 html 里，他不知道自己有一堆花过钱的图可以重用 -->
           <router-link class="btn-ghost" to="/ppt/assets">配图素材库</router-link>
           <button class="btn-create" @click="router.push('/ppt/decks/new')">
@@ -117,6 +119,10 @@ const router = useRouter()
 const decks = ref<DeckRow[]>([])
 const loading = ref(false)
 const err = ref('')
+// 版式条数跟着这次请求回来（服务端数 md 里那几条）。写成字面量的话库里加了 15 条之后
+// 这颗按钮上还是老数字 —— 页面完全正常，而他照着它以为案例库一直没长。
+// 拿不到时整个「（N 个）」不显示，宁可没有这个数也不显示一个错的。
+const layoutTotal = ref(0)
 
 onMounted(() => {
   if (!getToken()) {
@@ -130,8 +136,9 @@ async function load() {
   loading.value = true
   err.value = ''
   try {
-    const data = await apiGet<{ decks: DeckRow[] }>('/api/ppt/decks')
+    const data = await apiGet<{ decks: DeckRow[]; layoutTotal?: number }>('/api/ppt/decks')
     decks.value = data.decks || []
+    layoutTotal.value = Number(data.layoutTotal) || 0
   } catch (e: any) {
     err.value = e?.message || '加载失败'
   } finally {
