@@ -107,6 +107,7 @@ import { migration_104 } from './104_ppt_page_poster.js';
 import { migration_105 } from './105_seed_ppt_outline_skill.js';
 import { migration_106 } from './106_ppt_deck_decor.js';
 import { migration_107 } from './107_ai_logs_reasoning.js';
+import { migration_108 } from './108_ai_provider_no_thinking_form.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -215,4 +216,5 @@ export const allMigrations: Migration[] = [
   migration_105,
   migration_106,
   migration_107,
+  migration_108,
 ];

@@ -42,8 +42,21 @@
             <td class="mono">{{ p.api_key || '（未设）' }}</td>
             <td>{{ p.enabled ? '✓' : '✕' }}</td>
             <!-- 这一列必须在列表上看得见：开关只在编辑弹层里的话，
-                 「这条为什么答得这么浅」得逐条点开才看得出来。 -->
-            <td>{{ p.kind !== 'llm' ? '—' : p.no_thinking ? '已关闭' : '开' }}</td>
+                 「这条为什么答得这么浅」得逐条点开才看得出来。
+                 后面那个小标签是**运行时自己试出来的发法**（108）：勾了「已关闭」不等于
+                 真关掉了（各家网关认的键不是同一个），而没关掉时界面上照旧写着「已关闭」。 -->
+            <td>
+              <template v-if="p.kind !== 'llm'">—</template>
+              <template v-else-if="!p.no_thinking">开</template>
+              <template v-else>
+                已关闭
+                <span
+                  class="scope-tag"
+                  :class="{ 'form-bad': p.no_thinking_form === 'none-works' }"
+                  :title="formTitle(p.no_thinking_form)"
+                >{{ formLabel(p.no_thinking_form) }}</span>
+              </template>
+            </td>
             <td class="row-actions">
               <button class="link-btn" @click="editProvider(p)">编辑</button>
               <button class="link-btn" @click="testProvider(p)" :disabled="testingId === p.id">
@@ -301,9 +314,31 @@ interface Provider {
   id: string; kind: string; tier: string; label: string;
   base_url: string; api_key: string; model: string; extra_json: string; enabled: number;
   no_thinking: number;
+  /** 运行时自己试出来的发法（migration 108）。null = 还没试过；'none-works' = 都关不掉。 */
+  no_thinking_form: string | null;
   scope_app: string;
 }
 const providers = ref<Provider[]>([])
+
+// 发法 id → 人话。**认不出的 id 原样显示**：后端加了新发法而这份映射没跟上时，
+// 界面上是个眼生的 id（看得见），不是一句假的「已关闭」。
+const FORM_LABELS: Record<string, string> = {
+  combo: '四键齐发',
+  enable_thinking: 'enable_thinking',
+  chat_template_kwargs: 'chat_template_kwargs',
+  thinking_disabled: 'thinking:disabled',
+  effort_none: "effort:'none'",
+  effort_minimal: "effort:'minimal'",
+  reasoning_disabled: 'reasoning:false',
+  'none-works': '关不掉',
+}
+const formLabel = (f?: string | null) => (f ? FORM_LABELS[f] || f : '还没试')
+const formTitle = (f?: string | null) =>
+  f === 'none-works'
+    ? '所有发法都试过了，这个模型/网关关不掉思维链：调用会退到 reasoning_effort: low，思维链照旧和正文分同一份 max_tokens（可能截断）。要快只能换模型。'
+    : f
+      ? `这条接入点用「${formLabel(f)}」这种发法关思维链（运行时试出来的）。没生效的话下一次调用会自动换下一种。`
+      : '还没试过。第一次调用会从「四键齐发」开始试；没关掉就自动换下一种，点「测试」可以现在就试。'
 const apps = ref<Array<{ id: string; name: string }>>([])
 const appLabel = (id: string) => apps.value.find(a => a.id === id)?.name || id
 const testingId = ref('')
@@ -327,9 +362,12 @@ async function testProvider(p: Provider) {
       image_url?: string; protocol?: string; protocol_inferred?: boolean;
       storage?: string; storage_hint?: string; url_warning?: string;
       reasoning_hint?: string;
-      no_thinking?: { verdict: string; note?: string };
+      no_thinking?: { verdict: string; note?: string; form?: string };
       ref_image?: { verdict: string; note?: string };
     }>(`/api/admin/providers/${p.id}/test`, {})
+    // 探测会把试出来的发法写进这条接入点，列表那一列得跟着刷新 ——
+    // 不刷的话上面写着「还没试」而结论里说「已经记住了」，两句话对不上。
+    if (r.no_thinking?.form) loadProviders()
     let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
     if (r.protocol) msg += ` · 协议 ${r.protocol}${r.protocol_inferred ? '（按 Base URL 猜的，extra_json 里没写 protocol）' : ''}`
     if (r.storage) msg += ` · 存储 ${r.storage === 'cos' ? 'COS' : '本机磁盘'}`
@@ -339,7 +377,8 @@ async function testProvider(p: Provider) {
     // 「解析失败 / 提取用不了」的成因（思维链吃 max_tokens、模型关不掉思考），
     // 不显示的话管理员唯一的线索是用户来报错，而每次失败都真扣一次额度。
     if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
-    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
+    // verdict=ok 要给个 ✓：试出来管用的时候那句话是好消息，配着 ⚠ 会被当成又出了问题。
+    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : r.no_thinking.verdict === 'ok' ? '✓' : '⚠'} ${r.no_thinking.note}`
     // 生图接入点认不认参考图（图生图）同理：不显示的话唯一的线索是 PPT 里那一格
     // 「传了参考图但图跟它没关系」，而那时每次重生都真扣一次额度。
     if (r.ref_image?.note) msg += `\n${r.ref_image.verdict === 'unsupported' ? '✗' : r.ref_image.verdict === 'ok' ? '✓' : '⚠'} 参考图：${r.ref_image.note}`
@@ -501,6 +540,9 @@ onMounted(() => { loadConfig(); loadProviders() })
 .prov-table .mono { font-family: var(--font-mono); font-size: 12px; }
 .prov-table .ellip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scope-tag { display: inline-block; padding: 1px 6px; border: 1px solid #3B5BDB; color: #3B5BDB; border-radius: 3px; font-size: 11px; white-space: nowrap; }
+/* 「关不掉」得和「已经试出来了」一眼分得开：同一个蓝标签的话，
+   这条接入点其实一直带着思维链在跑这件事在列表上完全看不出来。 */
+.form-bad { border-color: #dc2626; color: #dc2626; }
 .row-actions { display: flex; gap: 10px; white-space: nowrap; flex-wrap: wrap; }
 .link-btn { border: none; background: none; color: #3B5BDB; cursor: pointer; font-size: 13px; padding: 0; }
 .link-btn.danger { color: #dc2626; }

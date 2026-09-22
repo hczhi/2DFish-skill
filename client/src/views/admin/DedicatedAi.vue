@@ -70,7 +70,15 @@
               <span class="tag tag-off" v-if="!p.enabled">已停用</span>
               <!-- 卡片上要看得见：只在编辑表单里的话，「这条为什么答得浅」
                    得逐条点开才看得出来 -->
-              <span class="tag tag-plain" v-if="p.kind === 'llm' && p.no_thinking">不深度思考</span>
+              <!-- 勾了「不深度思考」不等于真关掉了（各家网关认的键不是同一个），
+                   所以把运行时试出来的发法（108）也显示出来：不显示的话「一直带着
+                   思维链在跑」这件事在卡片上和真关掉了长得一模一样。 -->
+              <span class="tag tag-plain" v-if="p.kind === 'llm' && p.no_thinking">
+                不深度思考
+                <b :class="{ 'form-bad': p.no_thinking_form === 'none-works' }" :title="formTitle(p.no_thinking_form)">
+                  · {{ formLabel(p.no_thinking_form) }}
+                </b>
+              </span>
               <span class="tag tag-editing" v-if="dedForm.id === p.id">正在编辑</span>
             </div>
             <div class="prov-name">{{ p.label || '（未命名）' }}</div>
@@ -365,8 +373,31 @@ interface Provider {
   id: string; kind: string; tier: string; label: string; base_url: string;
   api_key: string; model: string; extra_json: string; enabled: number;
   no_thinking: number;
+  /** 运行时自己试出来的发法（migration 108）。null = 还没试过；'none-works' = 都关不掉。 */
+  no_thinking_form: string | null;
   scope_app: string;
 }
+
+// 发法 id → 人话。**认不出的 id 原样显示**：后端加了新发法而这份映射没跟上时，
+// 卡片上是个眼生的 id（看得见），不是一句假的「已关闭」。
+// 和 SystemConfig.vue 那份一样（专属接入点全在这一页配，两页都得显示）。
+const FORM_LABELS: Record<string, string> = {
+  combo: '四键齐发',
+  enable_thinking: 'enable_thinking',
+  chat_template_kwargs: 'chat_template_kwargs',
+  thinking_disabled: 'thinking:disabled',
+  effort_none: "effort:'none'",
+  effort_minimal: "effort:'minimal'",
+  reasoning_disabled: 'reasoning:false',
+  'none-works': '关不掉',
+}
+const formLabel = (f?: string | null) => (f ? FORM_LABELS[f] || f : '还没试')
+const formTitle = (f?: string | null) =>
+  f === 'none-works'
+    ? '所有发法都试过了，这个模型/网关关不掉思维链：调用会退到 reasoning_effort: low，思维链照旧和正文分同一份 max_tokens（可能截断）。要快只能换模型。'
+    : f
+      ? `这条接入点用「${formLabel(f)}」这种发法关思维链（运行时试出来的）。没生效的话下一次调用会自动换下一种。`
+      : '还没试过。第一次调用会从「四键齐发」开始试；没关掉就自动换下一种，点「测试」可以现在就试。'
 
 interface DedStatus {
   enabled: boolean; missingTiers: string[]; hasImage: boolean; ready: boolean;
@@ -670,14 +701,18 @@ async function testDed(p: Provider) {
     const r = await apiPost<{
       duration_ms: number; model: string;
       reasoning_hint?: string;
-      no_thinking?: { verdict: string; note?: string };
+      no_thinking?: { verdict: string; note?: string; form?: string };
       ref_image?: { verdict: string; note?: string };
     }>(`/api/admin/providers/${p.id}/test`, {})
+    // 探测会把试出来的发法写进这条接入点，卡片上那个标签得跟着刷新 ——
+    // 不刷的话上面写着「还没试」而结论里说「已经记住了」，两句话对不上。
+    if (r.no_thinking?.form) loadDedicated()
     let msg = `连通 ✓ ${r.model} · ${r.duration_ms}ms`
     // 专属接入点更要显示这两条：它没有平台回落，这一条不能关思维链就是
     // 「这个用户的提取/抽取全废」，而连通测试原来只说一句 ✓。
     if (r.reasoning_hint) msg += `\n⚠ ${r.reasoning_hint}`
-    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : '⚠'} ${r.no_thinking.note}`
+    // verdict=ok 要给个 ✓：试出来管用的时候那句话是好消息，配着 ⚠ 会被当成又出了问题。
+    if (r.no_thinking?.note) msg += `\n${r.no_thinking.verdict === 'unsupported' ? '✗' : r.no_thinking.verdict === 'ok' ? '✓' : '⚠'} ${r.no_thinking.note}`
     // 专属的生图接入点同样要说认不认参考图：专属渠道没有平台回落，这一条不认就是
     // 「这个用户传了参考图也没用」，而界面上那一格照样回 200 挂着新缩略图。
     if (r.ref_image?.note) msg += `\n${r.ref_image.verdict === 'unsupported' ? '✗' : r.ref_image.verdict === 'ok' ? '✓' : '⚠'} 参考图：${r.ref_image.note}`
@@ -761,6 +796,9 @@ onMounted(loadDedicated)
 .tag-kind { background: #f3f4f6; color: #4b5563; font-family: monospace; }
 .tag-tier { background: #e0e7ff; color: #3B5BDB; font-family: monospace; }
 .tag-plain { background: transparent; color: #9ca3af; font-weight: 500; }
+/* 「关不掉」得和「已经试出来了」一眼分得开：同色的话，这条接入点其实一直
+   带着思维链在跑这件事在卡片上完全看不出来。 */
+.tag-plain .form-bad { color: #dc2626; }
 .tag-off { background: #fef2f2; color: #dc2626; }
 .tag-editing { background: rgba(59, 91, 219, 0.1); color: #3B5BDB; }
 .scope-tag {

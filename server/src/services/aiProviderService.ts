@@ -27,6 +27,12 @@ export interface AIProvider {
    * **只能强制关，不能强制开** —— 见 gateway 里那句「取或」的注释。
    */
   no_thinking: number;
+  /**
+   * 这条接入点上**哪一种发法**真的关掉了思维链（`core/llm/gateway.ts` 的
+   * `NO_THINKING_FORMS` 里的 id；NULL = 还没试过，`'none-works'` = 都关不掉）。
+   * 运行时自己学出来的，不是管理员填的 —— 见 migration 108。
+   */
+  no_thinking_form: string | null;
   /** NULL/空 = 平台级；有值 = 该用户的专属接入点（见 migrations/052）。 */
   owner_user_id: string | null;
   /**
@@ -228,6 +234,9 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
     // 任何一次没带它的编辑（换个模型、改个名字）都会把这个开关悄悄关掉 ——
     // 而关掉的现象只是「怎么又变慢了」，保存那一下什么都不会提示。
     no_thinking: data.no_thinking !== undefined ? (data.no_thinking ? 1 : 0) : existing?.no_thinking ?? 0,
+    // 学出来的发法（108）跟着旧值走：这一列**不在编辑表单里**，漏掉它的话管理员随便改一次
+    // 标签就把它清成 NULL，于是下一次调用又从第一种发法开始试 —— 现象只是「偶尔又慢一次」。
+    no_thinking_form: data.no_thinking_form !== undefined ? data.no_thinking_form : existing?.no_thinking_form ?? null,
     // 空串归一成 null：平台级必须是 NULL 才能被 `owner_user_id IS NULL` 查到。
     // `??` 的连带后果：已有 owner 的配置**改不回平台级**（传 null 会落回 existing）。
     // 保持这个方向 —— 把某用户的 key 降成平台配置 = 全站所有人开始烧他那把 key，
@@ -241,8 +250,8 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
     updated_at: now,
   };
   db.prepare(
-    `INSERT OR REPLACE INTO ai_providers (id, kind, tier, label, base_url, api_key, model, extra_json, enabled, no_thinking, owner_user_id, scope_app, created_at, updated_at)
-     VALUES (@id, @kind, @tier, @label, @base_url, @api_key, @model, @extra_json, @enabled, @no_thinking, @owner_user_id, @scope_app, @created_at, @updated_at)`
+    `INSERT OR REPLACE INTO ai_providers (id, kind, tier, label, base_url, api_key, model, extra_json, enabled, no_thinking, no_thinking_form, owner_user_id, scope_app, created_at, updated_at)
+     VALUES (@id, @kind, @tier, @label, @base_url, @api_key, @model, @extra_json, @enabled, @no_thinking, @no_thinking_form, @owner_user_id, @scope_app, @created_at, @updated_at)`
     // merged.api_key 此刻是明文（existing 来自已解密的 getProvider），落库前加密
   ).run({ ...merged, api_key: encryptSecret(merged.api_key) });
   // 返回明文那份：调用方（admin API）拿去 maskProvider 脱敏回显
@@ -257,6 +266,17 @@ export function upsertProvider(data: Partial<AIProvider> & { id?: string }): AIP
  * 之后，那把早该失效的 key 会连着新接入点继续工作 —— 下游一切正常，
  * 管理员以为自己已经把接口断掉了。
  */
+/**
+ * 记住「这条接入点该用哪种发法关思维链」（108）。运行时学出来的结果，gateway 每次调用后写。
+ *
+ * 单独一条 UPDATE 而不是走 `upsertProvider`：那个函数会把 api_key 重新加密一遍、
+ * 把 updated_at 推到现在 —— 而这里改的不是管理员配的东西，让它顶到列表最前面
+ * （列表按 updated_at 排）会让人以为有人动过这条接入点的配置。
+ */
+export function setNoThinkingForm(providerId: string, form: string): void {
+  getDatabase().prepare('UPDATE ai_providers SET no_thinking_form = ? WHERE id = ?').run(form, providerId);
+}
+
 export function deleteProvider(id: string): { revokedRelayKeys: number } {
   const db = getDatabase();
   const revokedRelayKeys = revokeRelayKeysByProvider(id, '接入点已删除');

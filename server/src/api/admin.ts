@@ -7,7 +7,7 @@ import { generateApiToken, hashApiToken } from '../auth/middleware.js';
 import OpenAI from 'openai';
 import {
   listProviders, upsertProvider, deleteProvider, maskProvider, getProvider,
-  dedicatedChannelStatus, appChannelStatus, REQUIRED_LLM_TIERS,
+  dedicatedChannelStatus, appChannelStatus, REQUIRED_LLM_TIERS, setNoThinkingForm,
 } from '../services/aiProviderService.js';
 import {
   createRelayKey, listRelayKeys, getRelayKeyById, revokeRelayKey,
@@ -17,11 +17,15 @@ import { AI_APPS, PROVIDER_SCOPES, isValidAppScope, isValidProviderScope } from 
 import { normalizeBaseUrl } from '../core/llm/baseUrl.js';
 import {
   getAppQuotaStatus,
-  // 探测「关不关得掉思维链」用的是**业务真正会发的那组键**和同一份 400 识别，
-  // 不在 admin 里另抄一份（抄的那份和业务发的对不上时，后台会显示一个假的结论）。
-  NO_THINKING_BODY,
-  NO_THINKING_KEYS,
-  isAlwaysThinking,
+  // 探测「关不关得掉思维链」直接跑**业务那一段同一个** withNoThinking（键、400 识别、
+  // 一个一个摘的退法全在里面），不在 admin 里另写一遍：另写的那份迟早和业务发的对不上，
+  // 后台于是显示一个假的结论（「能关」而业务照旧慢，或者反过来）。
+  NoThinkingUnsupportedError,
+  withNoThinking,
+  NO_THINKING_FORMS,
+  NO_THINKING_FORM_EXHAUSTED,
+  noThinkingFormFor,
+  type NoThinkingOutcome,
 } from '../core/llm/gateway.js';
 import { generateImage } from '../core/image/imageGateway.js';
 import { parsePagination, patchRow } from '../core/http.js';
@@ -556,7 +560,12 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
       model: r.model || provider.model,
       json_object_supported: wantsJson ? true : undefined,
       reply: reply.slice(0, 200),
-      no_thinking: await probeNoThinking(client, provider.model || 'gpt-4o'),
+      no_thinking: await probeNoThinking(
+        client,
+        provider.model || 'gpt-4o',
+        provider.id,
+        provider.no_thinking_form
+      ),
       // 推理模型必须在配置阶段就说出来：它会静静吃掉 max_tokens 预算。
       reasoning_tokens: reasoningTokens || undefined,
       reasoning_hint: reasoningTokens
@@ -584,66 +593,149 @@ adminRouter.post('/providers/:id/test', async (req: Request, res: Response) => {
   }
 });
 
+/** 这个探测最多花多久（之后停下来，把进度记住，让管理员再点一次接着试）。 */
+const PROBE_BUDGET_MS = 25_000;
+
 /**
- * 「这条接入点关得掉思维链吗」—— 连通测试之后**再发一次**同样的最小请求，只是带上
- * 业务路径真正会发的那四个键（从 gateway 里 import，不在这里另抄一份：抄的那份迟早和
- * 业务发的不是同一组，后台显示「能关」而业务照旧慢/照旧 400）。
+ * 「这条接入点关得掉思维链吗，用哪种发法关」—— 连通测试之后**照着 `NO_THINKING_FORMS`
+ * 逐种试**，第一种把 `reasoning_tokens` 压到 0 的就记进 `no_thinking_form`（108），
+ * 业务调用以后直接用它。键和退法全从 gateway import，不在这里另抄一份：抄的那份迟早
+ * 和业务发的不是同一组，后台显示「能关」而业务照旧慢/照旧 400。
  *
- * 为什么值得多花一次调用：这件事**在配置阶段完全看不出来**，而它决定了半个平台能不能用。
- * 实测 glm-5.3-flash 连通 ✓、回复正常，但它「始终思考」—— 写死 `noThinking: true` 的那些
- * 路径（品牌咨询的图片提取/文件整理/出草稿、标讯抽取和评分）在它上面只能退到
- * `reasoning_effort: 'low'` 跑，而那条退路上思维链照旧吃 `max_tokens` —— 症状是偶发的
- * 「抄到一半就断了」，管理员唯一的线索是用户来说「提取出来的资料不全」。
+ * 为什么这个按钮要真的去试而不只是报告：各家网关认的键不是同一个，而**这件事在配置阶段
+ * 完全看不出来** —— 后台勾着「不使用深度思考」、连通 ✓、业务 200，只是每次调用慢十倍、
+ * 输出顶满 `max_tokens` 偶发截断。让管理员自己猜是哪个键 = 猜不到。
  *
- * 四种结果各对应一句不同的话：能关 / 发了但没照办（照旧慢、max_tokens 被思维链吃）/
- * 这个模型关不掉（退到 low，有截断风险）/ 这条网关不认这几个键（运行时自动摘掉重发，跑慢的那版）。
- * 探测本身失败（超时等）不影响连通结论，只说「没测出来」。
+ * 五条边界：
+ * ① **判据一律是 `reasoning_tokens`，不是「请求成功」**：发出去不等于生效（宽松网关对
+ *    不认识的键既不报错也不照办），而摘掉某个被拒的键之后剩下的键很可能就关成功了。
+ * ② **上游压根不报这个明细时立刻停下**（verdict `unknown`）：没有判据还往下试的话，
+ *    它会一路试到底、最后记成「关不掉」，而真相可能是第一种发法就成了。
+ * ③ **`refused`（上游明说「这个模型始终思考」）直接记成试完了**：剩下的发法再试一遍换来的
+ *    是几次真慢的调用，而每一次最后还是退到 `reasoning_effort: 'low'`。
+ * ④ **时间用完也要把进度记下来**，否则每次点「测试」都从第一种重头试，永远走不到后面几种。
+ * ⑤ **探测本身失败（超时等）不改连通结论**，只说「没测出来」：让它翻红的话「key 错了」
+ *    和「关不掉思考」会混成同一句。
  */
 async function probeNoThinking(
   client: OpenAI,
-  model: string
-): Promise<{ verdict: 'ok' | 'ignored' | 'unsupported' | 'keys-rejected' | 'unknown'; note?: string }> {
-  try {
-    const r = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: TEST_MAX_TOKENS,
-      temperature: 0,
-      ...NO_THINKING_BODY,
-    } as any);
-    const reasoning = (r.usage as any)?.completion_tokens_details?.reasoning_tokens ?? 0;
-    if (reasoning > 0) {
+  model: string,
+  providerId: string,
+  savedForm: string | null
+): Promise<{
+  verdict: 'ok' | 'ignored' | 'unsupported' | 'keys-rejected' | 'unknown';
+  note?: string;
+  /** 探完之后这条接入点记住的发法（前端显示出来，和列表那一列对得上）。 */
+  form?: string;
+}> {
+  const asUnsupported = (note: string) => {
+    setNoThinkingForm(providerId, NO_THINKING_FORM_EXHAUSTED);
+    return { verdict: 'unsupported' as const, note, form: NO_THINKING_FORM_EXHAUSTED };
+  };
+  const startedAt = Date.now();
+  // 从已经记住的那种接着试（试完了的话 noThinkingFormFor 回第一种 —— 管理员换了模型之后
+  // 再点一次「测试」就该从头试一遍，那正是他换模型想要的）。
+  const from = Math.max(0, NO_THINKING_FORMS.indexOf(noThinkingFormFor(savedForm)));
+  let triedCount = 0;
+
+  for (let i = from; i < NO_THINKING_FORMS.length; i++) {
+    const form = NO_THINKING_FORMS[i];
+    const outcome: NoThinkingOutcome = {};
+    let r: any;
+    try {
+      // 跑业务那一段同一个退法：上游点名拒某个键时它会只摘那一个、留着其余的重发。
+      r = await withNoThinking<any>(
+        true,
+        'provider-test',
+        (extra) =>
+          client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: 'ping' }],
+            max_tokens: TEST_MAX_TOKENS,
+            temperature: 0,
+            ...extra,
+          } as any),
+        outcome,
+        form.body
+      );
+    } catch (e: any) {
+      if (e instanceof NoThinkingUnsupportedError) {
+        return asUnsupported(`${e.message}\n（连通本身没问题，只是关不掉思维链。）`);
+      }
+      const msg = String(e?.message || e);
       return {
-        verdict: 'ignored',
-        note:
-          `发了「关思维链」的参数，但它还是想了 ${reasoning} token —— 这条接入点或这个模型不认那几个键`
-          + `（宽松的网关对不认识的键既不报错也不照办）。写死 noThinking 的路径在它上面照旧慢，`
-          + `而且思维链和正文分同一份 max_tokens，结果可能断在半句上。`,
+        verdict: 'unknown',
+        note: `试「${form.label}」时没测出来能不能关思维链（${msg.slice(0, 120)}）。再点一次「测试」会接着从这一种试。`,
       };
     }
-    return { verdict: 'ok' };
-  } catch (e: any) {
-    const msg = String(e?.message || e);
-    if (e?.status === 400 && isAlwaysThinking(msg)) {
+    triedCount++;
+    const raw = (r.usage as any)?.completion_tokens_details?.reasoning_tokens;
+    const reasoning: number | null = typeof raw === 'number' ? raw : null;
+    const dropped = outcome.droppedKeys?.length
+      ? `这条网关拒了 ${outcome.droppedKeys.join(' / ')}（回 400），已摘掉它重发。`
+      : '';
+    const before = triedCount > 1 ? `前面 ${triedCount - 1} 种发法没生效。` : '';
+
+    if (outcome.refused) {
+      return asUnsupported(
+        `这个模型**始终思考、关不掉**，只能退到 reasoning_effort: 'low' 跑`
+          + `（这次退到 low 之后还想了 ${reasoning ?? '？'} token）。写死「不深度思考」的那些路径`
+          + `（品牌咨询的图片提取 / 文件整理 / 出草稿、标讯的抽取和评分、展示稿生成每一页）在它上面能用，`
+          + `但思维链和正文分同一份 max_tokens：长文件、整页截图有断在半句上的风险。要稳就换一个能关思维链的模型。`
+      );
+    }
+    if (reasoning === 0) {
+      setNoThinkingForm(providerId, form.id);
       return {
-        verdict: 'unsupported',
-        note:
-          `这个模型**始终思考、关不掉**（上游原话：${msg.slice(0, 120)}）。`
-          + `写死「不深度思考」的那些路径（品牌咨询的图片提取 / 文件整理 / 出草稿、标讯的抽取和评分）`
-          + `在它上面会退到 reasoning_effort: 'low' 跑 —— 能用，但它还是在想，且这段思维链和正文`
-          + `分同一份 max_tokens：长文件、整页截图有断在半句上的风险。要稳就换一个能关思维链的模型。`,
+        verdict: 'ok',
+        form: form.id,
+        note: `${before}${dropped}「${form.label}」在这条接入点上管用：这次思维链 0 token。已经记住它，业务调用以后直接用这种发法。`,
       };
     }
-    if (e?.status === 400 && NO_THINKING_KEYS.some((k) => msg.includes(k))) {
+    if (reasoning === null && !outcome.strippedAll) {
+      // 边界②：没有判据就不能继续往下试。发法照旧记下来（起码它没被拒），
+      // 但结论必须说成「测不出来」—— 说成「能关」的话，真正的判据（AI 日志里那一列）
+      // 和这句话对不上时，管理员会先信这句。
+      setNoThinkingForm(providerId, form.id);
       return {
-        verdict: 'keys-rejected',
+        verdict: 'unknown',
+        form: form.id,
         note:
-          '这条网关不认「关思维链」那几个键（回 400）。运行时会自动摘掉重发，所以业务能用，'
-          + '但跑的是带思维链那一版：慢，而且 max_tokens 要和思维链分。',
+          `${before}${dropped}这条网关**不返回 reasoning_tokens**，所以关没关掉在这里测不出来。`
+          + `已按「${form.label}」记下（参数发出去了、没被拒）。真正的判据在后台「AI 日志」的「思维链」那一列：`
+          + `那里显示 0 就是真关掉了，显示红色数字就是没关掉（业务调用会自己换下一种发法再试）。`,
       };
     }
-    return { verdict: 'unknown', note: `没测出来能不能关思维链（${msg.slice(0, 120)}）。` };
+
+    const why = outcome.strippedAll
+      ? '这种发法的键全被拒了（400），这次跑的是思维链全开那一版。'
+      : `发了「${form.label}」，但它还是想了 ${reasoning} token（宽松的网关对不认识的键既不报错也不照办）。`;
+    const next = NO_THINKING_FORMS[i + 1];
+    const verdict = outcome.strippedAll ? ('keys-rejected' as const) : ('ignored' as const);
+    if (!next) {
+      return {
+        ...asUnsupported(
+          `${dropped}${why}${NO_THINKING_FORMS.length} 种发法全试过了，这条接入点/这个模型关不掉思维链 —— `
+            + `写死「不深度思考」的路径在它上面照旧慢，而且思维链和正文分同一份 max_tokens，结果可能断在半句上。`
+            + `要治本只有换模型（换完回来再点一次这个「测试」）。`
+        ),
+        verdict,
+      };
+    }
+    if (Date.now() - startedAt > PROBE_BUDGET_MS) {
+      // 边界④：进度必须落库，否则下次点「测试」又从第一种开始。
+      setNoThinkingForm(providerId, next.id);
+      return {
+        verdict,
+        form: next.id,
+        note:
+          `${dropped}${why}已经试了 ${triedCount} 种（一次只试 ${PROBE_BUDGET_MS / 1000} 秒，`
+          + `免得这个按钮转上一分钟）。下一种要试的是「${next.label}」—— 再点一次「测试」会接着试。`,
+      };
+    }
   }
+  // 循环体每一支都 return，走到这里只可能是 NO_THINKING_FORMS 空了。
+  return { verdict: 'unknown', note: '没有可试的发法（NO_THINKING_FORMS 是空的）。' };
 }
 
 /**
