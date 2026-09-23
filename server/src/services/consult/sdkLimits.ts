@@ -23,6 +23,17 @@ const AI_SPEND_ROUTES: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ['POST'], path: /^\/projects\/[^/]+\/stages\/[^/]+\/chat$/ },
   { methods: ['POST'], path: /^\/projects\/[^/]+\/stages\/[^/]+\/search$/ },
   { methods: ['POST'], path: /^\/projects\/[^/]+\/intake$/ },
+  // 一键四看（109）：一个请求最多 5 次调用（1 次出检索词 + 4 步并行）。中间件先扣 1，
+  // 差额由路由里 `chargeExtraSdkAiCalls` 补 —— 漏登记的话这一条对第三方是完全免费的
+  // 五连击，而它返回的是一份正常的进度列表。
+  { methods: ['POST'], path: /^\/projects\/[^/]+\/four-views\/run$/ },
+  // 「这一步全自动跑完」：一个请求最多 3 次（出检索词 1 + 慢车道出方向 1 + 出正文 1），
+  // 差额同样由路由里 `chargeExtraSdkAiCalls` 补。
+  { methods: ['POST'], path: /^\/projects\/[^/]+\/stages\/[^/]+\/auto$/ },
+  // 「一键生成整份报告」（111）：一个请求 ≈ 23 次（出检索词 1 + 慢车道八步各 2 + 其余各 1），
+  // 差额同样由路由里 `chargeExtraSdkAiCalls` 一次补掉。这一条不补的后果比上面两条严重得多：
+  // 第三方按这张表只扣 1 次，而它真跑了二十多次 —— 那本账看起来完全正常。
+  { methods: ['POST'], path: /^\/projects\/[^/]+\/full-report$/ },
   // 上传资料的 AI 整理（`consult:embed` 放行了它，见 `auth/scopeGuard.ts`）。
   // 它不在 projects 子树下 —— 新建页还没有项目 id。`/extract-file` 不在这张表里是
   // 因为它纯程序解析、不调 AI。

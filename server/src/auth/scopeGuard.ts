@@ -58,14 +58,24 @@ const SCOPE_RULES: Record<string, ScopeRule[]> = {
   // `/api/ppt/assets*` 是**故意放行**的（101 之后素材库按租户存）：素材在**一家公司内共用**，
   // 同一把 pk 下的员工看得到彼此生成的图。挡掉的话嵌入版的挑图抽屉是一片 403，而那意味着
   // 每次要同一张图都得重新生一次（真钱）。
+  // decks 那棵子树的方法要**齐**（含 PUT）：整份装饰底图那条就是 `PUT /decks/:id/decor`，
+  // 漏掉 PUT 的时候嵌入版点「加装饰背景 / 挑一张 / 关掉」是一句 403，而同一屏上其余几十个
+  // 按钮全是好的 —— 读起来像那一个按钮坏了，没人会想到是 scope 白名单少了一个方法。
+  // 放行整棵子树在这里是安全的：`/decks/*` 每条都先过 `ownerOf` + `getDeck(id, owner)`，
+  // 碰不到别人的稿子；真正要挡的是账号级/后台级的那三类（见下面的说明）。
   'ppt:embed': [
     { methods: ['GET'], path: /^\/api\/ppt\/(layouts|styles|design-options|edit-palette)$/ },
     { methods: ['GET'], path: /^\/api\/ppt\/layouts\/[^/]+$/ },
     {
-      methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       path: /^\/api\/ppt\/decks(\/|$)/,
     },
     { methods: ['GET', 'POST', 'DELETE'], path: /^\/api\/ppt\/assets(\/|$)/ },
+    // 「生成提纲」那条对话和它的上传资料：都**不在** decks 子树下（发生在建稿之前，
+    // 压根还没有 deck id）。不登记的话嵌入版点「让 AI 帮我出提纲」之后每发一句都是 403，
+    // 而建稿页其余部分全是好的。三条在 `ppt/sdkLimits.ts:AI_SPEND_ROUTES` 里都登记着按 pk
+    // 计额度（两处缺一处都不行：缺这里是 403，缺那里是这条路对第三方免费烧真钱）。
+    { methods: ['POST'], path: /^\/api\/ppt\/(outline-chat|extract-file|tidy-text)$/ },
   ],
 };
 

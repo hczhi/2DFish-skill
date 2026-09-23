@@ -217,14 +217,17 @@ export interface ConsultMessage {
   role: 'user' | 'assistant';
   /**
    * 'entry' = 定稿留下的那条记录；'decisions' = 慢车道动笔前的岔路口清单；
-   * 'decided' = 顾问在那几处岔路口上拍的板（**它是出正文时的地基**，见 decisionService）。
-   * **只有 'text' 会进下一次 prompt**（discussionBlock）。
+   * 'decided' = 顾问在那几处岔路口上拍的板（**它是出正文时的地基**，见 decisionService）；
+   * 'search' = 这一次分析之前自动联网的结论（`autoSourceService`）。
+   * **只有 'text' 会进下一次 prompt**（discussionBlock）—— 'search' 故意不是 'text'：
+   * 那段话里有检索词和「查到 N 条」，当成顾问说过的话带进下一次 prompt 的话，
+   * 模型会把它当成又一份资料（「多处资料都提到…」），而那句话读起来完全正常。
    *
    * 加一种 kind 必须同时在前端那个 `v-if` 链上加一条分支：认不出的 kind 落到
    * 最后那个 `v-else`，会被渲染成一张写着「已生成候选方向」的卡片，
    * 点开右栏是空的 —— 界面上读起来像那一版丢了。
    */
-  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided';
+  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided' | 'search';
   content: string;
   /** kind != 'text' 时的结构化原文（JSON 字符串，前端照它渲染卡片） */
   payload: string;
@@ -327,11 +330,23 @@ export function touchStage(
 export function saveEntry(
   projectId: string,
   stageKey: string,
-  input: SaveEntryInput
+  input: SaveEntryInput,
+  /**
+   * 这几步**不标 stale**。只给四看一键并行用（`fourViewsBatch.ts` 传那四个 key）：
+   * 那四步是同时跑的，谁先定稿都会把另外三步标成「⚠ 建议重跑」—— 一键跑完四看之后
+   * 四个里有三个挂着重跑提示，而它们全是这一次刚出的，用户唯一看得懂的动作就是
+   * 再跑一遍（再花 4 次额度），跑完还是三个 ⚠。
+   *
+   * 「它们没读到彼此的定稿」这件事不能因此消失，它写在每一步定稿那条对话记录里
+   * （`fourViewsBatch` 那句话）—— 换句话说这里删掉的是**没用的红点**，不是那个事实。
+   * 四问/四大成照旧被标（它们确实该回头看一遍）。
+   */
+  staleExcept: string[] = []
 ): { entry: ConsultEntry; staled: string[] } {
   const db = getDatabase();
   const now = new Date().toISOString();
-  const down = downstreamOf(stageKey);
+  const skip = new Set(staleExcept);
+  const down = downstreamOf(stageKey).filter((k) => !skip.has(k));
 
   const tx = db.transaction(() => {
     const existing = db

@@ -2066,7 +2066,12 @@
   —— 后者是**账号级**开关，一个接入方关掉一个版式，绑定账号自己和别的接入方从此都排不出它，
   而两边界面上都只是「这个版式没了」。花钱的端点另外在
   `services/ppt/sdkLimits.ts:AI_SPEND_ROUTES` 里逐条登记（两处缺一处都不行：缺 scope 是 403，
-  缺这张表是「这条路对第三方免费不限量」）。**`POST /decks/:id/images` 一次最多生 4 张图，
+  缺这张表是「这条路对第三方免费不限量」）。**清单的方法列表要齐，新加的路当天就要登记** ——
+  漏的那条在平台自己用时完全正常，只有嵌入版某一个按钮是一句 403，而同屏其余几十个都好使，
+  读起来像那一个功能坏了（实测漏过 `PUT /decks/:id/decor` 整份装饰底图、和整条「生成提纲」
+  `outline-chat`/`extract-file`/`tidy-text` —— 后三条在计费表里明明登记着）。
+  `auth/scopeGuardPpt.test.ts` 拿 `pptRouter.stack` 逐条比对，故意不放行的要写进那份
+  `DELIBERATE` 并附原因，所以以后漏登记会在测试里翻红，而不是等接入方来说按钮坏了。**`POST /decks/:id/images` 一次最多生 4 张图，
   中间件只扣 1，差额按张补扣**（`chargeExtraPptSdkAiCalls`）—— 不补的话生图对第三方等于打了
   N 折，而后台那个用量数字完全正常。`test/pptSdkEmbed.test.ts` 守着这几条。
 - **嵌入引导页 `/ppt/embed`（`views/ppt/PptEmbed.vue`，写法同 `/consult/embed`）：iframe 的 src

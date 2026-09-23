@@ -52,6 +52,8 @@ import { reapZombieCommands } from './services/feishuAssistant/commandLog.js';
 import { reapZombieJobs } from './core/jobs.js';
 import { verifyEncryptionKey } from './core/secrets.js';
 import { failInterruptedReviews } from './services/uiReview/orchestrator.js';
+import { reapInterruptedConsultRuns } from './services/consult/runStore.js';
+import { reapInterruptedConsultBatches } from './services/consult/batchStore.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
 
 dotenv.config();
@@ -438,6 +440,15 @@ if (!IS_TEST) {
   // 不收尸的话日志里会永远留着一行 `running`，看起来像还在办 ——
   // 而排障表里最难受的一格就是"状态一直 running"。
   reapZombieCommands();
+  // 咨询那边的长任务（出草稿 / 出方向）同理。不收尸的话那一步永远显示「正在分析」，
+  // 而 109 那条唯一索引还把它锁在「已经有一次在跑」—— 于是这一步彻底点不动，
+  // 界面上一个错都不报。
+  reapInterruptedConsultRuns();
+  // 「一键生成整份报告」那条链（111）：驱动它的是内存里一个游离的 async 函数，进程一没
+  // 它必然死了。不收尸的话那条唯一索引把项目永久锁在「已经有一批在跑」（这颗按钮从此一律
+  // 409），而界面上写着「正在跑第 7 步」—— 剩下那几步永远不会跑，没有任何一处报错。
+  // **不自动接着跑**：重启之后凭空花掉二十多次额度谁都没要求过（见那个函数的注释）。
+  reapInterruptedConsultBatches();
 
   // 加密密钥换了的话，库里的第三方密钥全都解不开。放在启动时说清楚，
   // 否则线上只会表现成 AI/上传/飞书同步三处互不相干的失败。

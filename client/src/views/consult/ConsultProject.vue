@@ -74,12 +74,13 @@ interface Msg {
   /**
    * 'entry' = 定稿那一刻留在对话里的记录（服务端 chatService.entryToText 生成）；
    * 'decisions' = 慢车道动笔前那一屏岔路口；'decided' = 他在那几处岔路口上拍的板
-   * （**它是这一步正文的地基**，所以恢复它比恢复岔路口清单更要紧）。
+   * （**它是这一步正文的地基**，所以恢复它比恢复岔路口清单更要紧）；
+   * 'search' = 这一次分析之前自动联网的结论（查到几条 / 为什么没查到）。
    *
    * 加一种 kind 必须同时在下面那条 `v-if` 链上加一条分支：认不出的 kind 会落到最后那个
    * `v-else`，被画成一张写着「已生成候选方向」的卡片，点开右栏是空的 —— 读起来像那一版丢了。
    */
-  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided'
+  kind: 'text' | 'directions' | 'draft' | 'entry' | 'discard' | 'decisions' | 'decided' | 'search'
   content: string
   payload: string
   created_at: string
@@ -115,6 +116,8 @@ interface DecidedSheet {
      *  而正文只会讲选中那条路的好处。 */
     cost: string
     note: string
+    /** 谁定的（服务端 decisionService.DecisionBy）。**空 = 他自己点的**（老记录没有这一列）。 */
+    by?: string
   }>
   noFork: string
   sheetMessageId: string
@@ -169,10 +172,22 @@ const runningStage = ref('')
 const draftPreview = ref(true)
 const savingEntry = ref(false)
 const staledNote = ref<string[]>([])
+/**
+ * 「AI 替你定了这几处、其中几处是掷硬币」那句提示。**不能用 err**：紧接着跑的
+ * `makeDraft` 一进门就把 err 清了，那句降级提示在屏幕上只存在几百毫秒，
+ * 而他看到的是一份正常出好的正文。
+ */
+const autoPickNote = ref('')
 const briefDraft = ref('')
 const savingBrief = ref(false)
 const briefSaved = ref(false)
-const workspaceTab = ref<'task' | 'kb'>('task')
+/**
+ * 右栏三个页签。`run` 是「一键生成整份报告」那条链的进度页（十几分钟、十几步），
+ * 它**不能只做成对话流上的一条提示**：那一批跑的时候他会切来切去看已经出来的那几步，
+ * 而挂在某一步下面的进度一切走就消失了 —— 剩下的表现是「点了按钮之后什么都没发生」，
+ * 而它正在花二十多次额度。
+ */
+const workspaceTab = ref<'task' | 'kb' | 'run'>('task')
 const workspaceOpen = ref(false) // Drawer state
 // 左栏缺省收起：正文（尤其定稿后那份满是表格的报告）比阶段清单值钱，展开的入口
 // 一直挂在左上角（`btn-global-sidebar-toggle`）。
@@ -235,6 +250,8 @@ interface Source {
   published: string
   snippet: string
   query: string
+  /** 1 = 四看一键分析自动搜来的，没人核对过（migration 110）。0 = 他逐条勾选采纳的。 */
+  auto: number
 }
 interface Hit {
   title: string
@@ -276,7 +293,19 @@ const stageBusy = computed(() => !!runningStage.value && runningStage.value === 
     A 步在跑 directions 时 `drafting` 是 false，于是在 B 步还能点出第二个并发的分析，
     先结束的那个会把 `runningStage` 清掉 —— 另一步的转圈圈就此消失而它还在花额度。 */
 const anyRunning = computed(
-  () => !!runningStage.value || drafting.value || loadingDirections.value || loadingDecisions.value || applying.value
+  () =>
+    !!runningStage.value ||
+    drafting.value ||
+    loadingDirections.value ||
+    loadingDecisions.value ||
+    applying.value ||
+    // 并行那一批也算：漏了它的话四看跑着的时候每一步的生成按钮都还是亮的，
+    // 点下去被 409 挡住（额度没花，但读起来像功能坏了），而真正在跑的那四次看不出来。
+    batchActive.value ||
+    // 整份报告那条链同理，而且更要紧：链条中间那几步在他点的时候还没开跑（`consult_runs`
+    // 里没有它们），所以那道 409 拦不住 —— 他能在链条前面插一次手动分析，两版正文互相盖，
+    // 而界面上只是「这一步的内容怎么换了」。
+    fullRunning.value
 )
 
 /**
@@ -309,6 +338,20 @@ function methodLabel(ref: string): string {
   if (!methodText(ref)) return ref
   const n = Number((ref.match(/\d+/) || [])[0])
   return `出自「该怎么想」第 ${n} 条`
+}
+
+/**
+ * 这一处是谁定的（见服务端 `DecisionBy`）。**`by` 缺失一律当他自己点的** ——
+ * 老记录里压根没有这一列，默认成 AI 的话，他过去亲手拍的板会显示成「AI 替你定的」。
+ */
+function aiPicked(p: { by?: string }): boolean {
+  return p.by === 'ai-recommend' || p.by === 'ai-fallback'
+}
+function pickByLabel(p: { by?: string }): string {
+  // 两种 AI 分开：fallback 那几处等于掷了个硬币，是他回头第一个要看的
+  if (p.by === 'ai-fallback') return '⚠ AI 掷硬币定的'
+  if (p.by === 'ai-recommend') return '⚠ AI 替你定的'
+  return '✓ 你定的'
 }
 
 /** 这一步的岔路口清单 / 拍板结果在不在屏幕上（右栏那一块和对话末尾那个 CTA 共用）。 */
@@ -433,7 +476,10 @@ onMounted(() => {
 
 // 离开这一页要把捞结果的定时器停掉（`startRunPoll`）：留着的话它会一直打接口，
 // 而且会往一个已经卸载的组件里写状态。
-onUnmounted(() => stopRunPoll())
+onUnmounted(() => {
+  stopRunPoll()
+  stopBatchPoll()
+})
 
 async function load() {
   loading.value = true
@@ -463,6 +509,17 @@ async function load() {
       selectedKey.value = (stages.value.find(s => !s.hasEntry) || stages.value[0])?.key || ''
       await loadMessages(selectedKey.value)
     }
+    // 整份报告那一批要在 `resumeRuns` **之前**接回来（111）：刷新/关掉页面再回来时，
+    // `runs` 里只有当前那一步，只接它的话面板上是「单步正在跑」，他会去点别的步骤
+    // （撞上链条中间），也看不到「后面还排着 9 步」。上次跑到一半停了的那句成因同理。
+    fullBatch.value = (res.batch as BatchView) || null
+    if (fullBatch.value?.status === 'running') {
+      startBatchPoll()
+      // 回到这一页时也把进度顶上来（他上次可能是关了页面走的）：不顶的话界面上只有某一步
+      // 在转圈，看起来是单步在跑，而其实后面还排着十几步。
+      openWorkspace('run')
+    }
+    resumeRuns(res.runs || [])
   } catch (e: any) {
     err.value = e?.message || '加载失败'
   } finally {
@@ -496,6 +553,8 @@ async function select(key: string) {
   draftTruncated.value = false
   draftDiscussion.value = null
   staledNote.value = []
+  // 这句话说的是「这一步」的取舍，跟着阶段走 —— 留着的话它挂在别的阶段头上
+  autoPickNote.value = ''
   directions.value = null
   directionsStageKey.value = ''
   directionsVerdict.value = ''
@@ -513,7 +572,9 @@ async function select(key: string) {
   chatDropped.value = 0
   chatOpen.value = false
   selectedKey.value = key
-  workspaceTab.value = 'task'
+  // 那条链跑着的时候**不切回「当前工作区」**：他在进度页上点某一步的名字就是去看已经出来
+  // 的那一份，切页签的话进度就此消失（而它还在跑、还在花额度），他只会以为跑完了。
+  if (!fullRunning.value) workspaceTab.value = 'task'
 
   if (window.innerWidth < 1024) {
     workspaceOpen.value = false
@@ -548,6 +609,43 @@ function stopRunPoll() {
   }
 }
 
+/**
+ * 贴一条消息，**已经在列表里的那条不再贴一遍**。
+ *
+ * 去重是必须的：等待期的轮询会先把已经落库的 🌐 联网结论捞出来贴上（见 `startRunPoll`），
+ * 而十几秒后那次 POST 的返回里还带着**同一条**（`searchMessage`）—— 直接 push 的话
+ * 对话里两张一模一样的黄卡片，读起来像联网跑了两遍（也就是「多花了一次额度」）。
+ */
+function pushMessage(m?: Msg | null) {
+  if (!m || messages.value.some(x => x.id === m.id)) return
+  messages.value = [...messages.value, m]
+}
+
+/**
+ * 这次分析开跑之前已经有哪几条资料。等待区里那句「这次新搜到 N 条」按它做差集算出来 ——
+ * `consult_sources` 那几列里没有时间戳，照 `auto=1` 数的话把**以前几次**搜的也算进这一次
+ * （四看跑完通常已经躺着十几条），于是他等的那一版明明一条都没搜到，屏幕上照旧写着
+ * 「这次新搜到 16 条」。
+ *
+ * **`null` = 这次没有快照可比**（刷新之后接回来的那次，`resume`），此时一条都不显示。
+ * 空 Set 当默认值是不行的：那样差集等于「库里全部」，于是 🌐 那条气泡说「这次联网一条
+ * 都没拿到」，紧下面却列着 39 条「这次新搜到、已经喂进去了」 —— 两句话都在屏幕上，
+ * 而真话是上面那句（实际跑出来的就是这个样子）。
+ */
+const preRunSourceIds = ref<Set<string> | null>(null)
+
+/**
+ * 只把右栏那份资料清单刷新一遍：自动联网是在写正文**之前**落库的，
+ * 不刷的话那十几条要等整次分析结束才出现，而等待的这一分钟里屏幕上一个字都没变。
+ * 失败就算了 —— 这是一条锦上添花的刷新，在这里报错会盖掉真正在跑的那次的状态。
+ */
+async function refreshSources() {
+  try {
+    const res = await apiGet(`/api/consult/projects/${projectId}`)
+    sources.value = res.sources || []
+  } catch {}
+}
+
 /** 把「正在跑」的三个状态位一起清掉。漏一个的话按钮或转圈圈会单独卡住。 */
 function clearRunState() {
   runningStage.value = ''
@@ -557,9 +655,20 @@ function clearRunState() {
   stopRunPoll()
 }
 
-function startRunPoll(key: string) {
+/**
+ * @param resume 这一次不是本标签页发起的（刷新/重进之后从 `consult_runs` 接回来的，见
+ *   `resumeRuns`）。这种情况下**不能按 message id 判新旧**：`messages` 里装的是当前选中步
+ *   的记录，而在跑的可能是另一步 —— `seen` 对不上号，第一轮就把那一步**早就存在**的旧草稿
+ *   当成刚出炉的收下并宣布「已经出好了」，而真正那一版还在写（几分钟后才落库，没人再去捞）。
+ *   所以改成按「比这次开跑的时刻更晚」认，`since` 传 `consult_runs.started_at`。
+ */
+function startRunPoll(key: string, resume?: { since: string }) {
   stopRunPoll()
   const seen = new Set(messages.value.map(m => m.id))
+  // 这次开跑时的资料快照（见 preRunSourceIds）。接回来的那次没有快照可言（那几条早就在
+  // 库里了），置 null 而不是空 Set —— 空 Set 的差集是「库里全部」，等待区会把以前搜的
+  // 几十条全说成「这次新搜到的」。
+  preRunSourceIds.value = resume ? null : new Set(sources.value.map(s => s.id))
   let ticks = 0
   runPoll = window.setInterval(async () => {
     // 那次 POST 已经正常返回（或换了别的步在跑）就不用捞了
@@ -567,9 +676,23 @@ function startRunPoll(key: string) {
     ticks++
     try {
       const res = await apiGet(`/api/consult/projects/${projectId}/stages/${key}/messages`)
+      // 🌐 那条联网结论在写正文**之前**就落库了（`autoSearchBeforeAnalysis`），
+      // 所以等待期里先把它贴出来 —— 不贴的话它要和正文一起在一分钟后同时冒出来，
+      // 而这一分钟里屏幕上只有一句纹丝不动的「正在分析」，和卡死了一模一样。
+      // **不算跑完**：它不进下面那个 `fresh`，转圈圈照旧转着。
+      if (key === selectedKey.value) {
+        const notes = (res.messages as Msg[]).filter(
+          m => m.kind === 'search' && !messages.value.some(x => x.id === m.id)
+        )
+        if (notes.length) {
+          notes.forEach(pushMessage)
+          // 搜回来的那几条同时进右栏和等待区（那次 POST 的返回里没有资料清单）
+          void refreshSources()
+        }
+      }
       const fresh = (res.messages as Msg[]).filter(
         m =>
-          !seen.has(m.id) &&
+          (resume ? m.created_at > resume.since : !seen.has(m.id)) &&
           (m.kind === 'draft' || m.kind === 'directions' || m.kind === 'decisions')
       )
       if (fresh.length) {
@@ -577,7 +700,8 @@ function startRunPoll(key: string) {
         // 库里那行是在 `res.json` 前一刻写的，所以正常的一次分析也会被这里撞上。
         // 先让那次返回有 3 秒机会自己回来 —— 不等的话每次分析结束都要多弹一句
         // 「这一版是捞回来的」，而它其实一切正常，看多了就没人当真了。
-        await new Promise(r => setTimeout(r, 3000))
+        // 接回来的那次不用等：这一页压根没有那个 POST 在飞（它死在上一次页面生命周期里）。
+        if (!resume) await new Promise(r => setTimeout(r, 3000))
         if (runningStage.value !== key) return stopRunPoll()
         stopRunPoll()
         // 轮次 / 解锁状态也要一起收下（那次返回里的 stages 同样没收到）
@@ -590,9 +714,10 @@ function startRunPoll(key: string) {
           messages.value = res.messages
           restoreArtifact(key)
           openWorkspace('task')
-          err.value =
-            '⚠ 这一版是直接从服务端捞回来的 —— 那次请求的返回没收到（页面热更新过 / 网络断了一下 / 服务重启都会这样）。' +
-            '内容是完整的，额度也只花了一次，不用重新生成。'
+          err.value = resume
+            ? '✅ 这是你刷新/离开之前那次分析的结果 —— 它在服务端一直跑着，现在写完了。额度只花了一次。'
+            : '⚠ 这一版是直接从服务端捞回来的 —— 那次请求的返回没收到（页面热更新过 / 网络断了一下 / 服务重启都会这样）。' +
+              '内容是完整的，额度也只花了一次，不用重新生成。'
         } else {
           err.value = `「${labelOf(key)}」已经出好了（额度已经花掉），切回那一步就能看到。`
         }
@@ -611,6 +736,398 @@ function startRunPoll(key: string) {
         '先切走再切回来（或刷新一次）看看那一版是不是已经出来了，确认没有再重新生成。'
     }
   }, POLL_MS)
+}
+
+/** `consult_runs`（109）回来的一行。 */
+interface RunRow {
+  id: string
+  stage_key: string
+  kind: 'draft' | 'decisions' | 'directions'
+  status: 'running' | 'done' | 'failed' | 'interrupted'
+  error: string | null
+  started_at: string
+}
+const RUN_LABEL: Record<RunRow['kind'], string> = {
+  draft: '写正文',
+  decisions: '出待定方向',
+  directions: '出候选方向',
+}
+
+/**
+ * 上次没等完的那些分析接回来（`consult_runs`，109，随项目详情一起回来）。
+ *
+ * 这一页的「正在跑」原来**只活在浏览器内存里**（`runningStage`）：一次分析要几十秒到几
+ * 分钟，而服务端那份产出是在 `res.json` 之前就落进对话记录的。于是刷新一次 / 息屏 /
+ * 切走那个标签页之后，界面退回「这一步还没有草稿」加一个生成按钮 —— 额度已经扣了、
+ * 正文正在写（或已经写完躺在库里），而唯一看得见的动作是再点一次（再扣一次）。
+ *
+ * 失败/被重启掐掉的那些要把**存下来的上游原文**说出来，并且只说一次（`acked_at`）：
+ * 不说的话它和「这一步从没跑过」在屏幕上是同一个样子，而额度是真花了（硬规则 1）；
+ * 每次进项目都弹一遍的话弹到第三次就没人看了，于是真中断那次也被划过去。
+ */
+function resumeRuns(runs: RunRow[]) {
+  const notes: string[] = []
+  // 失败那些先说：running 那条是「接着等就行」，这条是「额度花了但没东西」。
+  const dead = runs.filter(r => r.status === 'failed' || r.status === 'interrupted')
+  if (dead.length) {
+    const d = dead[dead.length - 1]
+    notes.push(
+      `⚠ 「${labelOf(d.stage_key)}」上次${RUN_LABEL[d.kind] || '分析'}没跑完：` +
+        `${d.error || '没有记下成因'}` +
+        (dead.length > 1 ? `（另外还有 ${dead.length - 1} 次也是这样）` : '')
+    )
+    for (const r of dead) {
+      apiPost(`/api/consult/projects/${projectId}/runs/${r.id}/ack`, {}).catch(() => {})
+    }
+  }
+  const running = runs.filter(r => r.status === 'running')
+  // 两条以上 = 一键并行那一批还在跑。**不能挂到 `runningStage` 上**（它只装得下一步，
+  // 于是另外三步的进度在界面上整个消失，而它们还在花额度），改成接回那个并行面板。
+  if (running.length > 1) {
+    batchRuns.value = runs
+    startBatchPoll()
+    notes.push(
+      `⏳ 「四看」还有 ${running.length} 步在服务端并行跑着 —— 这一页会接着等，` +
+        '每一步跑完自己定稿。别重复点「一键跑完四看」（那会再花 4 次额度）。'
+    )
+  } else if (running.length === 1 && fullRunning.value) {
+    // 整份报告那条链正在跑：那一步的转圈圈照样挂上（这一步的输入框要停掉），但**不报**
+    // 「别再点一次」那句话 —— 进度和「后面还有几步」在下面那块面板上，在这儿再说一遍
+    // 会把他的注意力引到单步上（他会以为只剩这一步了）。
+    attachRun(running[0])
+  } else if (running.length === 1) {
+    attachRun(running[0])
+    notes.push(
+      `⏳ 「${labelOf(running[0].stage_key)}」上次那次${RUN_LABEL[running[0].kind] || '分析'}还在服务端跑着` +
+        `（${new Date(running[0].started_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 开始），` +
+        '这一页会接着等，出来了自己贴上来 —— 不用再点一次（那会再花一次额度）。'
+    )
+  }
+  if (notes.length) err.value = notes.join('　')
+}
+
+// ── 四看一键并行（四步同时跑，跑完各自自动定稿）────────────
+//
+// 这一批**挂不到 `runningStage` 上** —— 那个变量只装得下一步，塞第二步进去的话第一步的
+// 转圈圈直接消失，而它还在花额度。所以并行这一批单独一套状态 + 单独一条轮询，进度一律
+// 按服务端的 `consult_runs` 显示（只记在本地的话刷新就没了，而那四次调用照旧在跑）。
+const batchRuns = ref<RunRow[]>([])
+/**
+ * 这块进度面板现在跑的是哪一种批量。**必须分**：两种的代价完全不同（四看是四步同时跑、
+ * 谁也没读到另外三份；单步全自动是 AI 替他把那几处取舍定了），而底下那句解释是他事后
+ * 唯一看得到的说明 —— 写死四看那句的话，单步全自动跑完之后面板上写着「四步是同时跑的」，
+ * 而真正该提醒的「地基是 AI 定的」一个字都没有。
+ */
+const batchKind = ref<'four-views' | 'stage-auto'>('four-views')
+const batchSkipped = ref<Array<{ stageKey: string; label: string; reason: string }>>([])
+const batchStarting = ref(false)
+/**
+ * 这次自动联网的结果。**四种状态（没配 key / 搜到了 / 搜了没结果 / 搜失败）都要显示出来** ——
+ * 四种在屏幕上完全一样（四看照样跑完四份通顺的正文），差别只在那几节数字是查来的还是编的，
+ * 而唯一的痕迹是定稿之后才出现一次的证据级别（L1? / L2）。
+ */
+const batchSearch = ref<{ status: 'off' | 'ok' | 'empty' | 'failed'; added: number; note: string } | null>(null)
+let batchPoll: number | undefined
+const batchActive = computed(() => batchRuns.value.some(r => r.status === 'running'))
+const batchDoneCount = computed(() => batchRuns.value.filter(r => r.status !== 'running').length)
+const isFourView = computed(() => selected.value?.group === '四看')
+
+function stopBatchPoll() {
+  if (batchPoll !== undefined) {
+    clearInterval(batchPoll)
+    batchPoll = undefined
+  }
+}
+
+async function runFourViews() {
+  // 这一下是 4 次额度 + 4 份自动定稿（定稿不可逆），所以必须先问一句 ——
+  // 而且要把「谁都没读到另外三份」写在这里：出来之后四份各自都通顺，没人看得出这件事。
+  if (
+    !confirm(
+      '四看那四步会同时开跑，一共花 5 次 AI 额度（1 次出联网检索词 + 4 步分析）。\n\n' +
+        '开跑前先自动联网查一遍资料（十几秒到一分钟，按钮会一直转），搜到的资料算「未人工核对」，' +
+        '喂给这四步之后你可以逐条删。\n' +
+        '跑完每一步各自自动定稿（定稿之后那一步只读，不能再改）。\n' +
+        '因为是同时跑的，四份里谁都没读到另外三份的结论 —— 出来之后对照一遍，哪一步口径不对就单独重跑那一步。\n\n继续？'
+    )
+  )
+    return
+  batchStarting.value = true
+  batchSearch.value = null
+  batchKind.value = 'four-views'
+  err.value = ''
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/four-views/run`, {})
+    batchRuns.value = res.runs || []
+    // 联网那一段的结论（含「压根没联网」的成因）—— 不显示的话它和「查到 12 条」在屏幕上一样
+    batchSearch.value = res.search || null
+    // 搜到的资料现在就要进右栏列表（服务端顺带回的）：不更新的话他看到的是「已采纳 0 条」，
+    // 而那四步的 prompt 里其实带着这几条 —— 读起来就是「自动联网没生效」。
+    // 这里不走 `load()`：它末尾会 `resumeRuns`，把刚开跑的这一批当成「接回来的那次」再报一遍。
+    if (res.sources) sources.value = res.sources
+    // 跳过了哪几步必须显示（服务端回的 skipped）：只说一句「已开始分析」的话他等的是四份、
+    // 出来两份，而那两步（已经定稿 / 已经在跑）在屏幕上看不出任何差别。
+    batchSkipped.value = res.skipped || []
+    if (res.stages) stages.value = res.stages
+    startBatchPoll()
+  } catch (e: any) {
+    err.value = e?.message || '一键分析没起来'
+  } finally {
+    batchStarting.value = false
+  }
+}
+
+/**
+ * 「这一步全自动跑完」：出方向 → AI 按建议拍板 → 出正文 → 自动定稿，中间不停。
+ *
+ * 进度复用四看那块面板（`batchRuns` + `startBatchPoll`）：形状完全一样（一批 run，
+ * 转到不转了就 `load()` 收结果）。另写一套轮询的话，跑完之后界面上还是
+ * 「这一步还没有草稿 + 生成按钮」，而正文已经在库里了 —— 他会再点一次（再花几次额度）。
+ *
+ * 确认框里那三句不能省：这一下 **2-3 次额度、AI 替他定取舍、定完稿那一步只读**，
+ * 三样都不可逆，而按钮和旁边那颗「开始分析」长得一样。
+ */
+async function autoRunStage() {
+  const key = selected.value?.key
+  if (!key) return
+  const slow = !isDraftLane.value
+  if (
+    !confirm(
+      `「${labelOf(key)}」这一步会一路跑到定稿，中间不停，共花 ${slow ? 3 : 2} 次 AI 额度` +
+        `（1 次出联网检索词${slow ? ' + 1 次出那几处取舍' : ''} + 1 次写正文）。\n\n` +
+        (slow
+          ? '那几处要拍板的取舍**由 AI 按它自己的建议定**（你不看就没人看）—— 定了哪几处、放弃了什么会写进对话和正文开头的「方法论速览」。\n'
+          : '') +
+        '跑完自动定稿，而定稿之后这一步只读、不能再改（下游每一步都拿它当依据）。\n\n继续？'
+    )
+  )
+    return
+  batchStarting.value = true
+  batchSearch.value = null
+  batchSkipped.value = []
+  batchKind.value = 'stage-auto'
+  err.value = ''
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/stages/${key}/auto`, {})
+    batchRuns.value = res.run ? [res.run] : []
+    // 同 runFourViews：联网那一段的结论（含「压根没联网」的成因）必须显示出来
+    batchSearch.value = res.search || null
+    if (res.sources) sources.value = res.sources
+    if (res.stages) stages.value = res.stages
+    startBatchPoll()
+  } catch (e: any) {
+    err.value = e?.message || '这一步的全自动分析没起来'
+  } finally {
+    batchStarting.value = false
+  }
+}
+
+// ── 一键生成整份报告（111）─────────────────────────────────
+//
+// 这一批是**串行**的：任何时候只有一步在 `consult_runs` 里，所以它挂不到上面那块
+// `batchRuns` 面板上（那块面板按「一批 run 全部离开 running」判结束，串行这一批第一步
+// 跑完就会被判成「整批跑完」，而后面十几步还在跑、还在花额度）。进度一律读服务端那张
+// `consult_batches`（只记在本地的话刷新就没了，而驱动器照旧在跑）。
+interface BatchView {
+  id: string
+  status: 'running' | 'done' | 'failed' | 'interrupted'
+  cursor: number
+  total: number
+  stageKeys: string[]
+  labels: string[]
+  current: string | null
+  error: string | null
+  searchNote: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+const fullBatch = ref<BatchView | null>(null)
+const fullStarting = ref(false)
+const fullRunning = computed(() => fullBatch.value?.status === 'running')
+/** 还没定稿的那几步 —— 和服务端 `pendingStagesFor` 同一个判据（「没定稿」不是「没跑过」）。 */
+const pendingStages = computed(() => stages.value.filter(s => !s.hasEntry))
+
+/**
+ * 进度页上那份十四步清单。**「这次自动跑出来的」和「之前就定稿的」必须分开**：
+ * 一律画成 ✅ 的话，跑完他看到的是十四份「已完成」，而其中只有几份是没人看过的 AI 自动稿 ——
+ * 该回头核的正是那几份，而它们和他上周一句一句核过的那些在屏幕上一模一样。
+ */
+type FullStepState = 'auto-done' | 'before' | 'running' | 'stopped' | 'queued' | 'idle'
+const fullSteps = computed(() => {
+  const b = fullBatch.value
+  return stages.value.map(s => {
+    const pos = b ? b.stageKeys.indexOf(s.key) : -1
+    let state: FullStepState
+    if (pos < 0) state = s.hasEntry ? 'before' : 'idle'
+    else if (pos < (b?.cursor ?? 0)) state = 'auto-done'
+    else if (pos === (b?.cursor ?? 0)) state = b?.status === 'running' ? 'running' : 'stopped'
+    else state = 'queued'
+    // 判据只认服务端的 `cursor`，**不再拿本地 `hasEntry` 复核**：那个数只在这一步真定稿
+    // （或者「跑到它时已经有人定稿了」被跳过）之后才往前走，所以它比前端这份阶段清单准。
+    // 复核过一版，症状是刚跑完的那几步显示「⚠ 停在这一步，没有定稿」，刷新一次全变 ✅ ——
+    // 链跑着的十几分钟里 `stages` 压根没更新过（现在 `refreshBatch` 跟着更新了）。
+    return { key: s.key, label: s.label, group: s.group, lane: s.lane, state, no: pos + 1 }
+  })
+})
+/**
+ * 这一批之外、之前就定稿的有几步。**进度页顶上必须说这个数**：清单是十四行，而进度是
+ * 「1/9」，于是前五行灰勾读起来像是「这一批已经跑完五步、却只有第六步打了绿勾」——
+ * 他会以为前面几步失败了（真实情况是它们压根不在这一批里）。
+ */
+const fullBeforeCount = computed(() => fullSteps.value.filter(s => s.state === 'before').length)
+/**
+ * 这一批已经跑了多久。**要显示**：每一步几十秒到几分钟，没有这个数的话「正在跑第 3 步」
+ * 停在屏幕上五分钟和卡死一模一样，他会刷新页面/重点一次（而那是二十多次额度）。
+ * 跟着轮询（6 秒）更新，不另开一条秒级定时器 —— 显示到分钟够了。
+ */
+const nowTick = ref(Date.now())
+const fullElapsed = computed(() => {
+  const b = fullBatch.value
+  if (!b) return ''
+  const end = b.finishedAt ? new Date(b.finishedAt).getTime() : nowTick.value
+  const sec = Math.max(0, Math.round((end - new Date(b.startedAt).getTime()) / 1000))
+  return sec < 60 ? `${sec} 秒` : `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`
+})
+
+/**
+ * 「一键生成整份报告」：把还没定稿的那几步按顺序串着跑完。
+ *
+ * 确认框里那几句一句都不能省，全是不可逆的：**二十多次额度**（默认配额 10 次/天，
+ * 这一下能把当天的全用完）、**慢车道那几处取舍由 AI 按它自己的建议定**、**每一步跑完
+ * 自动定稿**（定稿之后那一步只读）。按钮上写「一键生成」四个字的话，这三样在点之前
+ * 一个都看不见。
+ */
+async function runFullReport() {
+  const pending = pendingStages.value
+  if (!pending.length) return
+  // 次数在这儿现算（和服务端 `estimateAiCalls` 同一个算法）：写死一个「约 23 次」的话，
+  // 他从断点接着跑那次也看到 23，而那次可能只剩两步。
+  const estimate = 1 + pending.reduce((n, s) => n + (s.lane === 'slow' ? 2 : 1), 0)
+  const resume = pending.length < stages.value.length
+  if (
+    !confirm(
+      `这一下会把还没定稿的 ${pending.length} 步一路跑完（${pending[0].label} → ${pending[pending.length - 1].label}），` +
+        `串着跑，预计花 ${estimate} 次 AI 额度、十几分钟。\n\n` +
+        (resume ? `已经定稿的 ${stages.value.length - pending.length} 步不会重跑。\n` : '') +
+        '慢车道那几步要拍板的取舍**由 AI 按它自己的建议定**（你不看就没人看），定了哪几处会写进每一步的定稿记录。\n' +
+        '每一步跑完自动定稿，定稿之后那一步只读、不能再改。\n' +
+        '中间任何一步挂了就停在那里（后面几步不会跑），面板上会说清停在哪、为什么。\n\n继续？'
+    )
+  )
+    return
+  fullStarting.value = true
+  err.value = ''
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/full-report`, {})
+    fullBatch.value = res.batch || null
+    nowTick.value = Date.now()
+    // 点完直接把右栏那一页顶上来：不打开的话他点完看到的是原来那屏对话（这一批的第一步
+    // 要几十秒才有动静），读起来就是「点了没反应」，而它已经在花额度了。
+    openWorkspace('run')
+    // 联网那一段的结论跟着 batch 走（`searchNote`）：不显示的话「查了 12 条」和
+    // 「压根没联网、数字按常识给的区间」在这十几份正文里读起来一模一样。
+    if (res.sources) sources.value = res.sources
+    if (res.stages) stages.value = res.stages
+    startBatchPoll()
+  } catch (e: any) {
+    err.value = e?.message || '整份报告没起来'
+  } finally {
+    fullStarting.value = false
+  }
+}
+
+/** 那条失败/中断提示他已经看到了，别每次进项目再弹一遍（同 `runs/:rid/ack`）。 */
+async function dismissFullBatch() {
+  const b = fullBatch.value
+  fullBatch.value = null
+  // 收起之后那个页签也没了，停在 `run` 上的话右栏是一块空白（读起来像抽屉坏了）
+  if (workspaceTab.value === 'run') workspaceTab.value = 'task'
+  if (!b || b.status === 'running') return
+  await apiPost(`/api/consult/projects/${projectId}/batches/${b.id}/ack`, {}).catch(() => {})
+}
+
+function startBatchPoll() {
+  stopBatchPoll()
+  batchPoll = window.setInterval(() => void refreshBatch(), 6000)
+}
+
+/**
+ * 刷一次这一批的进度。
+ *
+ * 跑成了的那条**不在** `GET …/runs` 里（那个接口只回「还在跑的 + 还没跟他说过的失败」），
+ * 所以本地这一批里「从列表上消失了」就等于跑完了。反过来失败那条要**保留本地那份原文**：
+ * 下一次 `load()` 会把它 ack 掉（说过一次就不再回），那之后它同样从列表上消失 ——
+ * 一律当成跑完的话，那一步在面板上变成 ✅，而它一个字都没写出来。
+ */
+async function refreshBatch() {
+  try {
+    const res = await apiGet(`/api/consult/projects/${projectId}/runs`)
+    const live = (res.runs || []) as RunRow[]
+    batchRuns.value = batchRuns.value.map(r => {
+      const hit = live.find(l => l.id === r.id)
+      if (hit) return hit
+      return r.status === 'running' ? { ...r, status: 'done' as const } : r
+    })
+    // 整份报告那一批的进度一律用服务端这一份覆盖（`cursor` 每跑完一步就落库）。
+    // 本地自己数「跑完几步」的话，中间某一步失败之后本地还在往前数，界面上是
+    // 「正在跑第 8 步」而驱动器早就停了 —— 剩下几步永远不会跑。
+    // **跑完/失败之后不清空**（等他点 ×）：清掉的话停在半路那句成因一闪就没了。
+    if (res.batch || fullRunning.value) fullBatch.value = (res.batch as BatchView) || null
+    nowTick.value = Date.now()
+    // 阶段清单（`hasEntry`）必须跟着这一份一起更新，而且要用**同一个响应**里的那一份：
+    // 整份报告那条链一跑十几分钟，这段时间里只更新 `cursor` 的话，刚跑完的那几步在进度页上
+    // 是「⚠ 停在这一步，没有定稿」（`fullSteps` 拿 `hasEntry` 反推「跳过的那种」），
+    // 而它们已经定稿了 —— 刷一下页面就全变成 ✅，读起来像界面在骗人。
+    // 这里**不调 `load()`**：那会连 `briefDraft` 一起覆盖，他正在改的客户资料会被冲掉。
+    if (res.stages) stages.value = res.stages
+    if (!batchActive.value && !fullRunning.value) {
+      stopBatchPoll()
+      // 定稿、阶段状态、这一步的对话一起收下：不收的话四步都跑完了而界面上还是
+      // 「这一步还没有草稿 + 生成按钮」，他会再点一次（再花一次额度）。
+      await load()
+      if (selectedKey.value) await loadMessages(selectedKey.value)
+    }
+  } catch {
+    // 捞不到就下一轮再试：在这里报错会把正在跑的那一批显示成失败
+  }
+}
+
+/**
+ * 把界面挂到服务端那一次 run 上（转圈圈 + 接着捞产出）。
+ *
+ * 三个状态位按 `kind` 分开设：一律当成写正文的话，接回来的「出待定方向」在气泡里显示成
+ * 「正在写这一步的正文」，他会等一份永远不会出现的正文（出来的是几处要他拍板的取舍）。
+ */
+function attachRun(run: RunRow) {
+  runningStage.value = run.stage_key
+  drafting.value = run.kind === 'draft'
+  loadingDirections.value = run.kind === 'directions'
+  loadingDecisions.value = run.kind === 'decisions'
+  startRunPoll(run.stage_key, { since: run.started_at })
+}
+
+/**
+ * 这次 POST 报错（或回了 409）之后回头问一句：服务端那一步是不是**还在跑**？
+ *
+ * 在跑就接着等 —— 挂掉的往往只是「等返回」那一段（网络断一下、代理掐掉长连接、页面热
+ * 更新、息屏），而那次 AI 调用照旧在跑、额度照旧扣了、产出照旧会落进对话记录。不问这一句
+ * 的话界面上只剩一句报错加一颗生成按钮，他会再点一次（再扣一次），而先前那一版稍后
+ * 自己贴出来 —— 于是同一步两版，界面上一个错都不报。409 那条同理（另一个标签页在跑）。
+ */
+async function recoverRunning(stageKey: string) {
+  try {
+    const res = await apiGet(`/api/consult/projects/${projectId}/runs`)
+    const running = ((res.runs || []) as RunRow[]).find(
+      r => r.status === 'running' && r.stage_key === stageKey
+    )
+    if (!running) return
+    attachRun(running)
+    err.value =
+      `${err.value} —— 不过这一步在服务端还在跑，这一页会接着等它，出来了自己贴上来。` +
+      '别再点一次，那会再扣一次 AI 额度。'
+  } catch {
+    // 连这一句都问不到就算了：这时候那条报错横幅是他唯一的线索，别把它盖掉
+  }
 }
 
 /** 这条产出是不是轮询已经收下了（按 message id 认）。 */
@@ -782,6 +1299,7 @@ async function loadDirections(key?: string) {
   err.value = ''
   staledNote.value = []
   startRunPoll(stageKey)
+  let failed = false
   try {
     const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/directions`, {})
     // 轮询已经把这一批收下了（那次返回来得晚）：再走一遍就是同一批方向卡贴两张
@@ -800,14 +1318,19 @@ async function loadDirections(key?: string) {
     draftDiscussion.value = res.discussion || null
     draft.value = null
     draftStageKey.value = ''
-    if (res.message) messages.value = [...messages.value, res.message]
+    // 同 makeDraft：联网那条记录也要当场贴上去
+    // 这两条都走 pushMessage：轮询可能已经把 🌐 那条贴上去了（见 startRunPoll）
+    pushMessage(res.searchMessage)
+    pushMessage(res.message)
 
     openWorkspace('task')
   } catch (e: any) {
     err.value = e?.message || '出方向失败'
+    failed = true
   } finally {
     clearRunState()
   }
+  if (failed) await recoverRunning(stageKey)
 }
 
 /**
@@ -823,6 +1346,7 @@ async function loadDecisions(key?: string) {
   staledNote.value = []
   startRunPoll(stageKey)
   closeWorkspaceForRun()
+  let failed = false
   try {
     const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/decisions`, {})
     // 轮询先捞到了就不再收一遍（否则对话里两张一样的卡片）
@@ -848,13 +1372,18 @@ async function loadDecisions(key?: string) {
     decided.value = null
     decidedStageKey.value = ''
     draftDiscussion.value = res.discussion || null
-    if (res.message) messages.value = [...messages.value, res.message]
+    // 同 makeDraft：联网那条记录也要当场贴上去
+    // 这两条都走 pushMessage：轮询可能已经把 🌐 那条贴上去了（见 startRunPoll）
+    pushMessage(res.searchMessage)
+    pushMessage(res.message)
     openWorkspace('task')
   } catch (e: any) {
     err.value = e?.message || '出待定方向失败'
+    failed = true
   } finally {
     clearRunState()
   }
+  if (failed) await recoverRunning(stageKey)
 }
 
 /**
@@ -901,6 +1430,53 @@ async function applyPicks() {
     ok = true
   } catch (e: any) {
     err.value = e?.message || '提交这几处取舍失败'
+  } finally {
+    applying.value = false
+  }
+  if (ok) await makeDraft(key)
+}
+
+/**
+ * 「让 AI 按它的建议定这几处」= 不花额度的自动拍板，紧接着出正文（那一次花 1 次）。
+ *
+ * 存在的理由是全自动出整份报告：慢车道 8 步动笔之前都要这一条记录，而没人在屏幕前点卡片。
+ * 这里先把它做成一个按钮，是为了让他能**先手动核一遍 AI 会怎么定** —— 直接上全自动的话，
+ * 他第一次看到这几处是在十四步跑完之后。
+ *
+ * `fallbacks`（AI 连建议都没给准、代码拿了第一个选项）必须单独说出来：
+ * 混进那句「已按建议定完」的话，掷硬币定的那几处和有理由的选择长得一模一样。
+ */
+async function autoPicks() {
+  const key = decisionsStageKey.value || selected.value?.key
+  if (!key || !decisions.value || applying.value) return
+  applying.value = true
+  err.value = ''
+  autoPickNote.value = ''
+  let ok = false
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/stages/${key}/decisions/auto`, {})
+    stages.value = res.stages
+    if (key !== selectedKey.value) {
+      err.value = `「${labelOf(key)}」那几处取舍 AI 已经替你定了，但你已经切到别的阶段 —— 切回去点「按定好的方向出正文」。`
+      return
+    }
+    pushMessage(res.message)
+    decided.value = { picks: res.picks || [], noFork: res.noFork || '', sheetMessageId: res.sheetMessageId || '' }
+    decidedStageKey.value = key
+    decisions.value = null
+    decisionsStageKey.value = ''
+    ok = true
+    // 这不是报错，是降级要出声（硬规则 1）：fallback 那几处 AI 的建议指不到唯一一个选项，
+    // 用的是第一个 —— 它和有理由的选择在正文里长得一模一样。
+    const total = (res.picks || []).length
+    autoPickNote.value = res.fallbacks
+      ? `AI 替你定了这一步的 ${total} 处取舍，其中 ${res.fallbacks} 处它连建议都没给准、用的是第一个选项 —— ` +
+        `正文出来后先核这几处（对话里那条拍板记录上标着 ⚠）。不同意就重跑这一步和它的下游。`
+      : total
+        ? `AI 按它自己的建议替你定了这一步的 ${total} 处取舍，你还没核过 —— 正文开头的「方法论速览」会写明这几处不是你定的。`
+        : ''
+  } catch (e: any) {
+    err.value = e?.message || '让 AI 替你定这几处失败'
   } finally {
     applying.value = false
   }
@@ -963,6 +1539,7 @@ async function makeDraft(key?: string) {
   staledNote.value = []
   startRunPoll(stageKey)
   closeWorkspaceForRun()
+  let failed = false
   try {
     const res = await apiPost(`/api/consult/projects/${projectId}/stages/${stageKey}/draft`, {})
     // 同 loadDirections：轮询先捞到了就不再收一遍（否则对话里两张一样的卡片）
@@ -976,13 +1553,21 @@ async function makeDraft(key?: string) {
     draftStageKey.value = stageKey
     draftTruncated.value = !!res.truncated
     draftDiscussion.value = res.discussion || null
-    if (res.message) messages.value = [...messages.value, res.message]
+    // 联网那条记录排在产出之前贴上去：不贴的话那句话要等下一次刷新才出现，而「这次没联网」
+    // 和「查到 8 条」在正文里读起来一模一样（见 Msg.kind 的 'search'）。
+    // 这两条都走 pushMessage：轮询可能已经把 🌐 那条贴上去了（见 startRunPoll）
+    pushMessage(res.searchMessage)
+    pushMessage(res.message)
     openWorkspace('task')
   } catch (e: any) {
     err.value = e?.message || '出草稿失败'
+    failed = true
   } finally {
     clearRunState()
   }
+  // `clearRunState()` 之后才问（见 recoverRunning）：在 catch 里问的话刚挂上去的转圈圈
+  // 会被紧接着的 finally 清掉，于是那次还在跑的分析又变成孤儿。
+  if (failed) await recoverRunning(stageKey)
 }
 
 /**
@@ -1157,6 +1742,23 @@ async function adoptPicked() {
   }
 }
 
+/**
+ * 「这条自动抓的我点开看过了」→ 升级成 L1。
+ *
+ * 必须有这个动作：自动抓的那几条否则只有两条出路（删掉 / 永远挂着「未人工核对」，
+ * 于是每一步的结论都停在 L1? 且模型一直给区间）。核过一条按一条。
+ */
+async function verifySource(id: string) {
+  searchErr.value = ''
+  try {
+    const res = await apiPost(`/api/consult/projects/${projectId}/sources/${id}/verify`, {})
+    sources.value = res.sources || []
+    adoptNote.value = '这条已经记成「你核对过的」（L1）。后面出的结论会按 L1 引用它，不再标「未人工核对」。'
+  } catch (e: any) {
+    searchErr.value = e?.message || '确认失败'
+  }
+}
+
 async function removeSource(id: string) {
   searchErr.value = ''
   try {
@@ -1169,11 +1771,47 @@ async function removeSource(id: string) {
 }
 
 
+// 和服务端 `sourceLevelFor` 一份逻辑两处写。这里必须跟着分岔：自动搜来的那几条撑不到 L1
+// （没人核对过），说成 L1 的话他会拿这一版去做决策，而它可能全靠一页软文。
+const pickedSources = computed(() => sources.value.filter(s => !s.auto))
+const autoSources = computed(() => sources.value.filter(s => s.auto))
+
 const levelNow = computed(() => {
-  if (sources.value.length) return 'L1 联网检索'
+  if (sources.value.some(s => !s.auto)) return 'L1 联网检索'
+  if (sources.value.length) return 'L1? 自动联网（未人工核对）'
   if ((project.value?.brief || '').trim()) return 'L2 客户资料'
   return 'L3 模型内置知识（只给区间）'
 })
+
+/**
+ * 这次分析新搜回来的那几条（等待区里铺开给他先看）。差集见 `preRunSourceIds`。
+ * 只在**等待期**用：跑完之后右栏那份清单才是权威的（那边按采纳/自动分组）。
+ */
+const freshSources = computed(() => {
+  const before = preRunSourceIds.value
+  if (!before) return []
+  return sources.value.filter(s => !before.has(s.id))
+})
+
+/**
+ * 展开了摘要的那几条资料（id）。
+ *
+ * 摘要（`snippet`）是搜回来的正文片段，**也正是真进 prompt 的那段字**（`sourcesBlock`）。
+ * 界面上不给看的话，「我核过了」只能凭标题按，而标题永远看起来是相关的：实测自动搜
+ * 「吉盛伟邦 番禺店 消费者投诉 维权」回来一篇市场监管的**通用**案例汇编，通篇没提这个品牌，
+ * 而那一行的标题、域名、日期全都体面。原文站点打不开时（政府站偶发 502）这段字是
+ * 唯一还核得动的东西 —— 没有它，那一条只能凭感觉留着或删掉，而留着就是 L1? 进正文。
+ */
+const expandedSources = ref(new Set<string>())
+function toggleSnippet(id: string) {
+  const next = new Set(expandedSources.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedSources.value = next
+}
+
+/** 操法那几条里带着 `**`（它们原样进 prompt）。等待区是纯文本列表，不剥的话满屏星号。 */
+const plain = (s: string) => s.replace(/\*\*/g, '')
 
 const selectedNo = computed(() => {
   const i = stages.value.findIndex(s => s.key === selectedKey.value)
@@ -1185,7 +1823,7 @@ const isDraftLane = computed(() => !!selected.value && selected.value.lane !== '
 
 const md = (s: string) => renderMarkdown(s)
 
-function openWorkspace(tab?: 'task' | 'kb') {
+function openWorkspace(tab?: 'task' | 'kb' | 'run') {
   if (tab) workspaceTab.value = tab
   workspaceOpen.value = true
 }
@@ -1211,9 +1849,18 @@ function closeWorkspaceForRun() {
       <div class="grid-bg"></div>
     </div>
 
-    <div v-if="err" class="alert-banner">
-      <span>{{ err }}</span>
-      <button class="alert-close" @click="err = ''" title="关闭提示">×</button>
+    <!-- 两条提示叠在一个绝对定位的容器里，不各自 absolute top:0 —— 后者会让下面那条
+         压在上面那条身上，两句话只看得见一句（而看不见的那句正是降级提示）。 -->
+    <div v-if="err || autoPickNote" class="banner-stack">
+      <div v-if="err" class="alert-banner">
+        <span>{{ err }}</span>
+        <button class="alert-close" @click="err = ''" title="关闭提示">×</button>
+      </div>
+      <!-- AI 替他拍板那条降级提示自己一条：跟 err 合用的话，紧接着跑的出正文会把它清掉 -->
+      <div v-if="autoPickNote" class="alert-banner warn">
+        <span>{{ autoPickNote }}</span>
+        <button class="alert-close" @click="autoPickNote = ''" title="关闭提示">×</button>
+      </div>
     </div>
     
     <!-- Left Navigation: Floating Island -->
@@ -1270,6 +1917,24 @@ function closeWorkspaceForRun() {
       <!-- 导出方案：全定稿才亮。没定完时不隐藏而是灰着说还差几步 ——
            藏起来的话用户不知道有这个功能，也不知道差的是哪几步。 -->
       <div class="rail-footer" v-if="stages.length">
+        <!-- 一键生成整份报告（111）。放在「导出方案」上面：这两颗是一对（先生成整份、
+             再导出整份），而这一颗是项目级的 —— 挂在某一步的对话里的话，他要先挑对步骤
+             才找得到它。跑着的时候按钮换成进度文案并禁用：不禁的话连点两次被 409 挡住
+             （额度没花，但读起来像功能坏了）。 -->
+        <button
+          v-if="pendingStages.length"
+          class="btn-full-report"
+          :disabled="fullStarting || fullRunning || anyRunning"
+          @click="runFullReport()"
+        >
+          <template v-if="fullStarting">⏳ 正在联网查资料…</template>
+          <template v-else-if="fullRunning">⏳ 正在跑（{{ fullBatch?.cursor }}/{{ fullBatch?.total }}）</template>
+          <template v-else>⚡ 一键生成整份报告（剩 {{ pendingStages.length }} 步）</template>
+        </button>
+        <div v-if="pendingStages.length" class="export-sub">
+          串着跑完剩下 {{ pendingStages.length }} 步，约 {{ 1 + pendingStages.reduce((n, s) => n + (s.lane === 'slow' ? 2 : 1), 0) }} 次 AI 额度 ·
+          取舍由 AI 定 · 每步跑完自动定稿
+        </div>
         <button class="btn-export" :disabled="!canExport || exporting" @click="exportReport">
           {{ exporting ? '正在合并…' : '⬇ 导出方案' }}
         </button>
@@ -1300,6 +1965,21 @@ function closeWorkspaceForRun() {
       </div>
 
       <div class="chat-scroll-area" ref="chatScrollRef">
+        <!-- 整份报告那条链的一行状态条（111）。详情在右栏那一页（`workspaceTab==='run'`），
+             这里只留一行，但**停在半路那句成因要留在这条上** —— 藏到右栏里的话他不点就看不到，
+             而那时候剩下几步是真的没跑，和「他压根没点过这颗按钮」一模一样（硬规则 1）。 -->
+        <div v-if="fullBatch" class="full-strip" :class="fullBatch.status">
+          <strong>
+            {{ fullRunning ? '⏳ 正在生成整份报告' : fullBatch.status === 'done' ? '✅ 整份报告跑完了' : '⚠ 整份报告停在半路' }}
+          </strong>
+          <span class="full-strip-num">{{ fullBatch.cursor }}/{{ fullBatch.total }} 步</span>
+          <!-- 正在跑哪一步要点名：只显示「8/14」的话他不知道现在该等哪一步 -->
+          <span v-if="fullRunning" class="full-strip-cur">正在跑「{{ fullBatch.labels[fullBatch.cursor] || '…' }}」· 已跑 {{ fullElapsed }}</span>
+          <span v-else-if="fullBatch.error" class="full-strip-err">{{ fullBatch.error }}</span>
+          <button class="link-btn" @click="openWorkspace('run')">查看进度 →</button>
+          <button v-if="!fullRunning" class="alert-close" title="知道了，收起这条" @click="dismissFullBatch()">×</button>
+        </div>
+
         <!-- Editorial Stage Hero -->
         <div v-if="selected" class="stage-intro-card">
           <div class="intro-header">
@@ -1391,6 +2071,10 @@ function closeWorkspaceForRun() {
             <div v-else-if="m.kind === 'decided'" class="msg-bubble md decided-msg" v-html="md(m.content)"></div>
             <!-- 丢弃：单独一条细提示，不做成 AI 气泡（那是这一步的状态，不是 AI 说的话） -->
             <div v-else-if="m.kind === 'discard'" class="discard-note">{{ m.content }}</div>
+            <!-- 这一次分析之前自动联网的结论。**一定要显示出来**：没配 key / 搜失败 /
+                 搜到了在正文里一模一样（都是一份通顺的分析），差别只在那几节数字是查来的
+                 还是按常识给的区间。也不做成 AI 气泡 —— 那是这次调用的过程记录。 -->
+            <div v-else-if="m.kind === 'search'" class="search-note" v-html="md(m.content)"></div>
             <div
               v-else
               class="msg-artifact"
@@ -1411,6 +2095,55 @@ function closeWorkspaceForRun() {
           </div>
         </div>
         </component>
+
+        <!-- 一键并行那一批的进度。**和选中的是哪一步无关**（四步同时在跑），所以它挂在
+             对话流末尾、不跟着 `selected` 走：只在选中那一步显示的话，其余三步的进度和
+             失败原文在界面上整个消失，而它们各自都真花了一次额度。 -->
+        <div v-if="batchRuns.length" class="batch-panel">
+          <div class="batch-head">
+            <strong>{{ batchKind === 'stage-auto' ? '⚡ 这一步全自动跑完' : '⚡ 四看一键并行' }}</strong>
+            <span>{{ batchDoneCount }}/{{ batchRuns.length }} 步跑完</span>
+            <button v-if="!batchActive" class="alert-close" title="收起这块" @click="batchRuns = []; batchSkipped = []; batchSearch = null">×</button>
+          </div>
+          <!-- 联网那一段的结论。**四种状态都要在这儿出声**（没配 key / 搜到了 / 搜了没结果 /
+               搜失败）：四种在屏幕上一模一样 —— 四看照样跑完四份通顺的正文，差别只在那几节
+               数字是查来的还是编的。搜到了也要说「未人工核对」，不然他会当成核实过的事实。 -->
+          <div v-if="batchSearch" class="batch-row" :class="{ warn: batchSearch.status !== 'ok' }">
+            <span class="batch-ico">{{ batchSearch.status === 'ok' ? '🌐' : '⚠' }}</span>
+            <span class="batch-net">自动联网</span>
+            <span class="batch-note">{{ batchSearch.note }}</span>
+          </div>
+          <div v-for="r in batchRuns" :key="r.id" class="batch-row">
+            <span class="batch-ico">{{ r.status === 'running' ? '⏳' : r.status === 'done' ? (entryOf(r.stage_key) ? '✅' : '📄') : '⚠' }}</span>
+            <button class="link-btn" @click="select(r.stage_key)">{{ labelOf(r.stage_key) }}</button>
+            <span class="batch-note">
+              <template v-if="r.status === 'running'">正在写…（十几秒到几分钟，这一页会自己更新）</template>
+              <!-- 「跑完了但没定稿」必须和「已定稿」分开说：截断/超长那两种情况服务端
+                   故意不自动定稿（草稿留在那一步的对话里），一律写「已定稿」的话他永远
+                   不会回去看那一版，而那一步其实还空着。 -->
+              <template v-else-if="r.status === 'done'">
+                {{ entryOf(r.stage_key) ? '已自动定稿' : '草稿出来了，但没有自动定稿 —— 点进去看一眼再定' }}
+              </template>
+              <template v-else>{{ r.error || '没跑成，没记下成因' }}</template>
+            </span>
+          </div>
+          <div v-for="s in batchSkipped" :key="s.stageKey" class="batch-row muted">
+            <span class="batch-ico">–</span>
+            <button class="link-btn" @click="select(s.stageKey)">{{ s.label }}</button>
+            <span class="batch-note">这次没跑：{{ s.reason }}</span>
+          </div>
+          <!-- 这句解释按批量的种类分（见 batchKind）：两种的代价完全不同，而这是他事后
+               唯一看得到的说明。 -->
+          <p v-if="batchKind === 'stage-auto'" class="batch-foot">
+            这一步是<strong>全自动</strong>跑的：那几处要拍板的取舍是 <strong>AI 按它自己的建议定的</strong>，
+            你还没核过（定稿那条记录里每一处都标着 ⚠）。往下每一步都拿这一版当依据，
+            所以先核一眼结论和那几张表，不对就重跑这一步。
+          </p>
+          <p v-else class="batch-foot">
+            四步是<strong>同时</strong>跑的，所以每一份都没读到另外三份的结论（每一步的定稿记录里都写了这句）。
+            全部出来之后对照一遍，哪一步口径不对就单独重跑那一步。
+          </p>
+        </div>
 
         <!-- 还没有产出时，这一步唯一的推进入口就是这个按钮（原来是进阶段自动跑，
              见 showRunCta 的注释）。放在对话末尾而不是顶上：先聊几句再点是这次改动的
@@ -1436,6 +2169,19 @@ function closeWorkspaceForRun() {
                 点击下方按钮让 AI 开始分析并生成本步的草稿内容。
               </template>
             </p>
+            <!-- 「这一版会按第几级证据写」必须在点下去**之前**说，而且要在主区说。
+                 出来之后 L1 和 L3 的正文在屏幕上一模一样（一样的表格、一样的结论、
+                 一样的自信），而那个级别只在定稿之后的气泡里出现一次 —— 那时候这一步
+                 已经锁定了。
+                 原来这里并排一颗「🌐 联网查资料 →」（跳右栏抽屉自己搜），已经去掉：
+                 分析现在**一律先自动联网**，那颗按钮留着读起来像「不点它就不联网」。
+                 手动搜那条路还在右栏「全局知识库」里，它的作用变成「补一条机器没搜到的、
+                 而且是我核过的（L1）」。**多花的那 1 次额度要写在这里** —— 不说的话他按
+                 10 次/天算着用，实际一半就没了，而报错是一句突然冒出来的 429。 -->
+            <p class="run-cta-lv">
+              点下去会先自动联网查资料（多花 1 次额度），这一版会标成 <strong>{{ levelNow }}</strong
+              ><template v-if="sources.length">（现有 {{ sources.length }} 条联网资料）</template>
+            </p>
           </div>
           <!-- 一个入口。原来慢车道还并排一个「AI 直接出候选方向」（`/directions`：AI 把那几处
                取舍替他定了，再拿四份写好的方案给他挑），已经去掉 —— 摆着它就是给一条绕过
@@ -1451,6 +2197,58 @@ function closeWorkspaceForRun() {
             @click="isDraftLane ? makeDraft() : loadDecisions()"
           >
             {{ isDraftLane ? '生成这一步的草稿 →' : hasSheet ? '重新分析这一步（重出一版取舍）' : '开始分析 →' }}
+          </button>
+          <!-- 四看的一键入口只挂在四看那四步上（`isFourView`）：挂到四问/四大成上的话，
+               点下去跑的是另外四步，而那几步在界面上毫无动静（它们是慢车道，要先拍板）。
+               按钮上必须写明「4 次额度 + 自动定稿」：这一下不可逆，而它和旁边那颗
+               单步生成按钮长得一样。 -->
+          <button
+            v-if="isFourView"
+            class="btn-batch-cta"
+            :disabled="anyRunning || batchStarting"
+            @click="runFourViews()"
+          >
+            <!-- 点下去之后这个 POST 要等十几秒到一分钟（先自动联网），所以按钮文案必须换成
+                 「正在联网查资料」：不换的话那段时间里它和「卡住了」一模一样，他会刷新页面
+                 （而联网那一次额度已经花了）。 -->
+            {{ batchStarting ? '⏳ 正在联网查资料…（十几秒，别关页面）' : '⚡ 一键跑完四看（先联网查资料 · 4 步同时跑 · 共 5 次额度 · 跑完自动定稿）' }}
+          </button>
+          <!-- 「这一步全自动跑完」。四看那四步上不挂（它们有自己的一键入口，`isFourView`），
+               `hasDecided` 时也不挂 —— 那时候取舍已经是他定的了，再给一颗写着「AI 替你定」
+               的按钮会让他以为刚拍的板不算。按钮上必须写明额度和「AI 替你定取舍」：
+               这一下不可逆，而它和上面那颗单步按钮长得一样。 -->
+          <button
+            v-if="!isFourView && !hasDecided"
+            class="btn-batch-cta"
+            :disabled="anyRunning || batchStarting"
+            @click="autoRunStage()"
+          >
+            {{
+              batchStarting
+                ? '⏳ 正在联网查资料…（十几秒，别关页面）'
+                : isDraftLane
+                  ? '⚡ 这一步全自动跑完（联网 + 写正文 · 2 次额度 · 跑完自动定稿）'
+                  : '⚡ 这一步全自动跑完（取舍交给 AI 定 · 3 次额度 · 跑完自动定稿）'
+            }}
+          </button>
+          <!-- 「一键生成整份报告」也挂在这里（左栏底部那颗是同一个 `runFullReport`）：左栏缺省
+               是收起的，所以那颗按钮他很可能压根没见过 —— 而这块 CTA 是他每一步都会看到的地方。
+               样式必须和旁边那两颗分开（`full`：实线 + 更重的字）：三颗都长一样的话，本来想点
+               「一键跑完四看」（5 次额度）的那一下会点成二十多次额度的这一颗。
+               按钮上写明剩几步、几次额度、取舍由 AI 定、每步自动定稿 —— 全是不可逆的。 -->
+          <button
+            v-if="pendingStages.length"
+            class="btn-batch-cta full"
+            :disabled="anyRunning || batchStarting || fullStarting"
+            @click="runFullReport()"
+          >
+            <template v-if="fullStarting">⏳ 正在联网查资料…（十几秒，别关页面）</template>
+            <template v-else-if="fullRunning">⏳ 整份报告正在跑（{{ fullBatch?.cursor }}/{{ fullBatch?.total }}）—— 进度看右栏</template>
+            <template v-else>
+              ⚡ 一键生成整份报告（剩 {{ pendingStages.length }} 步串着跑 ·
+              约 {{ 1 + pendingStages.reduce((n, s) => n + (s.lane === 'slow' ? 2 : 1), 0) }} 次额度 ·
+              取舍由 AI 定 · 每步跑完自动定稿）
+            </template>
           </button>
         </div>
 
@@ -1474,7 +2272,40 @@ function closeWorkspaceForRun() {
                      现在服务端关掉了思维链（GatewayOptions.noThinking），实测回到
                      十几秒到一分钟。**关不掉的接入点会退回四分钟量级**（服务端日志里会
                      喊一句），所以这里给的是区间的上限，不是那个好看的下限。 -->
-                <strong>通常十几秒到 1 分钟</strong>（这一步要写六节带表格的正文）。别刷新，也不用再点一次生成 
+                <strong>通常十几秒到 1 分钟</strong>（这一步要写六节带表格的正文）。别刷新，也不用再点一次生成
+              </div>
+
+              <!-- 等这一分钟的时候屏幕上得有**这一步真要用的东西**，不是一句小贴士：
+                   这三块（刚搜回来的资料 / 这一步按哪几条操法想 / 出来之后要核哪几项）
+                   他反正都得看一遍，铺在这里等于把空转的时间变成预习。
+                   全部来自已经在内存里的数据（`stages` 那两列 + 轮询刷回来的 `sources`），
+                   没有新接口、也不猜进度 —— 写成假的百分比的话，那个条走到 90% 停住
+                   和真卡住一模一样。 -->
+              <div v-if="!chatting" class="wait-brief">
+                <div v-if="freshSources.length" class="wait-sec">
+                  <div class="wait-h">🌐 这次新搜到 {{ freshSources.length }} 条，已经喂进去了</div>
+                  <ul class="wait-list">
+                    <li v-for="sc in freshSources.slice(0, 6)" :key="sc.id">
+                      <a :href="sc.url" target="_blank" rel="noopener">{{ sc.title || sc.url }}</a>
+                      <span class="wait-dim">{{ sc.domain }}<template v-if="sc.published"> · {{ sc.published }}</template></span>
+                    </li>
+                  </ul>
+                  <div v-if="freshSources.length > 6" class="wait-dim">
+                    还有 {{ freshSources.length - 6 }} 条，在右栏「资料」里
+                  </div>
+                </div>
+                <div v-if="selected?.method?.length" class="wait-sec">
+                  <div class="wait-h">💡 它这一步按这几条想</div>
+                  <ul class="wait-list">
+                    <li v-for="(m, i) in selected.method" :key="i">{{ plain(m) }}</li>
+                  </ul>
+                </div>
+                <div v-if="selected?.deliverables?.length" class="wait-sec">
+                  <div class="wait-h">✅ 出来之后你要核这几项</div>
+                  <ul class="wait-list">
+                    <li v-for="(d, i) in selected.deliverables" :key="i">{{ plain(d) }}</li>
+                  </ul>
+                </div>
               </div>
             </div>
           </div>
@@ -1592,6 +2423,15 @@ function closeWorkspaceForRun() {
     <aside class="drawer-workspace" :class="{ open: workspaceOpen }">
       <div class="drawer-header">
         <div class="drawer-tabs">
+          <!-- 这一批跑着的时候这个页签排在最前面，并且带一个进度数字：他会切去看已经出来的
+               那几份，页签上不带数字的话「跑到第几步了」要点一下才知道。 -->
+          <button
+            v-if="fullBatch"
+            :class="{active: workspaceTab === 'run', running: fullRunning}"
+            @click="workspaceTab = 'run'"
+          >
+            {{ fullRunning ? `⏳ 生成进度 ${fullBatch.cursor}/${fullBatch.total}` : fullBatch.status === 'done' ? '✅ 生成进度' : '⚠ 生成进度' }}
+          </button>
           <button :class="{active: workspaceTab === 'task'}" @click="workspaceTab = 'task'">当前工作区</button>
           <button :class="{active: workspaceTab === 'kb'}" @click="workspaceTab = 'kb'">全局知识库</button>
         </div>
@@ -1599,6 +2439,82 @@ function closeWorkspaceForRun() {
       </div>
 
       <div class="drawer-body">
+        <!-- 「一键生成整份报告」的进度页（111）。十四步全列出来，而**「这次自动跑的」和
+             「之前就定稿的」画得不一样**（`fullSteps` 的 state）：一律 ✅ 的话跑完他看到的是
+             十四份「已完成」，而该回头核的只有那几份没人看过的自动稿。 -->
+        <div class="workspace-content run-page" v-show="workspaceTab === 'run'" v-if="fullBatch">
+          <div class="run-hero" :class="fullBatch.status">
+            <div class="run-hero-title">
+              {{ fullRunning ? '⏳ 正在生成整份报告' : fullBatch.status === 'done' ? '✅ 整份报告跑完了' : '⚠ 整份报告停在半路' }}
+            </div>
+            <div class="run-hero-num">已跑完 {{ fullBatch.cursor }}<span>/{{ fullBatch.total }} 步</span></div>
+            <div class="full-bar"><i :style="{ width: `${Math.round((fullBatch.cursor / Math.max(1, fullBatch.total)) * 100)}%` }"></i></div>
+            <!-- 「这一批只有 N 步」必须写出来：下面那份清单是十四行，不说的话前面几行灰勾
+                 会被当成「这一批跑过、但没打绿勾」= 前面几步失败了。 -->
+            <div class="run-hero-sub">
+              这一批只跑<strong>还没定稿的 {{ fullBatch.total }} 步</strong><template v-if="fullBeforeCount">，
+              另外 {{ fullBeforeCount }} 步之前就定稿了，这次不重跑</template>。
+            </div>
+            <!-- 已跑多久：每一步几十秒到几分钟，没有这个数的话「正在跑第 3 步」停在屏幕上
+                 五分钟和卡死一模一样，他会重点一次（那是二十多次额度）。 -->
+            <div class="run-hero-sub">
+              已跑 {{ fullElapsed }}<template v-if="fullRunning"> · 一步几十秒到几分钟 · 关掉页面也照跑，回来接得上</template>
+            </div>
+          </div>
+
+          <!-- 停在半路那句原文照搬（服务端已经把「第几步、为什么、后面几步没跑」写全了）：
+               合成一句「生成失败」的话他只会一路重点那颗按钮，每次都真跑一遍。 -->
+          <p v-if="fullBatch.error" class="run-err">{{ fullBatch.error }}</p>
+
+          <div class="run-steps">
+            <div v-for="st in fullSteps" :key="st.key" class="run-step" :class="st.state">
+              <!-- 这一批里的第几步。**不在这一批里的那几行不给号**（显示「—」）：都给号的话
+                   十四行连号，而顶上写着「1/9」，两个数对不上，他只能理解成前面几步没成功。 -->
+              <span class="run-step-no">{{ st.no > 0 ? st.no : '—' }}</span>
+              <span class="run-step-ico">
+                <template v-if="st.state === 'auto-done'">✅</template>
+                <template v-else-if="st.state === 'before'">✓</template>
+                <template v-else-if="st.state === 'running'">⏳</template>
+                <template v-else-if="st.state === 'stopped'">⚠</template>
+                <template v-else-if="st.state === 'queued'">·</template>
+                <template v-else>–</template>
+              </span>
+              <button class="run-step-label link-btn" @click="select(st.key)">{{ st.label }}</button>
+              <span class="run-step-note">
+                <template v-if="st.state === 'auto-done'">本批第 {{ st.no }} 步 · 已自动定稿 —— 没有人看过，回头核一眼</template>
+                <template v-else-if="st.state === 'before'">之前就定稿了，不在这一批里</template>
+                <!-- 慢车道那一步要打两次模型（出取舍 + 写正文），说出来他才知道为什么这一步等得久 -->
+                <template v-else-if="st.state === 'running'">
+                  本批第 {{ st.no }} 步 · {{ st.lane === 'slow' ? '正在定那几处取舍，然后写正文…' : '正在写正文…' }}
+                </template>
+                <template v-else-if="st.state === 'stopped'">停在这一步，没有定稿（草稿可能留在这一步的对话里）</template>
+                <template v-else-if="st.state === 'queued'">排队中</template>
+                <template v-else>这次不在清单里</template>
+              </span>
+            </div>
+          </div>
+
+          <!-- 自动联网那一段的结论（含「压根没联网」的成因）：这十几份正文里「查过资料」和
+               「按常识给的区间」读起来一模一样。 -->
+          <p v-if="fullBatch.searchNote" class="run-foot">{{ fullBatch.searchNote }}</p>
+          <p class="run-foot warn">
+            这几步是<strong>全自动</strong>跑的：慢车道那几处要拍板的取舍由 <strong>AI 按它自己的建议定</strong>，
+            每一步的定稿记录里都标着 ⚠。先按顺序核一遍再导出。
+          </p>
+
+          <!-- 「接着跑」就是重新 POST 一次（待跑清单按「哪几步还没定稿」现算，所以天然从
+               断点继续）。没有这颗按钮的话他唯一想得到的动作是回去一步一步手点。 -->
+          <button
+            v-if="!fullRunning && pendingStages.length"
+            class="btn-batch-cta"
+            :disabled="fullStarting"
+            @click="runFullReport()"
+          >
+            {{ fullStarting ? '⏳ 正在联网查资料…（十几秒，别关页面）' : `▶ 接着跑剩下的 ${pendingStages.length} 步（已定稿的不重跑）` }}
+          </button>
+          <button v-if="!fullRunning" class="btn-ghost small run-dismiss" @click="dismissFullBatch()">知道了，收起这一页</button>
+        </div>
+
         <div class="workspace-content" v-show="workspaceTab === 'task'">
           <!-- 补料问卷不在这里填，只有 /consult/projects/:id/intake 那一页有（入口在左栏那条
                黄色提示 + 「客户原始资料」下面那一行）。两套问卷 UI 迟早会漂：这份抽屉里的
@@ -1783,6 +2699,16 @@ function closeWorkspaceForRun() {
                           : '就按这几个走 · 出这一步的正文 →'
                   }}
                 </button>
+                <!-- 全自动出整份报告走的是同一条服务端逻辑（0 次额度）。放在这儿是为了让他
+                     先手动看一眼 AI 会怎么定 —— 不然他第一次看到这几处是在十四步跑完之后。 -->
+                <button
+                  v-if="decisions.points.length"
+                  class="btn-ghost"
+                  :disabled="applying || stageBusy"
+                  @click="autoPicks()"
+                >
+                  我不定，让 AI 按它的建议定（不花额度）
+                </button>
               </div>
             </div>
 
@@ -1806,7 +2732,12 @@ function closeWorkspaceForRun() {
                   <span v-if="methodText(p.methodRef)" class="dec-method" :title="methodText(p.methodRef)">{{ methodText(p.methodRef) }}</span>
                 </div>
                 <div class="dec-opt chosen">
-                  <div class="dec-opt-label">{{ p.label }} <span class="dec-chosen-tag">✓ 你定的</span></div>
+                  <!-- 一处一处标是谁定的。写死「✓ 你定的」的话，AI 替他定的那几处在这张
+                       只读回顾里和他亲手点的一模一样，而这张卡是他复核前唯一看得见的地方。 -->
+                  <div class="dec-opt-label">
+                    {{ p.label }}
+                    <span class="dec-chosen-tag" :class="{ ai: aiPicked(p) }">{{ pickByLabel(p) }}</span>
+                  </div>
                   <div v-if="p.detail" class="dec-opt-detail">{{ p.detail }}</div>
                   <!-- 放弃了什么必须一直显示：正文只会讲选中那条路的好处，
                        而这半句是这一步唯一不可逆的信息 -->
@@ -1815,7 +2746,7 @@ function closeWorkspaceForRun() {
                 <div v-if="p.note" class="dec-recommend">你的补充：{{ p.note }}</div>
               </div>
               <div class="dirs-note">
-                正文会照这几条写，并在开头的「方法论速览」里写明哪几处是你定的、放弃了什么。
+                正文会照这几条写，并在开头的「方法论速览」里写明每一处是谁定的、放弃了什么。
                 想改的话点「重出一版待定方向」重问一遍（已经定的这批就作废了）。
               </div>
               <div class="draft-actions">
@@ -1884,6 +2815,142 @@ function closeWorkspaceForRun() {
               <!-- <button class="btn-ghost small" @click="router.push(`/consult/projects/${projectId}/intake`)">
                 {{ intake && intake.questions.length ? '去填问卷 →' : '让 AI 再出一轮 →' }}
               </button> -->
+            </div>
+          </div>
+
+          <!-- 联网查资料（L1）。方法论 §8 的分级：L1 联网 > L2 客户资料 > L3 内置知识（只给区间）> L4 缺失。
+               **每一次分析都会自动搜一批**（`autoSourceService`），那几条单独一组标 L1?
+               「未人工核对」—— 不分开的话同名公司、几年前的旧闻会被当成他核过的事实写进
+               现状卡，而那一节读起来完全正常。
+               这个搜索框留着的是**手动补一条**：搜回来要逐条勾选才进 prompt，而勾进去的算 L1
+               （他自己看过）—— 机器搜不到的、或者他手上有出处的，只能从这里进来。
+               放在「全局知识库」这一栏而不是「当前工作区」：采纳的资料是**整个项目**共享的
+               （`sourcesBlock(listSources(project.id))`，不按阶段筛），摆在当前工作区里会读成
+               「这几条只给这一步用」，于是他在每一步都重新搜一遍同样的词。 -->
+          <div class="src-box">
+            <div class="brief-head">
+              <span class="brief-title">🌐 联网查资料（L1）</span>
+              <!-- 两个数分开报：合成一句「已采纳 12 条」的话，12 条全是机器抓的也读成
+                   「我核过 12 条」，而这一步的证据级别其实只到 L1? -->
+              <span class="muted">
+                你采纳 {{ pickedSources.length }} 条<template v-if="autoSources.length"> · 自动抓 {{ autoSources.length }} 条（未核对）</template>
+                · 现在定稿会标成 <strong>{{ levelNow }}</strong>
+              </span>
+            </div>
+
+            <!-- 没配 key 时说清楚是「这个部署没接搜索」，不是「网上查不到」：
+                 整块藏起来的话用户只会觉得这个 AI 在瞎猜，而它确实只能瞎猜。 -->
+            <div v-if="!searchEnabled" class="src-warn">
+              ⚠ 联网检索没开（管理员还没在「系统配置 &gt; 联网搜索」里填 Tavily key）。AI 不会替你上网 ——
+              它只用上面那段客户资料（L2），其余按 L3 给区间。需要外部事实请自己贴进客户资料。
+            </div>
+
+            <template v-else>
+              <div class="src-input">
+                <input
+                  v-model="searchQuery"
+                  :placeholder="`查什么？例如「${project?.brand_name || '品牌名'} 市场规模 2025」`"
+                  @keydown.enter="runSearch"
+                />
+                <!-- `!selected` 也要禁：`runSearch` 在没选中阶段时是 `return`（这条记录要挂在
+                     某一步名下），点下去一点动静都没有，读起来像搜索坏了。 -->
+                <button class="btn-primary" :disabled="searching || !searchQuery.trim() || !selected" @click="runSearch">
+                  {{ searching ? '搜索中…' : '搜索' }}
+                </button>
+              </div>
+
+              <div v-if="searchErr" class="src-warn">⚠ {{ searchErr }}</div>
+              <div v-if="adoptNote" class="src-note">{{ adoptNote }}</div>
+
+              <div v-if="hits && !hits.length" class="src-empty">
+                这个词没搜到东西。换个说法再试 —— 一条都不采纳的话，这一步的结论只能是 L2/L3。
+              </div>
+
+              <div v-if="hits && hits.length" class="hits">
+                <label v-for="h in hits" :key="h.url" class="hit">
+                  <input type="checkbox" v-model="picked[h.url]" />
+                  <div class="hit-body">
+                    <div class="hit-title">{{ h.title || '(无标题)' }}</div>
+                    <div class="hit-meta">
+                      <span>{{ h.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] }}</span>
+                      <!-- 日期没有就明说「未标日期」：省掉的话三年前的旧数字读起来和今年的一样 -->
+                      <span>{{ h.published || '未标日期' }}</span>
+                      <a :href="h.url" target="_blank" rel="noopener" @click.stop>打开原文 ↗</a>
+                    </div>
+                    <div class="hit-snip">{{ h.content }}</div>
+                  </div>
+                </label>
+                <div class="src-actions">
+                  <button class="btn-primary" :disabled="adopting || !pickedCount" @click="adoptPicked">
+                    {{ adopting ? '采纳中…' : `采纳选中的 ${pickedCount} 条` }}
+                  </button>
+                  <span class="muted">采纳之后每一次出草稿 / 出方向 / 对话都会带上它们，并要求 AI 标注「（联网·域名·年份）」</span>
+                </div>
+              </div>
+            </template>
+
+            <div v-if="sources.length" class="adopted">
+              <!-- **两组分开列**（`auto`）：自动抓的那几条谁都没看过，可能是同名的另一家、
+                   几年前的旧稿或一页软文，而它们在这张列表里和他亲手核过的年报长得一模一样。
+                   混在一起的话「这一步凭什么这么说」永远查不回去，而正文只会写得更自信。 -->
+              <div v-if="pickedSources.length" class="adopted-group">
+                <div class="adopted-head">你采纳的（L1）· {{ pickedSources.length }} 条</div>
+                <div v-for="sc in pickedSources" :key="sc.id" class="adopted-item">
+                  <span class="lv">L1</span>
+                  <div class="adopted-body">
+                    <a :href="sc.url" target="_blank" rel="noopener">{{ sc.title || sc.url }}</a>
+                    <div class="hit-meta">
+                      <span>{{ sc.domain }}</span>
+                      <span>{{ sc.published || '未标日期' }}</span>
+                      <span v-if="sc.query">搜的是「{{ sc.query }}」</span>
+                      <button class="src-snip-btn" @click="toggleSnippet(sc.id)">
+                        {{ expandedSources.has(sc.id) ? '收起摘要 ▴' : '看摘要 ▾' }}
+                      </button>
+                    </div>
+                    <!-- 见 expandedSources：这段字就是进 prompt 的那段，空的时候必须明说 -->
+                    <div v-if="expandedSources.has(sc.id)" class="src-snip">
+                      <template v-if="sc.snippet">{{ sc.snippet }}</template>
+                      <span v-else class="src-snip-empty">
+                        这条没存摘要（采纳那会儿上游没给正文片段）—— 进 AI 的也就只有标题和域名，核不动就删掉。
+                      </span>
+                    </div>
+                  </div>
+                  <button class="src-del" title="不再作为依据" @click="removeSource(sc.id)">✕</button>
+                </div>
+              </div>
+
+              <div v-if="autoSources.length" class="adopted-group auto">
+                <div class="adopted-head">
+                  一键四看自动抓的（L1? · 未人工核对）· {{ autoSources.length }} 条
+                  <!-- 只说「点开原文」不够：政府站/新闻站的旧链接偶发 502，点不开的那几条
+                       他就只能凭标题决定留不留 —— 所以这里先指向「看摘要」。 -->
+                  <span class="muted">点「看摘要」核一眼（原文打不开时它是唯一线索），对的按「我核过了」升成 L1，不对的删掉</span>
+                </div>
+                <div v-for="sc in autoSources" :key="sc.id" class="adopted-item">
+                  <span class="lv warn">L1?</span>
+                  <div class="adopted-body">
+                    <a :href="sc.url" target="_blank" rel="noopener">{{ sc.title || sc.url }}</a>
+                    <div class="hit-meta">
+                      <span>{{ sc.domain }}</span>
+                      <span>{{ sc.published || '未标日期' }}</span>
+                      <span v-if="sc.query">自动搜的是「{{ sc.query }}」</span>
+                      <button class="src-snip-btn" @click="toggleSnippet(sc.id)">
+                        {{ expandedSources.has(sc.id) ? '收起摘要 ▴' : '看摘要 ▾' }}
+                      </button>
+                    </div>
+                    <!-- 自动那几条尤其要能在这里核：原文经常打不开（政府站偶发 502），
+                         而标题看起来永远是相关的 —— 见 expandedSources 里那个例子。 -->
+                    <div v-if="expandedSources.has(sc.id)" class="src-snip">
+                      <template v-if="sc.snippet">{{ sc.snippet }}</template>
+                      <span v-else class="src-snip-empty">
+                        这条没存摘要（搜的时候上游没给正文片段）—— 进 AI 的也就只有标题和域名，核不动就删掉。
+                      </span>
+                    </div>
+                  </div>
+                  <button class="src-ok" title="我点开核对过了，按 L1 用" @click="verifySource(sc.id)">我核过了</button>
+                  <button class="src-del" title="不再作为依据" @click="removeSource(sc.id)">✕</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2004,9 +3071,12 @@ function closeWorkspaceForRun() {
   z-index: 1;
 }
 
-.alert-banner {
+.banner-stack {
   position: absolute;
   top: 0; left: 0; right: 0; z-index: 100;
+}
+
+.alert-banner {
   padding: 12px 24px;
   background: rgba(254, 242, 242, 0.95);
   backdrop-filter: blur(12px);
@@ -2024,6 +3094,14 @@ function closeWorkspaceForRun() {
 .alert-banner span {
   flex: 1;
 }
+
+/* 降级提示（不是报错）：黄底，跟红底的报错分得开 —— 同一个红底的话他会以为这次失败了 */
+.alert-banner.warn {
+  background: rgba(255, 251, 235, 0.96);
+  border-bottom-color: #FCD34D;
+  color: #92400E;
+}
+.alert-banner.warn .alert-close { color: #92400E; }
 
 .alert-close {
   background: transparent;
@@ -2191,6 +3269,87 @@ function closeWorkspaceForRun() {
   font-size: 11px; line-height: 1.6;
   color: var(--color-soft);
 }
+
+/* 一键生成整份报告：和「导出方案」明显分开（一个花二十多次额度且不可逆，一个只是合并
+   已有正文），所以用警示色 —— 两颗长一样的话他会随手点成这一颗。 */
+.btn-full-report {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #F59E0B;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #FFD9A0;
+  font-size: 13px; font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, opacity 0.2s;
+}
+.btn-full-report:hover:not(:disabled) { background: rgba(245, 158, 11, 0.3); }
+.btn-full-report:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* 整份报告那条链：对话流顶上那一行状态条（详情在右栏那一页） */
+.full-strip {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 16px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.32); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.7;
+}
+.full-strip.failed, .full-strip.interrupted {
+  background: rgba(239, 68, 68, 0.09); border-color: rgba(239, 68, 68, 0.32);
+}
+.full-strip.done { background: rgba(16, 185, 129, 0.09); border-color: rgba(16, 185, 129, 0.32); }
+.full-strip strong { font-size: 13px; font-weight: 800; }
+.full-strip-num { color: var(--color-muted); }
+.full-strip-cur { color: var(--color-soft); }
+/* 失败原文整段要看得见（几行上游报文 + 「后面 N 步没跑」），所以不截不省略 */
+.full-strip-err { flex: 1 1 100%; color: #F87171; font-weight: 600; word-break: break-word; }
+.full-strip .link-btn { margin-left: auto; font-weight: 700; }
+.full-strip .alert-close { flex: 0 0 auto; }
+
+.full-bar {
+  margin: 10px 0 4px; height: 6px; border-radius: 4px;
+  background: rgba(0,0,0,0.18); overflow: hidden;
+}
+.full-bar i { display: block; height: 100%; background: #F59E0B; transition: width .4s; }
+
+/* 右栏的「生成进度」页 */
+.drawer-tabs button.running { color: #F59E0B; }
+.run-hero { padding: 4px 0 14px; }
+.run-hero-title { font-size: 15px; font-weight: 800; }
+.run-hero-num { margin-top: 8px; font-size: 30px; font-weight: 800; line-height: 1; }
+.run-hero-num span { font-size: 14px; font-weight: 600; color: var(--color-soft); }
+.run-hero-sub { margin-top: 6px; font-size: 12px; line-height: 1.7; color: var(--color-soft); }
+.run-err {
+  margin: 0 0 14px; padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 10px;
+  font-size: 12.5px; line-height: 1.8; color: #F87171; word-break: break-word;
+}
+.run-steps { border-top: 1px solid rgba(255,255,255,0.08); }
+.run-step {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 9px 2px; border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-size: 12.5px; line-height: 1.6;
+}
+.run-step-no {
+  flex: 0 0 auto; width: 20px; text-align: right;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-soft); opacity: .8;
+}
+.run-step-ico { flex: 0 0 auto; width: 18px; text-align: center; }
+.run-step-label { flex: 0 0 auto; font-weight: 700; }
+.run-step-note { flex: 1 1 auto; min-width: 0; color: var(--color-soft); word-break: break-word; }
+/* 「这次自动跑的」要比「之前就定稿的」显眼 —— 该回头核的是前者 */
+.run-step.auto-done { background: rgba(245, 158, 11, 0.07); }
+.run-step.auto-done .run-step-note { color: #F59E0B; }
+.run-step.running { background: rgba(245, 158, 11, 0.14); }
+.run-step.running .run-step-note { color: #FFD9A0; font-weight: 600; }
+.run-step.stopped .run-step-note { color: #F87171; font-weight: 600; }
+.run-step.before, .run-step.queued, .run-step.idle { opacity: .6; }
+.run-foot { margin: 12px 0 0; font-size: 12px; line-height: 1.8; color: var(--color-muted); }
+.run-foot.warn { color: #F59E0B; }
+.run-page .btn-batch-cta { width: 100%; margin-top: 14px; }
+.run-dismiss { width: 100%; margin-top: 8px; }
 
 .rail-group { margin-bottom: 16px; }
 .rail-title {
@@ -2583,8 +3742,19 @@ function closeWorkspaceForRun() {
   font-size: 12px; line-height: 1.8; color: var(--color-muted);
 }
 
-.loading-bubble { 
-  background: transparent; border: none; box-shadow: none; 
+/* 联网结论。和「丢弃」那条一样是过程记录，不是 AI 说的话；但它要读得进去
+   （里面有搜的词和「未人工核对」那句），所以字号不压到 12px、底色用品牌色一点点 */
+.search-note {
+  margin: 8px 0 0; padding: 10px 14px; max-width: 640px;
+  background: rgba(255, 184, 0, 0.06); border: 1px dashed rgba(255, 184, 0, 0.22);
+  border-radius: 12px;
+  font-size: 13px; line-height: 1.85; color: var(--color-muted);
+}
+.search-note :deep(p) { margin: 0; }
+.search-note :deep(strong) { color: var(--brand); }
+
+.loading-bubble {
+  background: transparent; border: none; box-shadow: none;
   display: flex; flex-direction: column; gap: 16px;
 }
 .loading-progress-bar {
@@ -2629,6 +3799,23 @@ function closeWorkspaceForRun() {
     100% { opacity: 1; transform: translateY(0); }
   }
 
+/* 等待区：这一步真要用的东西（刚搜到的资料 / 操法 / 待核清单）。
+   气泡整个是透明的，所以这里给一条左边线把它和正文回答分开。 */
+.wait-brief {
+  max-width: 560px;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 12px 0 2px 14px;
+  border-left: 2px solid rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;
+}
+.wait-h { font-size: 12px; font-weight: 700; color: var(--color-muted); margin-bottom: 6px; }
+.wait-list { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.8; color: var(--color-soft); }
+.wait-list li + li { margin-top: 2px; }
+.wait-list a { color: var(--color-soft); text-decoration: none; border-bottom: 1px dotted currentColor; }
+.wait-list a:hover { color: var(--brand); }
+.wait-dim { font-size: 11.5px; color: var(--color-soft); opacity: 0.7; margin-left: 6px; }
+
 /* 定稿气泡：和普通回答区分开（左边一条绿边），否则它读起来像 AI 又说了一段话 */
 .entry-msg { border-left: 3px solid #10B981; }
 .entry-msg :deep(p:last-of-type) { margin-bottom: 8px; }
@@ -2647,6 +3834,11 @@ function closeWorkspaceForRun() {
 .run-cta-body { width: 100%; }
 .run-cta-title { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: -0.02em; margin-bottom: 12px; }
 .run-cta-sub { margin: 0; font-size: 14px; line-height: 1.8; color: var(--color-muted); }
+.run-cta-lv {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin: 12px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--color-soft);
+}
+.run-cta-lv strong { color: var(--brand); }
 .btn-run-cta {
   align-self: flex-start;
   margin-top: 8px;
@@ -2678,6 +3870,63 @@ function closeWorkspaceForRun() {
   transform: translateY(-2px);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
 }
+
+/* 四看一键并行那一批的进度。刻意不做成 AI 气泡 —— 它说的是**四步**的事，
+   长成气泡的话读起来像当前这一步的回复 */
+.batch-panel {
+  margin: 8px 0 0; padding: 16px 20px;
+  background: rgba(255, 184, 0, 0.07);
+  border: 1px solid rgba(255, 184, 0, 0.22); border-radius: 16px;
+}
+.batch-head {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 13px; color: var(--brand);
+}
+.batch-head strong { font-size: 14px; font-weight: 800; }
+.batch-head span { color: var(--color-muted); }
+.batch-head .alert-close { margin-left: auto; }
+.batch-row {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-top: 10px; font-size: 12.5px; line-height: 1.7;
+}
+.batch-ico { flex: 0 0 auto; width: 18px; text-align: center; }
+.batch-row .link-btn { flex: 0 0 auto; font-weight: 600; }
+/* 失败原文整段要看得见（可能是几行上游报文），所以不截不省略 */
+.batch-note { flex: 1 1 auto; min-width: 0; color: var(--color-soft); word-break: break-word; }
+.batch-row.muted { opacity: .6; }
+/* 自动联网那一行。`warn` = 这次压根没联网（没配 key / 搜失败 / 0 条）—— 必须和
+   「查到 12 条」在视觉上分开，两者的正文质量差一整级证据 */
+.batch-net { flex: 0 0 auto; font-weight: 600; color: var(--color-text); }
+.batch-row.warn { color: #ffb020; }
+.batch-row.warn .batch-net, .batch-row.warn .batch-note { color: #ffb020; }
+.batch-foot {
+  margin: 14px 0 0; padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px; line-height: 1.8; color: var(--color-muted);
+}
+.batch-foot strong { color: var(--brand); }
+/* 一键那颗和旁边的单步按钮**必须长得不一样**：这一下花 4 次额度并且自动定稿，
+   两颗实心黄按钮并排的话点错了完全看不出来（界面上就是「分析中」） */
+.btn-batch-cta {
+  align-self: flex-start; margin-top: 4px;
+  padding: 12px 22px;
+  background: rgba(255, 184, 0, 0.12); color: var(--brand);
+  border: 1px dashed rgba(255, 184, 0, 0.45); border-radius: 999px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-batch-cta:hover:not(:disabled) {
+  background: rgba(255, 184, 0, 0.2); border-style: solid; transform: translateY(-2px);
+}
+.btn-batch-cta:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+/* 整份报告那一颗：二十多次额度、十几步自动定稿，所以要和旁边那两颗（2-5 次）分得开 ——
+   三颗虚线按钮长一样的话，想点「一键跑完四看」的那一下会点成这一颗。 */
+.btn-batch-cta.full {
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid #F59E0B; color: #FFD9A0;
+  font-weight: 800;
+}
+.btn-batch-cta.full:hover:not(:disabled) { background: rgba(245, 158, 11, 0.32); }
 
 /* 别的步在跑。刻意不做成 AI 气泡：气泡长在这一步的对话里，读起来还是「这一步在跑」 */
 .other-running {
@@ -3134,6 +4383,8 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
   box-shadow: 0 8px 24px rgba(255, 184, 0, 0.12);
 }
 .dec-chosen-tag { margin-left: 8px; font-size: 12px; font-weight: 700; color: var(--brand); }
+/* AI 替他定的那几处换个颜色：和他自己点的同一个色的话，扫一眼扫不出哪几处要复核 */
+.dec-chosen-tag.ai { color: #D97706; }
 .dec-recommend {
   margin: 16px 0; padding: 16px 20px;
   background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 16px;
@@ -3299,6 +4550,111 @@ button.dec-opt:disabled { cursor: default; opacity: 0.7; }
 /* KB */
 .brief-side textarea { width: 100%; box-sizing: border-box; padding: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; font-size: 14px; line-height: 1.6; background: rgba(255,255,255,0.05); color: #fff; margin-bottom: 16px; transition: all 0.2s; }
 .brief-side textarea:focus { outline: none; border-color: var(--brand); background: rgba(255,255,255,0.1); box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.15); }
+/* 联网查资料（L1） */
+.src-box { margin-top: 32px; }
+.src-box .brief-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.src-box .brief-title { font-size: 16px; font-weight: 700; color: #fff; }
+.src-box .muted { font-size: 12px; color: var(--color-muted); }
+.src-box .muted strong { color: var(--brand); }
+.src-warn {
+  margin-bottom: 12px; padding: 12px 14px;
+  background: rgba(255, 184, 0, 0.1); border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.8; color: var(--brand);
+}
+.src-note {
+  margin-bottom: 12px; padding: 10px 14px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.7; color: var(--color-muted);
+}
+.src-input { display: flex; gap: 8px; margin-bottom: 12px; }
+.src-input input {
+  flex: 1; min-width: 0; padding: 10px 14px;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+  background: rgba(255,255,255,0.05); color: #fff; font-size: 13px;
+}
+.src-input input:focus {
+  outline: none; border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.15);
+}
+.src-empty {
+  padding: 12px 14px; background: rgba(255,255,255,0.05);
+  border: 1px dashed rgba(255,255,255,0.2); border-radius: 12px;
+  font-size: 12.5px; line-height: 1.7; color: var(--color-muted);
+}
+.hits { display: flex; flex-direction: column; gap: 8px; }
+.hit {
+  display: flex; gap: 10px; padding: 12px 14px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; background: rgba(255,255,255,0.05);
+}
+.hit:hover { border-color: var(--brand); }
+.hit input { margin-top: 3px; flex-shrink: 0; accent-color: var(--brand); }
+.hit-body { min-width: 0; }
+.hit-title { font-size: 13.5px; font-weight: 700; color: #fff; line-height: 1.5; }
+.hit-meta {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px;
+  font-size: 11.5px; color: var(--color-soft);
+}
+.hit-meta a { color: var(--brand); text-decoration: none; }
+.hit-snip { margin-top: 6px; font-size: 12.5px; line-height: 1.7; color: var(--color-muted); }
+.src-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.adopted { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.adopted-item {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+  border: 1px solid rgba(255, 184, 0, 0.2); border-radius: 12px; background: rgba(255, 184, 0, 0.06);
+}
+.adopted-item .lv {
+  flex-shrink: 0; padding: 2px 8px; border-radius: 999px;
+  background: rgba(255, 184, 0, 0.2); color: var(--brand);
+  font-size: 11px; font-weight: 800;
+}
+.adopted-body { flex: 1; min-width: 0; }
+.adopted-body a {
+  display: block; font-size: 13px; font-weight: 600; color: #fff; text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.adopted-body a:hover { color: var(--brand); }
+/* 「看摘要」：长在 meta 那一行里，所以做成一个不像按钮的按钮 */
+.src-snip-btn {
+  padding: 0; cursor: pointer; border: none; background: transparent;
+  color: var(--brand); font-size: 11.5px; font-weight: 700;
+}
+.src-snip-btn:hover { text-decoration: underline; }
+/* 摘要正文：可能几百字，给个高度上限让它自己滚，
+   不给的话一条展开就把整份资料清单顶出视口。 */
+.src-snip {
+  margin-top: 8px; padding: 8px 10px; max-height: 220px; overflow-y: auto;
+  background: rgba(0, 0, 0, 0.18); border-radius: 8px;
+  font-size: 12.5px; line-height: 1.75; color: var(--color-muted);
+  white-space: pre-line; word-break: break-word;
+}
+.src-snip-empty { color: #ffb020; }
+.src-del {
+  flex-shrink: 0; width: 24px; height: 24px; padding: 0; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+  background: transparent; color: var(--color-soft); font-size: 12px;
+}
+.src-del:hover { border-color: #e5484d; color: #e5484d; }
+/* 自动抓的那一组。**必须在视觉上和上面那组分开** —— 两组混在一起时，一页没人看过的
+   软文和他核过的年报长得一模一样，而它们差一整级证据（见模板里的注释） */
+.adopted-group { display: flex; flex-direction: column; gap: 8px; }
+.adopted-group + .adopted-group { margin-top: 16px; }
+.adopted-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; font-weight: 700; color: var(--color-muted);
+}
+.adopted-head .muted { font-weight: 400; font-size: 11.5px; color: var(--color-soft); }
+.adopted-group.auto .adopted-head { color: #ffb020; }
+.adopted-group.auto .adopted-item {
+  border-color: rgba(255, 176, 32, 0.28); border-style: dashed; background: rgba(255, 176, 32, 0.05);
+}
+.adopted-item .lv.warn { background: rgba(255, 176, 32, 0.2); color: #ffb020; }
+.src-ok {
+  flex-shrink: 0; padding: 3px 10px; cursor: pointer;
+  border: 1px solid rgba(255, 176, 32, 0.4); border-radius: 999px;
+  background: transparent; color: #ffb020; font-size: 11.5px; font-weight: 700;
+}
+.src-ok:hover { background: rgba(255, 176, 32, 0.15); }
+
 .kb-history { margin-top: 40px; }
 .kb-history h4 { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #fff; }
 .kb-item { display: block; width: 100%; text-align: left; padding: 16px; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; background: rgba(255,255,255,0.05); margin-bottom: 12px; cursor: pointer; transition: border-color 0.2s; }

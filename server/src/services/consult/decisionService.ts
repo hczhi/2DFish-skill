@@ -153,7 +153,7 @@ ${deliverablesBlock(stage)}
 【已定稿结论（企业知识库 —— 这里已经定了的不许再问）】
 ${knowledgeBlock(entries, bodyKeys(stage))}
 
-【联网资料（L1）】
+【联网资料】
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】
@@ -299,6 +299,19 @@ export async function buildDecisions(
  * `{id, label}` 的话，重出一版之后同一个 `d2` 指的是另一个问题 —— 而「问题 A 配
  * 答案 B」的记录在对话里、在正文的方法论速览里读起来都完全正常。
  */
+/**
+ * 这一处是谁定的。
+ *
+ * - `consultant`：他自己在卡片上点的（**缺这个字段的老记录一律按这个读** —— 老 payload 里
+ *   压根没有这一列，默认成 AI 定的话，过去几十条他亲手拍的板会在正文里变成「AI 替你定的」）。
+ * - `ai-recommend`：全自动跑报告时 AI 按它自己那句 `recommend` 定的。
+ * - `ai-fallback`：**AI 连建议都没给准**（`recommend` 指不到唯一一个选项），代码拿了第一个选项。
+ *
+ * 两种 AI 必须分开：`ai-fallback` 那几处等于掷了个硬币，是他回头第一个要看的；
+ * 混成一句「AI 定的」的话，那几处和有理由的选择长得一模一样，而它们决定整份方案的地基。
+ */
+export type DecisionBy = 'consultant' | 'ai-recommend' | 'ai-fallback';
+
 export interface DecisionPick {
   id: string;
   question: string;
@@ -310,6 +323,8 @@ export interface DecisionPick {
   cost: string;
   /** 顾问自己补的一句（可空）：「选 B，但别提加盟商」这类 */
   note: string;
+  /** 谁定的（见 {@link DecisionBy}）。**老记录里没有这一列，读的时候当 `consultant`。** */
+  by?: DecisionBy;
 }
 
 export interface DecidedSheet {
@@ -346,7 +361,14 @@ export function applyDecisions(
   projectId: string,
   stageKey: string,
   sheetMessageId: string,
-  raw: PickInput[]
+  raw: PickInput[],
+  /**
+   * 每一处是谁定的（按 point id）。**只有服务端自己填**（`autoDecideStage`）——
+   * 从请求体里收的话，前端/下游可以把 AI 掷硬币定的那几处标成「顾问已拍板」，
+   * 而正文里唯一能看出地基是谁定的那一段（方法论速览）就此说了假话。
+   * 不传 = 全是他自己点的。
+   */
+  by?: Map<string, DecisionBy>
 ): DecidedSheet {
   // 同 buildDecisions：慢车道、且这一步还没定稿（定稿之后是只读的）
   requireOpenStage(projectId, stageKey, { lanes: ['slow'] });
@@ -422,6 +444,7 @@ export function applyDecisions(
       detail: opt.detail || '',
       cost: opt.cost,
       note,
+      by: by?.get(p.id) || 'consultant',
     });
   }
 

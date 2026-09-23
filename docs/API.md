@@ -163,9 +163,74 @@ addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
 第一轮提交前进工作台会被送回那一页（只挡第一轮）。
 
 ### GET /api/consult/projects/:id
-`{ project, stages, entries, sources, intake, intakeRounds, searchEnabled }`。
+`{ project, stages, entries, sources, intake, intakeRounds, searchEnabled, runs, batch }`。
 `intake` 是**还没补进资料的那一轮问卷**（含已填答案），刷新页面靠它恢复。`searchEnabled=false` 表示这个部署
 没配搜索 key，前端必须显示出来（否则用户以为 AI 会上网）。
+`runs` 同 `GET …/runs`：刷新/重进之后靠它把「还在跑的那次分析」接回来，前端不处理的话那一步看起来从没跑过，
+而额度已经扣了。`batch` 同 `GET …/runs`（整份报告那条链，见下）。
+
+### GET /api/consult/projects/:id/runs
+`{ runs: [{ id, stage_key, kind: 'draft'|'decisions'|'directions', status: 'running'|'failed'|'interrupted',
+error, message_id, started_at }], batch, stages }` —— 正在跑的那些 + 还没跟用户说过的失败/中断（`consult_runs`，109）。
+`stages` 同 `GET /projects/:id` 那一份（十四行，便宜），**必须和 `batch` 在同一个响应里**：
+进度页用 `batch.cursor` 算「第几步」、用 `stages[].hasEntry` 标「已定稿」，分两次取的话中间那一步
+刚好跑完就对不上（症状是刚跑完的几步显示「没有定稿」，刷新一次全变 ✅）。
+`batch`（`consult_batches`，111）是「一键生成整份报告」那条链：
+`{ id, status: 'running'|'done'|'failed'|'interrupted', cursor, total, stageKeys, labels, current, error,
+searchNote, startedAt, finishedAt }`，没有在跑也没有未 ack 的失败时是 `null`。
+**十四步全定稿之后一律 `null`**（`activeBatchFor`）：那句「剩下 N 步没有跑、再点一次接着跑」这时是假警报，
+而它指的动作只会回 409。
+**前端必须单独显示它**：串行这条链任何时候只有一步在 `runs` 里，只显示 `runs` 的话用户当成单步
+（于是跑去点别的步骤，撞上链条中间），而「后面还排着 N 步」「跑到第 6 步停了」只存在这一份里。
+`error` 是**上游原文整段**，前端要原样显示（合成一句「分析失败」的话空返回/截断/上游忙三种成因就全没了）。
+上面那三个 POST 在同一步已经有一次在跑时回 **409 + `code: 'stage_running'`**（同一步不许同时跑两次，
+挡的是「两个标签页各点一次」= 两次真调用）。
+
+### POST /api/consult/projects/:id/runs/:rid/ack
+那条失败/中断提示已经跟用户说过了，别再回在 `runs` 里。回 `{ runs }`；还在跑的那条 ack 不动（404）。
+
+### POST /api/consult/projects/:id/batches/:bid/ack
+整份报告那条失败/中断提示已经跟用户说过了，别再回在 `batch` 里。回 `{ batch }`；还在跑的那条 ack 不动（404）。
+
+### POST /api/consult/projects/:id/full-report
+「一键生成整份报告」：把**还没定稿**的那几步按阶段顺序**串着**跑完，每一步都是
+`…/stages/:key/auto` 那条路（联网 → 慢车道 AI 按建议拍板 → 出正文 → 自动定稿）。
+一整份 ≈ 23 次额度（出检索词 1 + 慢车道八步各 2 + 其余各 1，`aiCallsEstimate` 现算回给前端 ——
+按钮上要写出来，默认配额是 10 次/天）。**立刻返回**（只等联网那十几秒）：
+`{ batch, stageKeys, labels, skipped, search, aiCallsEstimate, sources, stages }`，
+进度按 `GET …/runs` 里的 `batch` 轮询。六条边界：
+
+- 待跑清单的判据是**没有定稿**（不是「没跑过」），顺序直接用阶段清单（它本身是拓扑序）。
+  所以「接着跑」= 再 POST 一次，天然从断点继续，已定稿的不重跑 —— 前端不需要任何额外状态。
+- 联网**只做一次**、覆盖这一批全部待跑步骤（每步各搜一遍的话多花十三次出词额度，
+  而界面上只是「慢了一点」）。`search` 四种状态同 `/four-views/run`，都要显示。
+- **中间任何一步失败就停**（不接着跑）：下游每一步都要上游的定稿，接着跑的话后面十几步
+  一路抛「未解锁」，十几条失败记录成因全一样，而真正的成因埋在第一条里；额度用完那一种
+  还会在每一步上再撞一次（每次都是真调用）。那条 `batch.error` 里必须有**停在第几步、
+  上游原文、后面 N 步一步都没跑** —— 少了最后半句，界面上和「他压根没点过」一模一样。
+- 有单步正在跑时回 **409**（在扣任何额度之前拦住）；同一项目已经有一批在跑回 **409**
+  （`consult_batches` 上那条只对 `running` 生效的唯一索引）；客户资料为空回 **400**
+  （二十多次调用一路编）；十四步全定稿回 **409**。
+- 链条跑到某一步时那一步**已经被别人定稿了就跳过、不覆盖**（另一个标签页 / SDK / 他手动
+  跑完的）：覆盖的话他刚核过的那一版被没人看过的一版顶掉，界面上只是「已定稿」。
+- 服务重启后**不自动接着跑**：启动收尸把遗留的 `running` 标成 `interrupted` 并写明
+  「跑到第几步、剩几步没跑」。自动重来等于凭空花掉二十多次额度（而让进程挂掉的原因
+  很可能就在那一步上）；不收尸的话那条唯一索引把项目永久锁在「已经有一批在跑」。
+
+### POST /api/consult/projects/:id/four-views/run
+四看那四步**同时**开跑并各自**自动定稿**，开跑前先自动联网查一遍资料，一共 5 次额度
+（1 次出检索词 + 4 步分析）。**这个请求要等十几秒到一分钟**（联网那一段在请求里 await，
+搜到的必须在四步 prompt 拼起来之前落库），四步本身不等：
+`{ runs: [ConsultRun], skipped: [{ stageKey, label, reason }], search, sources, stages }`。
+`search: { status: 'off'|'ok'|'empty'|'failed', added, queries, note }` —— **四种状态都要显示 `note`**
+（没配 Tavily key / 搜到了 / 搜了没结果 / 搜失败），四种在界面上一模一样：四看照样跑完四份通顺的正文，
+差别只在那几节数字是查来的还是编的。自动搜来的资料是 `auto=1`「未人工核对」，证据级别只到 `L1?`。
+`sources` 顺带回整份列表，前端要立刻更新右栏（否则显示「已采纳 0 条」而 prompt 里带着它们）。
+进度按 `GET …/runs` 轮询（`runs` 里那几条跑完就不再出现，失败的带 `error` 原文）。
+客户资料为空回 **400**（四步会一起编）；四步全都已定稿/已在跑时回 **409**（`skipped` 里的原因写在那句话里）。
+`skipped` 前端必须显示 —— 少跑一步和跑完一步在进度上都是「不在 running 里」。
+**这四份谁也没读到另外三份的定稿**（并行的含义），每一步定稿记录里带了这句；被截断/超长的那一版
+**不自动定稿**，那条 run 标 `failed` 并说明，草稿留在该步对话里。
 
 ### PUT /api/consult/projects/:id/brief
 ### PUT /api/consult/projects/:id/name
@@ -178,7 +243,13 @@ addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
 **`slow` 必须先有一条 `kind='decided'` 记录**（见 `/decisions/apply`），没有回 **400**、
 拍板之后又重出过一版岔路口清单回 **409** —— 不拦的话这条路就是「AI 替他把取舍定了再写
 一份完整正文」，而它的产出和照他定的方向写出来的一模一样。
-**不落库**，返回 `{ draft, truncated, discussion, message, stages }`。
+**不落库**，返回 `{ draft, truncated, discussion, message, search, searchMessage, stages }`。
+**这三条分析端点（`/draft`、`/decisions`、`/directions`）都会先自动联网查一批资料**
+（`autoSourceService`，没有开关），所以一次请求 = **2 次 AI 额度**（1 次出检索词 + 1 次分析），
+响应也比以前多等十几秒。`search` 是那次联网的结论（`{status,added,queries,aiCalls,note}`，
+四种 status 的 `note` 都要显示），`searchMessage` 是已经落库的那条 `kind='search'` 消息 ——
+前端要把它和 `message` 一起贴进对话（只回不贴的话刷新之后才看得见，而「这次没联网」
+和「查到 8 条」在正文里读起来一模一样）。
 `discussion: { used, dropped }` 是这一版带进 prompt 的本步对话条数（只算 `kind='text'` 的），
 前端必须显示 —— 带上和没带上出来的草稿读起来一模一样。
 `draft.body` 固定以 `## 0. 方法论速览` 开头、以 `## 写作建议` 结尾（两节不在输出物清单里，
@@ -188,12 +259,14 @@ addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
 ### POST /api/consult/projects/:id/stages/:key/directions
 慢车道出 2–4 个互斥方向，每个带 `markdown`（三件套整段，选中后即定稿正文）+ `writingTip`
 + `aiOpportunities`，外层带 `verdict` 和 `methodBrief`（方法论速览，已拼进每个方向的 markdown
-开头；模型没给时那一节写明「没给」而不是消失），以及和 `/draft` 同义的 `discussion: { used, dropped }`。
+开头；模型没给时那一节写明「没给」而不是消失），以及和 `/draft` 同义的 `discussion: { used, dropped }`
+和 `search` / `searchMessage`（这一屏也先自动联网，一次 2 次额度）。
 
 ### POST /api/consult/projects/:id/stages/:key/decisions
 慢车道**动笔之前**先把「必须由顾问（或客户）拍板的取舍」列出来。只有 `lane='slow'` 能调，
 不产出正文、不定稿、不 `incRound`。返回
-`{ points, noFork, missing, dropped, truncated, discussion, message, stages }`：
+`{ points, noFork, missing, dropped, truncated, discussion, message, search, searchMessage, stages }`
+（`search` / `searchMessage` 同 `/draft`：这一屏也先自动联网，一次 2 次额度）：
 
 - `points[]`：`{ id, question, methodRef, basis, options[{label,detail,cost}], recommend }`，
   最多 4 个。`id`（`d1..dN`）由服务端生成，`methodRef` 指向 `GET /stages` 里那条 `method`
@@ -225,9 +298,48 @@ addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
 - `points` 为空的那种（`noFork`）**照样要提交一次**，落一条 `picks: []` 的记录：
   出正文那条路要求它存在，不然「没有取舍」和「还没拍板」在服务端分不开。
 
-存下来的每一处是 `{ id, question, methodRef, label, detail, cost, note }` ——
+存下来的每一处是 `{ id, question, methodRef, label, detail, cost, note, by }` ——
 问题和 `cost` **原样存**，不只存 id（同上一条：id 会随重出而漂），而 `cost` 要跟着进正文
 （正文只会讲选中那条路的好处，「放弃了什么」是这一步唯一不可逆的信息）。
+`by` 是「这一处是谁定的」（`consultant` / `ai-recommend` / `ai-fallback`，见下一条端点），
+**只由服务端填，请求体里给了也不认** —— 收下的话下游可以把 AI 掷硬币定的那几处标成
+「顾问已拍板」，而正文里唯一能看出地基是谁定的那一段就此说了假话。老记录里没有这一列，
+前后端**一律按 `consultant` 读**（默认成 AI 的话，他过去亲手拍的板全变成「AI 替你定的」）。
+
+### POST /api/consult/projects/:id/stages/:key/decisions/auto
+「我不定，让 AI 按它的建议定」。请求体空，返回和 `/decisions/apply` 同一份
+（`{ picks, noFork, sheetMessageId, message, stages }`）外加 `fallbacks`。
+**不花 AI 额度**：它读的是上一次 `/decisions` 已经花过钱出来的那份清单，只是替他挑
+（挑的规则在代码里 —— 拿 `recommend` 那句自由文本去比对选项 `label`，见
+`autoDecideService.autoPicksFor`；让模型另回一个「推荐第几项」是又开一个它会算错的格式）。
+存在的理由是「填完问卷一次出整份报告」：慢车道 8 步动笔之前都要一条 `kind='decided'` 记录，
+而全自动跑的时候没人在屏幕前点卡片。三条边界：
+
+- 每一处的 `by` 是 `ai-recommend`（`recommend` 指到唯一一个选项）或 `ai-fallback`
+  （**指不到**，代码拿了第一个选项）。**两者必须分开**：`ai-fallback` 那几处等于掷了个硬币，
+  是他回头第一个要看的；混成一句「AI 定的」的话，它们和有理由的选择长得一模一样。
+- `fallbacks` 是 `ai-fallback` 的处数，**前端必须单独说出来**，而且不能塞进那条会被下一次
+  请求清掉的报错位（这里是降级不是失败，见 `ConsultProject.vue` 的 `autoPickNote`）。
+- `message.role` 是 `assistant`（手动那条路是 `user`）—— 存成 user 的话，过两天回来看
+  对话里是「他说他定了这几处」，而他一处都没看过。
+
+### POST /api/consult/projects/:id/stages/:key/auto
+「这一步全自动跑完」：**联网 → （慢车道）出那几处取舍 → AI 按建议拍板 → 出正文 → 自动定稿**，
+中间不停。慢车道 3 次额度（出检索词 1 + 出取舍 1 + 写正文 1），快车道/执行层 2 次。
+这是「填完问卷一次出整份报告」的单步零件（那条驱动器就是照阶段顺序把它调 14 遍）。
+**立刻返回**（同 `/four-views/run`，只等联网那十几秒）：
+`{ run, search, searchMessage, sources, stages }`，进度按 `GET …/runs` 轮询。四条边界：
+
+- **顺序是先 `startRun` 占位、再联网**：反过来的话联网那十几秒里按钮还可点，连点两次
+  就是两次出词调用（两次额度），而第二次点完照旧只跑一批分析。
+- **联网这一段自己挂了要把占住的位子 `failRun` 还回去** —— 不还的话这一步永远显示
+  「正在分析」而压根没有人在跑它，重点一次还被 109 那条唯一索引挡住（这一步就此点不动）。
+- 这一步**已经定稿**回 **409**：这条路跑完直接盖上「已定稿」，而他核过的那一版是下游
+  每一步的依据。重做要他自己在那一步上手动跑。
+- 被截断 / 超过定稿上限的那一版**不自动定稿**（同 `/four-views/run`），那条 run 标 `failed`
+  并说出是哪一种，草稿留在该步对话里。定稿那条 `kind='entry'` 记录里还要写明
+  「这一版没有人看过」以及**有几处取舍是 AI 定的、其中几处是掷硬币的** ——
+  只写在拍板那条记录里的话，跑完之后他读的是一句「✅ 已自动定稿」。
 
 ### POST /api/consult/projects/:id/stages/:key/draft/discard
 丢弃这一版草稿 / 候选方向。请求体 `{ kind?: 'draft' | 'directions' }`（默认 `draft`），
@@ -292,6 +404,13 @@ addedNumbers, notes, calls, fallbackChunks, budgetChars, overBudget }`。
 采纳勾选的结果：`{ query, items: [{ title, url, snippet, published }] }` →
 `{ added, skipped, sources }`。同一 url 重复采纳被挡掉并计入 `skipped`；
 超过 40 条上限直接 400，**不只存前几条**。
+`sources[].auto`：1 = 一键四看自动搜来的「未人工核对」（`L1?`），0 = 用户逐条采纳的（L1）。
+手动采纳一条已经自动搜到的 url 会把那一行升级成 `auto=0` 并计入 `added`（他亲自核过了）。
+
+### POST /api/consult/projects/:id/sources/:sid/verify
+「这条我点开看过了」：把自动搜来的那一行升级成人工核对过的（`auto=0`）→ `{ sources }`。
+本来就是用户采纳的那些回 404 + 说明（不回 ok —— 那会让「点错了行」读成「已确认」）。
+不复用上面那个采纳端点：它有 40 条上限校验，满了的时候确认一条已经在库里的资料会回「还能加 0 条」。
 
 ### DELETE /api/consult/projects/:id/sources/:sid
 

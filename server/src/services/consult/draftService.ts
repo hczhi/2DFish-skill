@@ -123,14 +123,19 @@ const MIN_BODY_CHARS = 400;
 export function requireStage(
   projectId: string,
   stageKey: string,
-  opts: { lanes?: StageDef['lane'][] } = {}
+  opts: { lanes?: StageDef['lane'][]; skipUnlock?: boolean } = {}
 ): { stage: StageDef; entries: ConsultEntry[] } {
   const stage = stageByKey(stageKey);
   if (!stage) throw new StageError(`没有这个阶段：${stageKey}`, 404);
 
   const entries = listEntries(projectId);
+  // `skipUnlock` **只给四看一键并行用**（`fourViewsBatch.ts`）：那四步是用户明确选的
+  // 「同时跑」，上游定稿这时候压根还不存在。任何别的调用点都不许传它 —— 跳着做出来的
+  // 那一节读起来一样漂亮，只是依据是空的，而错的地方在十步之后才显形。并行那条路
+  // 因此必须在 prompt 里明说「另外三步还在跑，别装作读过它们的结论」
+  // （`draftFastStage` 的 `parallelWith`），并在定稿那条记录里写明这件事。
   const { unlocked, missing } = unlockState(stage, new Set(entries.map((e) => e.stage_key)));
-  if (!unlocked) {
+  if (!unlocked && !opts.skipUnlock) {
     const labels = missing.map((k) => stageByKey(k)?.label || k).join('、');
     throw new StageError(`「${stage.label}」还没解锁：需要先定稿 ${labels}`, 409);
   }
@@ -155,7 +160,7 @@ export function requireStage(
 export function requireOpenStage(
   projectId: string,
   stageKey: string,
-  opts: { lanes?: StageDef['lane'][] } = {}
+  opts: { lanes?: StageDef['lane'][]; skipUnlock?: boolean } = {}
 ): { stage: StageDef; entries: ConsultEntry[] } {
   const out = requireStage(projectId, stageKey, opts);
   const done = out.entries.find((e) => e.stage_key === stageKey);
@@ -320,13 +325,24 @@ ${sheet.noFork}
     .map(
       (p, i) =>
         `${i + 1}. ${p.question}${p.methodRef ? `（${p.methodRef}）` : ''}\n` +
-        `   他定了：${p.label}${p.detail ? ` —— ${p.detail}` : ''}\n` +
+        // 「他定了」和「AI 替他定的」必须在 prompt 里分开（见 decidedRule 最后一条）：
+        // 一律写成「他定了」的话，正文的方法论速览会把 AI 掷硬币定的那几处写成
+        // 「顾问定的」—— 而那一段是整份方案里唯一能看出地基是谁定的地方。
+        `   ${aiPicked(p) ? 'AI（不是顾问）替他定的' : '他定了'}：${p.label}${p.detail ? ` —— ${p.detail}` : ''}\n` +
         `   这一选择放弃的是：${p.cost}` +
         (p.note ? `\n   他另外交代：${p.note}` : '')
     )
     .join('\n');
-  return `\n\n【顾问已经拍板的方向（这是这一步的地基，${sheet.picks.length} 处）】
+  const ai = sheet.picks.filter(aiPicked).length;
+  return `\n\n【这一步的地基（${sheet.picks.length} 处取舍${
+    ai ? `，其中 ${ai} 处是 AI 替他定的、他还没核过` : '，全部是顾问自己定的'
+  }）】
 ${lines}`;
+}
+
+/** 这一处是 AI 定的（全自动跑报告那条路）。老记录没有 `by`，一律算顾问自己定的。 */
+function aiPicked(p: { by?: string }): boolean {
+  return p.by === 'ai-recommend' || p.by === 'ai-fallback';
 }
 
 /**
@@ -336,18 +352,26 @@ ${lines}`;
  */
 function decidedRule(sheet: DecidedSheet): string {
   const picked = sheet.picks.length;
+  const ai = sheet.picks.filter(aiPicked).length;
   return `
 
-关于【顾问已经拍板的方向】（优先级高于你自己的判断）：
+关于【这一步的地基】（优先级高于你自己的判断）：${
+    ai
+      ? `
+- 标着「AI（不是顾问）替他定的」那 ${ai} 处，正文照它写，但**方法论速览里必须写明这几处是 AI 替他定的、
+  他还没核过**（一处一句：定的是哪一条、放弃了什么）。写成「顾问定的」的话他不会回头看第二眼，
+  而这几处是整份方案的地基。`
+      : ''
+  }
 - **照他定的那几条写，不要再给第二种方案、不要再问一次。** 你觉得另一条更好也不许写成
   「或者也可以…」——一份方案里两个地基，两段各自都通顺，而客户拿到的是自相矛盾的定位。
 - **放弃的东西要真的写出来**（他选那一条时放弃的那些）：落到「边界 / 不做什么 / 不承诺」
   那几节里。只写好处的正文读起来更漂亮，而下一步会把被放弃的那些又拉回来。
 - 他定的和你从资料里读到的冲突时，**照他定的写，并在 rationale 里点出冲突在哪**
   （悄悄按自己的判断改一版的话，他看不出这一节已经不是他定的那条路了）。
-- \`## 0. 方法论速览\` 里**必须写出这${picked ? ` ${picked} ` : ''}处取舍是顾问定的、
-  他选的是哪一条、放弃了什么**（一处一句）。这是整份方案里唯一能看出地基是谁定的地方 ——
-  不写的话，他定的和你替他定的在正文里一模一样。`;
+- \`## 0. 方法论速览\` 里**必须写出这${picked ? ` ${picked} ` : ''}处取舍分别是谁定的
+  （照上面每一处的标记：顾问定的 / AI 替他定的）、定的是哪一条、放弃了什么**（一处一句）。
+  这是整份方案里唯一能看出地基是谁定的地方 —— 不写的话，他定的和你替他定的在正文里一模一样。`;
 }
 
 /** 对话块进 user prompt 的那一段。丢掉的条数要写给模型：不写它会以为手上是全部上下文。 */
@@ -393,7 +417,9 @@ const RULE_BODY_SECTIONS = `**body 必须按【本步必须产出的东西】逐
      还要配什么证据、哪里要留给顾问自己拍）。这是给内部顾问的，不是给客户的话术。`;
 
 const RULE_SOURCE_LEVELS = `**每个硬数字都要标出它是第几级证据**（方法论 §8 的数据源分级，四档不许混）：
-   能在【联网资料】里对上的写「（联网·域名·年份）」= L1；能在【客户资料】里对上原话/数字的写「（客户资料）」= L2；
+   能在【联网资料】里对上的写「（联网·域名·年份）」= L1，**但如果它在「自动检索抓回来的」那一段里，
+   必须多写一句「未人工核对」**（那几条没有任何人看过，可能是同名的另一家、旧稿或软文）；
+   能在【客户资料】里对上原话/数字的写「（客户资料）」= L2；
    只能靠通用行业常识推的写「（模型内置知识·仅区间）」并且**给区间不给精确值** = L3；
    查不到也推不出的写「资料缺失」并写进 gaps = L4。
    把 L3 的推测写成 L1 的口气（「据公开数据」「行业报告显示」）是这里最严重的错误 ——
@@ -511,12 +537,29 @@ function planSystem(stage: StageDef): string {
 ${DRAFT_JSON_FORMAT}`;
 }
 
+/**
+ * 并行批次那一段提醒。**不写这一段的后果是模型自己把上游补上**：四看的 prompt 里
+ * 挂着「只能依据客户资料和已定稿结论」，而这一次【已定稿结论】是空的 —— 模型照旧会
+ * 写「如『看行业』所述，该赛道…」，把一个它没读过的结论当依据引一遍。那句话读起来
+ * 完全正常（措辞、置信度、表格都在），而它引的是一份还在写的东西。
+ */
+function parallelSection(labels: string[]): string {
+  if (!labels.length) return '';
+  return `
+
+【注意：这一步和另外几步是**同时**在跑的】
+${labels.join('、')}此刻还在写，所以上面的【已定稿结论】里**没有**它们。
+只用【客户资料】（和【联网资料】）下判断；不许写「如前所述」「结合前面的行业分析」这类
+指代，也不许替它们编一个结论出来。资料支撑不到的地方写进 gaps，置信度照实给。`;
+}
+
 function buildMessages(
   project: ConsultProject,
   stage: StageDef,
   entries: ConsultEntry[],
   disc: Discussion,
-  decided: DecidedSheet | null
+  decided: DecidedSheet | null,
+  parallelWith: string[] = []
 ) {
   const system =
     (decided ? slowSystem(stage, decided) : stage.lane === 'plan' ? planSystem(stage) : fastSystem()) +
@@ -534,9 +577,9 @@ ${methodBlock(stage)}
 ${deliverablesBlock(stage)}${decided ? decidedSection(decided) : ''}
 
 【已定稿结论（企业知识库）】
-${knowledgeBlock(entries, bodyKeys(stage))}
+${knowledgeBlock(entries, bodyKeys(stage))}${parallelSection(parallelWith)}
 
-【联网资料（L1）】
+【联网资料】
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】
@@ -558,11 +601,20 @@ ${project.brief || '（客户还没贴任何资料）'}${discussionSection(disc)
 export async function draftFastStage(
   userId: string,
   project: ConsultProject,
-  stageKey: string
+  stageKey: string,
+  /**
+   * 只有四看一键并行会传（`fourViewsBatch.ts`）：`skipUnlock` 跳过「上游先定稿」那道闸，
+   * `parallelWith` 是同时在跑的那几步的 label —— **两个必须一起传**。只跳闸不告诉模型的话，
+   * 它会照旧引用一份还没写出来的上游结论（见 `parallelSection`）。
+   */
+  opts: { skipUnlock?: boolean; parallelWith?: string[] } = {}
 ): Promise<{ draft: StageDraft; truncated: boolean; discussion: Discussion }> {
   // 三条车道共用这条接口（都是「出一份草稿 → 用户改 → 定稿」），system prompt 按车道分。
   // 慢车道走到这里的前提是**取舍已经拍过板**（下面那道闸），所以它用的是 slowSystem。
-  const { stage, entries } = requireOpenStage(project.id, stageKey, { lanes: ['fast', 'plan', 'slow'] });
+  const { stage, entries } = requireOpenStage(project.id, stageKey, {
+    lanes: ['fast', 'plan', 'slow'],
+    skipUnlock: opts.skipUnlock,
+  });
   // plan 不拦空资料：它的依据是上游那十二条定稿，而那些已经解锁校验过了。
   // fast 必须拦 —— 四看的结论全部来自这段资料，空着的话模型只能编，而编出来的读着一样。
   if (stage.lane === 'fast' && !project.brief.trim()) {
@@ -594,7 +646,7 @@ export async function draftFastStage(
   const discussion = discussionBlock(project.id, stageKey);
   const { parsed, raw, finish, reasoningTokens, noThinkingRequested } = await jsonGateway<any>(
     () => ({
-      messages: buildMessages(project, stage, entries, discussion, decided),
+      messages: buildMessages(project, stage, entries, discussion, decided, opts.parallelWith || []),
       ...SAMPLING.analytic,
       max_tokens: MAX_TOKENS_DRAFT,
       response_format: { type: 'json_object' },
@@ -792,7 +844,7 @@ ${deliverablesBlock(stage)}
 【已定稿结论（企业知识库，这是你做判断的依据）】
 ${knowledgeBlock(entries, bodyKeys(stage))}
 
-【联网资料（L1）】
+【联网资料】
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】

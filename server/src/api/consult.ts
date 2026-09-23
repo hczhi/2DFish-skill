@@ -28,6 +28,7 @@ import {
   MAX_ENTRY_FIELD_CHARS,
   MAX_ENTRY_BODY_CHARS,
   type ProjectOwner,
+  type ConsultProject,
 } from '../services/consult/projectStore.js';
 import {
   draftFastStage,
@@ -40,6 +41,10 @@ import {
   MAX_AI_OPPORTUNITY_CHARS,
 } from '../services/consult/draftService.js';
 import { buildDecisions, applyDecisions } from '../services/consult/decisionService.js';
+import { autoDecideStage } from '../services/consult/autoDecideService.js';
+import { runStageAuto } from '../services/consult/autoStageService.js';
+import { startFourViews } from '../services/consult/fourViewsBatch.js';
+import { autoSearchForStages, searchNoteText } from '../services/consult/autoSourceService.js';
 import {
   chatInStage,
   directionsToText,
@@ -62,10 +67,23 @@ import {
   listSources,
   adoptSources,
   deleteSource,
+  verifySource,
   countSources,
+  countSourcesByKind,
   sourceLevelFor,
   MAX_SOURCES_PER_PROJECT,
 } from '../services/consult/sourceStore.js';
+import {
+  startRun,
+  finishRun,
+  failRun,
+  runningRun,
+  activeRuns,
+  ackRun,
+  type ConsultRunKind,
+} from '../services/consult/runStore.js';
+import { ackBatch, batchKeys } from '../services/consult/batchStore.js';
+import { startFullReport, activeBatchFor } from '../services/consult/fullReportService.js';
 import { webSearch, isSearchEnabled } from '../services/webSearchService.js';
 import { QuotaExceededError } from '../core/llm/gateway.js';
 import { registerConsultSdkRoutes, registerConsultSdkAdminRoutes } from './consultSdk.js';
@@ -354,6 +372,15 @@ consultRouter.get('/projects/:id', (req, res) => {
     // 没提交的那一轮问卷（刷新页面靠它恢复：一份七八题的问卷是拿去问客户的）
     intake: openRound(project.id),
     intakeRounds: countAppliedRounds(project.id),
+    // 正在跑的那些分析（109）。**进页面第一件事就要知道**：不回这个的话，刷新之后
+    // 界面退回「这一步还没有草稿 + 生成按钮」，而那一次正在跑、额度已经扣了 ——
+    // 他唯一看得见的动作是再点一次。顺带回还没说过的失败/中断，那些同样只有
+    // 「这一步空着」这一个表现。
+    runs: activeRuns(project.id),
+    // 整份报告那条链（111）同理，而且更要紧：`runs` 里只有当前那一步，进页面只看到一步
+    // 在转圈的话他会当成单步、跑去点别的步骤（撞上链条中间）；上次跑到一半停了的那句
+    // 「后面 N 步没跑」也只存在这张表上。
+    batch: batchView(project.id),
     // 联网能不能用必须让前端知道：藏起那个面板的话，用户以为「这个系统只会瞎猜」；
     // 显示成能用而搜出来是空的，他会以为网上真的没有这家公司的资料。
     searchEnabled: isSearchEnabled(),
@@ -385,34 +412,269 @@ consultRouter.put('/projects/:id/name', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── 长任务的记账（consult_runs，109）────────────────────────
+
+const RUN_LABEL: Record<ConsultRunKind, string> = {
+  draft: '出草稿',
+  decisions: '出待定方向',
+  directions: '出候选方向',
+};
+
+/** 「已经跑了多久」，给那句 409 用。 */
+function elapsedLabel(startedAt: string): string {
+  const sec = Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 1000));
+  return sec < 60 ? `${sec} 秒` : `${Math.round(sec / 60)} 分钟`;
+}
+
+/**
+ * 把一次「要跑几十秒到几分钟的 AI 调用」包在一条 `consult_runs` 记录里。
+ *
+ * 三个入口（/draft、/decisions、/directions）必须共用这一份：各写一遍的话漏掉
+ * `finishRun` 的那一个会把那一步**永久**锁在「已经有一次在跑」（109 的唯一索引），
+ * 现象是这一步从此点不动、而且界面上一直显示正在分析 —— 谁都想不到是记账漏了一笔。
+ *
+ * 失败**照原样抛出去**（只是顺手落一笔 failed + 原文）：在这里兜成一句「分析失败」的话，
+ * 空返回 / 截断 / 上游忙三种成因就全没了，而它们的解法完全不同（硬规则 1）。
+ */
+async function withStageRun<T>(
+  projectId: string,
+  stageKey: string,
+  kind: ConsultRunKind,
+  work: () => Promise<{ body: T; messageId: string | null }>
+): Promise<{ ok: true; body: T } | { ok: false; busy: string }> {
+  const run = startRun(projectId, stageKey, kind);
+  if (!run) {
+    const busy = runningRun(projectId, stageKey);
+    const label = busy ? RUN_LABEL[busy.kind] || '分析' : '分析';
+    return {
+      ok: false,
+      // 说清「已经在跑了」而不是「操作失败」：不说的话他会一直点，而每一次点成功了
+      // 都是一次真实的 AI 调用（真扣额度）。也要说清等着就行 —— 产出会自己出现。
+      // 说「已经跑了 N 分钟」而不是回一串 ISO 时间戳：那串东西他读不出「还要等多久」，
+      // 而这一句就是他判断「再等等还是重试」的唯一依据。
+      busy:
+        `这一步正在${label}（已经跑了 ${busy ? elapsedLabel(busy.started_at) : '不到一分钟'}）。` +
+        '可能是你在另一个标签页点的，或者刷新之前那一次还在跑 —— 等着就行，出来之后这一页会自己显示。' +
+        '再点一次只会再扣一次 AI 额度。',
+    };
+  }
+  try {
+    const out = await work();
+    finishRun(run.id, out.messageId);
+    return { ok: true, body: out.body };
+  } catch (err) {
+    failRun(run.id, (err as Error)?.message || String(err));
+    throw err;
+  }
+}
+
+/**
+ * 每一次分析之前先自动联网（出草稿 / 出待定方向 / 出候选方向三条路共用）。
+ *
+ * **没有开关**：原来那颗「联网查资料」按钮是可选的，而不联网那一版的表格、结论、置信度
+ * 和联网那一版在屏幕上一模一样 —— 于是大多数报告其实是按模型内置知识编的，
+ * 唯一的痕迹是定稿气泡里一闪而过的证据级别。
+ *
+ * 结论**当场落一条 `kind='search'` 的消息**，不是只回在这次 POST 的返回里：
+ * 只回返回值的话刷新一次就没了，而「这一版是查了资料写的」和「这次压根没联网、
+ * 数字是按常识给的区间」在正文里读起来一模一样。用 `search` 而不是 `text`：
+ * `text` 会被 `discussionBlock` 当成顾问说过的话带进下一次 prompt（见 ConsultMessage.kind）。
+ *
+ * 这一句在 LLM 调用**之前**就写进去：写在后面的话，分析挂掉那一次的联网费用（1 次额度 +
+ * 一批检索）就一点记录都没有，而他看到的只是一句「分析失败」。
+ */
+async function autoSearchBeforeAnalysis(
+  userId: string,
+  /** 第三方 SDK 的 pk（网页登录时 undefined）。见下面补扣那一句。 */
+  sdkPk: string | undefined,
+  project: ConsultProject,
+  stageKey: string
+) {
+  const search = await autoSearchForStages(userId, project, [stageKey]);
+  // 第三方那本账按「一个请求 1 次」扣，而这条路现在打两次模型 —— 不补的话那一档相当于
+  // 打了五折，而后台显示的用量是个完全正常的数字（平台配额在 gateway 里按次自己扣，不用管）。
+  if (sdkPk) chargeExtraSdkAiCalls(sdkPk, search.aiCalls);
+  const searchMessage = appendMessage(project.id, stageKey, {
+    role: 'assistant',
+    kind: 'search',
+    content: searchNoteText(search.note),
+  });
+  return { search, searchMessage };
+}
+
+/**
+ * 整份报告那一批的界面视图：进度 + 剩下几步 + 停在哪一步的原文。
+ *
+ * `labels` 在这里算（不让前端按 key 自己拼）：前端那份映射迟早和阶段清单对不上，
+ * 而症状是进度条上写着别的步骤名，读起来完全正常。
+ */
+function batchView(projectId: string) {
+  // 走 `activeBatchFor` 不是 `activeBatch`：全部定稿之后那条「剩下 N 步没有跑」是假警报。
+  const batch = activeBatchFor(projectId);
+  if (!batch) return null;
+  const keys = batchKeys(batch);
+  return {
+    id: batch.id,
+    status: batch.status,
+    cursor: batch.cursor,
+    total: keys.length,
+    stageKeys: keys,
+    labels: keys.map((k) => stageByKey(k)?.label || k),
+    /** 正在跑的那一步（跑完/失败时是 null）。 */
+    current: batch.status === 'running' ? keys[batch.cursor] || null : null,
+    error: batch.error,
+    searchNote: batch.search_note,
+    startedAt: batch.started_at,
+    finishedAt: batch.finished_at,
+  };
+}
+
+/**
+ * 这个项目正在跑的那些 + 还没跟用户说过的失败/中断（前端进页面靠它接着转圈）。
+ *
+ * `batch` 跟着一起回（111）：整份报告那条链任何时候只有一步在 `consult_runs` 里，
+ * 不回这个的话前端只看得到一步在转圈，他会当成单步、于是跑去点别的步骤（撞上链条中间）；
+ * 更要紧的是「跑到第 7 步挂了，后面 7 步没跑」这句话只存在这张表上。
+ */
+consultRouter.get('/projects/:id/runs', (req, res) => {
+  const project = getProject(req.params.id, owner(req));
+  if (!project) return res.status(404).json({ error: '项目不存在' });
+  // `stages` 也跟着回（十四行，便宜）：整份报告那条链一跑十几分钟，这段时间里前端拿不到
+  // 「哪几步已经定稿」的话，`cursor` 和 `hasEntry` 会对不上 —— 进度页上刚跑完的那几步
+  // 显示成「⚠ 停在这一步，没有定稿」，而它们已经定稿了（刷新一次就好，所以看起来像鬼影）。
+  // **必须和 `batch` 在同一个响应里**：分两次请求取的话中间那一步刚好跑完就又对不上了。
+  res.json({
+    runs: activeRuns(project.id),
+    batch: batchView(project.id),
+    stages: buildStageRail(project.id),
+  });
+});
+
+/** 那条失败提示已经看到了，别再弹（`acked_at`）。 */
+consultRouter.post('/projects/:id/runs/:rid/ack', (req, res) => {
+  const project = getProject(req.params.id, owner(req));
+  if (!project) return res.status(404).json({ error: '项目不存在' });
+  if (!ackRun(project.id, req.params.rid)) {
+    return res.status(404).json({ error: '这条记录不存在，或者它还在跑' });
+  }
+  res.json({ runs: activeRuns(project.id) });
+});
+
+/** 整份报告那条进度/失败提示他已经看到了，别再弹。 */
+consultRouter.post('/projects/:id/batches/:bid/ack', (req, res) => {
+  const project = getProject(req.params.id, owner(req));
+  if (!project) return res.status(404).json({ error: '项目不存在' });
+  if (!ackBatch(project.id, req.params.bid)) {
+    return res.status(404).json({ error: '这条记录不存在，或者它还在跑' });
+  }
+  res.json({ batch: batchView(project.id) });
+});
+
+/**
+ * 「一键生成整份报告」：把还没定稿的那几步按阶段顺序串着跑完。
+ *
+ * **立刻返回**（不等结果，同 `/four-views/run`）：整份要打二十多次模型、十几分钟。
+ * 进度靠 `GET …/runs` 里的 `batch`。
+ */
+consultRouter.post('/projects/:id/full-report', async (req, res, next) => {
+  try {
+    const project = getProject(req.params.id, owner(req));
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+    const out = await startFullReport(req.user!.id, project);
+    // 第三方那本账：中间件按「一个请求 1 次」扣，而这一条真打二十多次。不补的话这条路
+    // 对第三方近乎免费，而后台显示的用量是个完全正常的数字（见 `AI_SPEND_ROUTES`）。
+    if (req.sdkPk) chargeExtraSdkAiCalls(req.sdkPk, out.aiCallsEstimate - 1);
+    res.json({
+      ...out,
+      batch: batchView(project.id),
+      sources: listSources(project.id),
+      stages: buildStageRail(project.id),
+    });
+  } catch (err) {
+    fail(err, res, next);
+  }
+});
+
 /**
  * 快车道出结论草稿。**不落库** —— 用户改完调下面那个定稿接口才存。
  * 草稿不落库的代价是刷新页面就没了，所以前端必须提示；落库的代价更大：
  * 一份没人 review 过的草稿会以「已定稿」的身份进下游 prompt。
+ *
+ * 跑的这几分钟登记在 `consult_runs` 里（109）：那次返回收不到是很平常的事
+ * （刷新、息屏、热更新），而产出在 `res.json` 之前就已经进对话记录了。
  */
 consultRouter.post('/projects/:id/stages/:key/draft', async (req, res, next) => {
   try {
     const project = getProject(req.params.id, owner(req));
     if (!project) return res.status(404).json({ error: '项目不存在' });
-    const { draft, truncated, discussion } = await draftFastStage(req.user!.id, project, req.params.key);
-    // 出过一轮就记一轮：界面上「第 N 轮」是他唯一能看出草稿重出过的地方
-    touchStage(project.id, req.params.key, 'exploring', { incRound: true });
-    // 草稿进对话：他下一句往往是「把结论里那句改成…」，指的就是这一版
-    const message = appendMessage(project.id, req.params.key, {
-      role: 'assistant',
-      kind: 'draft',
-      content: draftToText(draft),
-      payload: draft,
+    const out = await withStageRun(project.id, req.params.key, 'draft', async () => {
+      // 先联网再出草稿：搜到的必须在拼 prompt 之前落库，晚一步的话这一版是按 L2/L3 编的，
+      // 而它和读过外部资料的那一版读起来一模一样。
+      const { search, searchMessage } = await autoSearchBeforeAnalysis(
+        req.user!.id,
+        req.sdkPk,
+        project,
+        req.params.key
+      );
+      const { draft, truncated, discussion } = await draftFastStage(
+        req.user!.id,
+        project,
+        req.params.key
+      );
+      // 出过一轮就记一轮：界面上「第 N 轮」是他唯一能看出草稿重出过的地方
+      touchStage(project.id, req.params.key, 'exploring', { incRound: true });
+      // 草稿进对话：他下一句往往是「把结论里那句改成…」，指的就是这一版
+      const message = appendMessage(project.id, req.params.key, {
+        role: 'assistant',
+        kind: 'draft',
+        content: draftToText(draft),
+        payload: draft,
+      });
+      return {
+        messageId: message.id,
+        // discussion 只回条数，不回原文（原文就在他眼前的对话里）：带上和没带上
+        // 这一版读起来一模一样，不回这个数的话「聊天到底有没有用」只能靠感觉。
+        body: {
+          draft,
+          truncated,
+          discussion: { used: discussion.used, dropped: discussion.dropped },
+          message,
+          // 联网那条消息也回出去：前端只把 `message` 贴进对话，不回的话那句话要等到
+          // 下次刷新才出现，读起来就是「这次没联网」（而它可能真的没联网）。
+          search,
+          searchMessage,
+          stages: buildStageRail(project.id),
+        },
+      };
     });
-    // discussion 只回条数，不回原文（原文就在他眼前的对话里）：带上和没带上
-    // 这一版读起来一模一样，不回这个数的话「聊天到底有没有用」只能靠感觉。
-    res.json({
-      draft,
-      truncated,
-      discussion: { used: discussion.used, dropped: discussion.dropped },
-      message,
-      stages: buildStageRail(project.id),
-    });
+    if (!out.ok) return res.status(409).json({ error: out.busy, code: 'stage_running' });
+    res.json(out.body);
+  } catch (err) {
+    fail(err, res, next);
+  }
+});
+
+/**
+ * 四看一键并行（四步同时跑，跑完各自自动定稿）。**立刻返回那四条 run，不等结果** ——
+ * 等的话这个请求必然撞超时，而四次调用照旧在跑、额度照旧扣了（见 fourViewsBatch）。
+ * 进度前端靠 `GET …/runs` 轮询，刷新/离开之后照样接得回来。
+ */
+// 这个 POST 会等十几秒到一分钟才返回 —— 它里面先做一次自动联网（出词 + 检索），
+// 搜到的资料要在四步的 prompt 拼起来之前落库。前端那颗按钮必须为此写明「正在联网查资料」，
+// 不写的话看起来就是卡住了（而这段时间里连点两次会被那条唯一索引挡掉，额度不会重扣）。
+consultRouter.post('/projects/:id/four-views/run', async (req, res, next) => {
+  try {
+    const project = getProject(req.params.id, owner(req));
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+    const out = await startFourViews(req.user!.id, project);
+    // sources 顺带回：自动联网搜到的那几条要立刻出现在「联网查资料」列表里，
+    // 否则界面上是「已采纳 0 条」而这四步的 prompt 里带着它们（读起来就是没生效）。
+    // skipped 必须回给界面：跳过了两步而只说「已开始分析」的话，他等的是四份，
+    // 出来两份 —— 而那两步（已定稿 / 已经在跑）在屏幕上看不出任何差别。
+    // 第三方那本账：中间件按「一个请求 1 次」扣，而这一条最多打 5 次（出词 1 + 四步各 1）。
+    // 不补的话这条路对第三方是免费的五连击，而返回的是一份完全正常的进度列表。
+    if (req.sdkPk) chargeExtraSdkAiCalls(req.sdkPk, out.search.aiCalls + out.runs.length - 1);
+    res.json({ ...out, sources: listSources(project.id), stages: buildStageRail(project.id) });
   } catch (err) {
     fail(err, res, next);
   }
@@ -456,22 +718,39 @@ consultRouter.post('/projects/:id/stages/:key/directions', async (req, res, next
   try {
     const project = getProject(req.params.id, owner(req));
     if (!project) return res.status(404).json({ error: '项目不存在' });
-    const out = await draftDirections(req.user!.id, project, req.params.key);
-    touchStage(project.id, req.params.key, 'exploring', { incRound: true });
-    // 方向卡进对话：「第 2 个方向再往深挖」的指代对象只存在于这一条里
-    const message = appendMessage(project.id, req.params.key, {
-      role: 'assistant',
-      kind: 'directions',
-      content: directionsToText(out),
-      payload: out,
+    const tracked = await withStageRun(project.id, req.params.key, 'directions', async () => {
+      // 这条路界面上已经没有入口了（见前端 loadDirections 的注释），但它照旧是一次分析 ——
+      // 漏掉这一句的话，哪天把入口接回来，那一版又是不联网的，而它读起来一模一样。
+      const { search, searchMessage } = await autoSearchBeforeAnalysis(
+        req.user!.id,
+        req.sdkPk,
+        project,
+        req.params.key
+      );
+      const out = await draftDirections(req.user!.id, project, req.params.key);
+      touchStage(project.id, req.params.key, 'exploring', { incRound: true });
+      // 方向卡进对话：「第 2 个方向再往深挖」的指代对象只存在于这一条里
+      const message = appendMessage(project.id, req.params.key, {
+        role: 'assistant',
+        kind: 'directions',
+        content: directionsToText(out),
+        payload: out,
+      });
+      return {
+        messageId: message.id,
+        // 同 /draft：只回条数，不把对话原文再回一遍（它就在下面的对话里）
+        body: {
+          ...out,
+          discussion: { used: out.discussion.used, dropped: out.discussion.dropped },
+          message,
+          search,
+          searchMessage,
+          stages: buildStageRail(project.id),
+        },
+      };
     });
-    // 同 /draft：只回条数，不把对话原文再回一遍（它就在下面的对话里）
-    res.json({
-      ...out,
-      discussion: { used: out.discussion.used, dropped: out.discussion.dropped },
-      message,
-      stages: buildStageRail(project.id),
-    });
+    if (!tracked.ok) return res.status(409).json({ error: tracked.busy, code: 'stage_running' });
+    res.json(tracked.body);
   } catch (err) {
     fail(err, res, next);
   }
@@ -489,22 +768,39 @@ consultRouter.post('/projects/:id/stages/:key/decisions', async (req, res, next)
   try {
     const project = getProject(req.params.id, owner(req));
     if (!project) return res.status(404).json({ error: '项目不存在' });
-    const sheet = await buildDecisions(req.user!.id, project, req.params.key);
-    // 不 incRound：轮次是「出过几版产出」，把问方向也算进去的话界面上的「第 N 轮」
-    // 比他真正看过的草稿版数多，他会以为有一版没显示出来。
-    touchStage(project.id, req.params.key, 'exploring');
-    const message = appendMessage(project.id, req.params.key, {
-      role: 'assistant',
-      kind: 'decisions',
-      content: decisionsToText(sheet),
-      payload: sheet,
+    const tracked = await withStageRun(project.id, req.params.key, 'decisions', async () => {
+      // 这一屏也要联网：那几处取舍（竞品挑哪几家这类）本来就该照外部事实列，
+      // 只在出正文那一步联网的话，取舍的名单是模型凭常识写的，而正文只是照它写下去。
+      const { search, searchMessage } = await autoSearchBeforeAnalysis(
+        req.user!.id,
+        req.sdkPk,
+        project,
+        req.params.key
+      );
+      const sheet = await buildDecisions(req.user!.id, project, req.params.key);
+      // 不 incRound：轮次是「出过几版产出」，把问方向也算进去的话界面上的「第 N 轮」
+      // 比他真正看过的草稿版数多，他会以为有一版没显示出来。
+      touchStage(project.id, req.params.key, 'exploring');
+      const message = appendMessage(project.id, req.params.key, {
+        role: 'assistant',
+        kind: 'decisions',
+        content: decisionsToText(sheet),
+        payload: sheet,
+      });
+      return {
+        messageId: message.id,
+        body: {
+          ...sheet,
+          discussion: { used: sheet.discussion.used, dropped: sheet.discussion.dropped },
+          message,
+          search,
+          searchMessage,
+          stages: buildStageRail(project.id),
+        },
+      };
     });
-    res.json({
-      ...sheet,
-      discussion: { used: sheet.discussion.used, dropped: sheet.discussion.dropped },
-      message,
-      stages: buildStageRail(project.id),
-    });
+    if (!tracked.ok) return res.status(409).json({ error: tracked.busy, code: 'stage_running' });
+    res.json(tracked.body);
   } catch (err) {
     fail(err, res, next);
   }
@@ -538,6 +834,88 @@ consultRouter.post('/projects/:id/stages/:key/decisions/apply', (req, res, next)
       payload: decided,
     });
     res.json({ ...decided, message, stages: buildStageRail(project.id) });
+  } catch (err) {
+    fail(err, res, next);
+  }
+});
+
+/**
+ * 让 AI 按它自己的建议把这几处取舍定完（全自动出整份报告那条路的零件，也给他手动用）。
+ *
+ * **不花额度**：清单是上一次 `/decisions` 已经花过钱出来的，这里只是在代码里挑
+ * （`autoPicksFor`）。返回里 `fallbacks` 是「AI 连建议都没给准、用了第一个选项」的处数，
+ * **前端必须显示**：那几处等于掷了硬币，而它们和有理由的那几处在卡片上长得一模一样。
+ */
+consultRouter.post('/projects/:id/stages/:key/decisions/auto', (req, res, next) => {
+  try {
+    const project = getProject(req.params.id, owner(req));
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+    const out = autoDecideStage(project.id, req.params.key);
+    res.json({ ...out.decided, message: out.message, fallbacks: out.fallbacks, stages: buildStageRail(project.id) });
+  } catch (err) {
+    fail(err, res, next);
+  }
+});
+
+/**
+ * 「这一步全自动跑完」：出方向 → AI 按建议拍板 → 出正文 → 自动定稿，中间不停。
+ *
+ * **立刻返回**（不等结果，同 `/four-views/run`）：慢车道这一条要打两次模型、几分钟，
+ * 同一个请求里等完必然撞上反代/浏览器超时，而那两次调用照旧在跑、额度照旧扣了 ——
+ * 用户看到的是一句「网络错误」。进度全靠 `consult_runs`（前端那个轮询已经在接了）。
+ *
+ * 顺序是**先占位再联网**（同 `startFourViews`）：反过来的话联网那十几秒里按钮还可点，
+ * 连点两次就是两次出词调用（两次额度），而第二次点完照旧只跑一批分析。
+ */
+consultRouter.post('/projects/:id/stages/:key/auto', async (req, res, next) => {
+  try {
+    const project = getProject(req.params.id, owner(req));
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+    const stage = stageByKey(req.params.key);
+    if (!stage) return res.status(404).json({ error: '没有这个阶段' });
+    // 已定稿的不让全自动重跑：这条路跑完就直接盖上「已定稿」，而他昨天核过的那一版
+    // 是下游每一步的依据。要重跑得他自己在那一步上一步一步来。
+    if (listEntries(project.id).some((e) => e.stage_key === stage.key)) {
+      return res.status(409).json({
+        error: `「${stage.label}」已经定稿了。全自动这条路会直接盖一版新的上去（没人 review），` +
+          `要重做的话在这一步上手动跑：点「开始分析」，那几处取舍你自己拍板。`,
+      });
+    }
+    const run = startRun(project.id, stage.key, 'draft');
+    if (!run) {
+      return res
+        .status(409)
+        .json({ error: `「${stage.label}」已经有一次分析在跑了，这次没重开（等它跑完再说）。`, code: 'stage_running' });
+    }
+
+    let search;
+    try {
+      search = await autoSearchForStages(req.user!.id, project, [stage.key]);
+    } catch (err) {
+      // 联网这一段挂了要**把占住的位子还回去**：不还的话这一步永远显示「正在分析」，
+      // 而压根没有人在跑它，重点一次还被那条唯一索引挡住（这一步就此点不动）。
+      failRun(run.id, `联网查资料这一步挂了，后面的分析没开跑：${(err as Error)?.message || String(err)}`);
+      throw err;
+    }
+    const searchMessage = appendMessage(project.id, stage.key, {
+      role: 'assistant',
+      kind: 'search',
+      content: searchNoteText(search.note),
+    });
+    // 第三方那本账：中间件按「一个请求 1 次」扣，而这一条最多打 3 次（出词 1 + 慢车道
+    // 出方向 1 + 出正文 1）。不补的话这条路对第三方是免费的三连击，而返回一份正常的进度。
+    if (req.sdkPk) {
+      chargeExtraSdkAiCalls(req.sdkPk, search.aiCalls + (stage.lane === 'slow' ? 2 : 1) - 1);
+    }
+
+    void runStageAuto(req.user!.id, project, run, search.note);
+    res.json({
+      run,
+      search,
+      searchMessage,
+      sources: listSources(project.id),
+      stages: buildStageRail(project.id),
+    });
   } catch (err) {
     fail(err, res, next);
   }
@@ -609,10 +987,16 @@ consultRouter.put('/projects/:id/stages/:key/entry', (req, res, next) => {
       confidence: String(req.body?.confidence || 'mid'),
       // 证据级别在服务端按「实际喂给模型的是什么」算，不收前端也不问模型：
       // 这里原来硬写成 'L1'，于是一条纯靠常识编出来的结论挂着「联网检索」的牌子。
-      sourceLevel: sourceLevelFor({
-        hasSources: countSources(project.id) > 0,
-        hasBrief: !!project.brief.trim(),
-      }),
+      // 自动搜来的那几条只能撑到 `L1?`（查过网但没人核对过，见 migration 110）——
+      // 算成 L1 的话这条定稿挂着「联网检索」，而他一条出处都没点开过。
+      sourceLevel: (() => {
+        const n = countSourcesByKind(project.id);
+        return sourceLevelFor({
+          hasPicked: n.picked > 0,
+          hasAuto: n.auto > 0,
+          hasBrief: !!project.brief.trim(),
+        });
+      })(),
     };
     for (const [k, v] of Object.entries(fields)) {
       if (v.length > MAX_ENTRY_FIELD_CHARS) {
@@ -801,6 +1185,22 @@ consultRouter.post('/projects/:id/stages/:key/sources', (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * 「这条自动抓的我核对过了」→ 升级成 L1（`auto = 0`）。
+ *
+ * 单独一个端点而不是复用「采纳」那个：采纳那条路上有 40 条上限校验，满了会回一句
+ * 「还能加 0 条」—— 而这个动作压根没有新增任何一条，他会以为是自己资料太多，
+ * 于是去删掉几条真有用的。
+ */
+consultRouter.post('/projects/:id/sources/:sid/verify', (req, res) => {
+  const project = getProject(req.params.id, owner(req));
+  if (!project) return res.status(404).json({ error: '项目不存在' });
+  if (!verifySource(project.id, req.params.sid)) {
+    return res.status(404).json({ error: '这条资料不存在，或者它本来就是你自己采纳的（不用再确认）' });
+  }
+  res.json({ sources: listSources(project.id) });
 });
 
 consultRouter.delete('/projects/:id/sources/:sid', (req, res) => {

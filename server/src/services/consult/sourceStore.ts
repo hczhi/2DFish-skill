@@ -18,6 +18,12 @@ export interface ConsultSource {
   published: string;
   snippet: string;
   query: string;
+  /**
+   * 1 = 机器自己搜来的（四看一键分析那次），0 = 用户逐条勾选采纳的。见 migration 110。
+   * **它不是元数据，是证据等级的一部分** —— 两者混同的话一条 SEO 垃圾页和他核过的年报
+   * 在分级里同为 L1，而正文只会写得更自信。
+   */
+  auto: number;
   created_at: string;
 }
 
@@ -63,14 +69,20 @@ export function adoptSources(
   projectId: string,
   stageKey: string,
   query: string,
-  items: AdoptInput[]
+  items: AdoptInput[],
+  /**
+   * true = 这几条是机器搜来的（四看一键分析），没人看过。**默认 false** ——
+   * 自动那条路忘了传的话，它们会当成「他逐条核过的 L1」进 prompt 和报告出处，
+   * 而界面上和真采纳的一模一样（见 migration 110）。
+   */
+  auto = false
 ): { added: number; skipped: number } {
   const db = getDatabase();
   const now = new Date().toISOString();
   const ins = db.prepare(
     `INSERT OR IGNORE INTO consult_sources
-       (id, project_id, stage_key, title, url, domain, published, snippet, query, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, project_id, stage_key, title, url, domain, published, snippet, query, auto, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   let added = 0;
   const tx = db.transaction(() => {
@@ -87,13 +99,43 @@ export function adoptSources(
         String(it.published || '').trim().slice(0, 40),
         String(it.snippet || '').trim().slice(0, MAX_SNIPPET_CHARS),
         query.slice(0, 200),
+        auto ? 1 : 0,
         now
       );
       added += info.changes;
+      // 他手动勾的这条，自动那次已经搜到过了（唯一索引把 INSERT 挡掉）——
+      // 那就把它**升级成人工核对过的**：不升的话他明明亲手核了一遍，那条资料在
+      // prompt 里照旧挂着「未人工核对」，模型会继续给区间、继续加免责的话，
+      // 而他在界面上只看到「这条已经在列表里了」。
+      if (!auto && info.changes === 0) {
+        const up = db
+          .prepare('UPDATE consult_sources SET auto = 0 WHERE project_id = ? AND url = ? AND auto = 1')
+          .run(projectId, url);
+        added += up.changes;
+      }
     }
   });
   tx();
   return { added, skipped: items.length - added };
+}
+
+/**
+ * 「这条我点开看过了」：把自动搜来的那一行升级成人工核对过的（`auto = 0`）。
+ *
+ * 必须有这个动作，否则自动抓的资料只有两条出路 —— 删掉，或者永远挂着「未人工核对」
+ * 让模型一直给区间、一直加免责的话。他核过一条就该按一条，而升级之后这一步的证据
+ * 级别才从 `L1?` 回到 L1。
+ *
+ * 只动 `auto = 1` 的行（回 false 而不是「成功」）：本来就是他采纳的那些不该被这个动作碰，
+ * 「点了没反应」也比「什么都没发生却说已确认」好定位。
+ */
+export function verifySource(projectId: string, id: string): boolean {
+  const db = getDatabase();
+  return (
+    db
+      .prepare('UPDATE consult_sources SET auto = 0 WHERE id = ? AND project_id = ? AND auto = 1')
+      .run(id, projectId).changes > 0
+  );
 }
 
 export function deleteSource(projectId: string, id: string): boolean {
@@ -126,16 +168,36 @@ export function sourcesBlock(sources: ConsultSource[]): string {
 其余一律按 L3「模型内置知识·仅区间」写：给区间不给精确值，并标注「（模型内置知识·仅区间）」。
 不许把推测写成查到的事实，也不许凭空出现「据公开数据」「行业报告显示」这类说法 —— 这次没有联网。）`;
   }
-  const lines = sources.map(
-    (s, i) =>
-      `${i + 1}. ${s.title || '(无标题)'} —— 来源：${s.domain}${s.published ? ` · ${s.published}` : ' · 未标日期'}\n` +
-      `   ${s.snippet.replace(/\s*\n\s*/g, ' ')}\n   ${s.url}`
-  );
-  return `以下是用户逐条勾选采纳的联网检索资料（L1，最高一级证据）。引用它们时标注
-「（联网·${sources[0].domain} 这类域名·年份）」，未标日期的写「未标日期」——
+  const fmt = (s: ConsultSource, i: number) =>
+    `${i + 1}. ${s.title || '(无标题)'} —— 来源：${s.domain}${s.published ? ` · ${s.published}` : ' · 未标日期'}\n` +
+    `   ${s.snippet.replace(/\s*\n\s*/g, ' ')}\n   ${s.url}`;
+
+  // 人工采纳的和机器自己搜的**分两段**，各带各的引用要求。混在一段里的话模型分不出来
+  // （它只看得到这段文字），于是一条没人看过的搜索结果被写成「据公开数据」，
+  // 而那句话和真查证过的一模一样 —— 这是这个字段存在的全部理由（见 migration 110）。
+  const picked = sources.filter((s) => !s.auto);
+  const auto = sources.filter((s) => s.auto);
+  const parts: string[] = [];
+  if (picked.length) {
+    parts.push(`【联网资料 · 用户逐条勾选采纳的（L1，最高一级证据）】
+引用它们时标注「（联网·域名·年份）」，未标日期的写「未标日期」——
 不写年份的话，三年前的旧数字读起来和今年的一模一样。
 
-${lines.join('\n')}`;
+${picked.map(fmt).join('\n')}`);
+  }
+  if (auto.length) {
+    parts.push(`【联网资料 · 这次自动检索抓回来的（L1?，**没有人核对过**）】
+这几条是系统按关键词自动搜的，用户还没有逐条看过：可能搜到的是同名的另一家公司、
+一篇几年前的旧稿、或者一页营销软文。所以用它们的时候三条硬要求：
+① 引用必须写成「（联网·域名·年份·未人工核对）」—— 少了后半句，读者会把它当成核实过的事实；
+② 关键数字（市场规模、份额、融资额、价格）**同时给出区间和这条出处**，只有一条来源支持时
+   明说「仅一处来源，未交叉验证」；
+③ 和【客户资料】冲突时**以客户资料为准**，并把冲突写进「需要核实」那一类里 ——
+   悄悄采信搜来的那条的话，整节结论都建立在一篇没人看过的网页上。
+
+${auto.map(fmt).join('\n')}`);
+  }
+  return parts.join('\n\n');
 }
 
 /**
@@ -144,8 +206,25 @@ ${lines.join('\n')}`;
  * 以前这个字段在路由里硬写成 'L1'，于是一条完全靠常识编出来的结论在界面上
  * 挂着「L1 联网检索」—— 用户会拿它去做决策，而它从来没被任何来源支撑过。
  */
-export function sourceLevelFor(opts: { hasSources: boolean; hasBrief: boolean }): string {
-  if (opts.hasSources) return 'L1';
+export function sourceLevelFor(opts: { hasPicked: boolean; hasAuto?: boolean; hasBrief: boolean }): string {
+  if (opts.hasPicked) return 'L1';
+  // 只有自动搜来的那几条时是 `L1?`：查过网了（比只靠常识强），但**没有人核对过**。
+  // 一律算 L1 的话，界面上这一步挂着「L1 联网检索」而它可能全靠一页软文；
+  // 一律算 L2 的话，那几条资料等于白搜（他会以为自动联网没生效，回去手动再搜一遍）。
+  if (opts.hasAuto) return 'L1?';
   if (opts.hasBrief) return 'L2';
   return 'L3';
+}
+
+/** 人工采纳的 / 自动抓的各几条。级别和界面分组都按这两个数分岔（见 `sourceLevelFor`）。 */
+export function countSourcesByKind(projectId: string): { picked: number; auto: number } {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `SELECT SUM(CASE WHEN auto = 1 THEN 0 ELSE 1 END) AS picked,
+              SUM(CASE WHEN auto = 1 THEN 1 ELSE 0 END) AS auto
+         FROM consult_sources WHERE project_id = ?`
+    )
+    .get(projectId) as { picked: number | null; auto: number | null };
+  return { picked: row.picked || 0, auto: row.auto || 0 };
 }

@@ -100,7 +100,15 @@ export function decisionsToText(sheet: {
  * 「客户说过的话」的身份再出现一遍，模型把它当成两处独立印证。
  */
 export function decidedToText(sheet: {
-  picks: Array<{ question: string; methodRef?: string; label: string; cost: string; note?: string }>;
+  picks: Array<{
+    question: string;
+    methodRef?: string;
+    label: string;
+    cost: string;
+    note?: string;
+    /** 见 decisionService.DecisionBy。空 = 他自己点的（老记录没有这一列） */
+    by?: string;
+  }>;
   noFork?: string;
 }): string {
   if (!sheet.picks.length) {
@@ -109,12 +117,26 @@ export function decidedToText(sheet: {
   const lines = sheet.picks.map(
     (p, i) =>
       `${i + 1}. ${p.question}${p.methodRef ? `（${p.methodRef}）` : ''}\n` +
+      // 一处一处标出来是谁定的：只在开头写一句「这几处是 AI 定的」的话，
+      // 混着的那种（他定了两处、AI 补了两处）看不出哪两处要复核。
       `   → **${p.label}**（放弃：${p.cost}）` +
+      (p.by === 'ai-recommend'
+        ? '　⚠ AI 按它自己的建议定的'
+        : p.by === 'ai-fallback'
+          ? '　⚠ AI 连建议都没给准，这一处用的是第一个选项'
+          : '') +
       (p.note ? `\n   → 补充：${p.note}` : '')
   );
+  // 全自动跑报告时这几处是 AI 定的，**开头那句必须跟着换**：照旧写「已经由你定了」的话，
+  // 他过两天回来看这条记录会以为这几处自己拍过板，于是最该复核的那几处再没人看第二眼。
+  const aiCount = sheet.picks.filter((p) => p.by === 'ai-recommend' || p.by === 'ai-fallback').length;
+  const head = !aiCount
+    ? `✅ 这一步的 ${sheet.picks.length} 处取舍已经由你定了，正文会照这几条写：`
+    : `⚠ 这一步的 ${sheet.picks.length} 处取舍里有 ${aiCount} 处是 **AI 替你定的**（你还没核过），正文会照这几条写：`;
   return (
-    `✅ 这一步的 ${sheet.picks.length} 处取舍已经由你定了，正文会照这几条写：\n\n${lines.join('\n')}\n\n` +
-    `这几条会写进正文开头的「方法论速览」—— 那是整份方案里唯一能看出地基是谁定的地方。`
+    `${head}\n\n${lines.join('\n')}\n\n` +
+    `这几条会写进正文开头的「方法论速览」—— 那是整份方案里唯一能看出地基是谁定的地方。` +
+    (aiCount ? '不同意哪一处就改那一处，然后重跑这一步（下游那几步也要跟着重跑）。' : '')
   );
 }
 
@@ -279,7 +301,7 @@ ${stage.deliverables.map((d, i) => `${i + 1}. ${d}`).join('\n')}
 【已定稿结论（企业知识库）】
 ${knowledgeBlock(entries, stage.key)}
 
-【联网资料（L1）】
+【联网资料】
 ${sourcesBlock(listSources(project.id))}
 
 【客户资料（L2）】
