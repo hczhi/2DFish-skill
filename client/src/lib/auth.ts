@@ -1,4 +1,5 @@
 import { embedToken, clearEmbedToken } from './embed';
+import { activeAppKey } from './appKey';
 
 export interface AuthUser {
   id: string;
@@ -18,7 +19,9 @@ const TOKEN_KEY = 'mmPla_token';
  * /consult 的身份，界面上读起来就是「莫名其妙被退出了」。
  */
 export function getToken(): string | null {
-  return embedToken() ?? localStorage.getItem(TOKEN_KEY);
+  // 应用 key（112）排在登录 token 前面：在 /ppt 下存了 key 就按这张卡的身份走，
+  // 没存才回落到登录态（管理员自己照旧能用）。
+  return embedToken() ?? activeAppKey() ?? localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string): void {
@@ -45,23 +48,9 @@ export async function login(username: string, password: string): Promise<{ token
     body: JSON.stringify({ username, password }),
   });
   if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || 'Login failed');
-  }
-  const data = await res.json();
-  setToken(data.token);
-  return data;
-}
-
-export async function register(username: string, password: string): Promise<{ token: string; user: AuthUser }> {
-  const res = await fetch('/api/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
-  if (!res.ok) {
-    const data = await res.json();
-    throw new Error(data.error || 'Registration failed');
+    const data = await res.json().catch(() => ({}));
+    // detail 是人话（429 限流会带「请 N 秒后再试」），error 可能只是机器码 rate_limit_exceeded。
+    throw new Error(data.detail || data.error || `登录失败（HTTP ${res.status}）`);
   }
   const data = await res.json();
   setToken(data.token);

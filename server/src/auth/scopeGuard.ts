@@ -79,6 +79,15 @@ const SCOPE_RULES: Record<string, ScopeRule[]> = {
   ],
 };
 
+// 售卖型应用 key（112）：和嵌入版同一套工作台端点，外加查自己余额那一条。
+// 不另写一份清单：两份各自维护的话，给嵌入版补上的端点（比如 decks 的 PUT）在卖出去的卡上
+// 是 403，而同一屏其余按钮全是好的。
+const KEY_ME: ScopeRule = { methods: ['GET'], path: /^\/api\/app-keys\/me$/ };
+// 充值（115）。漏了的话买家点「充值」是一句 403 scoped，读起来像码无效。
+const KEY_REDEEM: ScopeRule = { methods: ['POST'], path: /^\/api\/app-keys\/redeem$/ };
+SCOPE_RULES['ppt:key'] = [...SCOPE_RULES['ppt:embed'], KEY_ME, KEY_REDEEM];
+SCOPE_RULES['consult:key'] = [...SCOPE_RULES['consult:embed'], KEY_ME, KEY_REDEEM];
+
 export function scopeGuard(req: Request, res: Response, next: NextFunction): void {
   const scope = req.tokenScope;
   // 正常登录用户 / 模块 token / 匿名请求都不受影响。

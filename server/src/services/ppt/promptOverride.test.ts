@@ -22,6 +22,7 @@ vi.mock('../../services/aiProviderService.js', () => ({
   })),
 }));
 vi.mock('./assetStore.js', () => ({ rememberAsset: vi.fn(() => true) }));
+vi.mock('../appKeyService.js', () => ({ holdPoints: vi.fn(() => null), settlePoints: vi.fn(), releasePoints: vi.fn(), POINT_PRICE: { text: 1, image: 5 } }));
 
 const { generateImage } = await import('../../core/image/imageGateway.js');
 const { fillPageImages, previewSpecPrompt } = await import('./imageService.js');

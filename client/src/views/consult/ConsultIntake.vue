@@ -438,7 +438,7 @@ const sections = computed(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding-top: 30px; /* 避免被固定的 SiteHeader 遮挡 */
+  padding-top: 30px; /* 避免被固定的 刊头遮挡 */
 }
 
 .bg-elements {

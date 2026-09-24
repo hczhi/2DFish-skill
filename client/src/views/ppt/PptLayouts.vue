@@ -64,7 +64,7 @@
                  一条，绑定账号自己和别的接入方从此都排不出它，所以 scope 里就挡着这条接口。
                  留着按钮的话点下去是一句「没改上」，而开关看着是可点的 —— 他会一直重试。 -->
             <span v-if="embedded" class="sw ro" :class="{ on: !l.disabled }"
-              title="停用开关是账号级的，嵌入模式下只读"
+              title="停用开关是账号级的，这里只读"
             >{{ l.disabled ? '已停用' : '启用中' }}</span>
             <button
               v-else
@@ -129,6 +129,7 @@ import { ref, computed, onMounted } from 'vue'
 import { apiGet, apiPut } from '../../lib/api'
 import { renderMarkdown } from '../../lib/markdown'
 import { isEmbedMode } from '../../lib/embed'
+import { activeAppKey } from '../../lib/appKey'
 
 interface Layout {
   id: string; num: number; name: string; title: string;
@@ -143,8 +144,8 @@ interface Layout {
 
 /** 整份 demo deck（22 页）。单页是它加上 ?only=Lk。 */
 const deckUrl = '/api/ppt/demo-deck.html'
-/** 第三方 iframe 里（100）。只用来关掉账号级的那个开关，别的都照旧。 */
-const embedded = isEmbedMode()
+/** 第三方 iframe 里（100）或应用 key 模式（112，scope 同样挡着这条）。只用来关掉账号级的那个开关，别的都照旧。 */
+const embedded = isEmbedMode() || !!activeAppKey()
 
 const layouts = ref<Layout[]>([])
 const loading = ref(true)

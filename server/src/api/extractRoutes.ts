@@ -175,7 +175,7 @@ export function mountExtractRoutes(router: Router, deps: ExtractRouteDeps): void
         // 而他会以为是这张图/这个文件的问题，一路重传。
         if (
           e instanceof StageError || e instanceof QuotaExceededError || e instanceof OpenAI.APIError
-          || e instanceof NoThinkingUnsupportedError
+          || e instanceof NoThinkingUnsupportedError || e?.name === 'PointsExhaustedError'
         ) {
           return deps.fail(e, req, res, next);
         }

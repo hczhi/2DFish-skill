@@ -25,6 +25,7 @@ import { settingsRouter } from './api/settings.js';
 import { tokensRouter } from './api/tokens.js';
 import { quotaRouter } from './api/quota.js';
 import { adminRouter } from './api/admin.js';
+import { appKeysRouter, appKeyClientRouter } from './api/appKeys.js';
 import { homeRouter } from './api/home.js';
 import { seoRouter } from './api/seo.js';
 import { discoverRouter } from './api/discover.js';
@@ -262,7 +263,10 @@ app.use(moduleGuard);
 app.use(scopeGuard);
 
 // Rate limiting for API endpoints
-app.use('/api/auth/login', rateLimit(5, 60_000));
+// 登录按「IP + 用户名」计：只按 IP 的话同一个公司出口的几个同事共用 5 次，谁先点谁把别人锁在外面；
+// 同一个账号照样 10 次/分钟封顶（防猜密码），整个 IP 另有 60 次/分钟兜底。
+app.use('/api/auth/login', rateLimit(10, 60_000, (req) => `${req.ip}|${String(req.body?.username ?? '').trim().toLowerCase()}`));
+app.use('/api/auth/login', rateLimit(60, 60_000));
 app.use('/api/auth/register', rateLimit(3, 60_000));
 app.use('/api/auth', rateLimit(30, 60_000));
 app.use('/api/ai', rateLimit(30, 60_000));
@@ -295,6 +299,8 @@ app.use('/api/quota', quotaRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/skill-registry', skillRegistryRouter);
 app.use('/api/admin/agent-skills', agentSkillsRouter);
+app.use('/api/admin/app-keys', appKeysRouter);
+app.use('/api/app-keys', appKeyClientRouter);
 
 // Home content (public reads + admin writes)
 app.use('/api/home', homeRouter);
@@ -402,6 +408,12 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   // 而真正的出路（换一个能关思维链的模型）只在服务端日志里 —— 而这种失败每次都真扣一次额度。
   if (err.name === 'NoThinkingUnsupportedError') {
     res.status(502).json({ error: err.message, code: 'no_thinking_unsupported' });
+    return;
+  }
+
+  // 售卖型 key 点数不够（appKeyService）。兜成 500 的话他读到的是「服务器坏了」，会一路重试。
+  if (err.name === 'PointsExhaustedError') {
+    res.status(402).json({ error: err.message, code: 'points_exhausted' });
     return;
   }
 

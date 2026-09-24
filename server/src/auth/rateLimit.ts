@@ -21,11 +21,18 @@ export function resetRateLimits(): void {
   buckets.clear();
 }
 
-export function rateLimit(maxRequests = 60, windowMs = 60_000) {
+let limiterSeq = 0;
+
+export function rateLimit(maxRequests = 60, windowMs = 60_000, keyOf?: (req: Request) => string) {
+  // 每条规则各记各的：只按「谁」分桶的话，所有规则共用一个计数，登录那条「5 次/分钟」
+  // 数的是这个 IP 这一分钟里**所有**限流路由的请求（一次登录还同时过 /api/auth/login 和
+  // /api/auth 两道 = 算两次）—— 于是密码明明对，点第三下就是「请求太频繁」。
+  const ns = ++limiterSeq;
   return (req: Request, res: Response, next: NextFunction) => {
-    const key = req.authMethod === 'api_token'
+    const who = req.authMethod === 'api_token'
       ? `token:${req.headers.authorization?.slice(7, 19)}`
       : `user:${req.user?.id || req.ip}`;
+    const key = `${ns}:${keyOf ? keyOf(req) : who}`;
 
     const now = Date.now();
     let bucket = buckets.get(key);
@@ -42,7 +49,8 @@ export function rateLimit(maxRequests = 60, windowMs = 60_000) {
     res.setHeader('X-RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
 
     if (bucket.count > maxRequests) {
-      res.status(429).json({ error: 'rate_limit_exceeded', retry_after_ms: bucket.resetAt - now });
+      const secs = Math.ceil((bucket.resetAt - now) / 1000);
+      res.status(429).json({ error: 'rate_limit_exceeded', detail: `请求太频繁，请 ${secs} 秒后再试`, retry_after_ms: bucket.resetAt - now });
       return;
     }
 

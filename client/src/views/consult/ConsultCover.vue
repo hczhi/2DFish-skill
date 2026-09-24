@@ -1,6 +1,6 @@
 <template>
-  <div class="page-wrapper" @scroll="handleScroll" ref="wrapperRef">
-    <SiteHeader :class="['dynamic-header', { 'is-scrolled': isScrolled }]" />
+  <div class="page-wrapper">
+    <SiteHeader />
     
     <div class="consult-cover">
       <!-- 首屏：全屏背景图 -->
@@ -118,21 +118,28 @@
     
     <!-- 引入通用页脚 -->
     <SiteFooter />
+    <AppKeyModal :model-value="keyOpen" app="consult" :next="q('next')" :reason="q('reason')" @update:model-value="onKeyModal" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import SiteHeader from '../../components/common/SiteHeader.vue';
 import SiteFooter from '../../components/common/SiteFooter.vue';
+import AppKeyModal from '../../components/common/AppKeyModal.vue';
 
-const isScrolled = ref(false);
-const wrapperRef = ref<HTMLElement | null>(null);
+const route = useRoute();
+const router = useRouter();
 
-function handleScroll() {
-  if (!wrapperRef.value) return;
-  // 当向下滚动超过 60px 时，改变导航栏状态
-  isScrolled.value = wrapperRef.value.scrollTop > 60;
+// 「进入工作台」没 key 时守卫送到 /consult/key，它带着 ?key=1 回这里打开弹窗（同 PptCover）。
+const keyOpen = ref(false);
+watch(() => route.query.key, (v) => { keyOpen.value = !!v }, { immediate: true });
+const q = (k: string) => (typeof route.query[k] === 'string' ? (route.query[k] as string) : undefined);
+
+function onKeyModal(open: boolean) {
+  keyOpen.value = open;
+  if (!open && route.query.key) router.replace({ path: '/consult' });
 }
 
 onMounted(() => {
@@ -172,32 +179,6 @@ onMounted(() => {
   overflow-x: hidden;
   font-family: var(--font-sans);
   background: var(--bg-light);
-}
-
-/* 动态导航栏：在顶部时透明，向下滚动后恢复实色 */
-:deep(.site-header.dynamic-header) {
-  position: fixed;
-  top: 0;
-  width: 100%;
-  transition: all 0.3s ease;
-  background: transparent !important;
-  border-bottom: none !important;
-  box-shadow: none !important;
-}
-:deep(.site-header.dynamic-header *) {
-  color: #fff !important;
-  transition: color 0.3s ease;
-}
-
-/* 滚动后的导航栏状态 */
-:deep(.site-header.dynamic-header.is-scrolled) {
-  background: rgba(255, 255, 255, 0.9) !important;
-  backdrop-filter: blur(12px) !important;
-  border-bottom: 1px solid rgba(0,0,0,0.05) !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.03) !important;
-}
-:deep(.site-header.dynamic-header.is-scrolled *) {
-  color: var(--text-primary) !important;
 }
 
 .consult-cover {

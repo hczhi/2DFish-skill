@@ -63,14 +63,16 @@ export function logAIUsage(
   // 「已经关掉了」，而真相是上游压根没报这个明细。见 107 迁移里的边界 ①。
   reasoningTokens?: number | null,
   finishReason?: string | null
-): void {
+): string | null {
+  // 回这条日志的 id：key 扣点那一行流水要指得回它（买家问「这 1 点扣在哪」时对得上）。
+  const id = uuidv4();
   try {
     const db = getDatabase();
     db.prepare(
       `INSERT INTO ai_logs (id, source, operation, model, input_tokens, output_tokens, total_tokens, duration_ms, request_summary, user_id, request_body, response_body, provider_id, provider_owner, reasoning_tokens, finish_reason, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      uuidv4(), source, operation, model,
+      id, source, operation, model,
       inputTokens, outputTokens, inputTokens + outputTokens,
       durationMs || null, requestSummary || null,
       userId || null,
@@ -79,5 +81,9 @@ export function logAIUsage(
       reasoningTokens ?? null, finishReason ?? null,
       new Date().toISOString()
     );
-  } catch { /* non-critical */ }
+    return id;
+  } catch {
+    /* non-critical */
+    return null;
+  }
 }

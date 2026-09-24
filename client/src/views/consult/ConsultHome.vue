@@ -258,7 +258,7 @@ function fmt(ts: string) {
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 60px 4vw 80px; /* 增加 top padding 避免被固定的 SiteHeader 遮挡 */
+  padding: 60px 4vw 80px; /* 增加 top padding 避免被固定的 刊头遮挡 */
 }
 
 .bg-elements {

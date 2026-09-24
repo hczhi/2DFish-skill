@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import { getToken, fetchMe } from '../lib/auth';
 import { openLoginModal } from '../lib/loginModal';
 import { isEmbedMode, embedModule, requestEmbedToken, embedHostOrigin } from '../lib/embed';
+import { setActiveKeyApp, type KeyApp } from '../lib/appKey';
 
 function getSessionId(): string {
   let sid = sessionStorage.getItem('_sid');
@@ -124,6 +125,7 @@ const router = createRouter({
         // 展示稿对外接入（100）= 发 pk。和 /admin/consult 是两页，别合并：两个模块的 key
         // 混在一张表里，改错哪一行（停用/删除）看不出来。
         { path: 'ppt-access', name: 'admin-ppt-access', component: () => import('../views/admin/PptAccess.vue') },
+        { path: 'app-keys', name: 'admin-app-keys', component: () => import('../views/admin/AppKeys.vue') },
         { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
@@ -172,10 +174,11 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
-    // HTML 展示稿。/ppt 是演示稿列表（一份稿子一行，落库），案例库降成它的一个入口。
+    // HTML 展示稿。/ppt 是介绍页（「去使用」进 /ppt/decks 演示稿列表，一份稿子一行，落库）。
     {
       path: '/ppt',
-      redirect: '/ppt/decks',
+      name: 'ppt-cover',
+      component: () => import('../views/ppt/PptCover.vue'),
     },
     {
       // 第三方 iframe 的入口（100，写法同 /consult/embed）。**不能带 requiresAuth**
@@ -185,10 +188,17 @@ const router = createRouter({
       component: () => import('../views/ppt/PptEmbed.vue'),
     },
     {
+      // 没 key 时守卫和 401 都送到这里（112），它带着 ?key=1 回介绍页打开输入 key 的弹窗。
+      // 名字和路径不能改：守卫按 `${keyApp}-key` 找它，api.ts 的 401 按 `/${app}/key` 拼地址。
+      path: '/ppt/key',
+      name: 'ppt-key',
+      redirect: (to) => ({ path: '/ppt', query: { ...to.query, key: '1' } }),
+    },
+    {
       path: '/ppt/decks',
       name: 'ppt-decks',
       component: () => import('../views/ppt/PptDecks.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'ppt' },
     },
     {
       // new 必须写在 :id 之前 —— 反过来的话 /ppt/decks/new 会被当成一个 deck id，
@@ -196,33 +206,33 @@ const router = createRouter({
       path: '/ppt/decks/new',
       name: 'ppt-deck-create',
       component: () => import('../views/ppt/PptDeckCreate.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'ppt' },
     },
     {
       // 「生成提纲」那个对话页。也必须写在 /ppt/decks/:id 之前（同 new 那条的理由）。
       path: '/ppt/decks/new/outline',
       name: 'ppt-outline-chat',
       component: () => import('../views/ppt/PptOutlineChat.vue'),
-      meta: { requiresAuth: true, requiresAI: true },
+      meta: { requiresAuth: true, requiresAI: true, keyApp: 'ppt' },
     },
     {
       path: '/ppt/decks/:id',
       name: 'ppt-deck',
       component: () => import('../views/ppt/PptPlan.vue'),
-      meta: { requiresAuth: true, requiresAI: true },
+      meta: { requiresAuth: true, requiresAI: true, keyApp: 'ppt' },
     },
     {
       // 素材库：每张生成过的配图（花过钱的）都在这儿，以后可以重用
       path: '/ppt/assets',
       name: 'ppt-assets',
       component: () => import('../views/ppt/PptAssets.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'ppt' },
     },
     {
       path: '/ppt/layouts',
       name: 'ppt-layouts',
       component: () => import('../views/ppt/PptLayouts.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'ppt' },
     },
     {
       // 老的 /ppt/plan 是**不落库**的那个工作台。留着它等于留一个「干半天关掉就全没了」
@@ -252,16 +262,22 @@ const router = createRouter({
       component: () => import('../views/consult/ConsultEmbed.vue'),
     },
     {
+      // 同 /ppt/key：回封面打开输入 key 的弹窗。
+      path: '/consult/key',
+      name: 'consult-key',
+      redirect: (to) => ({ path: '/consult', query: { ...to.query, key: '1' } }),
+    },
+    {
       path: '/consult/projects',
       name: 'consult-home',
       component: () => import('../views/consult/ConsultHome.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'consult' },
     },
     {
       path: '/consult/projects/new',
       name: 'consult-create',
       component: () => import('../views/consult/ConsultCreate.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'consult' },
     },
     {
       // 补料问卷单独一页（新建项目后必过一轮）。放在工作台前面登记，
@@ -269,13 +285,13 @@ const router = createRouter({
       path: '/consult/projects/:id/intake',
       name: 'consult-intake',
       component: () => import('../views/consult/ConsultIntake.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'consult' },
     },
     {
       path: '/consult/projects/:id',
       name: 'consult-project',
       component: () => import('../views/consult/ConsultProject.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, keyApp: 'consult' },
     },
     {
       path: '/en/consult/:pathMatch(.*)*',
@@ -405,6 +421,7 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to, from) => {
+  setActiveKeyApp((to.meta.keyApp as KeyApp | undefined) ?? null);
   let token = getToken();
 
   // 嵌入模式（084）下刷新 iframe：内存里那把短 token 没了，而当前地址已经是
@@ -419,6 +436,11 @@ router.beforeEach(async (to, from) => {
       const name = embedModule() === 'ppt' ? 'ppt-embed' : 'consult-embed';
       return { name, query: { host: embedHostOrigin() || '', next: to.fullPath } };
     }
+  }
+
+  // 应用 key（112）：卖出去的页面没有登录框，没 key 就去输 key。
+  if (to.meta.keyApp && !token) {
+    return { name: `${to.meta.keyApp}-key`, query: { next: to.fullPath } };
   }
 
   if (to.meta.requiresAuth && !token) {

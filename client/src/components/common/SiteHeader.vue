@@ -10,7 +10,14 @@
 
     <!-- Right Actions -->
     <div class="header-right">
-      <div class="top-links" v-if="user">
+      <!-- 应用 key（112）模式：没有账号，显示的是这张卡和剩余点数。 -->
+      <div class="top-links" v-if="keyMode">
+        <span class="label">KEY:</span>
+        <span class="value">{{ keyInfo?.keyPrefix || '…' }}</span>
+        <span class="label">点数:</span>
+        <span class="value">{{ keyInfo ? keyInfo.balance : '…' }}</span>
+      </div>
+      <div class="top-links" v-else-if="user">
         <span class="label">USER:</span>
         <span class="value">{{ user.username }}</span>
         <QuotaIndicator />
@@ -19,15 +26,36 @@
         <router-link to="/settings" class="nav-btn">SETTINGS</router-link>
       </div>
       
-      <div class="lang-switch">
+      <!-- 应用页（展示稿 / 品牌咨询）只有中文，切到 EN 什么都不变，按了像是坏了。 -->
+      <div class="lang-switch" v-if="!isAppPage">
         <button :class="{ active: locale === 'zh' }" @click="setLocale('zh')">中</button>
         <button :class="{ active: locale === 'en' }" @click="setLocale('en')">EN</button>
       </div>
       
-      <button class="auth-btn" @click="handleLogout" v-if="user">EXIT</button>
-      <button class="auth-btn" @click="openLogin" v-else>LOGIN</button>
+      <button class="auth-btn topup-btn" @click="openTopup" v-if="keyMode">充值</button>
+      <button class="auth-btn" @click="switchKey" v-if="keyMode">换 KEY</button>
+      <button class="auth-btn" @click="handleLogout" v-else-if="user">EXIT</button>
+      <!-- 对外没有登录（112 起卖 key）：管理员直接打开 /admin，守卫会弹登录框。 -->
     </div>
   </header>
+
+  <!-- 充值码（115）：码充进的是**当前这把 key**，所以弹窗里要写出是哪一把 ——
+       同一台电脑存过两把 key 时，充错了那一把读起来也是一句「充值成功」。 -->
+  <Teleport to="body">
+    <div v-if="topupOpen" class="topup-mask" @click.self="topupOpen = false">
+      <div class="topup-box">
+        <h3>充值</h3>
+        <p class="topup-target">充进 KEY <code>{{ keyInfo?.keyPrefix || '…' }}</code>，当前 {{ keyInfo ? keyInfo.balance : '…' }} 点</p>
+        <input v-model="topupCode" placeholder="粘贴充值码，如 PPTCZ-XXXX-XXXX-XXXX-XXXX" @keydown.enter="redeem" :disabled="topupBusy" />
+        <p v-if="topupErr" class="topup-err">{{ topupErr }}</p>
+        <p v-if="topupOk" class="topup-ok">{{ topupOk }}</p>
+        <div class="topup-actions">
+          <button class="topup-cancel" @click="topupOpen = false">{{ topupOk ? '完成' : '取消' }}</button>
+          <button class="topup-go" :disabled="topupBusy || !topupCode.trim()" @click="redeem">{{ topupBusy ? '充值中…' : '充值' }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -35,8 +63,9 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchMe, logout, isAdmin, type AuthUser } from '../../lib/auth'
 import QuotaIndicator from './QuotaIndicator.vue'
-import { openLoginModal } from '../../lib/loginModal'
 import { isEmbedMode } from '../../lib/embed'
+import { activeKeyApp, activeAppKey, clearAppKey, keyInfo, refreshKeyInfo } from '../../lib/appKey'
+import { apiPost } from '../../lib/api'
 
 // 嵌到第三方页面里的时候整条刊头（和页脚）都不出现。判断放在这两个组件**自己**身上，
 // 不放在各个页面里：漏掉一个页面的后果是那一页在别人的站点上顶着我们的 LOGIN 按钮和
@@ -44,10 +73,13 @@ import { isEmbedMode } from '../../lib/embed'
 // 顺带也别再发 fetchMe()：拿着 consult:embed 那把短 token 调 /api/auth/me 会被 scopeGuard
 // 403，控制台里一串红，而界面看不出任何异常。
 const embedded = isEmbedMode()
+// key 模式下也不发 fetchMe()：影子用户调 /api/auth/me 会被 scopeGuard 403（同上）。
+const keyMode = !embedded && !!activeAppKey()
 
 const route = useRoute()
 const router = useRouter()
 const isHome = computed(() => route.path === '/' || route.path === '/en')
+const isAppPage = computed(() => /^\/(ppt|consult)(\/|$)/.test(route.path))
 
 const user = ref<AuthUser | null>(null)
 const locale = computed(() => {
@@ -77,16 +109,54 @@ function setLocale(lang: string) {
 
 onMounted(async () => {
   if (embedded) return
+  if (keyMode) { refreshKeyInfo(); return }
   user.value = await fetchMe()
 })
+
+// 「换 KEY」只清本地这一份，不动服务端：卡还在，稿子也在，重新输入就回来了。
+function switchKey() {
+  const app = activeKeyApp()
+  if (!app) return
+  if (!confirm('退出这个 key？稿子不会丢，重新输入同一个 key 就能回来。请确认你已经保存好它。')) return
+  clearAppKey(app)
+  window.location.href = `/${app}/key`
+}
+
+const topupOpen = ref(false)
+const topupCode = ref('')
+const topupBusy = ref(false)
+const topupErr = ref('')
+const topupOk = ref('')
+
+function openTopup() {
+  topupCode.value = ''
+  topupErr.value = ''
+  topupOk.value = ''
+  topupOpen.value = true
+}
+
+async function redeem() {
+  if (topupBusy.value || !topupCode.value.trim()) return
+  topupBusy.value = true
+  topupErr.value = ''
+  topupOk.value = ''
+  try {
+    const r = await apiPost<{ points: number; balance: number }>('/api/app-keys/redeem', { code: topupCode.value })
+    topupOk.value = `已充入 ${r.points} 点，现在可用 ${r.balance} 点`
+    topupCode.value = ''
+    await refreshKeyInfo()
+  } catch (e: any) {
+    // 服务端的话术已经分好了成因（抄错 / 贴成 key / 别的应用 / 已用过），原样给他看。
+    topupErr.value = e.message || '充值失败'
+  } finally {
+    topupBusy.value = false
+  }
+}
 
 function handleLogout() {
   logout()
 }
 
-function openLogin() {
-  openLoginModal(route.fullPath)
-}
 </script>
 
 <style scoped>
@@ -248,6 +318,23 @@ function openLogin() {
 .auth-btn:hover {
   background-color: #2b45a8;
 }
+
+.auth-btn.topup-btn { background-color: #f07a2c; }
+.auth-btn.topup-btn:hover { background-color: #d9661b; }
+
+.topup-mask { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: rgba(15, 23, 42, .45); }
+.topup-box { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 24px; border-radius: 14px; background: #fff; box-shadow: 0 24px 60px rgba(15, 23, 42, .25); font-size: 14px; color: #334155; }
+.topup-box h3 { margin: 0 0 6px; font-size: 18px; color: #0f172a; font-family: inherit; }
+.topup-target { margin: 0 0 14px; font-size: 13px; color: #64748b; }
+.topup-target code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; color: #0f172a; }
+.topup-box input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; font-family: monospace; }
+.topup-box input:focus { outline: none; border-color: #3B5BDB; box-shadow: 0 0 0 3px rgba(59, 91, 219, .15); }
+.topup-err { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.topup-ok { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: #ecfdf5; color: #166534; font-size: 13px; }
+.topup-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.topup-actions button { padding: 8px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; border: 1px solid #e2e8f0; background: #fff; color: #475569; }
+.topup-actions .topup-go { background: #3B5BDB; border-color: #3B5BDB; color: #fff; }
+.topup-actions .topup-go:disabled { opacity: .5; cursor: not-allowed; }
 
 @media (max-width: 768px) {
   .site-header {

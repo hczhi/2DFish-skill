@@ -249,6 +249,41 @@ skills/  workspaces/  docs/
   这两件事我们区分不了，说满了他会去怀疑自己挑的参考图。探测自己失败不改连通结论
   （同 `probeNoThinking`），两个后台页面都要显示这条 note。
 
+## 售卖型应用 key（112）
+
+- **余额只能经 `appKeyService.applyDelta` 变动（同一事务改 balance + 写 `app_key_ledger` 一行），
+  扣到负数直接拒、不截到 0。** 别处直接 UPDATE balance 的话余额和流水各自看起来都正常却对不上，
+  买家问「为什么少了」时拿不出依据。没有删除，只有停用（删了那笔钱的来龙去脉就没了）。
+  key 前缀按应用分（`KEY_APPS`），键名和 gateway 的 `source` 一致，后面按调用扣点直接对上。
+- **key 本身就是 Bearer，每次请求现查（停用立刻生效），映射到这张卡的影子用户 `key:<id>`，并置
+  `tokenScope = '<app>:key'` 交给 `scopeGuard`。** 影子用户让业务里所有按 user_id 的归属照旧成立；
+  scope 不能省 —— 影子用户就是个普通用户，漏了的话一张 ppt 的卡能调 /api/xhs、/api/chat，每个都 200。
+  `ppt:key` / `consult:key` 直接展开对应 `*:embed` 的清单，不另维护一份（两份的话嵌入版补上的端点在卖出去的卡上是 403）。
+  前端「现在用哪个应用的 key」由路由 `meta.keyApp` 决定（`lib/appKey.ts`），401 回输入页并带服务端成因，不弹登录框。
+- **扣点（113）：key 的影子用户每次 AI 调用先 `holdPoints` 冻结（文本 1 / 生图每张 5，`POINT_PRICE`），
+  成功才 `settlePoints` 记 charge 流水（带 ai_log_id），失败 `releasePoints`；这类用户不走 `ai_quota` 日额度。**
+  挂在 `aiGateway` / `aiGatewayStream` / `runOneImage` 三处，新加的扣额度入口要一起挂 —— 漏了就是免费调用，
+  界面一切正常。冻结条件写在 UPDATE 里（先读再写的话并发两次都看见「够」）；流式在上游接下时就结算
+  （读流中途抛错多半不调 onComplete，等它的话冻结永远不解，可用点数莫名少一截）。点数不足抛
+  `PointsExhaustedError`（402 `points_exhausted`），**不复用 `QuotaExceededError`** —— 那个会弹「N 次/天」的
+  日额度弹窗，key 用户没有日额度。后台调减不许扣到冻结额以下（否则进行中那次结算失败，钱已经花了）。
+
+- **充值码（115）给已有 key 加点：置 `used` 和 `applyDelta(…'topup')` 在同一个事务里，且 UPDATE 带 `status != 'used'`。**
+  先读再写的话双击 / 两个标签页各自看见「未使用」，同一张码加两遍点、两次都回「充值成功」。「已发放」只是后台记账，
+  没标发放的码照样能充（拒掉 = 买家付了钱看到报错）；撤回发放只在 未使用 ⇄ 已发放 之间切，用过的码变不回未使用
+  （变回去 = 后台显示还能卖，再卖出去买家充不上）。别的应用的码要在置 used **之前**拒（否则码被吃掉）。
+  码形如 `PPTCZ-…`，和 key 的 `PPT-…` 区分开：贴反了两边都要说「这是 key / 这是充值码」，不是一句「无效」。
+
+- **对外没有注册/登录（114）：`POST /api/auth/register` 在服务端直接 403，不只是前端藏入口。** 只藏入口的话
+  任何人 curl 一下就有一个普通账号，拿去调 /api/xhs、/api/chat，每个都 200、花平台的钱。管理员从 `/admin`
+  进（守卫弹登录框）。首页卡片由 `home_modules.visible` 控制，114 只是把 ppt/consult 以外的设成隐藏，没删。
+- **账号和 key 并行：B 端客户用管理员建的账号（可开专属 AI、可发 pk 做嵌入），C 端用 key。** 带 `meta.keyApp`
+  的页面没 token 时一律送到 `/<app>/key`，它再带 `?key=1` 回介绍页（`/ppt`、`/consult`）弹出 `AppKeyModal`；
+  介绍页的「去使用」只管跳列表、不自己判 token（两处判的话条件迟早对不上）。弹窗里的「用账号登录」是 B 端
+  **唯一**的登录入口 —— 去掉它的话
+  B 端账号看到的是「请输入 key」，而对方手里没有 key。`getToken()` 先取本地 key 再取账号 token，
+  同一浏览器两者都有时用的是 key。
+
 ## 对外中转接口（专属渠道下发的 key，082）
 
 - **一把 key 绑死一条 `provider_id`，不按档位解析。** 按档位解析时，同档有第二条接入点它会

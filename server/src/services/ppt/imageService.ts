@@ -19,6 +19,7 @@
 
 import { checkAndDeductAppQuota, checkAndDeductQuota, QuotaExceededError } from '../../core/llm/gateway.js';
 import { logAIUsage } from '../../core/llm/client.js';
+import { holdPoints, settlePoints, releasePoints, POINT_PRICE } from '../appKeyService.js';
 import { generateImage } from '../../core/image/imageGateway.js';
 import { resolveImageProvider } from '../../services/aiProviderService.js';
 import { assemblePreview, type DeckMeta } from './deckShell.js';
@@ -429,25 +430,33 @@ async function runOneImage(
   // 额度**记在绑定账号上**（`owner.userId`），不是记在租户上：第三方那边的终端用户没有
   // 平台账号，按租户记的话这笔钱在后台一处都对不上人。按 key 的天花板另在 sdkLimits 里。
   checkAndDeductAppQuota(ctx.owner.userId, 'ppt');
-  if (providerOwner !== 'dedicated') checkAndDeductQuota(ctx.owner.userId);
+  // 售卖型 key 按张冻结 5 点，生图成功、日志落了再结算（见 appKeyService）；不是 key 用户照旧走日额度。
+  const hold = holdPoints(ctx.owner.userId, POINT_PRICE.image);
+  if (!hold && providerOwner !== 'dedicated') checkAndDeductQuota(ctx.owner.userId);
 
   const t0 = Date.now();
   const { prompt, size, problems: promptProblems } = buildImagePrompt(job, ctx, style);
   problems.push(...promptProblems);
-  const [img] = await generateImage(prompt, {
-    userId: ctx.owner.userId,
-    providerId: provider.id,
-    n: 1,
-    timeoutMs: IMAGE_TIMEOUT_MS,
-    // **比例要真发出去**（`size`）：只在提示词里写「16:9 构图」的话，模型爱听就听，
-    // 多半还是按自己的默认出一张方图 —— 贴进 16:9 的图槽被 `object-fit:cover` 裁掉上下两条，
-    // 画面上是「主体被切了一半」，而接口 200、面板上写着「已生成」。
-    size,
-    // PPT 的图转存到后台配的「PPT 专用桶」（没配齐就照旧写默认桶）。**这是 PPT 唯一一处生图入口**
-    // ——「照槽位配图」和「按规划先备图」都走 runOneImage，漏在别处传的话那一批图会静默回到老桶。
-    bucketProfile: 'ppt',
-  });
-  if (!img?.url) throw new Error('生图接口没有返回图片地址');
+  let img: Awaited<ReturnType<typeof generateImage>>[number] | undefined;
+  try {
+    [img] = await generateImage(prompt, {
+      userId: ctx.owner.userId,
+      providerId: provider.id,
+      n: 1,
+      timeoutMs: IMAGE_TIMEOUT_MS,
+      // **比例要真发出去**（`size`）：只在提示词里写「16:9 构图」的话，模型爱听就听，
+      // 多半还是按自己的默认出一张方图 —— 贴进 16:9 的图槽被 `object-fit:cover` 裁掉上下两条，
+      // 画面上是「主体被切了一半」，而接口 200、面板上写着「已生成」。
+      size,
+      // PPT 的图转存到后台配的「PPT 专用桶」（没配齐就照旧写默认桶）。**这是 PPT 唯一一处生图入口**
+      // ——「照槽位配图」和「按规划先备图」都走 runOneImage，漏在别处传的话那一批图会静默回到老桶。
+      bucketProfile: 'ppt',
+    });
+    if (!img?.url) throw new Error('生图接口没有返回图片地址');
+  } catch (e) {
+    releasePoints(hold);
+    throw e;
+  }
 
   // 尺寸对账：两种「跑成了但不是要的那个尺寸」都必须出声（都只表现成「图被裁掉一块」）。
   if (img.sizeRefused) {
@@ -460,13 +469,14 @@ async function runOneImage(
   if (sizeNote) problems.push(sizeNote);
 
   // 生图原来完全不进 ai_logs —— 那意味着这笔钱在后台一处都看不见。
-  logAIUsage(
+  const logId = logAIUsage(
     'ppt', 'gen-image', img.model, 0, 0, Date.now() - t0,
     // 要的尺寸和**真回来的**像素都记进日志：只记要的那个的话，「这条接入点不吃 size」
     // 这件事在后台一处都看不见（每条记录都写着 16:9，而图全是方的）。
     `${job.label} ${job.ratio} ${style.id}/${job.mode} size=${size}${img.width && img.height ? ` got=${img.width}x${img.height}` : ''}`,
     ctx.owner.userId, prompt, img.url, img.provider, providerOwner
   );
+  settlePoints(hold, 'gen-image', logId);
 
   // 进素材库（migration 090）。**逐张写**：写在 api 层的话撞额度中断时前面那几张成功的图
   // 进不了库，而它们是真花过钱的。写不进去不能让这一步报错（图已经生成了），但**必须出声**

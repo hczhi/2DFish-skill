@@ -2,6 +2,7 @@ import { getToken, clearToken } from './auth';
 import { handleQuotaExceeded } from './quota';
 import { openLoginModal } from './loginModal';
 import { isEmbedMode, clearEmbedToken, requestEmbedToken, reportEmbedError } from './embed';
+import { activeKeyApp, activeAppKey, clearAppKey, scheduleKeyInfoRefresh } from './appKey';
 
 export async function api(url: string, options: RequestInit = {}, retried = false): Promise<Response> {
   const token = getToken();
@@ -34,9 +35,23 @@ export async function api(url: string, options: RequestInit = {}, retried = fals
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
+    // 应用 key（112）：没有登录框可弹，带着服务端给的真实成因（停用 / 查无此 key）回输入页。
+    // 弹登录框的话买家面对的是一个他压根没有账号的表单。
+    const app = activeKeyApp();
+    if (app && activeAppKey()) {
+      const data = await response.clone().json().catch(() => ({}));
+      clearAppKey(app);
+      const q = new URLSearchParams({ reason: data.error || 'key 已失效', next: window.location.pathname });
+      window.location.href = `/${app}/key?${q}`;
+      return response;
+    }
     clearToken();
     openLoginModal(window.location.pathname, 'ai');
   }
+
+  // key 模式下每次改动类请求之后刷一次右上角点数：扣点发生在服务端，不刷的话他看到的余额
+  // 一直是进页面那一刻的数，用光时才突然弹「点数不足」。
+  if (activeKeyApp() && (options.method || 'GET').toUpperCase() !== 'GET') scheduleKeyInfoRefresh()
 
   if (response.status === 429) {
     const data = await response.clone().json().catch(() => ({}));

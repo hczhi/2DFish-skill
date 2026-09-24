@@ -11,6 +11,7 @@ import {
 import { decryptSecret } from '../secrets.js';
 import { appName } from './apps.js';
 import { normalizeBaseUrl } from './baseUrl.js';
+import { holdPoints, settlePoints, releasePoints, POINT_PRICE } from '../../services/appKeyService.js';
 
 export interface GatewayOptions {
   userId: string;
@@ -717,33 +718,42 @@ export async function aiGateway(
   // 应用级额度先扣：它对专属渠道也生效，且要在总额之前判，
   // 否则应用额度撞墙时总额已经白扣了一次。见 checkAndDeductAppQuota 的注释。
   checkAndDeductAppQuota(options.userId, options.source);
+  // 售卖型 key 的影子用户按点数扣（先冻结、成功才结算），不走日额度 —— 见 appKeyService。
+  const hold = holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
+  if (!hold && providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
   const ntOutcome: NoThinkingOutcome = {};
   // 这条接入点上试出来管用的那种发法（108）。第一次是表里的第一种，之后按
   // learnNoThinkingForm 记下来的走 —— 各家网关认的键不是同一个，靠管理员猜是猜不到的。
   const form = noThinkingFormFor(savedForm);
-  const response = await withNoThinking<OpenAI.Chat.Completions.ChatCompletion>(
-    noThinking,
-    options.operation,
-    (extra) =>
-      // 「上游忙」的重发套在最里面：外面那层管的是「上游不认关思维链那几个键」（400），
-      // 两件事的解法不同，混在一层的话 400 那次会被当成忙、白等 2.5 秒再原样失败一次。
-      withBusyRetry(options.retryOnBusy, options.operation, () =>
-        client.chat.completions.create(
-          { ...params, ...extra, model } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-          // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
-          {
-            timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-            maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
-          }
-        )
-      ),
-    ntOutcome,
-    form.body
-  );
+  let response: OpenAI.Chat.Completions.ChatCompletion;
+  try {
+    response = await withNoThinking<OpenAI.Chat.Completions.ChatCompletion>(
+      noThinking,
+      options.operation,
+      (extra) =>
+        // 「上游忙」的重发套在最里面：外面那层管的是「上游不认关思维链那几个键」（400），
+        // 两件事的解法不同，混在一层的话 400 那次会被当成忙、白等 2.5 秒再原样失败一次。
+        withBusyRetry(options.retryOnBusy, options.operation, () =>
+          client.chat.completions.create(
+            { ...params, ...extra, model } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+            // 超时必须显式给：SDK 默认 10 分钟且会重试，见 DEFAULT_TIMEOUT_MS 的注释。
+            {
+              timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+              maxRetries: options.maxRetries ?? DEFAULT_MAX_RETRIES,
+            }
+          )
+        ),
+      ntOutcome,
+      form.body
+    );
+  } catch (e) {
+    // 失败不扣点：没拿到结果的调用出现在他的账单上，他只会以为「扣了点却什么都没给」。
+    releasePoints(hold);
+    throw e;
+  }
   const duration = Date.now() - startTime;
 
   const inputTokens = response.usage?.prompt_tokens || 0;
@@ -779,7 +789,7 @@ export async function aiGateway(
     }
   }
 
-  logAIUsage(
+  const logId = logAIUsage(
     options.source, options.operation, model, inputTokens, outputTokens, duration,
     options.requestSummary, options.userId,
     safeStringify(params.messages),
@@ -787,6 +797,7 @@ export async function aiGateway(
     providerId, providerOwner,
     reasoningTokens, response.choices?.[0]?.finish_reason || null
   );
+  settlePoints(hold, options.operation, logId);
 
   return {
     response,
@@ -834,8 +845,9 @@ export async function aiGatewayStream(
 
   // 顺序同 aiGateway：应用级额度先扣（对专属渠道也生效），再扣平台总额。
   checkAndDeductAppQuota(options.userId, options.source);
+  const hold = holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
+  if (!hold && providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
 
   // 流式这里的超时只约束**首字节**：SDK 的计时器在 fetch 的 promise
   // （也就是响应头到达）时就清掉了，之后读 body 不受它限制。这正是想要的 ——
@@ -843,16 +855,24 @@ export async function aiGatewayStream(
   // noThinking 两个入口都要认（同 providerId 那条）：只在 aiGateway 认的话，
   // 流式那条路径会静默照旧带思维链跑 —— 而流式的现象恰好是「首字来得很慢」，
   // 看起来像网络慢，没有任何一处说得出真实成因。
-  const stream = await withNoThinking<
-    Awaited<ReturnType<typeof client.chat.completions.create>> & AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-  >(noThinking, options.operation, (extra) =>
-    client.chat.completions.create(
-      { ...params, ...extra, model, stream: true } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-      { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
-    ) as any,
-    {},
-    form.body
-  );
+  let stream: Awaited<ReturnType<typeof client.chat.completions.create>> & AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+  try {
+    stream = await withNoThinking<typeof stream>(noThinking, options.operation, (extra) =>
+      client.chat.completions.create(
+        { ...params, ...extra, model, stream: true } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+        { timeout: options.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxRetries: DEFAULT_MAX_RETRIES }
+      ) as any,
+      {},
+      form.body
+    );
+  } catch (e) {
+    releasePoints(hold);
+    throw e;
+  }
+  // 流式在上游接下这次调用（响应头到了）时就结算，不等 onComplete：调用方读流中途抛错时
+  // 多半不会调 onComplete，等它的话这 1 点会一直冻着，他的可用点数莫名其妙少一截、永远不回来。
+  // 代价是「流到一半断了」也算一次 —— 那种他看得见报错，不是静默。
+  settlePoints(hold, options.operation);
 
   const onComplete = (inputTokens: number, outputTokens: number, durationMs: number, outputText?: string) => {
     logAIUsage(

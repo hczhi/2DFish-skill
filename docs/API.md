@@ -30,12 +30,8 @@ Authorization: Bearer <jwt_token_or_module_token>
 ```
 
 ### POST /api/auth/register `PUBLIC`
-```json
-// Request
-{ "username": "newuser", "password": "password123" }
-// Response 201
-{ "token": "eyJ...", "user": { "id": "...", "username": "newuser", "role": "user" } }
-```
+已关闭：一律回 403 `{ error: '已关闭注册：请购买对应应用的 key 使用', code: 'register_closed' }`。
+账号只由管理员在后台建；对外用户用应用 key（见「应用 Key」一节）。
 
 ### GET /api/auth/me `PROTECTED`
 返回当前用户信息（id、username、role）。
@@ -697,6 +693,49 @@ Query: `?module_id=fish&days=7&limit=100`
 ```
 
 ---
+
+## 应用 Key（售卖型，ADMIN）
+
+一把 key 只对一个应用有效（前缀 `PPT-` / `CST-`），余额按点数记，每次变动写一行流水。
+
+### GET /api/admin/app-keys/apps
+返回 `[{ app, prefix, label }]`。
+
+### GET /api/admin/app-keys?app=ppt
+返回该应用的 key 列表（不含明文）：`[{ id, app, key_prefix, label, batch_id, balance, enabled, created_at, last_used_at }]`。
+
+### POST /api/admin/app-keys
+Body `{ app, count (1-500), balance (≥0), label? }` → `{ batchId, keys: [{ id, key }] }`（`key` 是明文）。
+
+### PATCH /api/admin/app-keys/:id
+Body `{ enabled?, label? }`。没有删除接口，只能停用。
+
+### POST /api/admin/app-keys/:id/adjust
+Body `{ delta (非 0 整数), note? }` → 新写入的流水行。扣到负数回 400「余额不足」。
+
+### GET /api/admin/app-keys/:id/ledger
+最近 200 条流水：`[{ kind: grant|adjust|charge|topup, delta, balance_after, operation, ai_log_id, note, created_at }]`。
+
+### GET /api/admin/app-keys/:id/reveal
+`{ key }` 明文（再次复制用）。
+
+### GET /api/app-keys/me `KEY`
+前台用：`Authorization: Bearer PPT-XXXX-…`（key 本身就是 Bearer，`/api/ppt/*`、`/api/consult/*` 同理，范围同各自的嵌入版）。
+返回 `{ app, appLabel, keyPrefix, balance }`。key 查不到 / 已停用回 401
+`{ error: <真实成因>, code: 'app_key_invalid' }`。
+`balance` 是可用点数（余额 − 进行中调用冻结的点数）。AI 端点在点数不够时回 402
+`{ error: '点数不足：这把 key 还剩 X 点，这次要 Y 点…', code: 'points_exhausted' }`（这次不扣点）。
+
+### 充值码（115）
+- `GET /api/admin/app-keys/codes?app=ppt` → `[{ id, app, code_prefix, points, label, batch_id, status: unused|issued|used, issued_at, used_at, used_key_id, used_key_prefix, created_at }]`
+- `POST /api/admin/app-keys/codes` Body `{ app, count (1-500), points (≥1), label? }` → `{ batchId, codes: [{ id, code }] }`（`code` 明文，形如 `PPTCZ-XXXX-XXXX-XXXX-XXXX`）
+- `POST /api/admin/app-keys/codes/issue` Body `{ ids: string[], issued?: boolean (默认 true) }` → `{ changed }`。只在 未使用 ⇄ 已发放 之间切，已使用的不动，`changed` 是实际改了几张。
+- `GET /api/admin/app-keys/codes/:id/reveal` → `{ code }`
+
+### POST /api/app-keys/redeem `KEY`
+Body `{ code }`，充进 Bearer 那把 key → `{ points, balance }`（`balance` 为充值后可用点数）。
+未发放的码也能充。失败 400，`error` 分别说明：不是充值码格式 / 贴成了 key / 没有这个码 / 别的应用的码（码不会被消耗）/ 已经充进这把 key / 已被别的 key 用过。
+把充值码当 Bearer 发（比如贴进了 key 输入框）回 401「这是充值码，不是 key…」。
 
 ## Feishu Assistant Endpoints
 
@@ -2695,8 +2734,9 @@ consult / ppt 另带 `detail`（人话，说清撞的是账号总额还是这个
 
 ### 限流 (429)
 ```json
-{ "error": "rate_limit_exceeded", "retry_after_ms": 45000 }
+{ "error": "rate_limit_exceeded", "detail": "请求太频繁，请 45 秒后再试", "retry_after_ms": 45000 }
 ```
+每条限流规则各自计数；登录是同一 IP 同一用户名 10 次/分钟 + 同一 IP 60 次/分钟；前端显示 `detail`，不要显示 `error` 机器码。
 
 ### 模块路径未授权 (403)
 ```json

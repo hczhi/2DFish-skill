@@ -30,46 +30,13 @@ authRouter.post('/login', (req: Request, res: Response) => {
   res.json({ token, user: payload });
 });
 
-authRouter.post('/register', (req: Request, res: Response) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    res.status(400).json({ error: 'username and password are required' });
-    return;
-  }
-  if (!username || username.length < 2 || username.length > 30 || !/^[a-zA-Z0-9_一-鿿]+$/.test(username)) {
-    res.status(400).json({ error: 'Username must be 2-30 characters (letters, numbers, underscores, or Chinese characters)' });
-    return;
-  }
-  if (!password || password.length < 8) {
-    res.status(400).json({ error: 'Password must be at least 8 characters' });
-    return;
-  }
-  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
-    res.status(400).json({ error: 'Password must contain both letters and numbers' });
-    return;
-  }
-
-  const db = getDatabase();
-  const existing = db.prepare('SELECT id FROM user WHERE username = ?').get(username);
-  if (existing) {
-    res.status(409).json({ error: 'Registration failed, please try a different username' });
-    return;
-  }
-
-  const id = uuidv4();
-  const passwordHash = bcrypt.hashSync(password, 10);
-  const now = new Date().toISOString();
-
-  db.prepare(
-    `INSERT INTO user (id, username, password_hash, role, created_at, updated_at)
-     VALUES (?, ?, ?, 'user', ?, ?)`
-  ).run(id, username, passwordHash, now, now);
-
-  const payload = { id, username, role: 'user', tv: 1 };
-  const token = jwt.sign(payload, getJwtSecret(), { expiresIn: '7d' });
-
-  res.status(201).json({ token, user: payload });
+authRouter.post('/register', (_req: Request, res: Response) => {
+  // 平台对外改成「买 key 用应用」（112），不再开放注册：前端早就没有注册入口了，但接口开着的话
+  // 任何人 curl 一下就能得到一个普通账号，拿去调 /api/xhs、/api/chat（每个都 200，花的是平台的钱）。
+  // 账号只由管理员在后台建。
+  res.status(403).json({ error: '已关闭注册：请购买对应应用的 key 使用', code: 'register_closed' });
 });
+
 
 authRouter.get('/me', (req: Request, res: Response) => {
   if (!req.user) {

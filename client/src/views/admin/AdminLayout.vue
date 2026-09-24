@@ -7,6 +7,7 @@
         <h2>管理后台</h2>
       </div>
       <nav class="admin-nav">
+        <router-link to="/admin/app-keys" class="nav-item" active-class="active" @click="sidebarOpen = false">应用 Key</router-link>
         <router-link to="/admin/users" class="nav-item" active-class="active" @click="sidebarOpen = false">用户管理</router-link>
         <router-link to="/admin/quotas" class="nav-item" active-class="active" @click="sidebarOpen = false">额度管理</router-link>
         <router-link to="/admin/usage" class="nav-item" active-class="active" @click="sidebarOpen = false">AI 用量</router-link>

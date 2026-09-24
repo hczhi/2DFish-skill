@@ -40,7 +40,7 @@ adminRouter.get('/users', (req: Request, res: Response) => {
   const { page, pageSize, offset } = parsePagination(req);
   const db = getDatabase();
 
-  const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
+  const { total } = db.prepare(`SELECT COUNT(*) as total FROM user WHERE username NOT LIKE 'key:%'`).get() as { total: number };
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
       COALESCE(u.use_dedicated_ai, 0) as use_dedicated_ai,
@@ -48,6 +48,8 @@ adminRouter.get('/users', (req: Request, res: Response) => {
       q.daily_limit, q.used_today, q.last_reset_date
     FROM user u
     LEFT JOIN ai_quota q ON q.user_id = u.id
+    -- 应用 key 的影子用户（112）在「应用 Key」页管，混进来的话列表被几百张卡淹没
+    WHERE u.username NOT LIKE 'key:%'
     ORDER BY u.created_at ASC
     LIMIT ? OFFSET ?
   `).all(pageSize, offset);
@@ -131,7 +133,7 @@ adminRouter.get('/quotas', (req: Request, res: Response) => {
   const db = getDatabase();
   const today = new Date().toISOString().split('T')[0];
 
-  const { total } = db.prepare('SELECT COUNT(*) as total FROM user').get() as { total: number };
+  const { total } = db.prepare(`SELECT COUNT(*) as total FROM user WHERE username NOT LIKE 'key:%'`).get() as { total: number };
   const quotas = db.prepare(`
     SELECT u.id as user_id, u.username,
       COALESCE(q.daily_limit, 10) as daily_limit,
@@ -139,6 +141,7 @@ adminRouter.get('/quotas', (req: Request, res: Response) => {
       COALESCE(q.last_reset_date, ?) as last_reset_date
     FROM user u
     LEFT JOIN ai_quota q ON q.user_id = u.id
+    WHERE u.username NOT LIKE 'key:%'
     ORDER BY u.username ASC
     LIMIT ? OFFSET ?
   `).all(today, pageSize, offset);

@@ -111,6 +111,10 @@ import { migration_108 } from './108_ai_provider_no_thinking_form.js';
 import { migration_109 } from './109_consult_runs.js';
 import { migration_110 } from './110_consult_sources_auto.js';
 import { migration_111 } from './111_consult_batches.js';
+import { migration_112 } from './112_app_keys.js';
+import { migration_113 } from './113_app_key_frozen.js';
+import { migration_114 } from './114_home_key_apps.js';
+import { migration_115 } from './115_recharge_codes.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -223,4 +227,8 @@ export const allMigrations: Migration[] = [
   migration_109,
   migration_110,
   migration_111,
+  migration_112,
+  migration_113,
+  migration_114,
+  migration_115,
 ];

@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { getDatabase } from '../db/index.js';
+import { authenticateAppKey, AppKeyAuthError } from '../services/appKeyService.js';
 
 export interface AuthUser {
   id: string;
@@ -13,7 +14,11 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
-      authMethod?: 'jwt' | 'api_token' | 'sdk';
+      authMethod?: 'jwt' | 'api_token' | 'sdk' | 'app_key';
+      /** 售卖型应用 key（112）的 id。 */
+      appKeyId?: string;
+      /** 认证失败的真实成因（目前只有应用 key 填），401 时原样回给前端。 */
+      authError?: string;
       moduleId?: string;
       tokenId?: string;
       tokenScope?: string;
@@ -131,7 +136,35 @@ function authenticateByModuleToken(token: string, req: Request): AuthUser | null
   return { id: row.id, username: row.username, role: (row.role || 'user') as 'admin' | 'user' };
 }
 
+/** 售卖型应用 key（112）的形状：`PPT-XXXX-…` / `CST-XXXX-…`。 */
+const APP_KEY_RE = /^\s*(PPT|CST)-/i;
+
 function tryParseAuth(req: Request, token: string): boolean {
+  // 充值码（115）被当成 key 贴进输入框：按 JWT 解析的话回的是 «Invalid or expired token»，
+  // 他会以为自己买到的是张废码。
+  if (/^\s*(PPT|CST)CZ-/i.test(token)) {
+    req.authError = '这是充值码，不是 key：先输入你的 key 进入，再点右上角「充值」把它充进去';
+    return false;
+  }
+  if (APP_KEY_RE.test(token)) {
+    try {
+      const k = authenticateAppKey(token);
+      req.user = { id: k.user_id, username: k.key_prefix, role: 'user' };
+      req.authMethod = 'app_key';
+      req.appKeyId = k.id;
+      // 端点白名单复用 scopeGuard：`<app>:key` 只能碰这个应用的接口。不设的话影子用户就是个
+      // 普通登录用户，一张 ppt 的卡能调 /api/xhs、/api/chat，而每个接口都 200。
+      req.tokenScope = `${k.app}:key`;
+      return true;
+    } catch (e) {
+      if (e instanceof AppKeyAuthError) {
+        req.authError = e.message;
+        return false;
+      }
+      throw e;
+    }
+  }
+
   if (token.startsWith('mmPla_')) {
     const user = authenticateByModuleToken(token, req);
     if (user) {
@@ -198,7 +231,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const success = tryParseAuth(req, token);
 
   if (!success && level === 'protected') {
-    res.status(401).json({ error: 'Invalid or expired token' });
+    res.status(401).json({ error: req.authError || 'Invalid or expired token', ...(req.authError ? { code: 'app_key_invalid' } : {}) });
     return;
   }
 

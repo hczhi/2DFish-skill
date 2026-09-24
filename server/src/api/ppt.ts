@@ -155,6 +155,12 @@ export function sendPptError(res: Response, e: any, is400: boolean, fallback: st
     res.status(503).json({ error: message });
     return;
   }
+  // 售卖型 key 点数不够（appKeyService）：原文就是「还剩几点、这次要几点、这次没扣」，
+  // 落到下面 500 的话他读到的是「服务器坏了」，会一路重试。
+  if (e?.name === 'PointsExhaustedError') {
+    res.status(402).json({ error: message, code: 'points_exhausted' });
+    return;
+  }
   // 上游失败（超时 / 网关掐掉 / 上游忙 / 模型名不对）**不许兜成 500 原文**。
   // 线上真实现象：生成一页回 `500 {"error":"Request timed out."}` —— 那是 SDK 的原话
   // （`APIConnectionTimeoutError` 不设 name、status 是 undefined，所以以前落在下面那行），
