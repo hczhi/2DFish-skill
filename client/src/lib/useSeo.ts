@@ -50,7 +50,7 @@ export function useSeo() {
     const data = cache[cacheKey]
     if (!data?.page) return
 
-    document.title = data.page.title || `${data.globals.site_name || 'QiaoNan'}`
+    document.title = data.page.title || `${data.globals.site_name || 'QiaoNx'}`
 
     setMeta('description', data.page.description)
     setMeta('keywords', data.page.keywords)

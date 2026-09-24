@@ -18,40 +18,14 @@ interface SeoPage {
   json_ld: string;
 }
 
-interface HomeModule {
-  id: string;
-  icon: string;
-  title: string;
-  description: string;
-  path: string;
-  require_auth: number;
-  featured: number;
-  category: string;
-  image_url: string;
-  bg_color: string;
-  grid_span: string;
-}
-
-interface HomeFeed {
-  id: string;
-  title: string;
-  author: string;
-  icon: string;
-  bg_color: string;
-  avatar_color: string;
-  link: string;
-  likes: number;
-  image_height: number;
-}
-
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>, pagePath: string, locale?: string): string {
   const siteUrl = globals.site_url || 'https://qiaonx.com';
-  const siteName = globals.site_name || 'QiaoNan';
-  const title = page?.title || `${siteName} - AI 效率工具平台`;
+  const siteName = globals.site_name || 'QiaoNx';
+  const title = page?.title || `${siteName} - AI 展示稿与品牌咨询`;
   const description = page?.description || globals.site_description || '';
   const ogImage = page?.og_image || globals.default_og_image || '';
   const canonical = page?.canonical || (siteUrl ? `${siteUrl}${pagePath}` : '');
@@ -92,49 +66,99 @@ function buildSeoMetaTags(page: SeoPage | null, globals: Record<string, string>,
 
 interface DiscoverFeedItem {
   slug: string;
-  icon: string;
-  bg_color: string;
-  avatar_color: string;
-  author: string;
+  cover_image: string;
   title: string;
   summary: string;
 }
 
+// 首页预渲染：和 client/src/views/Home.vue 同一套结构和文案（Vue 挂载后整块替换掉它）。
+// 两边改文案要一起改 —— 这份是搜索引擎和首屏看到的，只改 Home.vue 的话线上先闪一下旧文案，
+// 而收录的一直是旧的那版，页面上完全看不出来。
 function getHomepageCriticalCss(): string {
   return `<style id="ssg-critical-css">
-#ssg-content { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; margin-top: 50px; }
-#ssg-content .bento-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); grid-auto-rows: 240px; gap: 24px; width: 100%; }
-#ssg-content .bento-card { position: relative; border: none; border-radius: 10px; background: #fff; overflow: hidden; text-decoration: none; color: inherit; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,0.02), 0 2px 8px rgba(0,0,0,0.02); }
-#ssg-content .bento-span-2x2 { grid-column: span 2; grid-row: span 2; }
-#ssg-content .bento-span-2x1 { grid-column: span 2; }
-#ssg-content .bento-span-1x2 { grid-row: span 2; }
-#ssg-content .card-bg { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: none; }
-#ssg-content .bg-image { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
-#ssg-content .bg-pattern { width: 100%; height: 100%; position: absolute; top: 0; left: 0; opacity: 0.8; }
-#ssg-content .card-content { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; padding: 24px; }
-#ssg-content .card-title { font-size: 18px; font-weight: 700; margin: 0; color: #111827; }
-#ssg-content .card-desc { font-size: 14px; color: #6b7280; line-height: 1.5; margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-#ssg-content .card-header .icon { font-size: 28px; }
-#ssg-content .card-body { margin-top: auto; }
-#ssg-content .ultra-wide-feed { margin-top: 64px; }
-#ssg-content .feed-header { margin-bottom: 40px; }
-#ssg-content .feed-title { font-size: 56px; font-weight: 900; margin: 0 0 4px; letter-spacing: -2px; text-transform: uppercase; color: #111827; }
-#ssg-content .feed-subtitle { color: #3b5bdb; text-transform: uppercase; letter-spacing: 4px; font-size: 12px; font-weight: 600; }
-#ssg-content .feed-masonry { columns: 1; column-gap: 20px; }
-@media (min-width: 640px) { #ssg-content .feed-masonry { columns: 2; } }
-@media (min-width: 1024px) { #ssg-content .feed-masonry { columns: 3; } }
-@media (min-width: 1440px) { #ssg-content .feed-masonry { columns: 4; } }
-#ssg-content .feed-card { display: block; text-decoration: none; color: inherit; break-inside: avoid; margin-bottom: 24px; }
-#ssg-content .feed-image { width: 100%; display: flex; align-items: center; justify-content: center; font-size: 56px; border-radius: 10px; overflow: hidden; margin-bottom: 12px; border: 1px solid rgba(0,0,0,0.04); }
-#ssg-content .feed-emoji { font-size: 56px; }
-#ssg-content .feed-info { padding: 0 4px; }
-#ssg-content .feed-text { font-size: 14px; font-weight: 500; line-height: 1.5; margin: 0 0 8px; color: #111827; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-#ssg-content .feed-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #6b7280; }
-#ssg-content .feed-author { display: flex; align-items: center; gap: 6px; }
-#ssg-content .author-avatar { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.05); }
-#ssg-content footer { margin-top: 64px; padding: 24px 0; text-align: center; font-size: 13px; color: #9ca3af; }
-@media (max-width: 900px) { #ssg-content .bento-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); } #ssg-content .bento-span-2x2, #ssg-content .bento-span-2x1, #ssg-content .bento-span-1x2 { grid-column: span 1; grid-row: span 1; } }
+#ssg-content { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif; color: #141a2e; background: #f6f8fc; }
+#ssg-content a { color: inherit; text-decoration: none; }
+#ssg-content section { max-width: 1280px; margin: 0 auto; padding: 110px 7vw 0; box-sizing: content-box; }
+#ssg-content .s-hero { min-height: 80vh; padding-top: 150px; }
+#ssg-content .s-kicker { font-weight: 800; font-size: 15px; margin: 0 0 30px; }
+#ssg-content h1 { font-size: clamp(42px, 5.6vw, 92px); line-height: 1.08; font-weight: 900; margin: 0; }
+#ssg-content h1 em { font-style: normal; color: #1f44c4; }
+#ssg-content .s-lead { margin: 26px 0 40px; font-size: 18px; color: #4a5270; }
+#ssg-content .s-btn { display: inline-block; padding: 15px 26px; border-radius: 999px; font-weight: 700; margin-right: 12px; background: #1f44c4; color: #fff; }
+#ssg-content .s-btn.ghost { background: #fff; color: #141a2e; box-shadow: inset 0 0 0 1px #e3e7f0; }
+#ssg-content h2 { font-size: clamp(28px, 3.2vw, 50px); line-height: 1.2; font-weight: 900; margin: 0 0 24px; }
+#ssg-content .s-tag { color: #1f44c4; font-weight: 700; font-size: 13px; }
+#ssg-content ul, #ssg-content ol { padding: 0; list-style: none; }
+#ssg-content li { padding: 12px 0; border-top: 1px solid #e3e7f0; color: #4a5270; line-height: 1.6; }
+#ssg-content li b { color: #141a2e; margin-right: 14px; }
+#ssg-content .s-posts a { display: block; padding: 18px 0; border-top: 1px solid #e3e7f0; }
+#ssg-content .s-posts h3 { font-size: 17px; margin: 0; }
+#ssg-content .s-posts p { margin: 6px 0 0; font-size: 13px; color: #8a91a8; }
+#ssg-content footer { max-width: 1280px; margin: 120px auto 0; padding: 28px 7vw; font-size: 13px; color: #8a91a8; }
+#ssg-content footer a { margin-right: 22px; }
+@media (max-width: 768px) { #ssg-content section { padding: 80px 24px 0; } #ssg-content .s-hero { padding-top: 120px; } }
 </style>`;
+}
+
+function renderHomepageContent(articles: DiscoverFeedItem[], locale: string, siteUrl = ''): string {
+  const prefix = locale === 'en' ? '/en' : '';
+  const posts = articles.filter(a => a.title).slice(0, 5).map(a => `
+          <a href="${siteUrl}${prefix}/discover/${escapeHtml(a.slug)}">
+            <h3>${escapeHtml(a.title)}</h3>
+            ${a.summary ? `<p>${escapeHtml(a.summary)}</p>` : ''}
+          </a>`).join('');
+
+  return `
+    <div class="ssg-home-content" id="ssg-content">
+      <main>
+        <section class="s-hero">
+          <p class="s-kicker">QiaoNx · 下一代 AI 生产力平台</p>
+          <h1>构想即现实<br /><em>AI 交付成品</em></h1>
+          <p class="s-lead">告别繁琐的对话框，用 AI 直接构建可交付的专业资产。</p>
+          <a class="s-btn" href="${siteUrl}/ppt">创建演示文稿 →</a>
+          <a class="s-btn ghost" href="${siteUrl}/consult">开启品牌咨询 →</a>
+        </section>
+        <section>
+          <p class="s-tag">HTML 演示文稿</p>
+          <h2><a href="${siteUrl}/ppt">从一个灵感，到一份专业的演示。</a></h2>
+          <ul>
+            <li><b>智能规划</b>对话生成提纲，或上传现有文档解析</li>
+            <li><b>全局掌控</b>一键切换全局版式，保持设计语言高度统一</li>
+            <li><b>所见即所得</b>双击修改文本，拖拽替换图片，修改免扣点数</li>
+          </ul>
+        </section>
+        <section>
+          <p class="s-tag">AI 品牌咨询</p>
+          <h2><a href="${siteUrl}/consult">将抽象的战略，转化为可落地的决策。</a></h2>
+          <ul>
+            <li><b>全局视野</b>洞察自身、行业、竞品与用户，建立客观基线</li>
+            <li><b>四维构建</b>联动定位、价值、信任与关系，牵一发而动全身</li>
+            <li><b>知识沉淀</b>决策过程与逻辑自动留痕，构建企业专属知识库</li>
+          </ul>
+        </section>
+        <section>
+          <h2>即刻开启创造</h2>
+          <ol>
+            <li><b>获取密钥</b>购买专属 Key，内置初始点数额度。</li>
+            <li><b>即开即用</b>无需繁琐注册，输入 Key 即可进入工作台。</li>
+            <li><b>按需充值</b>点数用尽随时充值，资产安全永久保留。</li>
+          </ol>
+          <p>1 点 / 单次文本操作 · 5 点 / 生成一张插图 · 调用失败不扣费</p>
+        </section>
+        <section>
+          <p class="s-tag">点数充值 · 企业级合作 · 私有化部署</p>
+          <h2>小红书搜 小智同学Hc</h2>
+          <p>发送私信即可。如需团队账号管理、定制专属模型，或集成至您的内部系统，也请通过此渠道联系。</p>
+        </section>
+        ${posts ? `<section class="s-posts">
+          <h2><a href="${siteUrl}${prefix}/discover">文章</a></h2>${posts}
+        </section>` : ''}
+      </main>
+      <footer>
+        <a href="${siteUrl}/privacy">隐私政策</a><a href="${siteUrl}/terms">服务条款</a><a href="${siteUrl}/sitemap.xml">网站地图</a>
+        <span>联系：小红书 小智同学Hc · &copy; ${new Date().getFullYear()} QiaoNx</span>
+      </footer>
+    </div>`;
 }
 
 function getDiscoverListCriticalCss(): string {
@@ -160,100 +184,6 @@ function getDiscoverListCriticalCss(): string {
 #ssg-content .author-avatar { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.05); }
 @media (max-width: 768px) { #ssg-content { padding: 88px 16px 56px; } #ssg-content .discover-title { font-size: 32px; } #ssg-content .articles-grid { grid-template-columns: 1fr; gap: 20px; } #ssg-content .article-cover { height: 160px; } }
 </style>`;
-}
-
-function renderHomepageContent(modules: HomeModule[], feeds: HomeFeed[], discoverArticles: DiscoverFeedItem[] = [], siteUrl: string = ''): string {
-  const moduleCards = modules.map(item => {
-    const spanClass = item.grid_span === '2x2' ? 'bento-span-2x2' :
-      item.grid_span === '2x1' ? 'bento-span-2x1' :
-      item.grid_span === '1x2' ? 'bento-span-1x2' : '';
-    const featuredClass = item.featured ? 'is-featured' : '';
-
-    return `      <a href="${escapeHtml(item.path.startsWith('/') ? siteUrl + item.path : item.path)}" class="bento-card ${spanClass} ${featuredClass}">
-        <div class="card-bg">
-          ${item.image_url
-            ? `<img src="${escapeHtml(item.image_url)}" class="bg-image" alt="${escapeHtml(item.title)}" />`
-            : `<div class="bg-pattern" style="background: ${escapeHtml(item.bg_color || '#f8faff')}"></div>`
-          }
-        </div>
-        <div class="card-content">
-          <div class="card-header">
-            <span class="icon">${escapeHtml(item.icon)}</span>
-          </div>
-          <div class="card-body">
-            <h2 class="card-title">${escapeHtml(item.title)}</h2>
-            <p class="card-desc">${escapeHtml(item.description)}</p>
-          </div>
-          ${item.featured ? `<div class="card-footer"><span class="meta-tag">${escapeHtml(item.category || 'Tool')}</span><span class="arrow">→</span></div>` : ''}
-        </div>
-      </a>`;
-  }).join('\n');
-
-  const articleCards = discoverArticles.map(article => {
-    if (!article.title) return '';
-    return `        <a href="${siteUrl}/discover/${escapeHtml(article.slug)}" class="feed-card">
-          <div class="feed-image" style="height: 220px; background: ${escapeHtml(article.bg_color)}">
-            <span class="feed-emoji">${escapeHtml(article.icon)}</span>
-          </div>
-          <div class="feed-info">
-            <h3 class="feed-text">${escapeHtml(article.title)}</h3>
-            <div class="feed-meta">
-              <div class="feed-author">
-                <div class="author-avatar" style="background: ${escapeHtml(article.avatar_color)}"></div>
-                <span>${escapeHtml(article.author)}</span>
-              </div>
-            </div>
-          </div>
-        </a>`;
-  }).filter(Boolean).join('\n');
-
-  const feedCards = feeds.map(feed => {
-    const tag = feed.link ? 'a' : 'div';
-    const hrefAttr = feed.link ? ` href="${escapeHtml(feed.link)}" target="_blank"` : '';
-    return `        <${tag}${hrefAttr} class="feed-card">
-          <div class="feed-image" style="height: ${feed.image_height}px; background: ${escapeHtml(feed.bg_color)}">
-            <span class="feed-emoji">${escapeHtml(feed.icon)}</span>
-          </div>
-          <div class="feed-info">
-            <h3 class="feed-text">${escapeHtml(feed.title)}</h3>
-            <div class="feed-meta">
-              <div class="feed-author">
-                <div class="author-avatar" style="background: ${escapeHtml(feed.avatar_color)}"></div>
-                <span>${escapeHtml(feed.author)}</span>
-              </div>
-              <div class="feed-likes">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                <span>${feed.likes}</span>
-              </div>
-            </div>
-          </div>
-        </${tag}>`;
-  }).join('\n');
-
-  const allFeedCards = articleCards + (articleCards && feedCards ? '\n' : '') + feedCards;
-  const hasFeedContent = feeds.length > 0 || discoverArticles.length > 0;
-
-  return `
-    <div class="ssg-home-content" id="ssg-content">
-      <main>
-        <nav class="bento-grid">
-${moduleCards}
-        </nav>
-        ${hasFeedContent ? `
-        <div class="ultra-wide-feed">
-          <div class="feed-header">
-            <h2 class="feed-title">DISCOVER</h2>
-            <span class="feed-subtitle">Personalized Content Recommendations</span>
-          </div>
-          <div class="feed-masonry">
-${allFeedCards}
-          </div>
-        </div>` : ''}
-      </main>
-      <footer>
-        <p>&copy; ${new Date().getFullYear()} QiaoNan. All rights reserved.</p>
-      </footer>
-    </div>`;
 }
 
 function renderDiscoverListContent(articles: Array<{ slug: string; icon: string; bg_color: string; avatar_color: string; author: string; cover_image: string; title: string; summary: string }>, topics: Array<{ slug: string; title: string }>, locale: string, siteUrl: string = ''): string {
@@ -347,6 +277,9 @@ function getBaseTemplate(): string | null {
   }
 
   if (html) {
+    // index.html 自带一条兜底 description（没预渲染的页面用），这里的 buildSeoMetaTags 会再写一条 ——
+    // 两条都留着的话搜索引擎挑哪条不确定，后台改的那条可能根本不生效。
+    html = html.replace(/\s*<meta name="description"[^>]*>/, '');
     html = html.replace(
       /<link rel="icon"[^>]*href="[^"]*"[^>]*\/?>/,
       `<link rel="icon" type="image/jpeg" href="${FAVICON_URL}" />`
@@ -386,8 +319,6 @@ export function generateStaticPages(): SSGResult {
   ];
 
   const siteUrl = globals.site_url || 'https://qiaonx.com';
-  const modules = db.prepare('SELECT * FROM home_modules WHERE visible = 1 ORDER BY sort_order ASC, created_at ASC').all() as HomeModule[];
-  const feeds = db.prepare('SELECT * FROM home_feeds WHERE visible = 1 ORDER BY sort_order ASC, created_at DESC').all() as HomeFeed[];
 
   for (const hp of homepageLocales) {
     try {
@@ -397,7 +328,7 @@ export function generateStaticPages(): SSGResult {
         || null;
 
       const discoverArticles = db.prepare(`
-        SELECT a.slug, a.icon, a.bg_color, a.avatar_color, a.author, c.title, c.summary
+        SELECT a.slug, a.cover_image, c.title, c.summary
         FROM discover_articles a
         LEFT JOIN discover_article_contents c ON c.article_id = a.id AND c.locale = ?
         WHERE a.status = 'published' AND a.visible_locales LIKE '%"' || ? || '"%'
@@ -409,7 +340,7 @@ export function generateStaticPages(): SSGResult {
       const hreflangTags = `    <link rel="alternate" hreflang="zh" href="${escapeHtml(siteUrl)}/" />\n    <link rel="alternate" hreflang="en" href="${escapeHtml(siteUrl)}/en" />\n    <link rel="alternate" hreflang="x-default" href="${escapeHtml(siteUrl)}/" />\n`;
       html = html.replace(/<title>.*?<\/title>/, metaTags + hreflangTags);
 
-      const homepageContent = renderHomepageContent(modules, feeds, discoverArticles, siteUrl);
+      const homepageContent = renderHomepageContent(discoverArticles, hp.locale, siteUrl);
       html = html.replace('</head>', `${getHomepageCriticalCss()}\n</head>`);
       html = html.replace('<div id="app"></div>', `<div id="app">${homepageContent}</div>`);
 
@@ -836,10 +767,10 @@ export function generateArticlePage(article: DiscoverArticle, contents: Discover
           '@type': 'Article',
           'headline': content.title,
           'description': content.seo_description || content.summary,
-          'author': { '@type': 'Person', 'name': article.author || 'QiaoNan' },
+          'author': { '@type': 'Person', 'name': article.author || 'QiaoNx' },
           'publisher': {
             '@type': 'Organization',
-            'name': 'QiaoNan',
+            'name': globals.site_name || 'QiaoNx',
             'logo': { '@type': 'ImageObject', 'url': siteUrl + '/logo.png' },
           },
           'datePublished': article.created_at,
@@ -957,7 +888,7 @@ export function renderDynamicPageHtml(reqPath: string): string | null {
         '@type': 'Article',
         'headline': content.title,
         'description': content.seo_description || content.summary,
-        'author': { '@type': 'Person', 'name': article.author || 'QiaoNan' },
+        'author': { '@type': 'Person', 'name': article.author || 'QiaoNx' },
         'datePublished': article.created_at,
         'dateModified': article.updated_at,
         'image': article.cover_image || siteUrl + '/og-default.png',

@@ -1,9 +1,9 @@
 <template>
   <footer v-if="!embedded" class="site-footer" :class="{ 'is-home': isHome }">
     <div class="footer-content">
-      <div class="brand">QiaoNan.</div>
+      <div class="brand">QiaoNx.</div>
       <div class="copyright">
-        &copy; {{ new Date().getFullYear() }} QiaoNan. All rights reserved.
+        &copy; {{ new Date().getFullYear() }} QiaoNx. All rights reserved.
       </div>
       <div class="links">
         <router-link :to="locale === 'en' ? '/en/about' : '/about'">{{ locale === 'en' ? 'About' : '关于我们' }}</router-link>

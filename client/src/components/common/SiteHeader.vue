@@ -2,9 +2,9 @@
   <header v-if="!embedded" class="site-header" :class="{ 'is-home': isHome }">
     <!-- Brand / Back Link -->
     <div class="header-left">
-      <router-link :to="locale === 'en' ? '/en' : '/'" class="brand-link" v-if="!isHome">
-        <span class="back-arrow">&larr;</span>
-        <span class="brand-text">QiaoNan.</span>
+      <router-link :to="locale === 'en' ? '/en' : '/'" class="brand-link">
+        <span class="back-arrow" v-if="!isHome">&larr;</span>
+        <span class="brand-text">QiaoNx.</span>
       </router-link>
     </div>
 
@@ -79,7 +79,8 @@ const keyMode = !embedded && !!activeAppKey()
 const route = useRoute()
 const router = useRouter()
 const isHome = computed(() => route.path === '/' || route.path === '/en')
-const isAppPage = computed(() => /^\/(ppt|consult)(\/|$)/.test(route.path))
+// 应用页和首页都只有中文内容，切了也不变，不给这个开关。
+const isAppPage = computed(() => /^\/(ppt|consult)(\/|$)/.test(route.path) || route.path === '/' || route.path === '/en')
 
 const user = ref<AuthUser | null>(null)
 const locale = computed(() => {
@@ -178,27 +179,6 @@ function handleLogout() {
   letter-spacing: 1px;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
-}
-
-/* On Home page, the header only spans the right side if left panel exists */
-@media (min-width: 769px) {
-  .site-header.is-home {
-    left: 360px; /* match the left-panel width */
-    background: rgba(255, 255, 255, 0.9);
-  }
-}
-
-/* Adjust header offset when left panel shrinks on medium screens */
-@media (max-width: 1200px) and (min-width: 901px) {
-  .site-header.is-home {
-    left: 280px;
-  }
-}
-
-@media (max-width: 900px) and (min-width: 769px) {
-  .site-header.is-home {
-    left: 240px;
-  }
 }
 
 .header-left {
@@ -339,9 +319,6 @@ function handleLogout() {
 @media (max-width: 768px) {
   .site-header {
     height: 56px;
-  }
-  .site-header.is-home {
-    left: 0;
   }
   .top-links {
     display: none;
