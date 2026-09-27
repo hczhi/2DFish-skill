@@ -20,13 +20,42 @@
         </ul>
       </div>
 
-      <div class="wall" aria-hidden="true">
-        <div class="wall-in">
-          <div v-for="(col, ci) in WALL" :key="ci" class="col" :class="'c' + ci">
-            <div class="track">
-              <img v-for="(src, k) in [...col, ...col]" :key="k" :src="src" alt="" />
-            </div>
+      <!-- 右侧：Agent 接到一句话之后自己往下干的样子（循环播放的示意，不连后端） -->
+      <div class="agent" aria-hidden="true">
+        <div class="ag-glow"></div>
+        <div class="ag-card">
+          <div class="ag-top">
+            <span class="ag-av">✦</span>
+            <div class="ag-who"><b>QiaoNx Agent</b><small>{{ agentDone ? '已交付' : '执行中' }} · 已用时 {{ clock }}</small></div>
+            <span class="ag-live" :class="{ fin: agentDone }"><i></i>{{ agentDone ? '已交付' : '运行中' }}</span>
           </div>
+          <div class="ag-ask">
+            <span>任务</span>
+            <p>{{ typed }}<i v-if="typing" class="caret"></i></p>
+          </div>
+          <ol class="ag-flow">
+            <li v-for="(st, i) in FLOW" :key="st.name" :class="flow[i].state">
+              <i></i>
+              <b>{{ st.name }}</b>
+              <em>{{ flow[i].note }}</em>
+              <s v-if="flow[i].state === 'run'"><u :style="{ width: flow[i].pct + '%' }"></u></s>
+              <small v-if="flow[i].state === 'run' && flow[i].log" class="ag-log">{{ flow[i].log }}</small>
+            </li>
+          </ol>
+          <div class="ag-tools">
+            <span v-for="(t, i) in TOOLS" :key="t" :class="{ on: toolOn === i }">{{ t }}</span>
+          </div>
+        </div>
+
+        <div class="ag-out o-report" :class="{ show: reportShown }">
+          <span class="ic-doc"></span>
+          <div><b>品牌定位报告</b><small>4 个维度 · 12 条依据</small></div>
+          <em>已完成</em>
+        </div>
+        <div class="ag-out o-deck" :class="{ show: deckShown }">
+          <img :src="agentDone ? IMG.cover : DECK[Math.max(0, pages - 1) % DECK.length]" alt="" />
+          <div><b>发布会展示稿</b><small>{{ agentDone ? '12 页 · 已完成' : `第 ${pages} / 12 页生成中` }}</small></div>
+          <em v-if="agentDone">已完成</em>
         </div>
       </div>
     </section>
@@ -183,7 +212,7 @@
 <script setup lang="ts">
 // 首页文案改了要同步改 server/src/services/ssgService.ts 的 renderHomepageContent：
 // 那份是搜索引擎收录和首屏先看到的，只改这里的话线上先闪一下旧文案，收录的一直是旧版。
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiGet } from '../lib/api'
 import SiteHeader from '../components/common/SiteHeader.vue'
@@ -213,12 +242,63 @@ const IMG = {
   consult: 'http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg',
 }
 
-// 首屏右侧的「稿子墙」：三列真实生成的页面，上下错向滚动。
-const WALL = [
-  [IMG.cover, IMG.five, IMG.party],
-  [IMG.cards, IMG.agenda, IMG.photo],
-  [IMG.pipeline, IMG.resume, IMG.cover],
+// ── 首屏右侧 Agent 面板：按时间轴循环播放的示意动画（纯前端，不连后端）──
+const TASK = '给新品精品咖啡做一份发布会方案，附品牌定位'
+const TOOLS = ['联网检索', '文档解析', '品牌框架', 'AI 生图']
+const PAGE_TITLES = ['封面', '市场机会', '目标人群', '竞品格局', '品牌定位', '核心价值', '产品亮点', '价格策略', '渠道规划', '发布节奏', '预算', '总结']
+const DECK = [IMG.cover, IMG.five, IMG.cards, IMG.agenda, IMG.pipeline, IMG.photo]
+// 每步时长（秒）、完成后的说明、这一步在用哪个工具（TOOLS 下标）
+const FLOW = [
+  { name: '理解需求', dur: 1.2, note: '拆成 4 个子任务', tool: -1 },
+  { name: '检索行业与竞品', dur: 2, note: '12 条来源', tool: 0 },
+  { name: '梳理品牌定位', dur: 1.8, note: '定位 · 价值 · 信任 · 关系', tool: 2 },
+  { name: '生成展示稿', dur: 4.2, note: '12 页', tool: 3 },
+  { name: '交付与复核', dur: 1.2, note: '已通过', tool: 1 },
 ]
+const TYPE_DUR = 1.4
+const HOLD = 3
+const STARTS = FLOW.reduce<number[]>((acc, f, i) => [...acc, i ? acc[i - 1] + FLOW[i - 1].dur : TYPE_DUR], [])
+const END = STARTS[STARTS.length - 1] + FLOW[FLOW.length - 1].dur
+const CYCLE = END + HOLD
+
+const t = ref(STARTS[3] + FLOW[3].dur * 0.62) // 不播放时（减少动态效果）停在这一帧
+const typed = computed(() => TASK.slice(0, Math.ceil(TASK.length * Math.min(1, t.value / TYPE_DUR))))
+const typing = computed(() => t.value < TYPE_DUR + 0.4)
+const agentDone = computed(() => t.value >= END)
+const clock = computed(() => {
+  const sec = Math.round(Math.min(t.value, END) * 5)
+  return `00:${String(sec).padStart(2, '0')}`
+})
+const flow = computed(() =>
+  FLOW.map((f, i) => {
+    const p = (t.value - STARTS[i]) / f.dur
+    if (p >= 1) return { state: 'done', note: f.note, pct: 100, log: '' }
+    if (p < 0) return { state: 'todo', note: '等待中', pct: 0, log: '' }
+    const pct = Math.round(p * 100)
+    if (i === 3) {
+      const n = Math.max(1, Math.ceil(p * 12))
+      return { state: 'run', note: `${n} / 12 页`, pct, log: `排版中 · 第 ${n} 页「${PAGE_TITLES[n - 1]}」` }
+    }
+    if (i === 1) return { state: 'run', note: `${Math.ceil(p * 12)} 条来源`, pct, log: '正在读取行业报告与竞品官网' }
+    return { state: 'run', note: '进行中', pct, log: '' }
+  })
+)
+const pages = computed(() => {
+  const p = (t.value - STARTS[3]) / FLOW[3].dur
+  return p >= 1 ? 12 : Math.max(1, Math.ceil(p * 12))
+})
+const toolOn = computed(() => FLOW.find((_, i) => flow.value[i].state === 'run')?.tool ?? -1)
+const reportShown = computed(() => t.value >= STARTS[3])
+const deckShown = computed(() => t.value >= STARTS[3] + 0.3)
+
+let timer: ReturnType<typeof setInterval> | undefined
+function startAgentLoop() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  t.value = 0
+  const t0 = performance.now()
+  timer = setInterval(() => { t.value = ((performance.now() - t0) / 1000) % CYCLE }, 80)
+}
+onUnmounted(() => clearInterval(timer))
 
 // 咨询面板里的示例内容，只做展示。
 const BOARD = [
@@ -269,6 +349,7 @@ onMounted(() => {
   // SSG 预渲染的首页带了一段内联样式，挂载后移掉，免得串到本页上。
   document.getElementById('ssg-critical-css')?.remove()
   loadArticles()
+  startAgentLoop()
 })
 </script>
 
@@ -312,8 +393,8 @@ a { color: inherit; text-decoration: none; }
 
 /* ── 首屏 ── */
 .hero {
-  position: relative; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center; padding: 90px 0 40px 7vw; overflow: hidden;
+  position: relative; min-height: 100vh; display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+  align-items: center; gap: 4vw; padding: 110px 7vw 60px; overflow: hidden;
 }
 /* 网格往下渐隐，和下一段之间不留硬边 */
 .hero::before {
@@ -342,23 +423,99 @@ a { color: inherit; text-decoration: none; }
 .facts li { font-size: 13px; color: var(--muted); }
 .facts b { display: block; font-size: 22px; color: var(--ink); font-weight: 800; margin-bottom: 2px; }
 
-.wall {
-  position: relative; height: 100vh; margin: -90px 0 -40px; perspective: 1400px;
-  -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 80%, transparent);
-  mask-image: linear-gradient(transparent, #000 16%, #000 80%, transparent);
+.agent { position: relative; z-index: 1; padding: 56px 36px 70px 56px; }
+.agent::before {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 122%; aspect-ratio: 1; margin: -61% 0 0 -61%;
+  border-radius: 50%; border: 1px dashed rgba(31, 68, 196, .18); pointer-events: none;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 72%, #000); mask-image: radial-gradient(closest-side, transparent 72%, #000);
+  animation: spin 80s linear infinite;
 }
-.wall-in {
-  position: absolute; inset: -20% -30% -20% 4%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
-  transform: rotateX(18deg) rotateY(-16deg) rotateZ(8deg); transform-style: preserve-3d;
+.ag-glow {
+  position: absolute; inset: 14% 8% 10% 16%; border-radius: 40px; pointer-events: none; filter: blur(50px); opacity: .55;
+  background: conic-gradient(from 200deg, #5b7cff, #b18cff, #ffb27d, #5b7cff);
+  animation: breathe 6s ease-in-out infinite;
 }
-.col { overflow: hidden; }
-.track { display: flex; flex-direction: column; gap: 20px; transform: translateY(-10%); }
-.c1 .track { transform: translateY(-15%); }
-.c2 .track { transform: translateY(-5%); }
-.track img {
-  width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; background: #fff;
-  box-shadow: 0 24px 50px -20px rgba(15, 42, 122, .45);
+.ag-card {
+  position: relative; border-radius: 28px; padding: 30px 32px 26px; font-size: 15px;
+  background:
+    linear-gradient(rgba(255, 255, 255, .86), rgba(255, 255, 255, .8)) padding-box,
+    linear-gradient(150deg, rgba(255, 255, 255, 1), rgba(31, 68, 196, .22) 45%, rgba(240, 122, 44, .3)) border-box;
+  border: 1px solid transparent; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 70px 120px -60px rgba(15, 42, 122, .55), 0 2px 0 rgba(255, 255, 255, .9) inset;
 }
+.ag-top { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid rgba(20, 26, 46, .06); }
+.ag-av {
+  position: relative; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; color: #fff; font-size: 20px;
+  background: linear-gradient(135deg, #3b63ea, #5b3fd6 60%, #f07a2c 130%); box-shadow: 0 14px 26px -10px rgba(31, 68, 196, .8);
+}
+.ag-av::after { content: ''; position: absolute; inset: -5px; border-radius: 18px; border: 1.5px solid rgba(91, 63, 214, .35); animation: ping 2.4s ease-out infinite; }
+.ag-who { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.ag-who b { font-size: 17px; letter-spacing: .01em; }
+.ag-who small { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ag-live { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; color: #16833a; padding: 6px 12px; border-radius: 999px; background: rgba(22, 131, 58, .08); }
+.ag-live i { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: blink 1.2s ease-in-out infinite; }
+.ag-live.fin { color: var(--blue); background: rgba(31, 68, 196, .08); }
+.ag-live.fin i { background: var(--blue); animation: none; }
+.ag-ask { margin: 20px 0 10px; padding: 16px 18px; border-radius: 16px; background: linear-gradient(180deg, #f3f6fe, #eef2fc); display: flex; gap: 14px; align-items: baseline; }
+.ag-ask span { flex: none; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--blue); }
+.ag-ask p { margin: 0; min-height: 1.6em; font-size: 15px; font-weight: 600; line-height: 1.6; color: var(--ink); }
+.caret { display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--blue); animation: blink .8s steps(1) infinite; }
+/* 按「有一步在跑」的高度留足，否则进度条那一行出现/消失时整张卡上下跳 */
+.ag-flow { list-style: none; margin: 0; padding: 6px 0 4px; min-height: 290px; }
+.ag-flow li {
+  position: relative; display: grid; grid-template-columns: 24px 1fr auto; align-items: center; column-gap: 14px;
+  padding: 12px 12px; margin: 0 -12px; border-radius: 14px; transition: background .4s;
+}
+.ag-flow li.run { background: linear-gradient(90deg, rgba(240, 122, 44, .08), rgba(240, 122, 44, 0)); }
+.ag-flow li:not(:last-child)::before {
+  content: ''; position: absolute; left: 23px; top: 38px; bottom: -10px; width: 2px; border-radius: 1px; background: #e3e8f4; transition: background .4s;
+}
+.ag-flow li.done:not(:last-child)::before { background: rgba(31, 68, 196, .35); }
+.ag-flow i { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; position: relative; z-index: 1; transition: background .3s, border-color .3s; }
+.ag-flow .done i { background: var(--blue); animation: pop .4s cubic-bezier(.3, 1.6, .5, 1); }
+.ag-flow .done i::after { content: ''; width: 9px; height: 4px; margin-top: -2px; border: solid #fff; border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+.ag-flow .run i { background: #fff; border: 2px solid var(--orange); }
+.ag-flow .run i::before { content: ''; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid rgba(240, 122, 44, .35); animation: ping 1.4s ease-out infinite; }
+.ag-flow .run i::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+.ag-flow .todo i { background: #fff; border: 2px solid #dfe4ef; }
+.ag-flow b { font-weight: 700; color: var(--ink); }
+.ag-flow .todo b { color: var(--muted); font-weight: 600; }
+.ag-flow em { font-style: normal; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ag-flow .run em { color: var(--orange); font-weight: 700; }
+.ag-flow s { grid-column: 2 / 4; height: 5px; margin-top: 10px; border-radius: 3px; background: #f4ece6; overflow: hidden; }
+.ag-flow s u {
+  display: block; height: 100%; border-radius: 3px; transition: width .12s linear;
+  background: linear-gradient(90deg, var(--orange), #ffb27d, var(--orange)) 0 0 / 200% 100%; animation: flow 1.2s linear infinite;
+}
+.ag-log { grid-column: 2 / 4; margin-top: 8px; font-size: 12px; color: var(--muted); animation: fade .3s; }
+.ag-tools { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 18px; margin-top: 10px; border-top: 1px solid rgba(20, 26, 46, .06); }
+.ag-tools span { font-size: 12px; color: var(--text); padding: 5px 11px; border-radius: 9px; background: #f3f5fa; transition: all .3s; }
+.ag-tools span::before { content: '⌁ '; color: var(--blue); }
+.ag-tools span.on { background: var(--blue); color: #fff; box-shadow: 0 8px 18px -8px rgba(31, 68, 196, .8); }
+.ag-tools span.on::before { color: #ffc59b; }
+.ag-out {
+  position: absolute; display: flex; align-items: center; gap: 14px; padding: 14px 18px 14px 14px; border-radius: 18px; background: rgba(255, 255, 255, .96);
+  box-shadow: 0 30px 60px -24px rgba(15, 42, 122, .55), 0 0 0 1px rgba(20, 26, 46, .05);
+  opacity: 0; transform: translateY(14px) scale(.96); transition: opacity .5s, transform .6s cubic-bezier(.2, 1.3, .4, 1);
+}
+.ag-out.show { opacity: 1; transform: none; animation: bob 5s ease-in-out .6s infinite; }
+.ag-out div { display: flex; flex-direction: column; gap: 3px; }
+.ag-out b { font-size: 15px; }
+.ag-out small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ag-out em { font-style: normal; font-size: 11px; font-weight: 700; color: #16833a; background: rgba(22, 131, 58, .08); padding: 3px 8px; border-radius: 6px; }
+.o-report { right: -6px; top: 8px; }
+.o-deck { left: 0; bottom: 14px; animation-delay: 1.6s !important; }
+.o-deck img { width: 104px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 9px; box-shadow: 0 0 0 1px rgba(20, 26, 46, .06); }
+.ic-doc { width: 42px; height: 42px; border-radius: 12px; flex: none; position: relative; background: linear-gradient(135deg, var(--orange), #d9531b); }
+.ic-doc::before { content: ''; position: absolute; left: 12px; right: 12px; top: 12px; height: 18px; background: linear-gradient(#fff 2px, transparent 2px) 0 0 / 100% 5px; opacity: .9; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes breathe { 50% { opacity: .35; transform: scale(.96); } }
+@keyframes ping { from { opacity: 1; transform: scale(.9); } to { opacity: 0; transform: scale(1.35); } }
+@keyframes blink { 50% { opacity: .25; } }
+@keyframes pop { from { transform: scale(.4); } }
+@keyframes flow { to { background-position: -200% 0; } }
+@keyframes fade { from { opacity: 0; transform: translateY(-3px); } }
+@keyframes bob { 50% { transform: translateY(-8px); } }
 
 /* ── 应用 ── */
 .app { padding: 130px 7vw; }
@@ -564,8 +721,14 @@ a { color: inherit; text-decoration: none; }
 /* ── 响应式 ── */
 @media (max-width: 1000px) {
   .hero { grid-template-columns: 1fr; min-height: 0; padding: 120px 24px 0; }
-  .wall { height: 380px; margin: 40px -24px 0 -24px; overflow: hidden; }
-  .wall-in { inset: -30% -20% -30% -10%; }
+  .agent { margin-top: 48px; padding: 50px 0 96px; }
+  .o-deck { bottom: 0; }
+  .ag-flow { min-height: 0; }
+  .ag-card { padding: 22px 18px 18px; font-size: 14px; }
+  .ag-flow li { padding: 10px 8px; margin: 0 -8px; }
+  .ag-flow li:not(:last-child)::before { left: 19px; }
+  .agent::before { display: none; }
+  .o-report { right: 0; }
   .facts { margin-top: 40px; }
   .app { padding: 90px 24px; }
   .app-inner, .app-cst .app-inner { grid-template-columns: 1fr; gap: 56px; }
@@ -601,6 +764,6 @@ a { color: inherit; text-decoration: none; }
   .bd-core { width: 44px; height: 44px; margin: -22px 0 0 -22px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chip { animation: none; }
+  .chip, .agent *, .agent::before { animation: none !important; }
 }
 </style>
