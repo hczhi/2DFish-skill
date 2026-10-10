@@ -283,7 +283,7 @@ async function copy(text: string, key: string) {
           <ol class="empty-l">
             <li><b>分镜时间轴</b>每个镜头几秒到几秒、景别焦段、用了哪一式运镜、怎么切过去</li>
             <li><b>完整提示词</b>一整段，按镜头 / 场景 / 动作 / 物体 / 声音分栏，时间标注写在里面，一键复制</li>
-            <li><b>问题诊断</b>原文哪一句有问题、为什么、改成了什么</li>
+            <li><b>提示词建议</b>没写进新提示词、留给你决定要不要改的地方</li>
           </ol>
         </div>
 
@@ -309,7 +309,7 @@ async function copy(text: string, key: string) {
             <nav class="tabs">
               <button :class="{ on: tab === 'timeline' }" @click="goTab('timeline')">分镜时间轴<small>{{ result.shots.length }}</small></button>
               <button :class="{ on: tab === 'final' }" @click="goTab('final')">完整提示词</button>
-              <button :class="{ on: tab === 'diag' }" @click="goTab('diag')">问题诊断<small :class="{ red: result.must.length }">{{ result.must.length + result.suggest.length }}</small></button>
+              <button :class="{ on: tab === 'diag' }" @click="goTab('diag')">提示词建议<small>{{ result.suggest.length }}</small></button>
             </nav>
             <button class="copy-all" @click="copy(result.fullText, 'all')">{{ copied === 'all' ? '已复制 ✓' : '复制完整提示词' }}</button>
           </div>
@@ -427,22 +427,22 @@ async function copy(text: string, key: string) {
             </article>
           </section>
 
-          <!-- 3 问题诊断 -->
+          <!-- 3 提示词建议（必改项已写进完整提示词，这里只列没写进去的） -->
           <section id="r-diag" class="part">
-            <h2 class="part-h">问题诊断<span>必改 {{ result.must.length }} · 建议 {{ result.suggest.length }}</span></h2>
-            <p v-if="!result.must.length && !result.suggest.length" class="muted">没挑出问题 —— 原文已经写得很具体了。</p>
+            <h2 class="part-h">提示词建议<span>{{ result.suggest.length }} 条 · 必改的 {{ result.must.length }} 处已写进完整提示词</span></h2>
+            <p v-if="!result.suggest.length" class="muted">没有额外建议。</p>
             <div class="issues">
               <div
-                v-for="(x, i) in [...result.must.map((m) => ({ ...m, must: true })), ...result.suggest.map((m) => ({ ...m, must: false }))]"
+                v-for="(x, i) in result.suggest"
                 :key="i"
-                :class="['issue', { must: x.must }]"
+                class="issue"
               >
                 <div class="iss-l">
-                  <span class="lv">{{ x.must ? '必改' : '建议' }}</span>
+                  <span class="lv">建议</span>
                   <p v-if="x.quote" class="q">{{ x.quote }}</p>
                   <p class="pb">{{ x.problem }}</p>
                 </div>
-                <div class="iss-r"><span>改成</span>{{ x.fix }}</div>
+                <div class="iss-r"><span>可以改成</span>{{ x.fix }}</div>
               </div>
             </div>
           </section>
@@ -688,13 +688,11 @@ textarea::placeholder { color: var(--mute); }
 .issues { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .issue { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 16px; border-bottom: 1px solid var(--line); }
 .issue:last-child { border-bottom: none; }
-.issue.must { background: #FFF7F5; }
 .iss-l { padding: 0; }
 .iss-r { padding: 0; color: var(--ink); font-size: 13px; line-height: 1.6; }
 .iss-r span { display: block; margin-bottom: 4px; font-size: 12px; color: var(--mute); }
 .lv { display: inline-flex; align-items: center; justify-content: center; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-.issue.must .lv { background: #FFECE8; color: var(--coral); }
-.issue:not(.must) .lv { background: #E8FFEA; color: #00B42A; }
+.issue .lv { background: #E8FFEA; color: #00B42A; }
 .iss-l p { margin: 0; }
 .q { margin-top: 8px !important; font-size: 13px; color: var(--mute); text-decoration: line-through; }
 .pb { margin-top: 6px !important; font-size: 13px; line-height: 1.6; color: var(--ink); }

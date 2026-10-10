@@ -202,6 +202,7 @@ ${prompt}
 }
 时间段规则：start/end 是秒数（可到 0.5 秒），第一段从 0 开始，每段的 start 等于上一段的 end，最后一段的 end 必须等于 ${seconds}；每段不短于 1 秒，最多 ${MAX_SHOTS} 段。
 final.cameraByShot、final.blockingByShot 和 final.actionByShot 的条数必须和 shots 一样多、顺序一致；时间标注由系统按 shots 自动加上，你不要在里面写秒数。
+must 里每一条 fix 都必须原样落实进 final 对应的栏目（final 就是改完之后的版本）。suggest 是你没有写进 final、留给用户自己决定的改法 —— 已经写进 final 的不要再列进 suggest。
 must / suggest 没有就给空数组。各字段的值直接写内容，不要再带「镜头·运镜：」这类栏目名。`;
 }
 
