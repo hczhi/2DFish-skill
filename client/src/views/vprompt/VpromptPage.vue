@@ -44,7 +44,7 @@ const HeadText: FunctionalComponent<{ text: string }> = ({ text }) => {
 const SHOT_COLORS = ['#ff8a3d', '#ffc23d', '#5ad1a4', '#4fa8ff', '#a98bff', '#ff6f91', '#7ee0e0', '#c2d94f']
 
 const EXAMPLES = [
-  { tag: '舞台高光', text: '女歌手在舞台上唱到高潮，灯光突然全亮，她很激动，台下观众都疯狂了。' },
+  { tag: '雨中奔跑', text: '大雨里一个男人在马路上奔跑，衣服全湿了，他很着急，跑到公交站时车刚好开走，他很失望。' },
   { tag: '天台告白', text: '男生在天台上向女生表白，女生很惊讶，犹豫了一下，然后笑着点头，风吹起她的头发。' },
   { tag: '咖啡馆日常', text: '早上的咖啡馆，店员在做拉花，一个顾客推门进来，店员抬头对他微笑，阳光很好。' },
 ]
