@@ -100,6 +100,13 @@ export interface GatewayOptions {
    * 剩下真正靠长链推理、又没人等的批量任务才留着不开。
    */
   noThinking?: boolean;
+  /**
+   * 不扣平台日额度（`ai_quota`）。只给作者明确定成「完全免费、不登录也能用」的应用用
+   * （视频提示词优化）。应用级额度和 key 点数照旧：管理员要临时收紧时还有那一道可配，
+   * 而 key 用户漏扣点就是免费调用。两个入口都要认 —— 只在一处认的话另一处的匿名访客
+   * 第 4 次就撞「3 次/天」，而页面上写着免费。
+   */
+  unmetered?: boolean;
 }
 
 /**
@@ -721,7 +728,7 @@ export async function aiGateway(
   // 售卖型 key 的影子用户按点数扣（先冻结、成功才结算），不走日额度 —— 见 appKeyService。
   const hold = holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (!hold && providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
+  if (!hold && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
 
   const startTime = Date.now();
   const ntOutcome: NoThinkingOutcome = {};
@@ -847,7 +854,7 @@ export async function aiGatewayStream(
   checkAndDeductAppQuota(options.userId, options.source);
   const hold = holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (!hold && providerOwner !== 'dedicated') checkAndDeductQuota(options.userId);
+  if (!hold && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
 
   // 流式这里的超时只约束**首字节**：SDK 的计时器在 fetch 的 promise
   // （也就是响应头到达）时就清掉了，之后读 body 不受它限制。这正是想要的 ——

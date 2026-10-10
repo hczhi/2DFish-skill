@@ -68,11 +68,15 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   // 而 /api/ppt/layouts 那次（带 token）是 200 —— 读起来像 demo 没做出来。
   // 它只回仓库里那份案例 html，没有任何用户数据、不花 AI 额度。
   { path: '/api/ppt/demo-deck.html', method: 'GET', level: 'public' },
+  // 视频提示词优化的选项表（风格 / 题材 / 51 式镜头），不调 AI。
+  { path: '/api/vprompt/options', method: 'GET', level: 'public' },
 
   // OPTIONAL — 匿名可访问。匿名主体由 auth/requester.ts 按 IP+UA 指纹派生独立 id
   // 并单独限额（不再借用 admin 身份和额度）。
   { path: '/api/ai/board/chat', method: 'POST', level: 'optional' },
   { path: /^\/api\/ui-review\/(?!admin)/, level: 'optional' },
+  // 视频提示词优化：作者定的「不登录也能用」。不扣日额度在调用处（unmetered）。
+  { path: '/api/vprompt/optimize', method: 'POST', level: 'optional' },
 ];
 
 function getAuthLevel(req: Request): AuthLevel {

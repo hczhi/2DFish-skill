@@ -174,6 +174,33 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
+    // 视频提示词优化：单页、免费、不登录也能用。
+    {
+      path: '/vprompt',
+      name: 'vprompt',
+      component: () => import('../views/vprompt/VpromptPage.vue'),
+    },
+    // 机械积木课堂：介绍页 + 各案例页（只展示），公开访问。
+    {
+      path: '/mech',
+      name: 'mech-cover',
+      component: () => import('../views/mech/MechCover.vue'),
+    },
+    {
+      path: '/mech/gearbox',
+      name: 'mech-gearbox',
+      component: () => import('../views/mech/MechGearbox.vue'),
+    },
+    {
+      path: '/mech/engine',
+      name: 'mech-engine',
+      component: () => import('../views/mech/MechEngine.vue'),
+    },
+    {
+      path: '/mech/steering',
+      name: 'mech-steering',
+      component: () => import('../views/mech/MechSteering.vue'),
+    },
     // HTML 展示稿。/ppt 是介绍页（「去使用」进 /ppt/decks 演示稿列表，一份稿子一行，落库）。
     {
       path: '/ppt',

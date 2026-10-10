@@ -1,0 +1,78 @@
+/* 案例页（齿轮箱 / 发动机）共用的版式。颜色变量也在这里给，MechViewer 要用。 */
+.mc {
+  --yellow: #ffc928;
+  --yellow-deep: #f2a900;
+  --yellow-soft: #fff1bf;
+  --cream: #fffaf0;
+  --ink: #1d1d1f;
+  --text: #55524a;
+  --muted: #9a958a;
+  --line: #eee6d3;
+  min-height: 100vh;
+  background: var(--cream);
+  color: var(--ink);
+  overflow-x: hidden;
+  font-family: "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
+}
+
+.nav { position: absolute; top: 50px; left: 0; right: 0; z-index: 5; padding: 22px 5vw; display: flex; justify-content: space-between; align-items: center; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; letter-spacing: .04em; color: var(--ink); text-decoration: none; }
+.brand i {
+  width: 24px; height: 16px; border-radius: 4px; background: var(--yellow); border: 2px solid var(--ink);
+  box-shadow: inset 5px 0 0 -3px var(--ink);
+}
+.back { font-weight: 800; font-size: 14px; color: var(--ink); text-decoration: none; background: #fff; border: 2px solid var(--ink); border-radius: 12px; padding: 7px 14px; box-shadow: 3px 3px 0 var(--ink); }
+
+.hero {
+  position: relative; min-height: 100vh; box-sizing: border-box;
+  display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.5fr); align-items: center; gap: 2vw;
+  padding: 140px 5vw 50px; max-width: 1640px; margin: 0 auto;
+}
+.hero-bg {
+  position: absolute; inset: 0 -30vw; z-index: 0; pointer-events: none;
+  background-image: radial-gradient(circle, rgba(29, 29, 31, .07) 1.6px, transparent 1.8px);
+  background-size: 28px 28px;
+}
+.hero-copy { position: relative; z-index: 2; }
+.kicker { margin: 0 0 18px; font-size: 12px; font-weight: 800; letter-spacing: .3em; color: var(--yellow-deep); }
+h1 { margin: 0; font-size: clamp(34px, 3.8vw, 58px); line-height: 1.2; font-weight: 900; }
+.lead { margin: 24px 0 0; font-size: 16px; line-height: 1.95; color: var(--text); }
+.lead b { color: var(--ink); background: linear-gradient(transparent 60%, var(--yellow) 60%); }
+.stats { display: flex; gap: 12px; margin: 36px 0 0; flex-wrap: wrap; }
+.stats div { background: #fff; border: 2px solid var(--ink); border-radius: 14px; padding: 12px 16px; min-width: 96px; }
+.stats dt { font-size: 12px; color: var(--muted); }
+.stats dd { margin: 4px 0 0; font-size: 26px; font-weight: 900; white-space: nowrap; }
+.stats small { font-size: 13px; font-weight: 600; margin-left: 2px; color: var(--text); }
+
+.viewer { background: #fff; border: 3px solid var(--ink); border-radius: 28px; box-shadow: 10px 10px 0 var(--ink); }
+.viewer :deep(.caption) { bottom: 10px; }
+.viewer :deep(.controls) { bottom: 40px; }
+
+.block { max-width: 1240px; margin: 0 auto; padding: 50px 5vw 20px; }
+.block h2 { margin: 0 0 8px; font-size: clamp(24px, 2.4vw, 34px); font-weight: 900; }
+.hint { margin: 0 0 22px; color: var(--text); }
+
+.stages { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+.stages li { background: #fff; border: 2.5px solid var(--ink); border-radius: 20px; padding: 20px; box-shadow: 5px 5px 0 var(--ink); }
+.stages li.sum { background: var(--yellow); }
+.no { width: 34px; height: 34px; border-radius: 50%; background: var(--yellow); border: 2px solid var(--ink); display: grid; place-items: center; font-weight: 900; }
+.sum .no { background: #fff; }
+.pair { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 22px; }
+.pair svg { width: 20px; height: 20px; }
+.stages p { margin: 0; color: var(--text); font-size: 14px; }
+.stages .pair { color: var(--ink); font-size: 22px; }
+
+.bom { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.bom li { display: flex; align-items: center; gap: 12px; background: #fff; border: 2px solid var(--ink); border-radius: 14px; padding: 12px 16px; }
+.bom i { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--ink); flex: none; }
+.bom .name { flex: 1; font-weight: 800; display: flex; flex-direction: column; }
+.bom small { font-weight: 500; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.bom b { font-size: 18px; }
+
+.credit { text-align: center; font-size: 12px; color: var(--muted); padding: 24px 5vw 40px; margin-top: 50px; line-height: 1.8; border-top: 1px solid var(--line); }
+.credit a { color: inherit; }
+
+@media (max-width: 960px) {
+  .hero { grid-template-columns: 1fr; padding-top: 130px; }
+  .stages, .bom { grid-template-columns: 1fr; }
+}

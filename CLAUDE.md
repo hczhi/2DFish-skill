@@ -330,6 +330,8 @@ skills/  workspaces/  docs/
 | 小红书写作台 | `/xhs` | `docs/modules/xhs.md` |
 | HTML 展示稿 | `/ppt` | `docs/modules/ppt.md` |
 | 品牌咨询 | `/consult`（含第三方 iframe 嵌入 084-086） | `docs/modules/consult.md` |
+| 机械积木课堂 | `/mech` | `docs/modules/mech.md` |
+| 视频提示词优化 | `/vprompt`（免费、匿名可用） | `docs/modules/vprompt.md` |
 
 长文档另有：`docs/FEISHU_ASSISTANT.md`（飞书助理完整设计）、`docs/FEISHU_DIARY.md`（项目
 日记）、`docs/MODULE_DEVELOPMENT.md`、`docs/API.md`（新端点必须补）、`docs/RELEASE.md`。

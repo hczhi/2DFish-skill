@@ -2713,6 +2713,43 @@ Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_ui
 
 ---
 
+## 视频提示词优化（/api/vprompt）
+
+### GET /api/vprompt/options
+PUBLIC。页面上的选项：`{ seconds:{min,max}, maxCameras, styles:[{id,label}], genres:[{id,label}], cameras:[{id,category,name,mood,shot,angle,move,desc,use}] }`（cameras 即 51 式运镜）。
+
+### POST /api/vprompt/optimize
+OPTIONAL（不登录也能用），**不扣日额度**；按 IP 每分钟 10 次。不落库。
+
+Body: `{ "prompt": "≤4000 字", "seconds": 8, "style"?: "auto|realistic|…", "genre"?: "auto|fight|…", "cameras"?: ["12","37"] }`
+（`seconds` 4–10 整数；`cameras` 最多 3 个，必须每个都用到某一段上，否则服务端重排一次、仍不满足就 502）
+
+Response 200:
+```json
+{
+  "seconds": 8,
+  "approach": { "style": { "label": "写实真人电影", "by": "user|ai" }, "genre": "…", "packs": [{ "label": "打斗动作", "reason": "原文里有「对决」" }] },
+  "must": [{ "quote": "原文", "problem": "…", "fix": "…" }],
+  "suggest": [],
+  "shots": [{ "start": 0, "end": 2.5, "name": "…", "shotSize": "中景", "focal": "35mm", "camera": "…",
+              "template": { "id": "37", "name": "背后手持追拍", "category": "逃跑 / 追逐" }, "content": "…", "transition": "开场" }],
+  "final": {
+    "title": "…", "overview": "画面总述", "lock": "人物与风格锁定",
+    "camera": [{ "start": 0, "end": 2.5, "name": "…", "text": "运镜句" }],
+    "scene": ["…"],
+    "action": [{ "start": 0, "end": 2.5, "name": "…", "text": "动作与神情" }],
+    "chain": ["物：…", "人：…"], "objects": ["对象：A → B"], "sound": ["… → …"]
+  },
+  "fullText": "可整段复制的完整提示词（按维度分栏，秒数由服务端按 shots 加）",
+  "notes": ["模型标了不存在的运镜编号时的说明"]
+}
+```
+`shots` 由服务端核对：从 0 开始、首尾相接、结束在 `seconds`、每段 ≥1 秒。
+
+错误：400 参数不对；502 输出被截断 / 模型空返回 / 时间段连续两次不合规 / 上游原文（`error` 里是真实成因）。
+
+---
+
 ## Error Responses
 
 ### 标准错误
@@ -2762,6 +2799,7 @@ consult / ppt 另带 `detail`（人话，说清撞的是账号总额还是这个
 | /api/consultant/* | 20 req/min |
 | /api/analytics/* | 30 req/min |
 | /api/ui-review/*、/api/tender/*、/api/xhs/*、/api/consult/*、/api/feishu-assistant/* | 60 req/min |
+| /api/vprompt/* | 10 req/min（免费不限次，只挡脚本连刷） |
 | /api/ppt/* | 300 req/min（案例库一页就是 65 个 iframe，60 的话翻两页就被 429 挡住，而卡片上照样挂着「效果 demo」） |
 
 Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`

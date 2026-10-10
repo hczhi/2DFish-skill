@@ -166,6 +166,30 @@
       </div>
     </section>
 
+    <!-- 机械积木课堂：免费的纯展示页，不走 key / 点数，所以放在购买那块之后、单独一条 -->
+    <section class="mech">
+      <router-link to="/mech" class="mech-in">
+        <div>
+          <p class="mech-k">免费 · 给孩子的机械课</p>
+          <h2>机械积木课堂</h2>
+          <p class="mech-sub">用真的乐高机械零件搭出三级减速齿轮箱、直列四缸发动机：换个角度看，一键拆开看里面怎么咬合。</p>
+        </div>
+        <span class="btn mech-btn">去看看 <span>→</span></span>
+      </router-link>
+    </section>
+
+    <!-- 视频提示词优化：免费、不用登录，样式沿用上面那条 mech 横幅 -->
+    <section class="mech vprompt">
+      <router-link to="/vprompt" class="mech-in">
+        <div>
+          <p class="mech-k">免费 · 不用登录</p>
+          <h2>视频提示词优化</h2>
+          <p class="mech-sub">贴上你写的 AI 视频提示词：挑出表情、动作、物体、镜头上的问题，拆好时间段和镜头，给你一份能直接用的新提示词。</p>
+        </div>
+        <span class="btn mech-btn">去优化 <span>→</span></span>
+      </router-link>
+    </section>
+
     <!-- 文章 -->
     <section v-if="articles.length" class="posts">
       <div class="posts-head">
@@ -687,6 +711,21 @@ a { color: inherit; text-decoration: none; }
 .copy-err { margin: 14px 0 0; font-size: 13px; color: #ffd2b0; }
 
 /* ── 文章 ── */
+.mech { padding: 90px 7vw 0; }
+.mech-in {
+  display: flex; align-items: center; justify-content: space-between; gap: 32px; max-width: 1240px; margin: 0 auto;
+  padding: 40px 48px; border-radius: 28px; background: #fff3c4; border: 2.5px solid var(--ink); box-shadow: 8px 8px 0 var(--ink);
+  color: var(--ink); text-decoration: none; transition: transform .2s, box-shadow .2s;
+}
+.mech-in:hover { transform: translate(-2px, -2px); box-shadow: 10px 10px 0 var(--ink); }
+.mech-k { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: .2em; color: #c98a00; }
+.mech h2 { margin: 10px 0 8px; font-size: clamp(26px, 2.8vw, 40px); font-weight: 900; }
+.mech-sub { margin: 0; color: var(--text); line-height: 1.8; max-width: 640px; }
+.mech-btn { flex: none; background: #ffc928; color: var(--ink); border: 2px solid var(--ink); }
+.mech-in:hover .mech-btn span { transform: translateX(4px); }
+.vprompt { padding-top: 32px; }
+.vprompt .mech-in { background: #ffe8dc; }
+.vprompt .mech-k { color: #b4532a; }
 .posts-head { display: flex; align-items: baseline; justify-content: space-between; }
 .more { font-size: 14px; color: var(--blue); font-weight: 700; }
 .post-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 56px; margin-top: 44px; }
@@ -720,6 +759,7 @@ a { color: inherit; text-decoration: none; }
 
 /* ── 响应式 ── */
 @media (max-width: 1000px) {
+  .mech-in { flex-direction: column; align-items: flex-start; padding: 32px 28px; }
   .hero { grid-template-columns: 1fr; min-height: 0; padding: 120px 24px 0; }
   .agent { margin-top: 48px; padding: 50px 0 96px; }
   .o-deck { bottom: 0; }

@@ -41,6 +41,7 @@ import { feishuAssistantRouter } from './api/feishuAssistant.js';
 import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { relayRouter } from './api/relay.js';
+import { vpromptRouter } from './api/vprompt.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import { expireOverdueTenders, startTenderExpiryScheduler } from './services/tender/retention.js';
@@ -319,6 +320,10 @@ app.use('/api/analytics', analyticsRouter);
 
 // Ad slots (public reads + admin management)
 app.use('/api/ad-slots', adSlotsRouter);
+
+// 视频提示词优化（免费、匿名可用、不扣日额度）。每分钟 10 次只挡脚本连刷，正常人点不到。
+app.use('/api/vprompt', rateLimit(10, 60_000));
+app.use('/api/vprompt', vpromptRouter);
 
 // UI Review
 app.use('/api/ui-review', rateLimit(60, 60_000));

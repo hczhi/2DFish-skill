@@ -155,9 +155,11 @@ export function jsonFailMessage(
      * 反复回去核那个开关，而唯一的解法是换模型。不带这个标记的话两种成因合成同一句话。
      */
     noThinkingRequested?: boolean;
+    /** 这次调用不计额度（GatewayOptions.unmetered）—— 那句「额度已经扣了」对它是假话，会让用户不敢重试。 */
+    unmetered?: boolean;
   }
 ): string {
-  const { raw, finish, reasoningTokens, budget, noThinkingRequested } = info;
+  const { raw, finish, reasoningTokens, budget, noThinkingRequested, unmetered } = info;
   const burnedByThinking = reasoningTokens && reasoningTokens >= budget * 0.9;
   const cot = reasoningTokens ? `，其中思维链占 ${reasoningTokens} token` : '';
   const why = !raw.trim()
@@ -176,7 +178,7 @@ export function jsonFailMessage(
       // 说错档位比不说更糟 —— 用户会去改一个跟这次调用无关的配置，然后发现还是这样。
       ? `这次 ${budget} token 的额度基本全花在思维链上了，正文没写出来。再点一次通常就好；老是这样就去「专属 AI / 系统配置」换一个不带思维链的模型`
       : '再试一次或换个模型';
-  return `${why}，${what}没生成。${how}（这次的 AI 额度已经扣了）`;
+  return `${why}，${what}没生成。${how}${unmetered ? '' : '（这次的 AI 额度已经扣了）'}`;
 }
 
 export interface JsonGatewayCtx {
@@ -200,6 +202,9 @@ export interface JsonGatewayCtx {
    * 说的就是没开它的那种失败。
    */
   noThinking?: boolean;
+  /** 原样转给 aiGateway（见 GatewayOptions 上同名字段）。 */
+  retryOnBusy?: boolean;
+  unmetered?: boolean;
 }
 
 export interface JsonGatewayResult<T> {
