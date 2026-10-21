@@ -2625,10 +2625,20 @@ html，再用 Playwright 逐页把 DOM 走一遍：有底色/描边的块 → pp
 { "baseUrl": "location.origin" }
 ```
 
+**后台任务，三步**：POST 只起任务，回 `202 { "job": "uuid", "total": 41 }`；然后轮询
+`GET /api/ppt/decks/:id/export-pptx/:job`，渲染中回 `{ "status": "running", "done": 12, "total": 41 }`，
+失败回 `{ "status": "error", "error": "原文成因" }`，完成回
+
 ```json
-{ "filename": "AI转型-20260917.pptx", "base64": "二进制的 base64", "bytes": 346521,
+{ "status": "done", "filename": "AI转型-20260917.pptx", "bytes": 346521,
   "pages": 5, "textBlocks": 108, "shapes": 62, "images": 9, "warnings": ["…"] }
 ```
+
+再 `GET /api/ppt/decks/:id/export-pptx/:job/file` 拿二进制（attachment，带 Content-Length）。
+**不能改回一个请求等到底**：41 页在云服务器上渲几分钟（超过 nginx 300 秒被掐），文件 30MB
+base64 进 JSON 又是 40MB 一整块，两段都没进度，按钮一直停在「导出中」= 慢和卡死看不出区别。
+任务在内存里，结果留 15 分钟；服务重启或过期一律 404 + 「重新点一次」。前端要核
+「收到的字节数 == bytes」：断流时 fetch 不一定抛错，存下来是一份「已损坏」的 pptx。
 
 **这条路是有损的，所以 `warnings` 必须显示在界面上，而且「一切正常」时也有一条。**
 那条常在的话说的是「位置是按服务器上量的字宽摆的」：客户机器上没装 Noto Sans/Serif SC 时会有
@@ -2640,8 +2650,8 @@ clip-path 变成完整矩形、竖排变横排、内嵌 svg 是贴图、CSS 背�
 每一类都报「几处、哪几页」，因为这几种下载下来都是一份打开正常的 pptx，客户只会觉得
 「这版设计有点素」。这几句在 `pptxNotes()` 里，有测试。
 
-**回 base64 JSON 不回 attachment**：同上，那几句话得有地方显示；前端必须走
-`atob → Uint8Array → Blob`，用文本存法会把二进制写坏（文件能下载下来，PowerPoint 说已损坏）。
+统计和 `warnings` 在轮询那一步回、文件单独下：那几句话得有地方显示；前端按字节收进 Blob，
+用文本存法会把二进制写坏（文件能下载下来，PowerPoint 说已损坏）。
 `/export` 自己那几条 warning（图的地址、localhost）在这里**不转发** —— 图已经按字节嵌进去了，
 说「换机器会 404」是指错方向。`textBlocks`/`shapes`/`images` 三个数**必须分开回**：
 `images` 是唯一能看出「这份里还剩几块是贴图、改不了」的地方，合成一个总数的话，
@@ -2710,6 +2720,28 @@ Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_ui
   三个模块共用）—— 漏了的话浏览器在预检就拦掉，接入方页面一块白而我们连日志都没有。
   消息通道是 `qn-ppt`（咨询是 `qn-consult`）：共用一个的话同页嵌两个工作台时展示稿会拿到一把
   `consult:embed` 的 token，握手看起来成功而每个接口都 403。样例页 `/sdk/ppt-demo.html`。
+
+---
+
+## BP 投资分析（/api/bp）
+
+### POST /api/bp/fact-card
+PROTECTED，扣 1 次日额度（应用 `bp`）。不落库、不存原文件。
+
+Body（multipart）：`file`（.pdf/.pptx/.docx/.doc/.txt/.md；.ppt 会回「另存为 .pptx」）或 `text`（粘贴的项目介绍），二选一。提取后超过 50000 字直接 400（不截断）。
+
+Response 200:
+```json
+{
+  "filename": "xx.pdf", "chars": 12034,
+  "sections": [{ "key": "company|product|team|operations|financing", "title": "公司主体",
+    "items": [{ "field": "公司名称", "value": "…", "label": "disclosed|computed|inferred|missing|unverified",
+      "quote": "原文片段", "page": 3, "basis": "计算/推断依据" }] }],
+  "issues": [{ "text": "BP 内部矛盾", "quote": "…", "page": 5 }],
+  "notes": ["必须显示的提醒"]
+}
+```
+`page` 由服务端按 `quote` 在原文里的位置算（docx/txt 为 null）；`unverified` = 模型标了「材料披露」但引文在原文里找不到。错误：400 文件/字数问题，429 `quota_exceeded`，502 模型失败（文案带成因）。
 
 ---
 
@@ -2799,6 +2831,7 @@ consult / ppt 另带 `detail`（人话，说清撞的是账号总额还是这个
 | /api/consultant/* | 20 req/min |
 | /api/analytics/* | 30 req/min |
 | /api/ui-review/*、/api/tender/*、/api/xhs/*、/api/consult/*、/api/feishu-assistant/* | 60 req/min |
+| /api/bp/* | 30 req/min |
 | /api/vprompt/* | 10 req/min（免费不限次，只挡脚本连刷） |
 | /api/ppt/* | 300 req/min（案例库一页就是 65 个 iframe，60 的话翻两页就被 429 挡住，而卡片上照样挂着「效果 demo」） |
 

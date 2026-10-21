@@ -1,6 +1,7 @@
 // HTML 展示稿（/ppt）。这一层薄：校验 → service → 响应。
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
+import { v4 as uuidv4 } from 'uuid';
 import { layouts, layoutById, library } from '../services/ppt/layoutLibrary.js';
 import { demoDeck, demoIds, DemoNotFoundError } from '../services/ppt/demoDeck.js';
 import { disabledLayoutIds, setLayoutEnabled, LayoutStateError } from '../services/ppt/layoutState.js';
@@ -2738,7 +2739,41 @@ pptRouter.post('/decks/:id/export', (req: Request, res: Response) => {
  *    图没取到）必须能显示在界面上。直接回文件流的话那几句话没地方说，而用户拿到的是一份
  *    「打开一片正常、就是比网页版素」的稿子，压根不知道差在哪。
  */
-pptRouter.post('/decks/:id/export-pptx', async (req: Request, res: Response) => {
+/**
+ * 导出 .pptx 是**后台任务**：POST 只起任务回 `job`，前端轮询进度，渲完再单独下载文件。
+ * 原来是一个请求等到底、文件 base64 塞在 JSON 里回：41 页在云服务器上渲几分钟（超过 nginx 的
+ * 300 秒直接被掐），回传又是 40MB 一整块 —— 两段都没有进度，按钮一直停在「导出中」，
+ * 「慢」「被掐了」「卡死了」三种在界面上一模一样。
+ *
+ * 任务存内存里（不落库）：服务重启就没了，轮询那边拿到的是 404 + 一句「重新点一次」，不是空等。
+ */
+interface PptxJob {
+  deckId: string;
+  done: number;
+  total: number;
+  status: 'running' | 'done' | 'error';
+  error?: string;
+  result?: Awaited<ReturnType<typeof exportDeckPptx>>;
+  finishedAt?: number;
+}
+const pptxJobs = new Map<string, PptxJob>();
+/** 结果留 15 分钟（够下载失败后再点一次「下载」），之后连文件一起丢，不然每份 30MB 一直占着内存。 */
+const PPTX_JOB_TTL_MS = 15 * 60 * 1000;
+const PPTX_JOB_GONE = '这次导出的结果已经不在了（服务重启过，或者导完超过 15 分钟）—— 重新点一次「导出 .pptx」。';
+
+function pptxJobOf(req: Request, res: Response): PptxJob | null {
+  const owner = ownerOf(req, res);
+  if (!owner) return null;
+  const job = pptxJobs.get(req.params.job);
+  // 别人的稿子和过期的任务回同一句：分开说的话等于告诉外人「这个 job id 存在」。
+  if (!job || job.deckId !== req.params.id || !getDeck(job.deckId, owner)) {
+    res.status(404).json({ error: PPTX_JOB_GONE });
+    return null;
+  }
+  return job;
+}
+
+pptRouter.post('/decks/:id/export-pptx', (req: Request, res: Response) => {
   const owner = ownerOf(req, res);
   if (!owner) return;
   const deck = getDeck(req.params.id, owner);
@@ -2746,14 +2781,61 @@ pptRouter.post('/decks/:id/export-pptx', async (req: Request, res: Response) => 
     res.status(404).json({ error: '这份演示稿不存在（或不是你的）' });
     return;
   }
+  const now = Date.now();
+  for (const [k, j] of pptxJobs) if (j.finishedAt && now - j.finishedAt > PPTX_JOB_TTL_MS) pptxJobs.delete(k);
   const baseUrl = String(req.body?.baseUrl || '').trim() || `${req.protocol}://${req.get('host')}`;
-  try {
-    const rows = listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
-    res.json(await exportDeckPptx(rows, deck.planned_total, shellMeta(deck), baseUrl));
-  } catch (e: any) {
-    const code = e instanceof PptxExportError || e instanceof ExportError || e instanceof PageError ? 400 : 500;
-    res.status(code).json({ error: e?.message || '导出 pptx 失败' });
+  const rows = listPages(deck.id, owner).map((p) => ({ page: p.page, html: p.html, veil: p.veil_opacity || 0 }));
+  const id = uuidv4();
+  const job: PptxJob = { deckId: deck.id, done: 0, total: rows.length, status: 'running' };
+  pptxJobs.set(id, job);
+  const t0 = Date.now();
+  exportDeckPptx(rows, deck.planned_total, shellMeta(deck), baseUrl, (done, total) => {
+    job.done = done;
+    job.total = total;
+  })
+    .then((r) => {
+      job.result = r;
+      job.status = 'done';
+      console.log(`[ppt] pptx 导出完成 deck=${deck.id} ${r.pages} 页 ${(r.bytes / 1048576).toFixed(1)}MB 用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    })
+    .catch((e: any) => {
+      job.status = 'error';
+      // 合成「导出失败」等于指错方向：起不了浏览器 / 超时 / 缺页的解法完全不同，原文带出去。
+      job.error = e instanceof PptxExportError || e instanceof ExportError || e instanceof PageError
+        ? e.message
+        : `导出 pptx 失败（第 ${job.done + 1} 页附近）：${e?.message || e}`;
+      console.warn(`[ppt] pptx 导出失败 deck=${deck.id} 走到第 ${job.done}/${job.total} 页 用时 ${((Date.now() - t0) / 1000).toFixed(1)}s:`, e?.message || e);
+    })
+    .finally(() => {
+      job.finishedAt = Date.now();
+    });
+  res.status(202).json({ job: id, total: rows.length });
+});
+
+pptRouter.get('/decks/:id/export-pptx/:job', (req: Request, res: Response) => {
+  const job = pptxJobOf(req, res);
+  if (!job) return;
+  if (job.status === 'running') {
+    res.json({ status: 'running', done: job.done, total: job.total });
+  } else if (job.status === 'error') {
+    res.json({ status: 'error', error: job.error });
+  } else {
+    const { buffer: _b, ...stats } = job.result!;
+    res.json({ status: 'done', ...stats });
   }
+});
+
+pptRouter.get('/decks/:id/export-pptx/:job/file', (req: Request, res: Response) => {
+  const job = pptxJobOf(req, res);
+  if (!job) return;
+  if (job.status !== 'done') {
+    res.status(409).json({ error: job.status === 'error' ? job.error : '还没导完，等进度走完再下载。' });
+    return;
+  }
+  const r = job.result!;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(r.filename)}`);
+  res.send(r.buffer);
 });
 
 /** deck 级共享资料（:root 变量 + 通用组件 CSS、配色 token、配图风格）。 */

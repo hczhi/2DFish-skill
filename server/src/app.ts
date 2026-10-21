@@ -42,6 +42,7 @@ import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { relayRouter } from './api/relay.js';
 import { vpromptRouter } from './api/vprompt.js';
+import { bpRouter } from './api/bp.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
 import { expireOverdueTenders, startTenderExpiryScheduler } from './services/tender/retention.js';
@@ -347,6 +348,10 @@ app.use('/api/consult', consultRouter);
 // 白，卡片上照样挂着「有效果 demo」，读起来像 demo 坏了。这条路径不花 AI 额度、只回仓库文件。
 app.use('/api/ppt', rateLimit(300, 60_000));
 app.use('/api/ppt', pptRouter);
+
+// BP 投资分析（BP → 项目事实卡）
+app.use('/api/bp', rateLimit(30, 60_000));
+app.use('/api/bp', bpRouter);
 
 // 飞书助理（在飞书里 @ 机器人下达自然语言指令）。
 // 只有管理接口，事件走长连接进来，没有对外的回调端点。

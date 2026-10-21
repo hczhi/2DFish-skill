@@ -35,8 +35,9 @@ export class PptxExportError extends Error {}
 
 export interface PptxExportResult {
   filename: string;
-  /** 文件字节的 base64（回 JSON 不回 attachment：下面那几句提示得有地方说，见 api/ppt.ts）。 */
-  base64: string;
+  /** 文件字节。**不再 base64 塞进 JSON 回**：41 页 ≈ 30MB → 40MB 的一个 JSON，小带宽下要传
+   *  几分钟、界面上没有进度，读起来就是「卡住了」。api 层先回统计和提示，文件单独下载。 */
+  buffer: Buffer;
   bytes: number;
   pages: number;
   /** 可编辑文本块数 —— 这个数是「可编辑」这件事唯一的凭据，前端要显示出来。 */
@@ -132,7 +133,9 @@ export async function exportDeckPptx(
   pages: DeckPageInput[],
   total: number,
   meta: DeckMeta,
-  baseUrl: string
+  baseUrl: string,
+  /** 每走完一页报一次。41 页在云服务器上要几分钟，没有这个数的话「慢」和「卡死」长得一样。 */
+  onProgress?: (done: number, total: number) => void
 ): Promise<PptxExportResult> {
   if (running >= MAX_CONCURRENT) {
     throw new PptxExportError(
@@ -181,6 +184,7 @@ export async function exportDeckPptx(
     if (!count) {
       throw new PptxExportError('渲染出来的这份 deck 里一页幻灯片都没有（template 的插入点被改坏了？）—— 不给导一份空文件。');
     }
+    onProgress?.(0, count);
 
     const PptxGenJS: any = (PptxModule as any).default || PptxModule;
     const pptx = new PptxGenJS();
@@ -205,12 +209,13 @@ export async function exportDeckPptx(
         e.pages.push(i + 1);
       }
       await emitPage(pptx, page, walk);
+      onProgress?.(i + 1, count);
     }
 
     const buf: Buffer = (await pptx.write({ outputType: 'nodebuffer' })) as Buffer;
     return {
       filename: filename.replace(/\.html$/i, '') + '.pptx',
-      base64: buf.toString('base64'),
+      buffer: buf,
       bytes: buf.length,
       pages: count,
       textBlocks,

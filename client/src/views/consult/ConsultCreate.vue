@@ -139,10 +139,10 @@ async function create() {
   --brand-yellow: #FFB800;
   --brand-yellow-hover: #E6A600;
   
-  --text-primary: #FFFFFF;
-  --text-secondary: rgba(255, 255, 255, 0.85);
-  --color-soft: rgba(255, 255, 255, 0.6);
-  --bg-color: #12182B; /* 从 #0A0F1E 调亮 */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --color-soft: rgba(0, 0, 0, 0.5);
+  --bg-color: #F9FAFB;
   
   display: flex;
   flex-direction: column;
@@ -165,25 +165,23 @@ async function create() {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
-  background-size: cover;
-  background-position: center;
+  background: var(--bg-color);
 }
 
 .bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(18, 24, 43, 0.65); /* 从 0.85 降低到 0.65 */
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
 .grid-bg {
   position: absolute;
   inset: 0;
   background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
   background-size: 32px 32px;
   z-index: 1;
 }
@@ -221,14 +219,14 @@ async function create() {
 
 .kicker-text {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.2em;
   color: var(--brand-yellow);
 }
 
 .hero h1 {
-  font-size:36px;
+  font-size: 36px;
   font-weight: 800;
   letter-spacing: -0.04em;
   color: var(--text-primary);
@@ -257,8 +255,8 @@ async function create() {
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.8);
   color: var(--text-primary);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -267,17 +265,16 @@ async function create() {
   justify-content: center;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
 }
 
 .btn-back-icon:hover {
   background: var(--brand-yellow);
   color: #000;
-  transform: translateY(-2px);
 }
 
 .btn-back-icon:active {
-  transform: translateY(0) scale(0.98);
+  opacity: 0.9;
 }
 
 .btn-primary {
@@ -287,10 +284,10 @@ async function create() {
   background: var(--brand-yellow);
   color: #111;
   padding: 14px 28px;
-  font-size: 15px;
+  font-size: 16.5px;
   font-weight: 700;
   border: none;
-  border-radius: 999px;
+  border-radius: 8px;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(255, 184, 0, 0.2);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -298,56 +295,55 @@ async function create() {
 }
 .btn-primary:hover { 
   background: var(--brand-yellow-hover);
-  transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(255, 184, 0, 0.3);
 }
 .btn-primary:active { 
-  transform: translateY(0) scale(0.98); 
+  opacity: 0.9; 
 }
-.btn-primary:disabled { opacity: .5; cursor: default; transform: none; box-shadow: none; }
+.btn-primary:disabled { opacity: .5; cursor: default; box-shadow: none; }
 
 .alert {
   margin-bottom: 24px; padding: 12px 16px; border-radius: 12px;
-  background: rgba(254, 242, 242, 0.1); border: 1px solid rgba(252, 165, 165, 0.3); color: #FCA5A5; font-size: 14px;
+  background: rgba(254, 242, 242, 0.9); border: 1px solid rgba(252, 165, 165, 0.5); color: #991B1B; font-size: 15.5px;
   backdrop-filter: blur(10px);
 }
 
 .create-card {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px); 
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 24px; 
   padding: 28px; 
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
 }
 
 .field { display: block; margin-bottom: 32px; }
-.label { display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; }
+.label { display: flex; justify-content: space-between; font-size: 15.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; }
 .label em { font-style: normal; color: var(--color-soft); font-family: var(--font-mono); font-weight: 400; }
-.label em.over { color: #FCA5A5; }
+.label em.over { color: #991B1B; }
 .field input, .field textarea {
   width: 100%; box-sizing: border-box; padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
-  font-size: 15px; font-family: var(--font-sans); color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.2); resize: vertical; line-height: 1.8;
+  border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px;
+  font-size: 16.5px; font-family: var(--font-sans); color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.5); resize: vertical; line-height: 1.8;
   transition: all 0.2s;
 }
 .field input::placeholder, .field textarea::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(0, 0, 0, 0.3);
 }
 .field input:focus, .field textarea:focus {
   outline: none; border-color: var(--brand-yellow);
-  box-shadow: 0 0 0 4px rgba(255, 184, 0, 0.1);
-  background: rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 0 4px rgba(255, 184, 0, 0.15);
+  background: #FFFFFF;
 }
-.hint { display: block; margin-top: 12px; font-size: 13px; line-height: 1.7; color: var(--color-soft); }
+.hint { display: block; margin-top: 12px; font-size: 14.5px; line-height: 1.7; color: var(--color-soft); }
 
 .create-actions {
   display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
-  margin-top: 48px; padding-top: 32px; border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 48px; padding-top: 32px; border-top: 1px solid rgba(0, 0, 0, 0.05);
 }
-.muted { font-size: 13px; color: var(--color-soft); line-height: 1.6; flex: 1; min-width: 300px; }
+.muted { font-size: 14.5px; color: var(--color-soft); line-height: 1.6; flex: 1; min-width: 300px; }
 
 @media (max-width: 820px) {
   .hero { padding: 40px 20px 32px; }

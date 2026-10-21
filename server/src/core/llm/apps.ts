@@ -32,6 +32,7 @@ export const AI_APPS: AIAppDef[] = [
   { id: 'relay', name: '对外中转接口' },
   { id: 'ppt', name: 'HTML 展示稿' },
   { id: 'vprompt', name: '视频提示词优化' },
+  { id: 'bp', name: 'BP 投资分析' },
 ];
 
 /**

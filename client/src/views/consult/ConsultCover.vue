@@ -168,9 +168,9 @@ onMounted(() => {
   --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
   --brand-yellow: #FFB800;
   --brand-yellow-hover: #E6A600;
-  --text-primary: #FFFFFF;
-  --text-secondary: rgba(255, 255, 255, 0.85);
-  --bg-color: #12182B; /* 从 #0A0F1E 调亮 */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --bg-light: #F9FAFB;
   
   display: flex;
   flex-direction: column;
@@ -179,6 +179,7 @@ onMounted(() => {
   overflow-x: hidden;
   font-family: var(--font-sans);
   background: var(--bg-light);
+  color: var(--text-primary);
 }
 
 .consult-cover {
@@ -196,7 +197,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #000;
+  background-color: var(--bg-light);
+  background-image: linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 /* 背景图与遮罩 */
@@ -216,9 +219,9 @@ onMounted(() => {
 .bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(18, 24, 43, 0.65);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
 /* 主要内容区 */
@@ -267,7 +270,7 @@ onMounted(() => {
 
 .kicker-text {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.2em;
   color: var(--brand-yellow);
@@ -276,11 +279,11 @@ onMounted(() => {
 .main-title {
   font-size: 88px;
   font-weight: 800;
-  color: #fff;
+  color: var(--text-primary);
   line-height: 1.1;
   letter-spacing: -0.04em;
   margin: 0 0 40px;
-  text-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  text-shadow: 0 4px 12px rgba(0,0,0,0.02);
 }
 
 .hero-desc-wrapper {
@@ -291,16 +294,16 @@ onMounted(() => {
 
 .vertical-accent {
   width: 3px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--brand-yellow);
   border-radius: 2px;
 }
 
 .sub-title {
-  font-size: 20px;
-  color: rgba(255, 255, 255, 0.85);
+  font-size: 21.5px;
+  color: var(--text-secondary);
   margin: 0;
   line-height: 1.8;
-  font-weight: 300;
+  font-weight: 500;
   letter-spacing: 0.02em;
 }
 
@@ -316,22 +319,23 @@ onMounted(() => {
   background: var(--brand-yellow);
   color: #111;
   padding: 16px 36px;
-  border-radius: 999px;
-  font-size: 16px;
+  border-radius: 8px; /* HC Design 推荐小圆角 */
+  font-size: 17.5px;
   font-weight: 700;
   text-decoration: none;
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.25);
+  box-shadow: 0 4px 12px rgba(255, 184, 0, 0.2);
 }
 
 .btn-yellow:hover {
   background: var(--brand-yellow-hover);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgba(255, 184, 0, 0.35);
+  /* 取消 translateY 满足视觉稳定 */
+  box-shadow: 0 8px 24px rgba(255, 184, 0, 0.3);
 }
 
 .btn-yellow:active {
-  transform: translateY(0) scale(0.98);
+  /* 取消 scale 满足视觉稳定 */
+  opacity: 0.9;
 }
 
 .icon-arrow {
@@ -385,8 +389,8 @@ onMounted(() => {
 }
 
 .stats-label {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.8);
+  font-size: 15.5px;
+  color: #4B5563;
   margin: 0 0 8px;
   letter-spacing: 0.05em;
 }
@@ -395,10 +399,9 @@ onMounted(() => {
   font-family: var(--font-mono);
   font-size: 88px;
   font-weight: 800;
-  color: #fff;
+  color: #111827;
   line-height: 1;
   letter-spacing: -0.04em;
-  text-shadow: 0 8px 24px rgba(0,0,0,0.2);
 }
 
 /* 底部居中滚动指示器 */
@@ -411,13 +414,13 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  opacity: 0.7;
+  opacity: 0.5;
 }
 
 .mouse-icon {
   width: 26px;
   height: 40px;
-  border: 2px solid #fff;
+  border: 2px solid var(--text-secondary);
   border-radius: 14px;
   position: relative;
   display: flex;
@@ -427,7 +430,7 @@ onMounted(() => {
 .wheel {
   width: 4px;
   height: 8px;
-  background: #fff;
+  background: var(--text-secondary);
   border-radius: 2px;
   margin-top: 6px;
   animation: scroll 2s cubic-bezier(0.15, 0.41, 0.69, 0.94) infinite;
@@ -443,13 +446,13 @@ onMounted(() => {
 ================== */
 .feature-section {
   padding: 140px 0;
-  background: #111; /* 深色背景提升高级感 */
-  color: #fff;
+  background: #FFFFFF;
+  color: var(--text-primary);
 }
 
 .clients-section {
   padding: 80px 0 120px;
-  background: #000;
+  background: var(--bg-light);
   overflow: hidden;
 }
 
@@ -475,15 +478,15 @@ onMounted(() => {
 .section-title {
   font-size: 56px;
   font-weight: 800;
-  color: #fff;
+  color: var(--text-primary);
   margin: 0 0 32px;
   letter-spacing: -0.02em;
   line-height: 1.15;
 }
 
 .section-desc {
-  font-size: 20px;
-  color: rgba(255,255,255,0.7);
+  font-size: 21.5px;
+  color: var(--text-secondary);
   line-height: 1.6;
   margin: 0 0 48px;
 }
@@ -505,23 +508,25 @@ onMounted(() => {
 
 .feature-card {
   padding: 48px;
-  border-radius: 24px;
+  border-radius: 24px; /* 可以调整为 hc-design 推荐的 10px 或保留 */
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   opacity: 0;
   transform: translateY(40px);
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
 }
 
 .glass-card:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.15);
-  transform: translateY(-8px) !important; /* 覆盖默认 transform */
+  background: #FFFFFF;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.08);
+  /* 取消 transform 以满足视觉稳定 */
 }
 
 .feature-card.is-visible {
@@ -535,7 +540,7 @@ onMounted(() => {
 
 .fc-number {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 17.5px;
   color: var(--brand-yellow);
   font-weight: 700;
   margin-bottom: 24px;
@@ -545,14 +550,14 @@ onMounted(() => {
 .fc-title {
   font-size: 32px;
   font-weight: 800;
-  color: #fff;
+  color: var(--text-primary);
   margin: 0 0 20px;
   letter-spacing: -0.02em;
 }
 
 .fc-desc {
-  font-size: 18px;
-  color: rgba(255,255,255,0.6);
+  font-size: 19.5px;
+  color: var(--text-secondary);
   line-height: 1.7;
   margin: 0;
 }
@@ -561,9 +566,9 @@ onMounted(() => {
 .clients-kicker {
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14.5px;
   letter-spacing: 4px;
-  color: rgba(255,255,255,0.4);
+  color: #9CA3AF;
   margin-bottom: 64px;
 }
 
@@ -600,7 +605,7 @@ onMounted(() => {
   font-family: var(--font-mono);
   font-size: 24px;
   font-weight: 800;
-  color: rgba(255,255,255,0.3);
+  color: #D1D5DB;
   letter-spacing: -0.5px;
   white-space: nowrap;
   transition: color 0.3s;
@@ -608,12 +613,12 @@ onMounted(() => {
 }
 
 .logo-item:hover {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .lg-icon {
   font-size: 32px;
-  color: rgba(255,255,255,0.2);
+  color: #E5E7EB;
   transition: color 0.3s;
 }
 

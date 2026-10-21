@@ -240,10 +240,10 @@ function fmt(ts: string) {
   --brand-yellow: #FFB800;
   --brand-yellow-hover: #E6A600;
   
-  /* 调整文字颜色以适应深色背景 */
-  --text-primary: #FFFFFF;
-  --text-secondary: rgba(255, 255, 255, 0.85);
-  --bg-color: #12182B; /* 从 #0A0F1E 调亮 */;
+  /* 调整文字颜色以适应明亮背景 */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --bg-color: #F9FAFB;
   
   display: flex;
   flex-direction: column;
@@ -266,27 +266,25 @@ function fmt(ts: string) {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  /* 添加首页同款背景图 */
-  background-image: url('http://file.qiaonan.vip/uploads/2026/09/01/90892237-f079-493e-b2e4-13c15d0106e5.jpg');
-  background-size: cover;
-  background-position: center;
+  /* 移除图片背景，改用极致极简的网格底色 */
+  background: var(--bg-color);
 }
 
-/* 添加一个深色遮罩，保证上方卡片和文字的对比度 */
+/* 明亮模式下调整遮罩 */
 .bg-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(18, 24, 43, 0.65); /* 从 0.85 降低到 0.65 */
-  backdrop-filter: blur(12px); /* 稍微增加模糊度让画面更柔和 */
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
 .grid-bg {
   position: absolute;
   inset: 0;
   background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
   background-size: 32px 32px;
   z-index: 1; /* 确保网格在背景和遮罩之上 */
 }
@@ -319,7 +317,7 @@ function fmt(ts: string) {
 
 .kicker-text {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.2em;
   color: var(--brand-yellow);
@@ -397,7 +395,7 @@ function fmt(ts: string) {
 }
 
 .header-sub {
-  font-size: 18px;
+  font-size: 19.5px;
   line-height: 1.8;
   color: var(--text-secondary);
   max-width: 600px;
@@ -420,7 +418,7 @@ function fmt(ts: string) {
 
 .tag {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 6px 14px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.04);
@@ -437,7 +435,7 @@ function fmt(ts: string) {
   background: var(--brand-yellow);
   color: #111;
   padding: 14px 32px;
-  font-size: 15px;
+  font-size: 16.5px;
   font-weight: 800;
   border: none;
   border-radius: 999px;
@@ -533,7 +531,7 @@ function fmt(ts: string) {
   padding: 12px 16px;
   border-radius: 12px;
   margin-bottom: 24px;
-  font-size: 14px;
+  font-size: 15.5px;
 }
 
 .empty-state {
@@ -542,13 +540,14 @@ function fmt(ts: string) {
   align-items: center;
   justify-content: center;
   padding: 80px 20px;
-  background: rgba(255, 255, 255, 0.05); /* 调整空状态背景透明度以适应深色背景 */
+  background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 24px;
   color: var(--text-secondary);
-  font-size: 15px;
+  font-size: 16.5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
 }
 
 .ios-loading-bar {
@@ -579,7 +578,7 @@ function fmt(ts: string) {
 
 .loading-text {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 2px;
   color: var(--text-secondary);
 }
@@ -594,26 +593,28 @@ function fmt(ts: string) {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.05); /* 调整卡片背景透明度以适应深色背景 */
+  background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1); /* 添加微弱的白色边框提升质感 */
-  border-radius: 20px;
-  padding: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 12px; /* HC Design 推荐 */
+  padding: 24px;
   overflow: hidden;
   cursor: pointer;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .project-card:hover {
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-4px);
+  background: #FFFFFF;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.08);
+  /* 移除 transform 位移满足交互约束 */
 }
 
 .project-card:active {
-  transform: translateY(0) scale(0.98);
+  /* 移除 scale 缩放满足交互约束 */
+  opacity: 0.9;
 }
 
 .card-bg-number {
@@ -623,7 +624,7 @@ function fmt(ts: string) {
   font-family: var(--font-mono);
   font-size: 80px;
   font-weight: 800;
-  color: rgba(255, 255, 255, 0.03); /* 调整卡片内大数字的颜色以适应深色背景 */
+  color: rgba(0, 0, 0, 0.03); /* 明亮模式下的超大数字颜色 */
   line-height: 1;
   pointer-events: none;
   letter-spacing: -4px;
@@ -651,7 +652,7 @@ function fmt(ts: string) {
 }
 
 .badge {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   padding: 4px 10px;
   border-radius: 6px;
@@ -668,7 +669,7 @@ function fmt(ts: string) {
 
 .meta-item {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 14px;
   color: var(--text-secondary);
 }
 
@@ -696,11 +697,11 @@ function fmt(ts: string) {
 }
 
 .btn-icon {
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.05);
   border: none;
   padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: 6px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;

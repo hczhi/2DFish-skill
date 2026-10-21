@@ -174,6 +174,13 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
+    // BP 投资分析：上传 BP → 项目事实卡。
+    {
+      path: '/bp',
+      name: 'bp',
+      component: () => import('../views/bp/BpFactCard.vue'),
+      meta: { requiresAuth: true },
+    },
     // 视频提示词优化：单页、免费、不登录也能用。
     {
       path: '/vprompt',

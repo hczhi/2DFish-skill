@@ -57,7 +57,7 @@
           class="btn-ghost"
           :disabled="batchRunning || exporting || exportingPptx || !pages.length || builtCount < pages.length"
           @click="exportPptx"
-        >{{ exportingPptx ? `导出 pptx 中…（${pages.length} 页，约 ${pptxEta} 秒）` : '导出 .pptx（可编辑）' }}</button>
+        >{{ exportingPptx ? pptxProgress || '导出 pptx 中…' : '导出 .pptx（可编辑）' }}</button>
       </div>
     </header>
 
@@ -1784,8 +1784,10 @@ const exportWarnings = ref<string[]>([])
 const exportingPptx = ref(false)
 const pptxNote = ref('')
 const pptxWarnings = ref<string[]>([])
-/** 一页在服务端大约半秒（渲染 + 走 DOM + 截图），报个数是为了让人愿意等而不是连点。 */
-const pptxEta = computed(() => Math.max(3, Math.round(pages.value.length * 0.6)))
+/** 按钮上的进度：服务端「渲染第 n / N 页」→ 浏览器「下载 x / y MB」。两段分开报 ——
+ *  原来那句「约 25 秒」是按本机速度估的，线上 41 页要几分钟，过了那个数之后「慢」和「卡死」
+ *  在界面上一模一样。 */
+const pptxProgress = ref('')
 
 interface FilledImage {
   index: number; prompt: string; mode: string; ratio: string
@@ -3945,12 +3947,25 @@ async function exportPptx() {
   pptxNote.value = ''
   pptxWarnings.value = []
   exportingPptx.value = true
+  pptxProgress.value = '导出 pptx 中…（正在打开浏览器）'
   try {
-    const data = await apiPost<{
-      filename: string; base64: string; bytes: number; pages: number
+    const base = `/api/ppt/decks/${deckId.value}/export-pptx`
+    const { job } = await apiPost<{ job: string; total: number }>(base, { baseUrl: location.origin })
+    let data: {
+      status: 'running' | 'done' | 'error'; done?: number; total?: number; error?: string
+      filename: string; bytes: number; pages: number
       textBlocks: number; shapes: number; images: number; warnings: string[]
-    }>(`/api/ppt/decks/${deckId.value}/export-pptx`, { baseUrl: location.origin })
-    downloadBytes(data.filename, data.base64, 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+    }
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500))
+      data = await apiGet(`${base}/${job}`)
+      if (data.status === 'error') throw new Error(data.error || '导出 pptx 失败')
+      if (data.status === 'done') break
+      pptxProgress.value = data.total
+        ? `导出 pptx 中…（渲染第 ${Math.min(data.done! + 1, data.total)} / ${data.total} 页）`
+        : '导出 pptx 中…（正在打开浏览器）'
+    }
+    await downloadPptx(`${base}/${job}/file`, data.filename, data.bytes)
     pptxNote.value =
       `已导出 ${data.filename}（${data.pages} 页 / 文本 ${data.textBlocks} 块 / 色块 ${data.shapes} 个 / ` +
       `图片 ${data.images} 张，${Math.max(1, Math.round(data.bytes / 1024 / 102.4) / 10)} MB）` +
@@ -3960,24 +3975,40 @@ async function exportPptx() {
     exportErr.value = e.message || '导出 pptx 失败'
   }
   exportingPptx.value = false
+  pptxProgress.value = ''
 }
 
-/** base64 → 文件。**不能走 `download()`**：那个按文本存，二进制会被当成 UTF-8 改写，
- *  存出来的 .pptx 双击时 PowerPoint 说文件损坏（而下载那一步一切正常）。 */
-function downloadBytes(filename: string, b64: string, mime: string) {
-  const bin = atob(b64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  const url = URL.createObjectURL(new Blob([bytes], { type: mime }))
+/** 下载渲好的文件，边下边报 MB 数（几十 MB 在小带宽下要传好几分钟）。按字节收进 Blob ——
+ *  当文本存的话二进制会被当 UTF-8 改写，PowerPoint 双击说文件损坏（而下载那一步一切正常）。 */
+async function downloadPptx(url: string, filename: string, total: number) {
+  const res = await api(url)
+  if (!res.ok || !res.body) {
+    const d = await res.json().catch(() => ({}))
+    throw new Error(d.error || `下载 pptx 失败（HTTP ${res.status}）`)
+  }
+  const mb = (n: number) => (n / 1048576).toFixed(1)
+  const reader = res.body.getReader()
+  const chunks: BlobPart[] = []
+  let got = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    got += value.length
+    pptxProgress.value = `下载中…（${mb(got)} / ${mb(total)} MB）`
+  }
+  // 连接中途断了 fetch 不一定抛错，读到的只是半个文件 —— 存下来是一份「已损坏」的 pptx。
+  if (got !== total) throw new Error(`下载到一半断了（${mb(got)} / ${mb(total)} MB），文件不完整 —— 再点一次导出。`)
+  const href = URL.createObjectURL(new Blob(chunks, { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }))
   try {
     const a = document.createElement('a')
-    a.href = url
+    a.href = href
     a.download = filename
     document.body.appendChild(a)
     a.click()
     a.remove()
   } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setTimeout(() => URL.revokeObjectURL(href), 1000)
   }
 }
 
