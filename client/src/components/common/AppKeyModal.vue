@@ -14,6 +14,8 @@ const router = useRouter()
 const GATES: Record<KeyApp, { title: string; prefix: string; home: string; theme: 'cinema' | 'light' }> = {
   ppt: { title: 'HTML 展示稿', prefix: 'PPT', home: '/ppt/decks', theme: 'light' },
   consult: { title: '品牌咨询', prefix: 'CST', home: '/consult/projects', theme: 'light' },
+  broll: { title: '口播动效卡', prefix: 'BRL', home: '/broll/studio', theme: 'cinema' },
+  explainer: { title: '代码动画视频', prefix: 'EXP', home: '/explainer/studio', theme: 'light' },
 }
 const gate = GATES[props.app]
 

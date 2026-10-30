@@ -6,7 +6,7 @@ import { ref } from 'vue'
 // window.location 现读：守卫跑的时候地址栏还是上一页，现读的话从首页点进 /ppt 那一下带的是
 // 空 token，被判成没 key 送去输入页。
 
-export type KeyApp = 'ppt' | 'consult'
+export type KeyApp = 'ppt' | 'consult' | 'broll' | 'explainer'
 
 const storeKey = (app: KeyApp) => `qn-app-key:${app}`
 

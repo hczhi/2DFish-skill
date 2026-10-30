@@ -1,0 +1,25 @@
+/* 动效卡共用的「材质」：强调字的渐变填充 + 微光。不放进各卡的 scoped 样式里，
+   是为了 10 张卡用的是同一份 —— 各写一份的话改了一张其余照旧，整条视频质感不统一。
+   渐变由 --accent 用 color-mix 推出来：单张卡改了强调色时渐变和光晕跟着变（写死成橙色的话改色只改了一半）。 */
+.bx-hot {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 45%, #fff) 0%,
+    var(--accent) 52%,
+    color-mix(in srgb, var(--accent) 78%, #000) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 22px color-mix(in srgb, var(--accent) var(--glow-a, 45%), transparent));
+}
+.bx-glow-box {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent),
+    0 0 36px color-mix(in srgb, var(--accent) var(--glow-a, 45%), transparent);
+}
+/* 小标签前面那个会呼吸的点（亮度由 --pulse 控制，0~1，按 t 算） */
+.bx-dot {
+  display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 calc(6px + var(--pulse, 0) * 18px) var(--accent);
+  opacity: calc(0.55 + var(--pulse, 0) * 0.45);
+}

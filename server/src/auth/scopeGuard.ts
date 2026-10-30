@@ -87,6 +87,25 @@ const KEY_ME: ScopeRule = { methods: ['GET'], path: /^\/api\/app-keys\/me$/ };
 const KEY_REDEEM: ScopeRule = { methods: ['POST'], path: /^\/api\/app-keys\/redeem$/ };
 SCOPE_RULES['ppt:key'] = [...SCOPE_RULES['ppt:embed'], KEY_ME, KEY_REDEEM];
 SCOPE_RULES['consult:key'] = [...SCOPE_RULES['consult:embed'], KEY_ME, KEY_REDEEM];
+// 口播动效卡没有嵌入版，单独列。不含 `PUT /api/broll/templates/:id`（上下线模版是管理员的事）；
+// 卡片里的图片要先传服务器（导出在服务器渲染，读不到本机文件），漏了上传那条的话加图是一句 403。
+SCOPE_RULES['broll:key'] = [
+  { methods: ['GET'], path: /^\/api\/broll\/templates$/ },
+  { methods: ['POST'], path: /^\/api\/broll\/(plan|export|export-all)$/ },
+  { methods: ['POST'], path: /^\/api\/upload\/image$/ },
+  KEY_ME,
+  KEY_REDEEM,
+];
+
+// 代码动画视频（/explainer/studio）。笔顺接口本来是 public，列上是为了 key 带着头来取时不被挡；
+// 漏了 script / scene / export 任何一条的话 key 用户点那个按钮是一句 403，账号用户一切正常。
+SCOPE_RULES['explainer:key'] = [
+  { methods: ['GET'], path: /^\/api\/explainer\/strokes$/ },
+  { methods: ['POST'], path: /^\/api\/explainer\/(script|scene|export)$/ },
+  { methods: ['GET'], path: /^\/api\/explainer\/export\/[0-9a-f-]{36}(\/file)?$/ },
+  KEY_ME,
+  KEY_REDEEM,
+];
 
 export function scopeGuard(req: Request, res: Response, next: NextFunction): void {
   const scope = req.tokenScope;

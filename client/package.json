@@ -16,6 +16,7 @@
     "@tiptap/starter-kit": "^3.29.1",
     "@tiptap/vue-3": "^3.29.1",
     "dompurify": "^3.4.11",
+    "lucide": "^1.61.0",
     "marked": "^18.0.10",
     "three": "^0.180.0",
     "vue": "^3.4.0",

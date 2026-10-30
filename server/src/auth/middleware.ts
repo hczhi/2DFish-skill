@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { getDatabase } from '../db/index.js';
-import { authenticateAppKey, AppKeyAuthError } from '../services/appKeyService.js';
+import { authenticateAppKey, AppKeyAuthError, APP_KEY_RE, RECHARGE_CODE_RE } from '../services/appKeyService.js';
 
 export interface AuthUser {
   id: string;
@@ -70,6 +70,10 @@ const ROUTE_AUTH_CONFIG: RouteAuthConfig[] = [
   { path: '/api/ppt/demo-deck.html', method: 'GET', level: 'public' },
   // 视频提示词优化的选项表（风格 / 题材 / 51 式镜头），不调 AI。
   { path: '/api/vprompt/options', method: 'GET', level: 'public' },
+  // 口播动效卡模版的上线状态：编辑页不登录也能打开，判成 protected 的话一进页面就弹登录框。
+  { path: '/api/broll/templates', method: 'GET', level: 'public' },
+  // 代码动画的汉字笔顺数据：导出渲染页（无头浏览器、不带登录）也要取；只有开源字库，不调 AI。
+  { path: '/api/explainer/strokes', method: 'GET', level: 'public' },
 
   // OPTIONAL — 匿名可访问。匿名主体由 auth/requester.ts 按 IP+UA 指纹派生独立 id
   // 并单独限额（不再借用 admin 身份和额度）。
@@ -140,13 +144,11 @@ function authenticateByModuleToken(token: string, req: Request): AuthUser | null
   return { id: row.id, username: row.username, role: (row.role || 'user') as 'admin' | 'user' };
 }
 
-/** 售卖型应用 key（112）的形状：`PPT-XXXX-…` / `CST-XXXX-…`。 */
-const APP_KEY_RE = /^\s*(PPT|CST)-/i;
 
 function tryParseAuth(req: Request, token: string): boolean {
   // 充值码（115）被当成 key 贴进输入框：按 JWT 解析的话回的是 «Invalid or expired token»，
   // 他会以为自己买到的是张废码。
-  if (/^\s*(PPT|CST)CZ-/i.test(token)) {
+  if (RECHARGE_CODE_RE.test(token)) {
     req.authError = '这是充值码，不是 key：先输入你的 key 进入，再点右上角「充值」把它充进去';
     return false;
   }

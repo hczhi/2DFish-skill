@@ -15,8 +15,17 @@ import { encryptSecret, tryDecryptSecret } from '../core/secrets.js';
 export const KEY_APPS = {
   ppt: { prefix: 'PPT', label: 'HTML 展示稿' },
   consult: { prefix: 'CST', label: '品牌咨询' },
+  broll: { prefix: 'BRL', label: '口播动效卡' },
+  explainer: { prefix: 'EXP', label: '代码动画视频' },
 } as const;
 export type KeyApp = keyof typeof KEY_APPS;
+
+// key / 充值码的形状一律从 KEY_APPS 推出来，不在各处写死前缀：漏改一处的话新应用的 key
+// 被当成 JWT 解析，买家看到的是一句 «Invalid or expired token»，只会以为自己买到的是张废卡。
+const PREFIX_ALT = Object.values(KEY_APPS).map((a) => a.prefix).join('|');
+/** `PPT-XXXX-…` / `CST-XXXX-…` / … */
+export const APP_KEY_RE = new RegExp(`^\\s*(${PREFIX_ALT})-`, 'i');
+const RECHARGE_EXAMPLES = Object.values(KEY_APPS).map((a) => `${a.prefix}CZ-`).join(' / ');
 
 export function isKeyApp(app: unknown): app is KeyApp {
   return typeof app === 'string' && Object.prototype.hasOwnProperty.call(KEY_APPS, app);
@@ -250,8 +259,8 @@ function touchKey(row: AppKeyRow): void {
 
 // ── 按次扣点（113）：调用前冻结、成功后结算、失败解冻 ──────────────────────────
 
-/** 单价。文本每次 AI 调用 1 点、生图每张 5 点 —— 不看 token，买家算得清。 */
-export const POINT_PRICE = { text: 1, image: 5 } as const;
+/** 单价。文本每次 AI 调用 1 点、生图每张 5 点、动效卡每次导出 5 点（不看时长）—— 不看 token，买家算得清。 */
+export const POINT_PRICE = { text: 1, image: 5, brollExport: 5, explainerExport: 5 } as const;
 
 export class PointsExhaustedError extends Error {
   status = 402;
@@ -334,7 +343,7 @@ export type RechargeCodePublic = Omit<RechargeCodeRow, 'code_hash' | 'code_enc'>
  * 码的形状是 `PPTCZ-XXXX-…`：和 key 的 `PPT-XXXX-…` 一眼能分开，两个输入框贴反了时能说出
  * 「这是 key / 这是充值码」，而不是一句「无效」。
  */
-export const RECHARGE_CODE_RE = /^\s*(PPT|CST)CZ-/i;
+export const RECHARGE_CODE_RE = new RegExp(`^\\s*(${PREFIX_ALT})CZ-`, 'i');
 
 export function createRechargeCodes(
   app: KeyApp,
@@ -410,8 +419,8 @@ export function redeemRechargeCode(keyId: string, raw: string): { points: number
   const key = getAppKey(keyId);
   if (!key) throw new AppKeyError('key 不存在');
   if (!RECHARGE_CODE_RE.test(raw)) {
-    if (/^\s*(PPT|CST)-/i.test(raw)) throw new AppKeyError('这是一把 key，不是充值码。充值码以 PPTCZ- / CSTCZ- 开头');
-    throw new AppKeyError('这不是充值码的格式（应以 PPTCZ- / CSTCZ- 开头），请核对是否抄错');
+    if (APP_KEY_RE.test(raw)) throw new AppKeyError(`这是一把 key，不是充值码。充值码以 ${RECHARGE_EXAMPLES} 开头`);
+    throw new AppKeyError(`这不是充值码的格式（应以 ${RECHARGE_EXAMPLES} 开头），请核对是否抄错`);
   }
   const db = getDatabase();
   return db.transaction(() => {

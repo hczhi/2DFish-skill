@@ -116,6 +116,9 @@ import { migration_113 } from './113_app_key_frozen.js';
 import { migration_114 } from './114_home_key_apps.js';
 import { migration_115 } from './115_recharge_codes.js';
 import { migration_116 } from './116_home_seo_qiaonx.js';
+import { migration_118 } from './118_home_broll.js';
+import { migration_119 } from './119_home_explainer.js';
+import { migration_117 } from './117_broll_templates.js';
 
 export const allMigrations: Migration[] = [
   migration_001,
@@ -233,4 +236,7 @@ export const allMigrations: Migration[] = [
   migration_114,
   migration_115,
   migration_116,
+  migration_117,
+  migration_118,
+  migration_119,
 ];

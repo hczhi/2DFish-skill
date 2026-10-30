@@ -260,6 +260,8 @@ skills/  workspaces/  docs/
   scope 不能省 —— 影子用户就是个普通用户，漏了的话一张 ppt 的卡能调 /api/xhs、/api/chat，每个都 200。
   `ppt:key` / `consult:key` 直接展开对应 `*:embed` 的清单，不另维护一份（两份的话嵌入版补上的端点在卖出去的卡上是 403）。
   前端「现在用哪个应用的 key」由路由 `meta.keyApp` 决定（`lib/appKey.ts`），401 回输入页并带服务端成因，不弹登录框。
+  key / 充值码的前缀正则（`APP_KEY_RE` / `RECHARGE_CODE_RE`）由 `KEY_APPS` 推出来，**加应用只改 `KEY_APPS` + `SCOPE_RULES['<app>:key']`
+  + 前端 `KeyApp` / `AppKeyModal` 的 GATES**，别再在别处写死前缀：漏一处的话新应用的 key 被当 JWT 解析，买家看到 «Invalid or expired token»。
 - **扣点（113）：key 的影子用户每次 AI 调用先 `holdPoints` 冻结（文本 1 / 生图每张 5，`POINT_PRICE`），
   成功才 `settlePoints` 记 charge 流水（带 ai_log_id），失败 `releasePoints`；这类用户不走 `ai_quota` 日额度。**
   挂在 `aiGateway` / `aiGatewayStream` / `runOneImage` 三处，新加的扣额度入口要一起挂 —— 漏了就是免费调用，
@@ -333,6 +335,8 @@ skills/  workspaces/  docs/
 | 机械积木课堂 | `/mech` | `docs/modules/mech.md` |
 | 视频提示词优化 | `/vprompt`（免费、匿名可用） | `docs/modules/vprompt.md` |
 | BP 投资分析 | `/bp`（BP → 项目事实卡） | `docs/modules/bp.md` |
+| 口播动效卡 | `/broll`（字幕 → 动效卡叠加） | `docs/modules/broll.md` |
+| 代码动画视频 | `/explainer`（白板讲解 / 蓝图，场景 JSON → 代码画） | `docs/modules/explainer.md` |
 
 长文档另有：`docs/FEISHU_ASSISTANT.md`（飞书助理完整设计）、`docs/FEISHU_DIARY.md`（项目
 日记）、`docs/MODULE_DEVELOPMENT.md`、`docs/API.md`（新端点必须补）、`docs/RELEASE.md`。
@@ -343,6 +347,7 @@ skills/  workspaces/  docs/
 PORT=3001
 JWT_SECRET=your-random-secret-here
 CONFIG_ENCRYPTION_KEY=...      # 库里第三方密钥用它做 AES-GCM；没配时别轮换 JWT_SECRET
+BROLL_RENDER_ORIGIN=...        # 动效卡导出时无头浏览器打开前端渲染页的地址；不设时生产 = 本机 Express、开发 = vite 5173（设错 = 导出报「渲染页没准备好」）
 ```
 
 平台 API key 存库里的 `system_config` 表，不在 .env。

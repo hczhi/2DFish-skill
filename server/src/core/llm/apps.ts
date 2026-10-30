@@ -33,6 +33,8 @@ export const AI_APPS: AIAppDef[] = [
   { id: 'ppt', name: 'HTML 展示稿' },
   { id: 'vprompt', name: '视频提示词优化' },
   { id: 'bp', name: 'BP 投资分析' },
+  { id: 'broll', name: '口播动效卡' },
+  { id: 'explainer', name: '代码动画视频' },
 ];
 
 /**

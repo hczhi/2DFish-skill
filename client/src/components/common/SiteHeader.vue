@@ -80,7 +80,7 @@ const route = useRoute()
 const router = useRouter()
 const isHome = computed(() => route.path === '/' || route.path === '/en')
 // 应用页和首页都只有中文内容，切了也不变，不给这个开关。
-const isAppPage = computed(() => /^\/(ppt|consult)(\/|$)/.test(route.path) || route.path === '/' || route.path === '/en')
+const isAppPage = computed(() => /^\/(ppt|consult|broll|explainer)(\/|$)/.test(route.path) || route.path === '/' || route.path === '/en')
 
 const user = ref<AuthUser | null>(null)
 const locale = computed(() => {

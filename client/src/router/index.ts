@@ -187,6 +187,69 @@ const router = createRouter({
       name: 'vprompt',
       component: () => import('../views/vprompt/VpromptPage.vue'),
     },
+    // 口播动效卡。/broll 是介绍页（「去使用」进 /broll/studio 编辑器）。
+    {
+      path: '/broll',
+      name: 'broll-cover',
+      component: () => import('../views/broll/BrollCover.vue'),
+    },
+    // 同 /ppt/key：回介绍页打开输入 key 的弹窗。
+    {
+      path: '/broll/key',
+      name: 'broll-key',
+      redirect: (to) => ({ path: '/broll', query: { ...to.query, key: '1' } }),
+    },
+    {
+      path: '/broll/studio',
+      name: 'broll',
+      component: () => import('../views/broll/BrollPage.vue'),
+      meta: { requiresAuth: true, keyApp: 'broll' },
+    },
+    // 动效卡导出用的渲染页：只给服务器上的无头浏览器打开（透明底、逐帧跳），不需要登录 —— 卡片数据是浏览器启动时注入的，页面不调任何接口。
+    {
+      path: '/broll/render',
+      name: 'broll-render',
+      component: () => import('../views/broll/BrollRender.vue'),
+    },
+    // 动效卡调试台：模版上线前在这里看所有测试数据，只给管理员。
+    {
+      path: '/broll/lab',
+      name: 'broll-lab',
+      component: () => import('../views/broll/BrollLab.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    // 代码动画视频。/explainer 是介绍页（「开始使用」进 /explainer/studio）。
+    {
+      path: '/explainer',
+      name: 'explainer-cover',
+      component: () => import('../views/explainer/ExplainerCover.vue'),
+    },
+    // 同 /broll/key：没 key 时守卫和 401 送到这里，带着 ?key=1 回介绍页打开输入 key 的弹窗。名字和路径不能改（守卫按 `${keyApp}-key` 找）。
+    {
+      path: '/explainer/key',
+      name: 'explainer-key',
+      redirect: (to) => ({ path: '/explainer', query: { ...to.query, key: '1' } }),
+    },
+    // 写内容 → AI 出剧本（可改）→ 生成画面 → 导出。账号用户和售卖型 key（EXP-…）都能用。
+    {
+      path: '/explainer/studio',
+      name: 'explainer',
+      component: () => import('../views/explainer/ExplainerStudio.vue'),
+      meta: { requiresAuth: true, keyApp: 'explainer' },
+    },
+    // 代码动画导出用的渲染页：只给服务器上的无头浏览器打开（逐帧跳），不需要登录 —— 场景数据是浏览器启动时注入的，页面只取公开的笔顺数据。
+    {
+      path: '/explainer/render',
+      name: 'explainer-render',
+      component: () => import('../views/explainer/ExplainerRender.vue'),
+    },
+    // 代码动画视频（白板讲解 / 蓝图）调试台：同一份场景 JSON 切两种风格看，只给管理员。
+    {
+      path: '/explainer/lab',
+      name: 'explainer-lab',
+      component: () => import('../views/explainer/ExplainerLab.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
     // 机械积木课堂：介绍页 + 各案例页（只展示），公开访问。
     {
       path: '/mech',

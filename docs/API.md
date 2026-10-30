@@ -2782,6 +2782,76 @@ Response 200:
 
 ---
 
+## 口播动效卡（/api/broll）
+
+### GET /api/broll/templates
+PUBLIC。动效卡模版上线状态：`{ "status": { "number": "live", "chapter": "draft" } }`，没列出的 = 草稿。
+
+### PUT /api/broll/templates/:id
+管理员。Body `{ "status": "draft" | "live" }` → `{ id, status }`。
+
+### POST /api/broll/plan
+PROTECTED，扣 1 次日额度（应用 `broll`；售卖型 key `BRL-…` 改为扣 1 点，不足 402 `points_exhausted`）。不落库。口播视频和字幕时间都留在前端，只收编号 + 原文。只用**已上线**的模版。服务端分两步调模型：先按目录挑卡（扣额度），再只带选中卡型的规则分 ≤3 组并行填（`unmetered`，不再扣日额度，`ai_logs` 照记）；`timing` 是两步各自的毫秒数。
+
+Body: `{ "lines": [{ "id": 1, "text": "去年营收涨了300%" }] }`（id 为整数且不重复；最多 800 句 / 30000 字）
+
+Response 200:
+```json
+{
+  "cards": [{ "template": "list", "line": 9, "endLine": 12,
+    "data": { "label": "KEY MOVES", "title": "做对的三件事", "items": ["只做一个品类", "…"], "conclusion": "" },
+    "summarized": ["label", "title"] }],
+  "rejected": [{ "line": 6, "template": "对比条", "text": "…", "why": "原话里没有「20」这个数" }],
+  "notes": ["「xx」已上线，但还不支持 AI 配，只能手动加"],
+  "timing": { "pickMs": 3071, "fillMs": 2555, "groups": 2 }
+}
+```
+`line`/`endLine` 是请求里的字幕编号（单句卡两者相同），入点出点由前端按字幕时间算；`data` 的字段名和前端 `templates.ts` 一致，章节编号 `index` 由服务端按顺序编。`summarized` = AI 概括（非原话）的字段，前端要标出来。`rejected` = 没通过原话核对的卡，`notes` = 降级说明，前端都要显示。错误：400 参数不对 / 没有已上线的卡，429 `quota_exceeded`，502 模型失败（文案带成因）。
+
+---
+
+### POST /api/broll/export
+PROTECTED，不调 AI。账号用户不扣额度；售卖型 key 每次导出扣 5 点（不看时长，失败不扣），点数不足 402 `points_exhausted`。一次只能有一个导出在跑（否则 429）。单张卡最长 20 秒。
+
+Body: `{ "aspect": "16:9"|"9:16", "theme": "ember"|"paper", "format"?: "png"|"hevc", "card": { "template", "data", "duration", "x", "y", "s" } }`（默认 png；hevc 只有 Mac 服务器能导，否则 400）
+
+Response 200：透明 .mov 本身（png = PNG 帧；hevc = 苹果 HEVC 带透明）。响应头 `X-Broll-Notes` 是 encodeURIComponent 过的 JSON 数组（如服务器缺主题字体），前端必须显示。错误：400 参数不对 / 渲染页报错（图片加载不出来等，原文），429 已有导出在进行，500 起不了浏览器 / 打不开渲染页 / ffmpeg 失败（原文）。
+
+### POST /api/broll/export-all
+同上（key 用户同样每次 5 点），导出和口播等长的整条叠加层。Body: `{ aspect, theme, format, total, cards: [{ template, data, start, end, x, y, s, track }] }`。总长 ≤ 600 秒；png 只允许 ≤ 300 秒，更长的 400 并提示换 hevc。
+
+---
+
+## 代码动画视频（/api/explainer）
+
+售卖型 key `EXP-…`（scope `explainer:key`）能调：`GET strokes`、`POST script / scene / export`、`GET export/:id(/file)`、`GET /api/app-keys/me`、`POST /api/app-keys/redeem`。`script` / `scene` 每次 1 点（网关扣）。
+
+### GET /api/explainer/strokes?chars=手机怎么
+PUBLIC（导出渲染页是无头浏览器打开的、不带登录），不调 AI。回 `{ strokes: { 手: [[[x, y], …], …] }, missing: ["…"] }`：每个汉字按书写顺序的笔画中线，坐标在 1024 见方、y 轴朝上（hanzi-writer-data，Arphic Public License）。只认汉字，字母 / 数字 / 标点不查；库里没有的字进 `missing`。一次最多 400 字，超了 400。
+
+### POST /api/explainer/script
+PROTECTED，扣 1 次日额度（应用 `explainer`；售卖型 key 按实际调用次数扣点，2–3 点）。不落库（剧本存在用户浏览器里）。Body `{ style: 'whiteboard' | 'blueprint' | 'sketch'（白纸手绘）, prompt: string（≤4000 字）, duration: 15 | 20 | 30 | 45 | 60 | 90 | 120 | 180 }`。
+服务端三步：创意方案 → 分镜（每镜带 `role` 叙事角色、`layout` 版式）→ 代码检查（`lintScript`），不过就让 AI 改一轮；还剩的问题写进 `notes`。另回 `calls`（这次调了几次 AI）、`review: { found, revised, remaining }`，`script.treatment = { hook, structure[], turn, ending }`。
+回 `{ script: { title, summary, style, duration, treatment, shots: [{ seconds, heading, visual, elements: string[], note, role?, layout? }] }, notes: string[], calls, review }`。
+`seconds` 只是比例，每镜起止秒数由前端 `shotWindows` 算；标题超 16 字、元素超 4 个、镜头超过「按时长算的上限」时截断并写进 `notes`。
+
+### POST /api/explainer/scene
+PROTECTED，扣 1 次日额度（应用 `explainer`；镜头每 8 个一组并行生成，售卖型 key 每组 1 点，回 `calls`）。剧本里定了 `layout` 的镜头照剧本的版式。不落库。Body `{ script }`（上面 `/script` 回的形状，用户可能改过）：格式不对 400 并说明哪一镜哪一项（标题 ≤30 字、画面描述 ≤200、注释 ≤40、元素 ≤6 个且每个 ≤16 字、最多 30 镜），不截断。
+回 `{ scene: { version: 1, title, duration, shots: [{ seconds, heading?, items: [{ id, type: 'icon'|'text'|'list', … }], arrows?: [{ from, to, label?, dashed? }], note? }] }, notes: string[] }`。
+每镜还可以有 `layout`（`grid | hero | reveal | compare | flow | hub | timeline`，不认识的按 grid 并写进 `notes`）和 `beats`（`[{ do: 'circle' | 'underline' | 'cross' | 'check' | 'box' | 'zoom', target: itemId }]`，≤4 个，对着不存在的元素去掉并写进 `notes`）。items 还有参数化图示 `{ type: 'diagram', kind: 'dots' | 'tenframe' | 'equation' | 'shape' | 'numberline', …参数, label? }`（参数范围见 `sceneService.ts` 的 `readDiagram`，超范围改成文字并写进 `notes`；算式两边算出来不相等也写进 `notes`）。标题 / 注释 / 秒数从剧本原样抄，AI 只决定 items 和 arrows；图标名只认 `services/explainer/iconCatalog.json`，没有的改成文字并写进 `notes`。
+
+### POST /api/explainer/export
+PROTECTED，不调 AI、不扣日额度；售卖型 key（`EXP-…`）每次扣 5 点（`POINT_PRICE.explainerExport`，参数校验之后冻结、任务成功结算、失败解冻，不足 402 `points_exhausted`），账号用户不扣。Body `{ scene, style }`，格式不对 400 并说明哪一镜。
+**后台任务**：回 `202 { id, total }`（total = 总帧数）；已有导出在跑时 429（冻结之前就拒）。服务器上无头浏览器打开前端 `/explainer/render` 逐帧截图（地址同 `BROLL_RENDER_ORIGIN`），H.264，1920×1080，白板 30 帧 / 蓝图 24 帧。
+
+### GET /api/explainer/export/:id
+回 `{ state: 'running' | 'done' | 'failed', done, total, notes: string[], error? }`。只有发起人看得到；服务重启或导完 30 分钟后 404。
+
+### GET /api/explainer/export/:id/file
+`video/mp4`。还没导完 409；导完 30 分钟内可以重复下载。
+
+---
+
 ## Error Responses
 
 ### 标准错误
@@ -2833,6 +2903,7 @@ consult / ppt 另带 `detail`（人话，说清撞的是账号总额还是这个
 | /api/ui-review/*、/api/tender/*、/api/xhs/*、/api/consult/*、/api/feishu-assistant/* | 60 req/min |
 | /api/bp/* | 30 req/min |
 | /api/vprompt/* | 10 req/min（免费不限次，只挡脚本连刷） |
+| /api/explainer/* | 60 req/min |
 | /api/ppt/* | 300 req/min（案例库一页就是 65 个 iframe，60 的话翻两页就被 429 挡住，而卡片上照样挂着「效果 demo」） |
 
 Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`

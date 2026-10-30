@@ -42,6 +42,8 @@ import { agentSkillsRouter } from './api/agentSkills.js';
 import { skillRegistryRouter } from './api/skillRegistry.js';
 import { relayRouter } from './api/relay.js';
 import { vpromptRouter } from './api/vprompt.js';
+import { brollRouter } from './api/broll.js';
+import { explainerRouter } from './api/explainer.js';
 import { bpRouter } from './api/bp.js';
 import { initWorkspace } from './services/workspaceService.js';
 import { startLogCleanupScheduler, cleanupOldLogs } from './services/logCleanupService.js';
@@ -325,6 +327,14 @@ app.use('/api/ad-slots', adSlotsRouter);
 // 视频提示词优化（免费、匿名可用、不扣日额度）。每分钟 10 次只挡脚本连刷，正常人点不到。
 app.use('/api/vprompt', rateLimit(10, 60_000));
 app.use('/api/vprompt', vpromptRouter);
+
+// 口播动效卡（AI 配卡，登录用户、扣日额度）
+app.use('/api/broll', rateLimit(20, 60_000));
+app.use('/api/broll', brollRouter);
+
+// 代码动画视频（白板讲解 / 蓝图）
+app.use('/api/explainer', rateLimit(60, 60_000));
+app.use('/api/explainer', explainerRouter);
 
 // UI Review
 app.use('/api/ui-review', rateLimit(60, 60_000));
