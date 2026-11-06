@@ -11,8 +11,9 @@ import type { BpOwner } from './reportStore.js';
 //   漏了的话一份报告既扣 200 又扣十几个 1 点，流水上是一堆看起来正常的零散扣费。
 // - **嵌入版（pk）：按实际调用次数计这把 pk 的当日额度**（同咨询的口径，后台「今日已用」就是真实调用数），
 //   开跑前按 `BP_EST_AI_CALLS` 预检：不预检的话跑到第七章撞上限，前面六章的钱白花、报告停在一半。
-// - **每个 owner 每天最多开跑 `BP_DAILY_RUNS` 次**（新建 + 续跑 + 重跑都算）：一份约 30 次联网检索，
-//   而嵌入用的 pk 是公开字符串，重跑对 key 用户又是免费的 —— 不封顶的话一个循环就能刷几百份。
+// - **key 用户每天最多开跑 `BP_DAILY_RUNS` 次**（新建 + 续跑 + 重跑都算）：重跑对 key 用户是免费的，
+//   不封顶的话一个循环就能刷几百份。**嵌入版（pk）不计次数**：花多少已经被这把 pk 的每日 AI 调用额度管住
+//   （上面的预检 + 按实际调用计数），再叠一层次数上限只会在额度还够时把人拦下（接入方测试几次就撞上）。
 
 export const BP_REPORT_POINTS = 200;
 export const BP_EST_AI_CALLS = 15;
@@ -29,11 +30,10 @@ export const ownerOf = (req: { user?: { id: string }; sdkPk?: string; externalUi
   userId: req.user!.id, sdkPk: req.sdkPk ?? null, externalUid: req.externalUid ?? null,
 });
 
-/** 计次的那个主体：key → 按这把 key；嵌入 → 按 pk（一个接入方所有终端用户合计）；管理员 / 普通账号 → 不计。 */
+/** 计次的那个主体：只有 key 用户按这把 key 计；嵌入版（pk）、管理员 / 普通账号不计次数。 */
 function usageOwner(owner: BpOwner): { key: string; label: string } | null {
   const keyId = keyIdOfUser(owner.userId);
   if (keyId) return { key: `key:${keyId}`, label: '这把 key' };
-  if (owner.sdkPk) return { key: `pk:${owner.sdkPk}`, label: '这个接入方' };
   return null;
 }
 

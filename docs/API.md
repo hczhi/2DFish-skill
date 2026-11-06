@@ -2731,7 +2731,7 @@ Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_ui
 **开跑闸门**（新建 / `resume` / `rerun` 都过，管理员不受限）：
 - key 用户一份报告固定 **200 点**：开跑前冻结，不够 402 `points_exhausted`；跑完结算一笔 charge 流水，失败 / 中断解冻；扣过的报告续跑、重跑不再扣。报告里的单次 AI 调用不再按次扣点。
 - 嵌入版按实际 AI 调用次数计这把 pk 的当日额度；剩余不足一份报告（约 15 次）时 429 `sdk_ai_quota`（带 `used / limit / need`）。
-- 每把 key / 每个 pk 每天最多开跑 10 次（新建 + 续跑 + 重跑都算），超了 429 `bp_daily_cap`。
+- 每把 key 每天最多开跑 10 次（新建 + 续跑 + 重跑都算），超了 429 `bp_daily_cap`。嵌入版（pk）不限次数，只受这把 pk 的每日 AI 调用额度约束（开跑前按 15 次预检）。
 
 ### POST /api/bp/reports
 Body（multipart）：
