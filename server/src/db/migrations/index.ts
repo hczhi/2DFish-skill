@@ -118,6 +118,20 @@ import { migration_115 } from './115_recharge_codes.js';
 import { migration_116 } from './116_home_seo_qiaonx.js';
 import { migration_118 } from './118_home_broll.js';
 import { migration_119 } from './119_home_explainer.js';
+import { migration_120 } from './120_bp_reports.js';
+import { migration_121 } from './121_seed_bp_consistency_skill.js';
+import { migration_122 } from './122_seed_bp_revenue_skill.js';
+import { migration_123 } from './123_seed_bp_industry_skill.js';
+import { migration_124 } from './124_seed_bp_report_skills.js';
+import { migration_125 } from './125_seed_bp_credit_skill.js';
+import { migration_126 } from './126_bp_report_materials.js';
+import { migration_127 } from './127_bp_report_attachments.js';
+import { migration_128 } from './128_bp_third_party.js';
+import { migration_129 } from './129_seed_bp_stage_rubrics.js';
+import { migration_130 } from './130_bp_benchmarks.js';
+import { migration_131 } from './131_seed_bp_p1_skills.js';
+import { migration_132 } from './132_bp_pitch_sessions.js';
+import { migration_133 } from './133_seed_bp_pitch_skill.js';
 import { migration_117 } from './117_broll_templates.js';
 
 export const allMigrations: Migration[] = [
@@ -239,4 +253,18 @@ export const allMigrations: Migration[] = [
   migration_117,
   migration_118,
   migration_119,
+  migration_120,
+  migration_121,
+  migration_122,
+  migration_123,
+  migration_124,
+  migration_125,
+  migration_126,
+  migration_127,
+  migration_128,
+  migration_129,
+  migration_130,
+  migration_131,
+  migration_132,
+  migration_133,
 ];

@@ -51,7 +51,7 @@ export interface ImageExtractResult {
 }
 
 /** 图片文件头 → mime。改扩展名的图到处都有，按文件头认才不会把 PDF 当图片发上去。 */
-function sniffMime(buf: Buffer): string | null {
+export function sniffMime(buf: Buffer): string | null {
   if (buf.length < 12) return null;
   const hex = buf.subarray(0, 12).toString('latin1');
   if (buf[0] === 0x89 && hex.slice(1, 4) === 'PNG') return 'image/png';
@@ -67,7 +67,7 @@ function sniffMime(buf: Buffer): string | null {
  * 不认的话它们落到「文件头不是图片」那句上，而那句话对一张明明能看的照片讲不通，
  * 他只会反复传同一张。
  */
-function sniffUnusable(buf: Buffer): { format: string; hint: string } | null {
+export function sniffUnusable(buf: Buffer): { format: string; hint: string } | null {
   const head = buf.subarray(0, 16).toString('latin1');
   if (/ftyp(heic|heix|hevc|mif1|msf1)/.test(head)) {
     return {

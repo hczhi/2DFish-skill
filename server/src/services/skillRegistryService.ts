@@ -72,6 +72,28 @@ export const KNOWN_SLOTS: Array<{ slot: string; label: string }> = [
   // 「提纲是纯文本行、不要 markdown 表格」这两条要看他写的 skill 里有没有 ——
   // 没有的时候提纲里会出现编的数字和表格，而它们会被逐字排进页面（见 outlineChatService）。
   { slot: 'ppt-outline', label: 'HTML 展示稿 · 生成提纲（追加，不覆盖）' },
+  // 替换的是「分析方法」那段；输出格式和引文核验在 bp/consistencyService.ts 代码里，不受这份影响。
+  { slot: 'bp-consistency', label: 'BP 分析 · 5.11 一致性审计（分析方法）' },
+  // 只管「摘数字的口径」；摘哪几项、公式、阈值在 bp/revenueService.ts。
+  { slot: 'bp-revenue', label: 'BP 分析 · 5.12 收入质量（摘数字口径）' },
+  // 检索词、来源编号→链接、数字核验在 bp/industryService.ts。
+  { slot: 'bp-credit', label: 'BP 分析 · 5.9 企业信用档案（整理口径）' },
+  { slot: 'bp-team', label: 'BP 分析 · 5.10 团队竞争力评估（写法）' },
+  { slot: 'bp-credibility', label: 'BP 分析 · 5.7 可信度核验（写法）' },
+  { slot: 'bp-financing', label: 'BP 分析 · 09 融资方案（建议写法）' },
+  { slot: 'bp-industry', label: 'BP 分析 · 06 宏观分析（写法）' },
+  // 以下五个同理：只管写法，核验 / 算分 / 输出格式在 bp/*Service.ts。
+  { slot: 'bp-competitors', label: 'BP 分析 · 07 竞品 + 08 对标（写法）' },
+  { slot: 'bp-investors', label: 'BP 分析 · 09 目标融资对象（写法）' },
+  { slot: 'bp-diagnosis', label: 'BP 分析 · 01-02 五维评分（判分口径）' },
+  // 分阶段标尺：轮次由代码从事实卡认（bp/standards.stageOf），这里只放每个轮次的判分口径文字。
+  { slot: 'bp-stage-angel', label: 'BP 分析 · 评分标尺 · 天使 / 种子轮' },
+  { slot: 'bp-stage-prea', label: 'BP 分析 · 评分标尺 · Pre-A 轮' },
+  { slot: 'bp-stage-a', label: 'BP 分析 · 评分标尺 · A 轮' },
+  { slot: 'bp-stage-b', label: 'BP 分析 · 评分标尺 · B 轮及以后' },
+  { slot: 'bp-stage-general', label: 'BP 分析 · 评分标尺 · 未写明轮次' },
+  { slot: 'bp-advice', label: 'BP 分析 · 03 BP 优化 + 04 追问预演（写法）' },
+  { slot: 'bp-plan', label: 'BP 分析 · 10 90 天行动清单（写法）' },
 ];
 
 // 主文件里引用引用文件的占位符：{{ref:filename}}（filename 可带或不带 .md）

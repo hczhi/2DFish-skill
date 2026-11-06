@@ -152,7 +152,7 @@ import { mountConsult } from 'https://your-platform-host/sdk/consult-sdk.js'
 | `baseUrl` | ✅ | 平台地址，如 `https://your-platform-host` |
 | `externalUid` | ✅ | 你这边终端用户的稳定 id（项目归属键） |
 | `target` | ✅ | 容器选择器或 DOM 元素 |
-| `path` | | 打开哪一页，默认 `/consult/projects`（项目列表） |
+| `path` | | 打开哪一页，默认落在 `/consult` 封面（品牌咨询 / BP 分析二选一）。可传 `/consult/projects/...`、`/consult/bp/...` 下的具体页面；传 `/consult/projects` 这个根路径也会落在封面 |
 | `height` | | iframe 初始高度 px，默认 900；之后按内容自动调整 |
 | `autoHeight` | | 传 `false` 关掉自动调高（自己给容器定高时用） |
 | `onError` | | 失败回调。不接的话失败只写控制台，而页面上是一块空白 iframe |

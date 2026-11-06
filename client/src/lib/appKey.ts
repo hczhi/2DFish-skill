@@ -29,6 +29,15 @@ export function activeAppKey(): string | null {
   }
 }
 
+/** 本机存没存这个应用的 key（入口显不显示用；对不对由服务端判）。 */
+export function hasAppKey(app: KeyApp): boolean {
+  try {
+    return !!localStorage.getItem(storeKey(app))
+  } catch {
+    return false
+  }
+}
+
 export function saveAppKey(app: KeyApp, key: string): void {
   localStorage.setItem(storeKey(app), key.replace(/\s+/g, '').toUpperCase())
 }

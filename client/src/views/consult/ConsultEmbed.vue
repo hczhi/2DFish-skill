@@ -7,7 +7,7 @@ import {
 } from '../../lib/embed'
 
 // 嵌入模式的引导页（084）：iframe 的 src 指到这里。它自己不画工作台，只做三件事 ——
-// 记下宿主 Origin、向宿主要一把短 token、然后跳到 `next`（默认项目列表）。之后的页面
+// 记下宿主 Origin、向宿主要一把短 token、然后跳到 `next`（默认封面 /consult）。之后的页面
 // 就是我们自己那套 /consult/projects/* ，一份 UI 不做第二遍（两份必然漂）。
 //
 // 失败必须在这块空白上写出来：拿不到 token 的时候 iframe 里是一片白，宿主那边看到的是
@@ -20,7 +20,11 @@ const error = ref('')
 
 onMounted(async () => {
   const host = String(route.query.host || '')
-  const next = String(route.query.next || '/consult/projects')
+  // 落地页是 /consult（品牌咨询 / BP 分析二选一的封面）。已经上线的接入方 iframe 地址里写死的是
+  // next=/consult/projects（老 SDK 的默认值），这里把这个**根路径**改送到封面 —— 不用接入方发版。
+  // 带项目 id 的深链接（iframe 刷新时守卫带回来的当前页）原样保留，否则用户一刷新就被踢回封面。
+  const raw = String(route.query.next || '/consult')
+  const next = /^\/consult\/projects\/?$/.test(raw) ? '/consult' : raw
 
   if (!host) {
     error.value =
@@ -30,8 +34,10 @@ onMounted(async () => {
   }
   // next 必须是我们自己的 /consult 路径：不校验的话宿主传一个 //evil.com 进来，
   // 这个 iframe 会把用户带到别人的站上，而外面看起来还是「你们的工作台」。
-  if (!/^\/consult\/projects(\/|$)/.test(next)) {
-    error.value = `next 参数只能是 /consult/projects 下的路径，收到的是：${next}`
+  // /consult/bp 也要放行：BP 分析页里刷新 iframe 时守卫会带着 /consult/bp/... 回来，只认 projects 的话那一刷就是一句报错。
+  const path = next.split(/[?#]/)[0]
+  if (!(path === '/consult' || /^\/consult\/(projects|bp)(\/|$)/.test(path))) {
+    error.value = `next 参数只能是 /consult、/consult/projects 或 /consult/bp 下的路径，收到的是：${next}`
     return
   }
 

@@ -334,7 +334,7 @@ skills/  workspaces/  docs/
 | 品牌咨询 | `/consult`（含第三方 iframe 嵌入 084-086） | `docs/modules/consult.md` |
 | 机械积木课堂 | `/mech` | `docs/modules/mech.md` |
 | 视频提示词优化 | `/vprompt`（免费、匿名可用） | `docs/modules/vprompt.md` |
-| BP 投资分析 | `/bp`（BP → 项目事实卡） | `docs/modules/bp.md` |
+| BP 分析 | `/consult/bp`（和品牌咨询同一入口；管理员 / consult key / consult 嵌入版；BP → 10 章体检报告，后台任务） | `docs/modules/bp.md` |
 | 口播动效卡 | `/broll`（字幕 → 动效卡叠加） | `docs/modules/broll.md` |
 | 代码动画视频 | `/explainer`（白板讲解 / 蓝图，场景 JSON → 代码画） | `docs/modules/explainer.md` |
 

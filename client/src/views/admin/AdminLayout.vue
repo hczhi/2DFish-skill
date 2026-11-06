@@ -27,6 +27,7 @@
         <router-link to="/admin/ppt-access" class="nav-item" active-class="active" @click="sidebarOpen = false">展示稿接入</router-link>
         <router-link to="/admin/feishu" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书助理</router-link>
         <router-link to="/admin/skills" class="nav-item" active-class="active" @click="sidebarOpen = false">Skill 管理</router-link>
+        <router-link to="/admin/bp-benchmarks" class="nav-item" active-class="active" @click="sidebarOpen = false">BP 参考口径</router-link>
         <router-link to="/admin/agent-skills" class="nav-item" active-class="active" @click="sidebarOpen = false">飞书 Skill</router-link>
         <div class="nav-group" :class="{ active: isUiReviewActive }" @mouseenter="openFlyout" @mouseleave="closeFlyout">
           <div class="nav-item nav-group-title">UI 测评</div>

@@ -128,6 +128,8 @@ const router = createRouter({
         { path: 'app-keys', name: 'admin-app-keys', component: () => import('../views/admin/AppKeys.vue') },
         { path: 'feishu', name: 'admin-feishu', component: () => import('../views/admin/FeishuAssistantManagement.vue') },
         { path: 'skills', name: 'admin-skills', component: () => import('../views/admin/SkillRegistry.vue') },
+        // BP 分析 · 平台参考口径（融资方案章的估值区间 / 出让比例 / 下一轮门槛）。
+        { path: 'bp-benchmarks', name: 'admin-bp-benchmarks', component: () => import('../views/admin/BpBenchmarks.vue') },
         { path: 'skills/new', name: 'admin-skill-create', component: () => import('../views/admin/SkillEditor.vue') },
         { path: 'skills/:id/edit', name: 'admin-skill-edit', component: () => import('../views/admin/SkillEditor.vue') },
         { path: 'agent-skills', name: 'admin-agent-skills', component: () => import('../views/admin/AgentSkills.vue') },
@@ -174,12 +176,29 @@ const router = createRouter({
       component: () => import('../views/xhs/XhsCalibration.vue'),
       meta: { requiresAuth: true },
     },
-    // BP 投资分析：上传 BP → 项目事实卡。
+    // BP 分析：和品牌咨询合在 /consult 一个入口下（管理员 / 品牌咨询的 key / 品牌咨询嵌入版）。
+    // 路径必须在 /consult/ 下面：嵌入版的 iframe 白名单（CSP frame-ancestors）只发给 /consult*，放在 /bp 的话
+    // iframe 里一刷新就是一块白，而每个接口都 200。keyApp = consult：没 token 时回 /consult 弹 key 输入框。
+    // 普通账号（非管理员、非 key）服务端回 403。老地址 /bp 留一个跳转。
+    { path: '/bp', redirect: '/consult/bp' },
+    { path: '/bp/reports/:id', redirect: (to) => `/consult/bp/reports/${to.params.id}` },
     {
-      path: '/bp',
+      path: '/consult/bp',
       name: 'bp',
-      component: () => import('../views/bp/BpFactCard.vue'),
-      meta: { requiresAuth: true },
+      component: () => import('../views/bp/BpHome.vue'),
+      meta: { requiresAuth: true, keyApp: 'consult' },
+    },
+    {
+      path: '/consult/bp/reports/:id/deck',
+      name: 'bp-deck',
+      component: () => import('../views/bp/BpDeck.vue'),
+      meta: { requiresAuth: true, keyApp: 'consult' },
+    },
+    {
+      path: '/consult/bp/reports/:id',
+      name: 'bp-report',
+      component: () => import('../views/bp/BpReport.vue'),
+      meta: { requiresAuth: true, keyApp: 'consult' },
     },
     // 视频提示词优化：单页、免费、不登录也能用。
     {

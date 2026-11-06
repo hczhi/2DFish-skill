@@ -86,6 +86,10 @@ const KEY_ME: ScopeRule = { methods: ['GET'], path: /^\/api\/app-keys\/me$/ };
 // 充值（115）。漏了的话买家点「充值」是一句 403 scoped，读起来像码无效。
 const KEY_REDEEM: ScopeRule = { methods: ['POST'], path: /^\/api\/app-keys\/redeem$/ };
 SCOPE_RULES['ppt:key'] = [...SCOPE_RULES['ppt:embed'], KEY_ME, KEY_REDEEM];
+// BP 分析（和品牌咨询合在 /consult 一个入口下）：嵌入版和卖出去的 key 都能用。只登记 /api/bp/reports* 这一棵
+// （新建 / 列表 / 详情 / 续跑 / 重跑 / 删除 / 补充资料）—— bp 的后台接口在 /api/bp/admin/* 下，不在这棵里。
+// 计费和每日上限在 services/bp/billing.ts（开跑前判），不在这里。
+SCOPE_RULES['consult:embed'].push({ methods: ['GET', 'POST', 'DELETE'], path: /^\/api\/bp\/reports(\/|$)/ });
 SCOPE_RULES['consult:key'] = [...SCOPE_RULES['consult:embed'], KEY_ME, KEY_REDEEM];
 // 口播动效卡没有嵌入版，单独列。不含 `PUT /api/broll/templates/:id`（上下线模版是管理员的事）；
 // 卡片里的图片要先传服务器（导出在服务器渲染，读不到本机文件），漏了上传那条的话加图是一句 403。

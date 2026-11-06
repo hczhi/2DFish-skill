@@ -2723,25 +2723,116 @@ Body：`{ pk, externalUid }`。回 `{ token, token_type, expires_in, external_ui
 
 ---
 
-## BP 投资分析（/api/bp）
+## BP 分析（/api/bp）
 
-### POST /api/bp/fact-card
-PROTECTED，扣 1 次日额度（应用 `bp`）。不落库、不存原文件。
+谁能调：**管理员**（网页登录）、**品牌咨询的 key**（`consult:key`，Bearer 就是 key）、**品牌咨询嵌入版**（`consult:embed` 短 token）。普通账号 403 `bp_forbidden`；停用的 pk 403 `sdk_key_disabled`。
+前端页面在 `/consult/bp`、`/consult/bp/reports/:id`（老地址 `/bp` 跳转过去）。报告落库在 `bp_reports`（存 BP 提取出的文字，不存原文件），按 `(账号, sdk_pk, external_uid)` 归属 —— 嵌入版同一个 pk 下的终端用户互相看不到。
 
-Body（multipart）：`file`（.pdf/.pptx/.docx/.doc/.txt/.md；.ppt 会回「另存为 .pptx」）或 `text`（粘贴的项目介绍），二选一。提取后超过 50000 字直接 400（不截断）。
+**开跑闸门**（新建 / `resume` / `rerun` 都过，管理员不受限）：
+- key 用户一份报告固定 **200 点**：开跑前冻结，不够 402 `points_exhausted`；跑完结算一笔 charge 流水，失败 / 中断解冻；扣过的报告续跑、重跑不再扣。报告里的单次 AI 调用不再按次扣点。
+- 嵌入版按实际 AI 调用次数计这把 pk 的当日额度；剩余不足一份报告（约 15 次）时 429 `sdk_ai_quota`（带 `used / limit / need`）。
+- 每把 key / 每个 pk 每天最多开跑 10 次（新建 + 续跑 + 重跑都算），超了 429 `bp_daily_cap`。
+
+### POST /api/bp/reports
+Body（multipart）：
+- `file` —— BP 文件（.pdf/.pptx/.docx/.doc/.txt/.md；.ppt 会回「另存为 .pptx」），可选；
+- `text` —— 粘贴的项目介绍，没有 `file` 时必填（就是 BP 本身）；
+- `files` —— 补充材料，最多 9 份：文档同上，另收图片 .png/.jpg/.jpeg/.webp/.gif（每张一次视觉模型逐字转写，模型不认图时 502 并说明成因）；
+- `extra` —— 补充说明文字（有 `file` 时粘贴框走这里，作为一份「粘贴文字」附件）。
+
+附件拼在 BP 原文后面（`===== 附件K《名》（类型） =====`，附件页码单独一套），和 BP 一起进事实卡 / 一致性 / 收入质量；引文出自附件时各处带 `doc: "附件K《名》"`。
+BP 超过 50000 字、或合计超过 90000 字、或任何一份材料读不出来，当场报错并点名（不截断、不跳过、不建报告）。否则建一份报告并在后台开跑：
+
+Response 202: `{ "id": "uuid" }`
+
+### GET /api/bp/reports
+Response 200: `{ "reports": [{ "id", "filename", "chars", "status", "step", "error", "created_at", "finished_at", "company", "score", "band", "attachments": [{ "name", "kind", "chars", "notes" }] }], "steps": [{ "key", "label" }] }`（`company` / `score` / `band` 是事实卡公司名和 01 章总分，没跑到为 null）
+
+### POST /api/bp/reports/:id/resume
+失败 / 中断 / 缺章（旧版生成）的报告从第一个缺的章节接着跑，已有章节不重跑。Response 202 `{ id, missing: ["章节键"] }`。
+不缺章 400，已经在跑 409（并发两次点击只有一次能开跑）。
+
+### POST /api/bp/reports/:id/rerun
+Body `{ "from": "章节键" }`。清掉这一章**及其后面所有章**再从这一章跑（后面每一章都拿前面的结果当输入）。
+Response 202 `{ id, rerun: ["被清掉重跑的章节键"] }`。`factCard` 不能重跑（400，要换就重新上传），在跑 409。
+
+### 补充资料（每章人工补料 / 排除检索结果）
+`chapter` ∈ `credit | industry | competitors | investors`，每章最多 10 条。补了不会自动生效，要再调 `/rerun`（`from` = 同名步骤键）。
+- `POST /api/bp/reports/:id/materials` JSON `{ chapter, kind: 'url', url }` → 服务端用 Tavily Extract 抓正文，`{ id, chars }`；抓不到 / 正文 < 200 字 / > 80000 字 400，抓取失败 502 带原文。
+- `POST /api/bp/reports/:id/materials` JSON `{ chapter, kind: 'exclude', url, title }` → 重跑这一章时不再用这条检索结果。
+- `POST /api/bp/reports/:id/materials/file` multipart：`chapter`（**必须排在 file 前面**）+ `file`（PDF / DOCX / PPTX / TXT）→ `{ id, chars, notes, emptyPages }`。
+- `DELETE /api/bp/reports/:id/materials/:mid`
+- `GET /api/bp/reports/:id` 的响应里带 `materials: [{ id, chapter, kind, title, url, chars, created_at }]`（不带正文）；文件类的 `url` 是 `upload://…`，不是可点的链接。
+
+### 平台参考口径（仅管理员）
+- `GET /api/bp/admin/benchmarks` → `{ rows: [{ sector, sectorLabel, stage, stageLabel, data, defaults, edited, updatedAt, updatedBy }] }`
+- `PUT /api/bp/admin/benchmarks/:sector/:stage` `{ data: { valuation:[低,高](万元), dilution:[低,高](%), nextRound, thresholds:[{ metric, label, op:'>='|'<=', value, unit }] } }`，校验不过 400 并逐条列出错误（`errors`）。
+- `DELETE /api/bp/admin/benchmarks/:sector/:stage` 恢复缺省。
+
+### DELETE /api/bp/reports/:id
+Response 200 `{ ok: true }`。还在跑 409，不存在 / 不是自己的 404。
+
+### GET /api/bp/reports/:id
+前端在 `status = running` 时轮询它。不是自己的报告回 404。另带 `missing: ["还缺的章节键"]`。
 
 Response 200:
 ```json
 {
-  "filename": "xx.pdf", "chars": 12034,
-  "sections": [{ "key": "company|product|team|operations|financing", "title": "公司主体",
-    "items": [{ "field": "公司名称", "value": "…", "label": "disclosed|computed|inferred|missing|unverified",
-      "quote": "原文片段", "page": 3, "basis": "计算/推断依据" }] }],
-  "issues": [{ "text": "BP 内部矛盾", "quote": "…", "page": 5 }],
-  "notes": ["必须显示的提醒"]
+  "id": "…", "filename": "xx.pdf", "chars": 12034,
+  "status": "running|done|failed|interrupted", "step": "factCard", "error": "失败原文（failed/interrupted 时）",
+  "steps": [{ "key": "factCard", "label": "抽取企业基本面（事实卡）" }],
+  "notes": ["必须显示的提醒"],
+  "result": {
+    "factCard": {
+      "sections": [{ "key": "company|product|team|operations|financing", "title": "公司主体",
+        "items": [{ "field": "公司名称", "value": "…", "label": "disclosed|computed|inferred|missing|unverified",
+          "quote": "原文片段", "page": 3, "basis": "计算/推断依据" }] }],
+      "issues": [{ "text": "BP 内部矛盾", "quote": "…", "page": 5 }]
+    },
+    "consistency": {
+      "items": [{ "metric": "收入", "status": "conflict|consistent|single", "severity": "致命|重要|可选|null",
+        "values": [{ "quote": "BP 原文", "page": 3 }], "impact": "对结论的影响" }],
+      "counts": { "conflict": 1, "consistent": 0, "single": 0 },
+      "dropped": ["引文核不上被丢掉的指标名"],
+      "promptSource": "skill|default"
+    },
+    "revenue": {
+      "verdict": "一句结论（代码按状态计数生成）",
+      "metrics": [{ "name": "现金跑道", "value": "约 7.5 个月|未披露|不可计算", "basis": "公式 + 用到的原文数字",
+        "status": "good|watch|risk|null", "flag": "判定说明" }],
+      "gaps": [{ "item": "毛利率", "why": "…", "ask": "向对方要什么" }],
+      "inputs": [{ "key": "annualRevenue", "label": "…", "raw": "1.2亿元", "quote": "…", "page": 2, "rejected": "没采用的原因|null" }],
+      "promptSource": "skill|default"
+    },
+    "industry": {
+      "topic": "检索用的行业词（事实卡「所属行业」）",
+      "queries": ["代码拼的检索词"], "failedQueries": [{ "q": "…", "error": "原文" }],
+      "sources": [{ "n": 1, "title": "…", "url": "…", "published": "…" }],
+      "kpis": [{ "label": "…", "value": "102", "unit": "亿元", "delta": "+18.6%", "note": "口径", "src": [1], "unsourced": false }],
+      "trends": [{ "title": "…", "strength": "已发生|进行中|拐点将至|加速中|结构性风险", "judge": "…", "evidence": "…",
+        "meaning": "对这家公司意味着", "src": [1], "unsourced": false }],
+      "promptSource": "skill|default"
+    }
+  }
 }
 ```
-`page` 由服务端按 `quote` 在原文里的位置算（docx/txt 为 null）；`unverified` = 模型标了「材料披露」但引文在原文里找不到。错误：400 文件/字数问题，429 `quota_exceeded`，502 模型失败（文案带成因）。
+其余章节键（字段定义以 `server/src/services/bp/*Service.ts` 的导出类型为准）：
+- `competitors`（07/08）：`{ topic, queries, failedQueries, sources, competitors:[{name,positioning,tech,stage,diff,note,src,rounds:[{round,date,amount,investors,lead,src,amountUnsourced}]}], positionMap:{xLeft,xRight,yBottom,yTop,points:[{name,self,x,y,note}],conclusion}|null, positionMapNote, benchmarks:[{name,funding,revenue,profit,outlook,src,unsourced}], dropped, fundingNote, promptSource }`
+- `investors`（09）：`{ queries, failedQueries, sources, investors:[{name,type,circle,deal,partner,partnerRejected,role,fit,why,approach,confidence:'已公开'|'部分公开',src}], approachNote, dropped, promptSource }`
+- `diagnosis`（01/02）：`{ dims:[{key,name,fact,proof,factP,proofP,recoverableP,band,quadrant,note,deductions:[{text,cause,severity,quote,page,quoteFound}]}], total,proofTotal,recoverable（500 分制）, totalP,proofP,recoverableP（100 分制）, band, quadrant, verdict, top3, benchmark, scoreInText, promptSource }`
+- `advice`（03/04）：`{ fixes:[{level,quote,page,problem,investorView,rewrite}], droppedFixes, qa:[{q,why,answer,evidence}], promptSource }`
+- `plan`（10）：`{ tradeoffs, quickWins, phases:[{key:'d30'|'d60'|'d90',label,items:[{task,deliverable,ref}]}], reviewPoint, dataRequests, ddChecklist, promptSource }`
+- `credit`（5.9）：`{ skipped: 没查的原因|null, company, queries, failedQueries, sources, items:[{key,label,risk,found,value,bpCheck,src,unsourced,otherCompany}], whereToCheck, promptSource }`
+- `team`（5.10）：`{ skipped, overall:{level,note}, dims:[{key,name,level,evidence,gap}], members:[{name,role,bio,signals:[{text,src}],gaps,verifyPath,status:'已核实'|'部分核实'|'待外部核实'}], advice, droppedSignals, queries, failedQueries, sources, promptSource }`
+- `credibility`（5.7）：`{ rating:'高'|'中'|'低', ratingBasis, note, claims:[{claim,page,doc,category,status:'已核实'|'部分核实'|'存矛盾'|'未核到',finding,evidence:['E3'],downgraded}], contradictions, evidence:[{id,kind,text}], droppedClaims, promptSource }`
+- `financing`（09）：`{ stage, stageLabel, stageBasis, sector, sectorLabel, ask, burn, runwayMonths, suggestedAsk, askVerdict, askNote, reference:{valuation,dilution,nextRound,edited}|null, impliedPre, disclosedValuation, valuationVerdict, valuationNote, milestones:[{label,target,current,status,gap}], equity:{found,holders,topPct,hasPlatform,flags}, terms, advice:{summary,ask,valuation,milestones,equity,sequencing}, numbersOutside, promptSource }`
+- `revenue` 另有 `sector / sectorLabel`、`metrics[].group:'sector'`；`diagnosis` 另有 `stage / stageLabel / stageBasis / missingParts`；`keywords` 另有 `sector`。
+- `industry` 另有 `marketChart` / `concentration` / `personas[].evidenceKind:'data'|'inference'` / `scenarios`。
+`src` 一律是**本章**资料编号（各章独立编号）。各章 `sources[]` 另带 `tier`（0 用户提供 / 1 官方 / 2 研报权威媒体 / 3 行业媒体其他 / 4 自媒体）、`domain`、`stale`（发布于 3 年前）；
+数字类条目带 `xsrc`（这个数出现在几个不同域名的资料正文里，1 = 单一来源）；联网章节带 `trimmed / userMaterials / excluded`；`industry.keywordNote` 非空 = 检索词退回了「所属行业」。
+新步骤 `keywords`（事实卡之后）：`{ segment, products, english, aliases, fallback }`。
+
+`result` 按章节键存，一章跑完写一章：`failed` 时已经跑完的章节照样在。`page` 由服务端按 `quote` 在原文里的位置算（docx/txt 为 null）；`unverified` = 模型标了「材料披露」但引文在原文里找不到。服务重启时还在跑的报告标 `interrupted`。
 
 ---
 

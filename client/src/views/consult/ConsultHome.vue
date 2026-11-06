@@ -11,6 +11,8 @@
 
       <header class="home-header">
         <div class="header-content">
+          <!-- 回总入口（/consult 是品牌咨询和 BP 分析的二选一封面；嵌入版也落在那里）。 -->
+          <router-link to="/consult" class="back-hub">← 返回创业者体检咨询</router-link>
           <div class="header-kicker">
             <span class="kicker-line"></span>
             <span class="kicker-text">BRAND CONSULTING WORKBENCH</span>
@@ -34,6 +36,10 @@
         </div>
         
         <div class="header-actions">
+          <!-- BP 分析和品牌咨询合在一个入口下：key 用户 / 嵌入版 / 管理员能用（服务端同样只放这三种）。 -->
+          <button v-if="showBp" class="btn-create btn-bp" @click="router.push('/consult/bp')">
+            <span class="btn-text">BP 分析</span>
+          </button>
           <button class="btn-create" @click="router.push('/consult/projects/new')">
             <span class="btn-text">新建咨询项目</span>
           </button>
@@ -97,7 +103,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet, apiDelete } from '../../lib/api'
-import { getToken } from '../../lib/auth'
+import { getToken, fetchMe, isAdmin } from '../../lib/auth'
+import { isEmbedMode } from '../../lib/embed'
+import { hasAppKey } from '../../lib/appKey'
 import { openLoginModal } from '../../lib/loginModal'
 import SiteHeader from '../../components/common/SiteHeader.vue'
 import SiteFooter from '../../components/common/SiteFooter.vue'
@@ -123,6 +131,8 @@ function openProject(p: ProjectRow) {
 
 const route = useRoute()
 const router = useRouter()
+const showBp = ref(isEmbedMode() || hasAppKey('consult'))
+if (!showBp.value && getToken()) fetchMe().then((u) => { if (isAdmin(u)) showBp.value = true }).catch(() => {})
 const projects = ref<ProjectRow[]>([])
 const loading = ref(false)
 const err = ref('')
@@ -234,6 +244,9 @@ function fmt(ts: string) {
 </script>
 
 <style scoped>
+.back-hub { display: inline-block; margin-bottom: 16px; font-size: 13px; letter-spacing: 1px; color: #6b7280; text-decoration: none; transition: color .2s; }
+.back-hub:hover { color: #111827; }
+
 .page-wrapper {
   --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
@@ -425,6 +438,13 @@ function fmt(ts: string) {
   color: var(--text-secondary);
   font-weight: 600;
 }
+
+.btn-bp {
+
+  background: #fff;
+  box-shadow: inset 0 0 0 1.5px #111;
+}
+.btn-bp:hover { background: #f5f5f5; }
 
 .btn-create {
   position: relative;

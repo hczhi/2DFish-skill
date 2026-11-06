@@ -18,6 +18,8 @@ export interface WebSearchResult {
    * 三年前的旧数字和今年的读起来一模一样。
    */
   published: string;
+  /** 整页正文（只有 `rawContent: true` 时才有，否则空串）。 */
+  raw: string;
 }
 
 /** 读取搜索 key，没配置返回 null（调用方据此降级）。 */
@@ -46,7 +48,15 @@ export function isSearchEnabled(): boolean {
  */
 export async function webSearch(
   query: string,
-  opts: { maxResults?: number } = {}
+  opts: {
+    maxResults?: number;
+    /** 'advanced' 摘要更贴题、慢一些、按 Tavily 计费算两次。缺省 basic（小红书 / 咨询沿用）。 */
+    depth?: 'basic' | 'advanced';
+    /** 要不要整页正文（`raw`）。只有 BP 报告要 —— 摘要片段里经常没有那个数字。 */
+    rawContent?: boolean;
+    /** 只要最近这段时间的结果（新闻 / 融资类检索用）。 */
+    timeRange?: 'month' | 'year';
+  } = {}
 ): Promise<WebSearchResult[]> {
   const apiKey = getSearchApiKey();
   if (!apiKey) throw new Error('WEB_SEARCH_NOT_CONFIGURED');
@@ -59,9 +69,11 @@ export async function webSearch(
     body: JSON.stringify({
       api_key: apiKey,
       query,
-      search_depth: 'basic',
+      search_depth: opts.depth ?? 'basic',
       max_results: maxResults,
       include_answer: false,
+      ...(opts.rawContent ? { include_raw_content: true } : {}),
+      ...(opts.timeRange ? { time_range: opts.timeRange } : {}),
     }),
   });
 
@@ -78,5 +90,34 @@ export async function webSearch(
     content: String(r.content || ''),
     score: typeof r.score === 'number' ? r.score : 0,
     published: String(r.published_date || ''),
+    raw: typeof r.raw_content === 'string' ? r.raw_content : '',
   }));
+}
+
+/**
+ * 抓指定网页的正文（Tavily Extract）。BP 报告「补充资料」里用户贴的链接走这里。
+ * 抓不到就抛错带原文 —— 不能回一段空正文：空的那条资料进了 prompt 是「这条来源什么都没说」，
+ * 用户却以为 AI 读过了他贴的那篇。
+ */
+export async function extractUrl(url: string): Promise<{ url: string; title: string; content: string }> {
+  const apiKey = getSearchApiKey();
+  if (!apiKey) throw new Error('WEB_SEARCH_NOT_CONFIGURED');
+  const resp = await fetch('https://api.tavily.com/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey, urls: [url] }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Tavily extract failed (${resp.status}): ${text.slice(0, 200)}`);
+  }
+  const data = (await resp.json()) as { results?: any[]; failed_results?: any[] };
+  const r = data.results?.[0];
+  if (!r?.raw_content) {
+    const why = data.failed_results?.[0]?.error;
+    throw new Error(`这个链接没抓到正文${why ? `（${why}）` : '（可能要登录、或是纯图片 / 视频页）'}`);
+  }
+  const content = String(r.raw_content);
+  const title = (content.match(/^#\s+(.+)$/m)?.[1] || '').trim();
+  return { url: String(r.url || url), title, content };
 }

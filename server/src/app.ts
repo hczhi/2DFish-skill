@@ -59,6 +59,7 @@ import { verifyEncryptionKey } from './core/secrets.js';
 import { failInterruptedReviews } from './services/uiReview/orchestrator.js';
 import { reapInterruptedConsultRuns } from './services/consult/runStore.js';
 import { reapInterruptedConsultBatches } from './services/consult/batchStore.js';
+import { reapInterruptedBpReports } from './services/bp/reportStore.js';
 import { renderDynamicPageHtml } from './services/ssgService.js';
 
 dotenv.config();
@@ -481,6 +482,8 @@ if (!IS_TEST) {
   // 409），而界面上写着「正在跑第 7 步」—— 剩下那几步永远不会跑，没有任何一处报错。
   // **不自动接着跑**：重启之后凭空花掉二十多次额度谁都没要求过（见那个函数的注释）。
   reapInterruptedConsultBatches();
+  // BP 分析报告同理：不收尸的话那份报告永远显示「分析中」。
+  reapInterruptedBpReports();
 
   // 加密密钥换了的话，库里的第三方密钥全都解不开。放在启动时说清楚，
   // 否则线上只会表现成 AI/上传/飞书同步三处互不相干的失败。

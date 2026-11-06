@@ -43,7 +43,7 @@ export interface MountConsultOptions {
   externalUid: string;
   /** 挂载容器（选择器或元素）。 */
   target: string | HTMLElement;
-  /** 打开哪一页，默认项目列表。只能是 /consult/projects 下的路径。 */
+  /** 打开哪一页，默认 /consult 封面（品牌咨询 / BP 分析二选一）。可传 /consult/projects/...、/consult/bp/... 下的页面；/consult/projects 根路径会被服务端改送到封面。 */
   path?: string;
   /** iframe 初始高度（px），默认 900。之后按内容自动调整。 */
   height?: number;

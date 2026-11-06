@@ -127,6 +127,18 @@ export function consultSdkLimits(req: Request, res: Response, next: NextFunction
 }
 
 /**
+ * 这把 pk 现在的状态（BP 分析开跑前预检用：一份报告约十几次调用，跑到一半撞上限的话前面几章白花了钱）。
+ * 没这把 key 返回 null。
+ */
+export function sdkAiStatus(pk: string): { name: string; enabled: boolean; used: number; limit: number } | null {
+  const row = getDatabase()
+    .prepare(`SELECT pk, name, enabled, daily_ai_limit, max_projects, ai_used_today, ai_used_date FROM consult_sdk_keys WHERE pk = ?`)
+    .get(pk) as KeyRow | undefined;
+  if (!row) return null;
+  return { name: row.name || pk, enabled: !!row.enabled, used: usedToday(row, new Date().toISOString().split('T')[0]), limit: row.daily_ai_limit };
+}
+
+/**
  * 一个请求实际打了不止一次模型时，把差额补扣上（`/tidy-text` 分段整理）。
  *
  * 中间件是**每个请求扣 1** 的 —— 它跑在解析 body 之前，不可能知道这次要分几段。

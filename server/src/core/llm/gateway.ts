@@ -11,7 +11,8 @@ import {
 import { decryptSecret } from '../secrets.js';
 import { appName } from './apps.js';
 import { normalizeBaseUrl } from './baseUrl.js';
-import { holdPoints, settlePoints, releasePoints, POINT_PRICE } from '../../services/appKeyService.js';
+import { holdPoints, settlePoints, releasePoints, POINT_PRICE, keyIdOfUser } from '../../services/appKeyService.js';
+import { aiCallContext } from './callContext.js';
 
 export interface GatewayOptions {
   userId: string;
@@ -725,10 +726,14 @@ export async function aiGateway(
   // 应用级额度先扣：它对专属渠道也生效，且要在总额之前判，
   // 否则应用额度撞墙时总额已经白扣了一次。见 checkAndDeductAppQuota 的注释。
   checkAndDeductAppQuota(options.userId, options.source);
+  // 上层整体计费（BP 报告，见 core/llm/callContext.ts）：key 影子用户这次既不按次冻结、也不扣日额度。
+  const callCtx = aiCallContext.getStore();
+  const covered = !!callCtx?.coversPoints && !!keyIdOfUser(options.userId);
   // 售卖型 key 的影子用户按点数扣（先冻结、成功才结算），不走日额度 —— 见 appKeyService。
-  const hold = holdPoints(options.userId, POINT_PRICE.text);
+  const hold = covered ? null : holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (!hold && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
+  if (!hold && !covered && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
+  callCtx?.onAiCall?.();
 
   const startTime = Date.now();
   const ntOutcome: NoThinkingOutcome = {};
@@ -852,9 +857,13 @@ export async function aiGatewayStream(
 
   // 顺序同 aiGateway：应用级额度先扣（对专属渠道也生效），再扣平台总额。
   checkAndDeductAppQuota(options.userId, options.source);
-  const hold = holdPoints(options.userId, POINT_PRICE.text);
+  // 同 aiGateway：整体计费的上下文里 key 用户既不按次冻结也不扣日额度。
+  const callCtx = aiCallContext.getStore();
+  const covered = !!callCtx?.coversPoints && !!keyIdOfUser(options.userId);
+  const hold = covered ? null : holdPoints(options.userId, POINT_PRICE.text);
   // 专属渠道烧的是用户自己的 key，平台没有理由限流。
-  if (!hold && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
+  if (!hold && !covered && providerOwner !== 'dedicated' && !options.unmetered) checkAndDeductQuota(options.userId);
+  callCtx?.onAiCall?.();
 
   // 流式这里的超时只约束**首字节**：SDK 的计时器在 fetch 的 promise
   // （也就是响应头到达）时就清掉了，之后读 body 不受它限制。这正是想要的 ——
